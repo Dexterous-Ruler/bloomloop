@@ -1,0 +1,26 @@
+{
+  "name": "bloomloop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BloomLoop - Adaptive, Bloom's-Taxonomy-Aligned Assessment for Mixed-Ability Classrooms",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "npm --workspace server run dev",
+    "dev:client": "npm --workspace client run dev",
+    "build": "npm --workspace client run build",
+    "demo": "npm run build && npm --workspace server run start",
+    "seed": "npm --workspace server run seed",
+    "test": "npm --workspace server test",
+    "smoke": "npm --workspace server run smoke"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

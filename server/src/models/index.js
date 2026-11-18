@@ -1,0 +1,151 @@
+// Mongoose schemas - exactly the data model in completion.md section 5 and
+// chapter 5 of the project report. Do not drift: the report is submitted.
+
+import mongoose from 'mongoose';
+import { LEVELS } from '../bloom.js';
+import { KINDS } from '../questionTypes.js';
+
+const { Schema, model } = mongoose;
+
+const levelCounter = { seen: { type: Number, default: 0 }, correct: { type: Number, default: 0 } };
+
+const contentSchema = new Schema(
+  {
+    title: { type: String, required: true },
+    kind: { type: String, enum: ['pptx', 'syllabus'], required: true },
+    rawText: { type: String, default: '' },
+    topics: { type: [String], default: [] },
+  },
+  { timestamps: { createdAt: 'createdAt', updatedAt: false } },
+);
+
+const questionSchema = new Schema(
+  {
+    contentId: { type: Schema.Types.ObjectId, ref: 'Content', required: true, index: true },
+    topic: { type: String, default: '' },
+    text: { type: String, required: true },
+    // The interaction is chosen by the bloom level (see questionTypes.js), so a
+    // question carries whichever payload its kind needs. Per-kind shape is
+    // enforced by invalidReason() before anything is written, not here.
+    // Taken from the contract rather than retyped. A hand-listed enum here is
+    // how five of the eleven kinds would be silently refused on save, and every
+    // payload field this schema does not name is dropped on write - which is
+    // the same class of bug that once emptied every non-mcq question in the
+    // bank, one layer further down.
+    kind: { type: String, enum: KINDS, default: 'mcq' },
+    options: { type: [String], default: undefined },   // mcq (4), multi (4-6)
+    answerIdx: { type: Number, min: 0, max: 3 },       // mcq
+    answerIdxs: { type: [Number], default: undefined }, // multi
+    answerBool: { type: Boolean, default: undefined },  // truefalse
+    pairs: { type: [{ _id: false, left: String, right: String }], default: undefined }, // match
+    buckets: { type: [{ _id: false, name: String, items: [String] }], default: undefined }, // categorise
+    sequence: { type: [String], default: undefined },  // order and rank, in correct order
+    criterion: { type: String, default: undefined },   // rank - what it is ranked against
+    accept: { type: [String], default: undefined },    // blank
+    blanks: { type: [{ _id: false, accept: [String] }], default: undefined }, // cloze, one per marker
+    value: { type: Number, default: undefined },       // numeric
+    tolerance: { type: Number, default: undefined },   // numeric
+    unit: { type: String, default: undefined },        // numeric
+    rubric: { type: [String], default: undefined },    // open
+    bloom: { type: String, enum: LEVELS, required: true },
+    status: { type: String, enum: ['active', 'discarded'], default: 'active' },
+    // [D] provenance, so the UI can never pass a template item off as an LLM one
+    source: { type: String, enum: ['llm', 'fallback'], default: 'llm' },
+  },
+  { timestamps: { createdAt: 'createdAt', updatedAt: false } },
+);
+
+const sessionSchema = new Schema(
+  {
+    code: { type: String, required: true, unique: true, index: true },
+    contentId: { type: Schema.Types.ObjectId, ref: 'Content', required: true },
+    title: { type: String, default: '' },
+    status: { type: String, enum: ['open', 'closed'], default: 'open' },
+    startedAt: { type: Date, default: Date.now },
+    closedAt: { type: Date, default: null },
+
+    // Phase 7. The three settings the teacher chooses when opening the room.
+    // Declared here because Mongoose silently DROPS anything it has no path for,
+    // which would leave createSession() reporting a 100% goal back to the screen
+    // that asked for it while the room it wrote ran at 80% - the setting would
+    // appear to work everywhere except where it counts.
+    //
+    // Defaults reproduce the behaviour of every room opened before this existed.
+    masteryGoal: { type: Number, enum: [0.8, 0.9, 1.0], default: 0.8 },
+    reattempts: { type: Number, min: 0, max: 2, default: 0 },
+    redemption: { type: Boolean, default: false },
+  },
+  { versionKey: false },
+);
+
+const profileSchema = new Schema(
+  {
+    sessionId: { type: Schema.Types.ObjectId, ref: 'Session', required: true, index: true },
+    rollNo: { type: String, required: true },
+    name: { type: String, default: '' },
+    levels: {
+      type: Object,
+      default: () => LEVELS.reduce((a, l) => ({ ...a, [l]: { seen: 0, correct: 0 } }), {}),
+    },
+    workingLevel: { type: String, enum: LEVELS, default: 'understand' },
+    reason: { type: String, default: '' },
+    history: {
+      type: [
+        {
+          _id: false,
+          questionId: String,
+          bloom: { type: String, enum: LEVELS },
+          correct: Boolean,
+          // Partial credit. A match answered 3-of-4 is not the same evidence as
+          // one answered 1-of-4, and without this field Mongoose drops the
+          // difference on the floor - every partial answer stored as a bare
+          // boolean, and the mastery model reasoning from less than it was given.
+          score: Number,
+          // Phase 7. How many goes this answer took, written only when it took
+          // more than one. "Right on the third try" is different evidence from
+          // "right", and a schema with no path for it would flatten the two.
+          tries: Number,
+          // Redemption's two ends. The failure names the answer that redeemed
+          // it; the answer names the failure it paid off. Both are question
+          // ids, and both are what makes withdrawnByLevel() derivable from the
+          // history rather than kept as a counter that can drift from it.
+          redeemedBy: String,
+          redeems: String,
+          at: String,
+        },
+      ],
+      default: [],
+    },
+
+    // Phase 5. The question this student is currently on, so a closed tab comes
+    // back to the SAME item.
+    served: {
+      type: {
+        _id: false,
+        questionId: String,
+        at: String,
+        reason: String,
+        // Phase 7. Attempts spent on THIS question, and a hash of the last
+        // answer submitted against it so a re-sent submission is one attempt
+        // rather than two. Both live on the pin because both die with it.
+        tries: Number,
+        last: String,
+      },
+      default: null,
+    },
+
+    // Phase 6. Append-only integrity signals.
+    integrity: { type: Array, default: [] },
+  },
+  { versionKey: false },
+);
+
+// roll number is the identity within a session [F4]
+profileSchema.index({ sessionId: 1, rollNo: 1 }, { unique: true });
+
+export const Content = model('Content', contentSchema);
+export const Question = model('Question', questionSchema);
+export const Session = model('Session', sessionSchema);
+export const Profile = model('Profile', profileSchema);
+
+export { levelCounter };

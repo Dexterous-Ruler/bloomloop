@@ -1,0 +1,111 @@
+// F6 tier 1 - the artefact the teacher actually walks out of the room with.
+// Tier 2 (Classroom) can be unconfigured, unauthorised or blocked by the college
+// network; this file is the path that always works, so it is pure: no I/O, no
+// framework, and every number comes from mastery.js rather than being recomputed
+// here. If the CSV and the dashboard ever disagreed, the mastery model would no
+// longer be the single source of truth.
+
+import { LEVELS, LABEL } from '../bloom.js';
+import { hydrate, levelReport, totals, overallAccuracy, isSlowLearner } from './mastery.js';
+import { HONESTY, summarise } from './integrity.js';
+
+// Without the BOM, Excel reads the file as the local ANSI codepage and student
+// names with accents open as mojibake. Sheets ignores it.
+const BOM = '\ufeff';
+
+// RFC 4180 line ending - the one both Excel and Sheets agree on.
+const EOL = '\r\n';
+
+const FORMULA_LEAD = /^[=+\-@]/;
+const NEEDS_QUOTING = /[",\r\n]/;
+
+/**
+ * One CSV field: injection guard first, then quoting.
+ * A leading = + - or @ is executed as a formula by both Excel and Sheets, so a
+ * student who types `=HYPERLINK(...)` as their name would otherwise run code on
+ * the teacher's machine. The apostrophe is the standard neutraliser and is not
+ * displayed by either program.
+ */
+function cell(value) {
+  const raw = value === null || value === undefined ? '' : String(value);
+  const safe = FORMULA_LEAD.test(raw) ? `'${raw}` : raw;
+  return NEEDS_QUOTING.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
+const line = (cells) => cells.map(cell).join(',');
+
+/** mastery.js returns null for "no evidence"; an empty cell keeps the column numeric. */
+const asPercent = (accuracy) =>
+  accuracy === null || accuracy === undefined ? '' : Math.round(accuracy * 100);
+
+function today(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function headerRow() {
+  const cells = ['Roll No', 'Name', 'Working Level', 'Slow Learner'];
+  for (const level of LEVELS) {
+    cells.push(`${LABEL[level]} Seen`, `${LABEL[level]} Correct`, `${LABEL[level]} %`);
+  }
+  cells.push('Total Seen', 'Total Correct', 'Total %', 'Reason', 'Signals', 'How to read the signals');
+  return cells;
+}
+
+function profileRow(raw) {
+  // hydrate() guarantees all six levels exist, so the row can never come out
+  // short and shift every column to the right of a missing cell.
+  const profile = hydrate(raw);
+
+  const cells = [
+    profile.rollNo,
+    profile.name,
+    LABEL[profile.workingLevel] ?? profile.workingLevel,
+    isSlowLearner(profile) ? 'Yes' : 'No',
+  ];
+
+  for (const level of levelReport(profile)) {
+    cells.push(level.seen, level.correct, asPercent(level.accuracy));
+  }
+
+  const total = totals(profile);
+  cells.push(total.seen, total.correct, asPercent(overallAccuracy(profile)), profile.reason);
+
+  // The signals leave the room with the results, as the sentences integrity.js
+  // wrote and not as its level word. 'watch' alone in a column beside a student's
+  // name, in a file that will be read weeks later by someone who was not in the
+  // room, is precisely the verdict this feature refuses to render; the sentences
+  // describe what was recorded and leave the reading of it to a person.
+  // An empty cell is a student nothing was recorded about.
+  const signals = summarise(profile).notes.join(' ');
+
+  // The caveat rides on the rows that make a claim, and only those. A sheet gets
+  // mailed, filtered and quoted one row at a time, and this column is the only
+  // thing that keeps the limits attached to the sentence they qualify once it
+  // has left the dashboard that showed them together. It cannot be a caption
+  // row: the header must stay exactly one row or the Classroom import reads the
+  // caption as the column names.
+  cells.push(signals, signals ? HONESTY : '');
+
+  return cells;
+}
+
+/**
+ * @param {object[]} profiles raw profile documents, in the order they should appear
+ * @param {{sessionCode?: string, contentTitle?: string}} meta
+ * @returns {string} a complete CSV file, BOM included
+ */
+export function profilesToCsv(profiles, { sessionCode = '', contentTitle = '' } = {}) {
+  const rows = Array.isArray(profiles) ? profiles : [];
+
+  // The header MUST be row 1 with no caption or blank line above it. Test TC-08
+  // is "columns match Classroom import", and Classroom's mark import - like
+  // Sheets' first-row-is-header default - reads row 1 as the column names and
+  // would otherwise import a one-cell caption as the entire header.
+  // Provenance lives in the filename instead: bloomloop-<CODE>-<date>.csv,
+  // built by routes/export.js from sessionCode and today().
+  const lines = [line(headerRow())];
+  for (const raw of rows) lines.push(line(profileRow(raw)));
+
+  return BOM + lines.join(EOL) + EOL;
+}

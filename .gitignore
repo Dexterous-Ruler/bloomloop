@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+.env.local
+server/uploads/
+server/.data/
+*.log
+.DS_Store
+
+# Local tooling config. Not secret today, but personal to one machine, and
+# settings.local.json is local by name.
+.claude/
+.mcp.json
