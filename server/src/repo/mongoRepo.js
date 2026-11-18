@@ -1,7 +1,7 @@
 // MongoDB Atlas / Mongoose implementation. This is the documented primary
 // store (report section 5.6). memoryRepo is the fallback with the same surface.
 
-import { Content, Question, Session, Profile } from '../models/index.js';
+import { Content, Question, Session, Profile, Answer, RoomArchive } from '../models/index.js';
 
 const lean = (d) => (d ? JSON.parse(JSON.stringify(d)) : null);
 
@@ -59,6 +59,7 @@ export function createMongoRepo() {
     async deleteSession(id) {
       // Mongo has no cascade, so the profiles go first - the other way round
       // would leave them unreachable if the second call failed.
+      await Answer.deleteMany({ sessionId: id });
       await Profile.deleteMany({ sessionId: id });
       await Session.findByIdAndDelete(id);
       return true;
@@ -88,6 +89,54 @@ export function createMongoRepo() {
           String(a.rollNo).localeCompare(String(b.rollNo), undefined, { numeric: true }),
         ),
       );
+    },
+
+    // -- answers (append-only evidence) --
+    async recordAnswer(doc) {
+      try {
+        return { answer: lean(await Answer.create(doc)), duplicate: false };
+      } catch (err) {
+        if (err?.code === 11000) {
+          const existing = await this.getAnswerByKey(doc.sessionId, doc.answerKey);
+          if (existing) return { answer: existing, duplicate: true };
+        }
+        throw err;
+      }
+    },
+    async getAnswerByKey(sessionId, answerKey) {
+      return lean(await Answer.findOne({ sessionId, answerKey: String(answerKey) }).lean());
+    },
+    async getAnswer(id) {
+      return lean(await Answer.findById(id).lean());
+    },
+    async listAnswers({ sessionId, sessionIds, rollNo, accountId, reviewStatus, limit = 2000, offset = 0 } = {}) {
+      const q = {};
+      if (sessionId) q.sessionId = sessionId;
+      if (Array.isArray(sessionIds)) q.sessionId = { $in: sessionIds };
+      if (rollNo) q.rollNo = String(rollNo);
+      if (accountId) q.accountId = accountId;
+      if (reviewStatus) q.reviewStatus = reviewStatus;
+      return lean(await Answer.find(q).sort({ answeredAt: 1, _id: 1 }).skip(offset).limit(limit).lean());
+    },
+    // -- room archives (see memoryRepo for the contract) --
+    async saveRoomArchive(doc) {
+      const rec = await RoomArchive.findOneAndUpdate(
+        { sessionId: String(doc.sessionId) },
+        { $set: { ...doc, sessionId: String(doc.sessionId) } },
+        { upsert: true, new: true, projection: { data: 0 } },
+      ).lean();
+      return lean(rec);
+    },
+    async listRoomArchives() {
+      return lean(await RoomArchive.find({}, { data: 0 }).sort({ archivedAt: -1 }).lean()) ?? [];
+    },
+    async getRoomArchive(id) {
+      return lean(await RoomArchive.findById(id).lean().catch(() => null));
+    },
+    async updateAnswer(id, patch) {
+      const allowed = ['correct', 'score', 'reviewStatus', 'reviewedBy', 'reviewedAt', 'reviewNote', 'final'];
+      const set = Object.fromEntries(Object.entries(patch).filter(([k, v]) => allowed.includes(k) && v !== undefined));
+      return lean(await Answer.findByIdAndUpdate(id, { $set: set }, { new: true }).lean());
     },
   };
 }

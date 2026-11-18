@@ -109,7 +109,7 @@ const isCodeCollision = (error) =>
 
 /**
  * The other unique index a write to this table can trip: one Google identity
- * backs at most one account (supabase/003_student_google_link.sql). Told apart
+ * backs at most one account (supabase/migrations/0003_student_google_link.sql). Told apart
  * from the code collision above because this one must never be retried - a
  * redraw fixes a code clash, and nothing fixes "somebody else already linked
  * that Google account" except a person.
@@ -300,6 +300,58 @@ export async function getAccountByEmail(email) {
   const { data, error } = await db().from('accounts').select('*').eq('email', wanted).maybeSingle();
   if (error) fail('getAccountByEmail', error);
   return outAccount(data);
+}
+
+/** Roll numbers compare the way the live room stores them: trimmed, single-spaced, upper case. */
+const rollKey = (value) => String(value ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
+
+/**
+ * The student account a room roll number belongs to, on the room owner's roster.
+ *
+ * Linked only when exactly one active student reporting to `ownerId` carries
+ * that roll number. None or several means no link: guessing would attach one
+ * student's answers to another student's account, which is worse than leaving a
+ * guest row unlinked.
+ *
+ * Returns the id and the stored supports; nothing else about the account leaves.
+ *
+ * @returns {Promise<{id: string, accommodations: object} | null>}
+ */
+export async function findStudentForRoll(ownerId, rollNo) {
+  const wanted = rollKey(rollNo);
+  if (!ownerId || !wanted) return null;
+  const { data, error } = await db()
+    .from('accounts')
+    .select('id, roll_no, accommodations')
+    .eq('role', 'student')
+    .eq('reports_to', ownerId)
+    .eq('active', true)
+    .limit(1000);
+  if (error) fail('findStudentForRoll', error);
+  const matches = (data ?? []).filter((r) => rollKey(r.roll_no) === wanted);
+  if (matches.length !== 1) return null;
+  return { id: matches[0].id, accommodations: normaliseAccommodations(matches[0].accommodations) };
+}
+
+/** A student's stored supports, normalised. Empty for an unknown id. */
+export async function getAccommodations(id) {
+  if (!id) return {};
+  const { data, error } = await db().from('accounts').select('accommodations').eq('id', id).maybeSingle();
+  if (error) fail('getAccommodations', error);
+  return normaliseAccommodations(data?.accommodations);
+}
+
+/** Replace a student's supports. Unknown keys and non-true values are dropped by normalise(). */
+export async function setAccommodations(id, raw) {
+  const value = normaliseAccommodations(raw);
+  const { data, error } = await db()
+    .from('accounts')
+    .update({ accommodations: value, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select('accommodations')
+    .maybeSingle();
+  if (error) fail('setAccommodations', error);
+  return normaliseAccommodations(data?.accommodations);
 }
 
 /** How many accounts exist at all - the gate POST /bootstrap opens exactly once. */

@@ -21,9 +21,17 @@ import {
 import { selectNext } from '../services/selector.js';
 import { buildGridRow } from '../routes/session.js';
 import { isRecordId } from '../ids.js';
-import { score, forStudent, countsTowardMastery } from '../questionTypes.js';
+import { score, forStudent, countsTowardMastery, shownOptionIndices } from '../questionTypes.js';
 import { verifyTeacherCredentials } from '../auth.js';
-import { reportFromClient, checkLatency, noteSecondSocket } from '../services/integrity.js';
+import { canRead, ownerOf } from '../ownership.js';
+import { phoneSupports } from '../accommodations.js';
+import { findStudentForRoll } from '../services/accounts.js';
+import {
+  reportFromClient,
+  checkLatency,
+  noteSecondSocket,
+  checkLevelJump,
+} from '../services/integrity.js';
 
 const presence = new Map(); // `${code}:${rollNo}` -> socket.id
 const bankCache = new Map(); // sessionId -> Promise<question[]>
@@ -32,7 +40,11 @@ const sessionCache = new Map(); // code -> open session document
 // Roll numbers in the wild look like 21BCE1234, CS-045, 2/A. Anything else is a
 // typo or a probe, and an empty one would collide with every other empty one.
 const ROLL_SHAPE = /^[A-Z0-9][A-Z0-9 ._\-\/]{0,23}$/;
-const MAX_OPTION_INDEX = 3;
+
+// The idempotency key a phone sends with every attempt. One key per attempt,
+// reused verbatim on every resend of that attempt, so the server can tell "the
+// same answer again" from "a new answer".
+const ANSWER_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
 const key = (code, rollNo) => `${String(code).toUpperCase()}:${rollNo}`;
 
@@ -122,7 +134,35 @@ function loadBank(session) {
 
 async function gridRows(session) {
   const profiles = await getRepo().listProfiles(session._id);
-  return profiles.map((p) => buildGridRow(p, { online: isOnline(session.code, p.rollNo) }));
+  // The room's own mastery goal, so the live grid and the REST grid agree.
+  const { masteryGoal } = sessionSettings(session);
+  return profiles.map((p) =>
+    buildGridRow(p, { online: isOnline(session.code, p.rollNo), goal: masteryGoal }));
+}
+
+/**
+ * The question as it stood when it was answered, kept with the answer.
+ *
+ * Questions are edited, regenerated and deleted after a class; the evidence of
+ * what a student was actually asked must not change with them. Teacher-only:
+ * this lives in the answers store, which no student route reads.
+ */
+function snapshotOf(question) {
+  const { _id, contentId, createdAt, status, ...rest } = question ?? {};
+  return { id: String(_id ?? ''), ...rest };
+}
+
+/**
+ * How many extra goes this student gets at this question. Computed on the
+ * options the student was actually SHOWN: with fewer choices on, a retry that
+ * would be safe on the full list could leave a single option standing.
+ */
+function retriesAllowed(question, settings, rollNo, supports) {
+  const keep = shownOptionIndices(question, `${rollNo}:${question._id}`, supports);
+  const shown = keep && Array.isArray(question.options)
+    ? { ...question, options: keep.map((i) => question.options[i]) }
+    : question;
+  return retriesFor(shown, settings.reattempts);
 }
 
 async function broadcastGrid(io, session) {
@@ -137,6 +177,7 @@ async function broadcastGrid(io, session) {
  * `answerIdx` must never reach a phone before the answer is in.
  */
 async function dispatchNext(socket, { profile, session, bank = null, resume = false }) {
+  const supports = socket.data.student?.supports ?? null;
   try {
     const items = bank ?? (await loadBank(session));
 
@@ -178,11 +219,17 @@ async function dispatchNext(socket, { profile, session, bank = null, resume = fa
     // strips every answer field and shuffles match/order/rank/categorise
     // deterministically from the student + question, so a reconnect returns the
     // same board rather than rearranging under a half-finished answer.
+    // Goes left on this question. A resumed question may already have spent
+    // some, and the phone has to say so rather than promise a fresh set.
+    const allowed = retriesAllowed(q, sessionSettings(session), profile.rollNo, supports);
+    const spent = triesSpent(profile, q._id);
+
     socket.emit('server:question', {
-      question: forStudent(q, `${profile.rollNo}:${q._id}`),
+      question: forStudent(q, `${profile.rollNo}:${q._id}`, supports),
       reason: pick.reason,
       index: profile.history.length + 1,
       bankCount: items.length,
+      triesLeft: Math.max(1, allowed + 1 - spent),
       // True only when the item below is one this student was already pinned to.
       // The old test compared pick.reason against the pin's reason, which the
       // block above has just overwritten with pick.reason - so it was true on
@@ -217,11 +264,26 @@ async function handleJoin(io, socket, payload) {
     const name = String(payload?.name ?? '').trim().slice(0, 60);
     const stored = await repo.getProfile(session._id, rollNo);
 
+    // The student account behind this roll number, on the room owner's roster.
+    // Gives the profile a lasting identity (so the answers follow the student
+    // across rooms) and brings the supports their professor set. Only on a live
+    // database, and never allowed to block a join: a failed lookup is a guest.
+    let link = null;
+    if (repo.kind === 'supabase' && session.ownerId) {
+      link = await findStudentForRoll(session.ownerId, rollNo).catch((err) => {
+        logError('account link', err);
+        return null;
+      });
+    }
+
     // TC-07: the same roll number resumes the same profile. Never a second row.
     const profile = stored
       ? hydrate({ ...stored, name: stored.name || name })
       : hydrate(emptyProfile({ sessionId: String(session._id), rollNo, name }));
-    if (!stored || profile.name !== (stored.name ?? '')) await repo.saveProfile(profile);
+    const linkChanged = Boolean(link) && profile.accountId !== link.id;
+    if (linkChanged) profile.accountId = link.id;
+    if (!stored || linkChanged || profile.name !== (stored.name ?? '')) await repo.saveProfile(profile);
+    const supports = link?.accommodations ?? null;
 
     // Two live sockets on one roll number. This is the strongest signal the
     // server has: it is not a browser self-report, devtools cannot switch it
@@ -242,14 +304,19 @@ async function handleJoin(io, socket, payload) {
       rollNo,
       sessionId: String(session._id),
       key: key(session.code, rollNo),
+      // The full set, for forStudent() and score(). The phone is told only the
+      // rendering switches (phoneSupports), never that options were removed.
+      supports,
     };
     socket.join(`session:${session.code}`);
 
     const bank = await loadBank(session);
+    const settings = sessionSettings(session);
     socket.emit('session:accepted', {
-      profile: buildGridRow(profile, { online: true }),
-      session: { code: session.code, title: session.title ?? '' },
+      profile: buildGridRow(profile, { online: true, goal: settings.masteryGoal }),
+      session: { code: session.code, title: session.title ?? '', settings },
       bankCount: bank.length,
+      supports: phoneSupports(supports),
     });
 
     await broadcastGrid(io, session);
@@ -267,6 +334,74 @@ async function handleJoin(io, socket, payload) {
     logError('student:join', err);
     reject(socket, 'Could not join - try again.');
   }
+}
+
+/**
+ * Re-send the outcome of an attempt the server already holds.
+ *
+ * Reached when a phone resends an answer whose result it never received. If the
+ * evidence was stored but the profile write behind it failed, the profile is
+ * repaired from the stored answer here, so a resend can never leave the two
+ * disagreeing and never counts twice.
+ */
+async function replayStored(io, socket, { session, profile, prior, settings }) {
+  const repo = getRepo();
+  const question = await repo.getQuestion(prior.questionId).catch(() => null);
+  const seed = `${prior.rollNo}:${prior.questionId}`;
+
+  if (!prior.final) {
+    const allowed = question ? retriesAllowed(question, settings, prior.rollNo, socket.data.student?.supports) : 0;
+    socket.emit('server:result', {
+      retry: true,
+      correct: false,
+      score: prior.score,
+      detail: prior.detail ?? '',
+      kind: prior.kind,
+      triesLeft: Math.max(1, allowed + 1 - prior.attempt),
+      workingLevel: profile.workingLevel,
+      reason: profile.reason,
+      levelChanged: false,
+      profile: buildGridRow(profile, { online: true, goal: settings.masteryGoal }),
+    });
+    return;
+  }
+
+  let current = profile;
+  const inHistory = profile.history.some((h) => String(h.questionId) === String(prior.questionId));
+  if (!inHistory) {
+    const fields = {
+      questionId: prior.questionId,
+      bloom: prior.bloom,
+      topic: prior.topic,
+      kind: prior.kind,
+      answerId: prior.answerKey,
+    };
+    current = prior.ungraded
+      ? recordUngraded(profile, fields).profile
+      : applyAnswer(profile, {
+        ...fields,
+        correct: prior.correct,
+        score: prior.score,
+        tries: prior.attempt,
+        redemption: settings.redemption,
+      }).profile;
+    current.served = null;
+    await repo.saveProfile(current);
+    await broadcastGrid(io, session);
+  }
+
+  socket.emit('server:result', {
+    correct: prior.ungraded ? false : Boolean(prior.correct),
+    score: prior.score,
+    ungraded: prior.ungraded,
+    solution: question ? score(question, prior.response, seed, socket.data.student?.supports).solution : null,
+    detail: prior.detail ?? '',
+    kind: prior.kind,
+    workingLevel: current.workingLevel,
+    reason: current.reason,
+    levelChanged: false,
+    profile: buildGridRow(current, { online: true, goal: settings.masteryGoal }),
+  });
 }
 
 async function handleAnswer(io, socket, payload) {
@@ -304,22 +439,39 @@ async function handleAnswer(io, socket, payload) {
       return;
     }
     const profile = hydrate(stored);
+    const settings = sessionSettings(session);
+    const supports = ctx.supports ?? null;
 
-    // A double-tap on a phone must not score twice - but the phone still has to
-    // hear something back. It disables its options the moment one is tapped and
-    // only re-enables on server:result, so a silent return freezes that student
-    // with no way forward and no visible error.
+    // The idempotency key. A current phone sends one per attempt; an older one
+    // does not, and then the key is derived from the question and the answer, so
+    // an identical resend is still recognised as the same attempt.
+    const print = answerPrint(response);
+    const sent = String(payload?.answerId ?? '');
+    const answerKey = ANSWER_ID.test(sent) ? sent : `legacy-${questionId}-${print}`;
+
+    // 1. An attempt the server already holds: answer it with the stored outcome.
+    const prior = await repo.getAnswerByKey(ctx.sessionId, answerKey);
+    if (prior) {
+      await replayStored(io, socket, { session, profile, prior, settings });
+      return;
+    }
+
+    // 2. A question this student has already been marked on, arriving under a
+    // new key. A double-tap on a phone must not score twice - but the phone still
+    // has to hear something back, or it sits with its options disabled.
     const already = profile.history.find((h) => String(h.questionId) === questionId);
     if (already) {
       const stale = await repo.getQuestion(questionId).catch(() => null);
       socket.emit('server:result', {
         correct: already.correct,
         score: already.score ?? (already.correct ? 1 : 0),
-        solution: stale ? score(stale, response, `${ctx.rollNo}:${stale._id}`).solution : null,
+        ungraded: already.ungraded === true,
+        solution: stale ? score(stale, response, `${ctx.rollNo}:${stale._id}`, supports).solution : null,
+        kind: already.kind ?? stale?.kind ?? 'mcq',
         workingLevel: profile.workingLevel,
         reason: profile.reason,
         levelChanged: false,
-        profile: buildGridRow(profile, { online: true }),
+        profile: buildGridRow(profile, { online: true, goal: settings.masteryGoal }),
       });
       return;
     }
@@ -334,28 +486,157 @@ async function handleAnswer(io, socket, payload) {
       return;
     }
 
-    // Scored here, from the stored item, per its kind. A client-sent
-    // correctness flag is never read - the phone only ever reports what it did.
-    // Partial-credit kinds return a 0..1 score; the mastery model still consumes
-    // a boolean, so the threshold lives in questionTypes and not in the model.
-    // The SAME seed forStudent() shuffled with. It is what turns the positions
-    // the phone reported back into the items they actually are - the phone is no
-    // longer told which item is which, so this is the only place that knows.
-    // Checked before the pin is cleared: `served.at` is when the server sent
-    // this question, so the gap is real elapsed time and not something the phone
-    // reported about itself.
-    checkLatency(profile, question, profile.served?.at);
+    const spent = triesSpent(profile, questionId);
+    // The same answer as the attempt just refused, under a new key: that is a
+    // resend, not a new attempt, and must not cost a retry.
+    if (spent > 0 && profile.served?.last === print) {
+      const allowed = retriesAllowed(question, settings, ctx.rollNo, supports);
+      socket.emit('server:result', {
+        retry: true,
+        correct: false,
+        kind: question.kind ?? 'mcq',
+        triesLeft: Math.max(1, allowed + 1 - spent),
+        workingLevel: profile.workingLevel,
+        reason: profile.reason,
+        levelChanged: false,
+        profile: buildGridRow(profile, { online: true, goal: settings.masteryGoal }),
+      });
+      return;
+    }
+    const attempt = spent + 1;
 
-    const graded = score(question, response, `${ctx.rollNo}:${question._id}`);
-    const { profile: next, decision } = applyAnswer(profile, {
+    // Checked on the first attempt only: `served.at` is when the server sent
+    // this question, so the gap is real elapsed time and not something the
+    // phone reported about itself. A retry's gap measures nothing new.
+    if (attempt === 1) checkLatency(profile, question, profile.served?.at);
+
+    // Scored here, from the stored item, per its kind. A client-sent
+    // correctness flag is never read. The SAME seed and supports forStudent()
+    // used, so shown positions map back to the items they really are.
+    const seed = `${ctx.rollNo}:${question._id}`;
+    const graded = score(question, response, seed, supports);
+    const kind = question.kind ?? 'mcq';
+    // One moment for this answer: the stored row and the history entry carry
+    // the same timestamp, so the two records of one answer always agree.
+    const answeredAt = new Date().toISOString();
+    const evidence = {
+      sessionId: ctx.sessionId,
+      answerKey,
+      rollNo: ctx.rollNo,
+      accountId: profile.accountId ?? null,
+      questionId,
+      contentId: question.contentId ?? session.contentId ?? null,
+      topic: question.topic ?? '',
+      bloom: question.bloom,
+      kind,
+      questionSnapshot: snapshotOf(question),
+      response,
+      attempt,
+      servedAt: profile.served?.at ?? null,
+      answeredAt,
+      language: 'en',
+      questionSource: question.source ?? 'llm',
+      detail: graded.detail ?? '',
+      autoCorrect: graded.correct,
+      autoScore: graded.score,
+      autoDetail: graded.detail ?? '',
+      // A written answer is marked by matching rubric words. That is a first
+      // reading, not a verdict, so it is stored as provisional for a professor
+      // to confirm or override.
+      reviewStatus: kind === 'open' ? 'provisional' : 'auto',
+    };
+
+    // A poll asks without assessing. It is recorded so it is never served
+    // again, and it touches no level, no accuracy and no band.
+    if (!countsTowardMastery(question)) {
+      const stamped = await repo.recordAnswer({
+        ...evidence, ungraded: true, correct: null, score: null, final: true, reviewStatus: 'auto',
+      });
+      if (stamped.duplicate) {
+        await replayStored(io, socket, { session, profile, prior: stamped.answer, settings });
+        return;
+      }
+      const { profile: next } = recordUngraded(profile, {
+        questionId, bloom: question.bloom, topic: question.topic ?? '', kind, answerId: answerKey, at: answeredAt,
+      });
+      next.served = null;
+      await repo.saveProfile(next);
+      socket.emit('server:result', {
+        ungraded: true,
+        correct: false,
+        score: null,
+        solution: null,
+        detail: '',
+        kind,
+        workingLevel: next.workingLevel,
+        reason: next.reason,
+        levelChanged: false,
+        profile: buildGridRow(next, { online: true, goal: settings.masteryGoal }),
+      });
+      await broadcastGrid(io, session);
+      return;
+    }
+
+    // Wrong with goes left: this attempt is stored as evidence but does not
+    // count. The answer is NOT revealed - that would end the retry.
+    const allowed = retriesAllowed(question, settings, ctx.rollNo, supports);
+    if (!graded.correct && attempt <= allowed) {
+      const stamped = await repo.recordAnswer({
+        ...evidence, final: false, correct: false, score: graded.score,
+      });
+      if (stamped.duplicate) {
+        await replayStored(io, socket, { session, profile, prior: stamped.answer, settings });
+        return;
+      }
+      profile.served = {
+        ...(profile.served ?? {}),
+        questionId,
+        at: profile.served?.at ?? new Date().toISOString(),
+        reason: profile.served?.reason ?? '',
+        tries: attempt,
+        last: print,
+      };
+      await repo.saveProfile(profile);
+      socket.emit('server:result', {
+        retry: true,
+        correct: false,
+        score: graded.score,
+        detail: graded.detail ?? '',
+        kind,
+        triesLeft: allowed + 1 - attempt,
+        workingLevel: profile.workingLevel,
+        reason: profile.reason,
+        levelChanged: false,
+        profile: buildGridRow(profile, { online: true, goal: settings.masteryGoal }),
+      });
+      return;
+    }
+
+    // Final. The evidence is written first: it is also the idempotency gate, so
+    // a resend racing this one finds it and is answered from it.
+    const stamped = await repo.recordAnswer({
+      ...evidence, final: true, correct: graded.correct, score: graded.score,
+    });
+    if (stamped.duplicate) {
+      await replayStored(io, socket, { session, profile, prior: stamped.answer, settings });
+      return;
+    }
+
+    const { profile: next, decision, redeemed } = applyAnswer(profile, {
       questionId,
       bloom: question.bloom,
+      topic: question.topic ?? '',
+      kind,
+      answerId: answerKey,
       correct: graded.correct,
       score: graded.score,
+      at: answeredAt,
+      tries: attempt,
+      redemption: settings.redemption,
     });
+    checkLevelJump(next);
     // Answered, so the pin is spent. Leaving it set would resume a student onto
-    // a question they have already been marked on, which the double-tap guard
-    // would then refuse to score - a dead end they could not get out of.
+    // a question they have already been marked on.
     next.served = null;
     await repo.saveProfile(next);
 
@@ -364,11 +645,13 @@ async function handleAnswer(io, socket, payload) {
       score: graded.score,
       solution: graded.solution,
       detail: graded.detail ?? '',
-      kind: question.kind ?? 'mcq',
+      kind,
+      attempts: attempt,
+      redeemed: redeemed ? redeemed.reason : null,
       workingLevel: next.workingLevel,
       reason: next.reason,
       levelChanged: Boolean(decision.changed),
-      profile: buildGridRow(next, { online: true }),
+      profile: buildGridRow(next, { online: true, goal: settings.masteryGoal }),
     });
 
     await broadcastGrid(io, session);
@@ -376,7 +659,8 @@ async function handleAnswer(io, socket, payload) {
     logError('student:answer', err);
     // The phone is sitting with its options disabled waiting for a result. A
     // store hiccup must not strand a student for the rest of the session, so
-    // tell them plainly rather than leaving a dead screen.
+    // tell them plainly rather than leaving a dead screen. The phone keeps the
+    // attempt and its key, so sending it again is safe.
     socket.emit('session:rejected', {
       reason: 'That answer did not save. Tap Next question to carry on.',
     });
@@ -433,9 +717,21 @@ async function handleWatch(socket, payload) {
       return;
     }
 
+    // Being a teacher is not enough: this has to be a room this teacher may
+    // read - their own, an HOD's department, or for the shared key the rooms
+    // nobody owns. The same rule GET /grid enforces, and the same answer for a
+    // room that exists but is not theirs as for one that does not, so a code
+    // cannot be probed.
+    const viewer = { id: who.accountId ?? null, role: who.role };
+    if (!(await canRead(viewer, ownerOf(session)))) {
+      reject(socket, 'No session with that code.');
+      return;
+    }
+
     socket.data.teacher = { code: session.code, accountId: who.accountId, role: who.role };
     socket.join(`teacher:${session.code}`);
     socket.emit('teacher:grid', { rows: await gridRows(session), code: session.code });
+    socket.emit('teacher:status', { code: session.code, status: session.status });
   } catch (err) {
     logError('teacher:watch', err);
   }

@@ -1,0 +1,185 @@
+/* The student's own home (/me) and analytics (/analytics). */
+
+.in-gap { margin-bottom: 16px; }
+
+/* The title keeps a readable measure: when the actions cannot sit beside it
+   they drop under it, and do not squeeze it into a column of single words. */
+.in-head > .grow { flex: 1 1 280px; }
+@media (max-width: 640px) {
+  .in-head .acts { margin-left: 0; }
+  .in-head .acts .btn { height: 40px; }
+}
+
+/* ------------------------------------------------------------ record lists */
+
+/* Sessions, rooms, students, topics. Given room, a list is a table: one line
+   per row, its figures in columns under a line of labels. Without room each
+   row is two lines: what it is, then its figures spelled out. The switch is on
+   the width of the list and not of the window, because the same list fills a
+   page on /me and half of one on /analytics. */
+.in-rec-box { container-type: inline-size; }
+.in-rec { display: flex; flex-direction: column; padding: 0 8px 8px; }
+.in-rec > li + li { box-shadow: 0 -1px 0 var(--line); }
+.in-rec-head, .in-rec-row { display: grid; grid-template-columns: var(--rec-cols); align-items: center; column-gap: 16px; }
+.in-rec-head { padding: 8px 20px; border-bottom: 1px solid var(--line); font: 500 12px/16px var(--font); color: var(--text-3); white-space: nowrap; }
+.in-rec-head .r { text-align: right; }
+.in-rec-row { min-width: 0; min-height: 48px; padding: 8px 12px; font: 400 14px/20px var(--font); color: var(--text); }
+button.in-rec-row { width: 100%; border: 0; border-radius: var(--r-1); background: transparent; text-align: left; cursor: pointer; transition: background var(--t-1) var(--ease); }
+button.in-rec-row:hover { background: var(--raised); }
+.in-rec-main { min-width: 0; display: flex; align-items: center; gap: 4px 8px; }
+.in-rec-cells { display: contents; }
+.in-rec-date { order: -1; color: var(--text-2); white-space: nowrap; }
+.in-rec-n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* The column label says what a figure counts; a screen reader gets it here. */
+.in-rec-unit { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.in-rec-end { min-width: 0; display: flex; align-items: center; }
+.in-rec-end.in-rec-n { justify-content: flex-end; }
+.in-rec-more { color: var(--text-3); transition: transform var(--t-2) var(--ease); }
+button.in-rec-row[aria-expanded='true'] .in-rec-more { transform: rotate(180deg); }
+
+@container (max-width: 560px) {
+  .in-rec-head { display: none; }
+  .in-rec > li:first-child { margin-top: 8px; }
+  .in-rec-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; padding: 12px; }
+  .in-rec-main { grid-column: 1; grid-row: 1; flex-wrap: wrap; }
+  .in-rec-cells { grid-column: 1 / -1; grid-row: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 13px; color: var(--text-3); }
+  .in-rec-date { order: 0; color: inherit; }
+  .in-rec-n { text-align: left; }
+  .in-rec-unit { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
+  .in-rec-end { grid-column: 2; grid-row: 1; }
+  .in-rec-end.in-rec-n { gap: 4px; font-size: 14px; color: var(--text); }
+  .in-rec-more { grid-column: 3; grid-row: 1; }
+  .me-sat .in-rec-row { grid-template-columns: minmax(0, 1fr) auto 16px; column-gap: 12px; }
+}
+
+/* ---------------------------------------------------------------- /me */
+
+/* Where they are, and how well at each level: one instrument, two readings. */
+.me-stand { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); margin-bottom: 24px; }
+.me-now { display: flex; align-items: center; gap: 24px; padding: 32px; --len: 48; }
+.me-now:only-child { grid-column: 1 / -1; }
+.me-now .said { max-width: 52ch; }
+.me-levels { display: flex; flex-direction: column; gap: 16px; padding: 24px; border-left: 1px solid var(--line); }
+.me-figs { grid-column: 1 / -1; padding: 16px 32px; border-top: 1px solid var(--line); }
+.me-google { display: flex; align-items: center; gap: 12px; }
+.me-sat { --rec-cols: 72px minmax(0, 1fr) 72px 64px 120px 16px; }
+
+/* One mark per answer. Colour is the level, filled or hollow is right or wrong. */
+.me-trail { display: flex; flex-direction: column; gap: 12px; padding: 4px 12px 16px; }
+.me-marks { display: flex; flex-wrap: wrap; gap: 12px 4px; padding-bottom: 8px; }
+.me-marks i { position: relative; display: block; width: 12px; height: 24px; border-radius: var(--r-1); background: var(--lv); }
+.me-marks i::after { content: ''; position: absolute; left: 0; right: 0; top: calc(100% + 4px); height: 2px; border-radius: var(--r-full); background: var(--ok); }
+.me-marks i[data-right='false'] { background: transparent; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--lv) 72%, var(--text)); }
+.me-marks i[data-right='false']::after { background: var(--bad); }
+
+@media (max-width: 900px) {
+  .me-stand { grid-template-columns: minmax(0, 1fr); }
+  .me-levels { border-left: 0; border-top: 1px solid var(--line); }
+}
+@media (max-width: 640px) {
+  .me-google .btn { height: 40px; }
+  .me-now { padding: 20px; gap: 20px; }
+  .me-levels { padding: 20px; }
+  .me-figs { padding: 16px 20px; }
+}
+@media (max-width: 480px) {
+  .me-now { flex-direction: column; align-items: flex-start; }
+  .me-now .loop { width: 88px; height: 88px; }
+}
+
+/* ---------------------------------------------------------- /analytics */
+
+/* The people on the left, one person's record on the right. */
+.an { display: grid; grid-template-columns: 400px minmax(0, 1fr); gap: 24px; align-items: start; }
+.an.an-solo { grid-template-columns: minmax(0, 1fr); }
+.an-pane { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.an-back { display: none; align-self: flex-start; }
+
+/* The list keeps its place while the record beside it scrolls, and scrolls
+   itself when it is longer than the window. The bottom clears the dock. */
+.an-list { container-type: inline-size; position: sticky; top: calc(var(--strip-h) + 16px); max-height: calc(100dvh - var(--strip-h) - 112px); min-height: 0; display: flex; flex-direction: column; }
+.an-list-top { display: flex; flex-direction: column; gap: 12px; padding: 16px 20px 12px; }
+/* The filters span the list, so four of them fit a phone. */
+.an-filter .seg { display: flex; align-self: stretch; }
+.an-filter .seg > button { flex: 1 1 auto; min-width: 0; padding: 0 8px; justify-content: center; }
+.an-cols, .an-person { display: grid; grid-template-columns: minmax(0, 1fr) 112px 56px; column-gap: 12px; align-items: center; }
+.an-cols { padding: 8px 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font: 500 12px/16px var(--font); color: var(--text-3); }
+.an-cols .r { text-align: right; }
+.an-people { min-height: 0; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; padding: 8px; }
+.an-people > li + li { box-shadow: 0 -1px 0 var(--line); }
+.an-person { min-height: 52px; border-radius: var(--r-1); }
+.an-person .rw-main { display: flex; flex-direction: column; }
+.an-person > .lv { justify-self: start; }
+.an-name { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.an-name .t-meta { flex: none; }
+.an-acc { text-align: right; font: 400 13px/20px var(--mono); color: var(--text); }
+/* A percentage resting on fewer than three answers is printed, quietly. */
+.an-acc[data-thin] { color: var(--text-3); }
+.an-none { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 20px; }
+
+.an-record { min-width: 0; container-type: inline-size; }
+.an-who { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 24px; padding: 20px; }
+.an-at { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.an-figs { padding: 0 20px 20px; }
+.an-sec { min-width: 0; display: flex; flex-direction: column; gap: 16px; padding: 20px; border-top: 1px solid var(--line); }
+.an-sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+/* A section that is a list runs to the edges of the card, as a card's own does. */
+.an-sec-list { padding: 20px 0 0; gap: 8px; }
+.an-sec-list > .an-sec-head { padding: 0 20px; }
+.an-sec-list:not(:has(.in-rec-box)) { padding-bottom: 20px; }
+.an-list-note { padding: 12px 20px; border-top: 1px solid var(--line); }
+.an-two { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); border-top: 1px solid var(--line); }
+.an-two > .an-sec { border-top: 0; }
+.an-two > .an-sec + .an-sec { border-left: 1px solid var(--line); }
+
+.an-sat { --rec-cols: 72px minmax(0, 1fr) 72px 64px 72px 120px; }
+.an-run { --rec-cols: 72px minmax(0, 1fr) 64px 96px 72px; }
+.an-roster { --rec-cols: minmax(0, 1fr) 72px 80px 72px 120px; }
+.an-topics { --rec-cols: minmax(0, 1fr) 160px 80px 72px; }
+.an-meter { display: block; min-width: 0; }
+
+/* Sentences with a level named inside them. */
+.in-words { display: flex; flex-direction: column; gap: 8px; }
+.in-words p { font: 400 14px/28px var(--font); color: var(--text); }
+.in-words p.muted { font: 400 13px/20px var(--font); color: var(--text-3); }
+.in-words .lv { vertical-align: middle; }
+
+@container (max-width: 640px) {
+  .an-two { grid-template-columns: minmax(0, 1fr); }
+  .an-two > .an-sec + .an-sec { border-left: 0; border-top: 1px solid var(--line); }
+  .an-at { align-items: flex-start; }
+}
+@container (max-width: 560px) {
+  .an-meter { flex: 1 1 100%; }
+}
+
+@media (min-width: 1280px) {
+  .an { grid-template-columns: 440px minmax(0, 1fr); }
+}
+
+/* On a phone the list and the record are two steps, not two columns. */
+@media (max-width: 960px) {
+  .an { grid-template-columns: minmax(0, 1fr); }
+  .an-list { position: static; max-height: none; }
+  .an-people { overflow: visible; }
+  .an[data-step='list'] > .an-pane, .an[data-step='detail'] > .an-list { display: none; }
+  .an-back { display: inline-flex; height: 40px; }
+  /* On the record step the page is the person, so the lead stands down. */
+  .an-head-detail .lead { display: none; }
+  .an-list .search { height: 40px; }
+  .an-filter .seg > button { height: 40px; }
+  /* Nobody has been opened yet on the list step, so no row is marked. */
+  .an[data-step='list'] .an-person[aria-current='true']:not(:hover) { background: transparent; }
+}
+
+/* In a list as narrow as a phone a person takes two lines: name over id,
+   accuracy over weakest level. */
+@container (max-width: 380px) {
+  .an-cols { display: flex; gap: 12px; }
+  .an-cols > :first-child { flex: 1; order: -2; }
+  .an-cols > .r { order: -1; }
+  .an-person { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; min-height: 64px; }
+  .an-person .rw-main { grid-row: 1 / span 2; }
+  .an-person > .an-acc { grid-column: 2; grid-row: 1; }
+  .an-person > .lv, .an-person > .t-meta { grid-column: 2; grid-row: 2; justify-self: end; }
+}

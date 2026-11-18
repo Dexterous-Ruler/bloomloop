@@ -1,6 +1,6 @@
 // Supabase / Postgres implementation of the repository interface.
 //
-// Run supabase/schema.sql once in the Supabase SQL editor before using this.
+// Run every file in supabase/migrations/, in order, before using this.
 //
 // Two translations happen here and nowhere else:
 //   snake_case columns  <->  camelCase document fields
@@ -137,7 +137,92 @@ const outProfile = (r) =>
         }
       : null,
     integrity: Array.isArray(r.integrity) ? r.integrity : [],
+    // The student account this room profile belongs to, when the room owner's
+    // roster maps the roll number to one. Null for a guest roll number.
+    accountId: r.account_id ?? null,
   };
+
+/**
+ * One submitted attempt, as stored. Append-only evidence: the response and the
+ * machine's original assessment are never overwritten; a professor's review is
+ * written beside them (reviewed_by, review_status) rather than over them.
+ */
+const outAnswer = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    answerKey: r.answer_key,
+    rollNo: r.roll_no,
+    accountId: r.account_id ?? null,
+    questionId: r.question_id ?? null,
+    contentId: r.content_id ?? null,
+    topic: r.topic ?? '',
+    bloom: r.bloom,
+    kind: r.kind ?? 'mcq',
+    questionSnapshot: r.question_snapshot ?? {},
+    response: r.response ?? null,
+    attempt: Number(r.attempt) || 1,
+    final: r.final !== false,
+    correct: r.correct ?? null,
+    score: r.score == null ? null : Number(r.score),
+    detail: r.detail ?? '',
+    ungraded: r.ungraded === true,
+    language: r.language ?? 'en',
+    questionSource: r.question_source ?? 'llm',
+    servedAt: r.served_at ?? null,
+    answeredAt: r.answered_at,
+    reviewStatus: r.review_status ?? 'auto',
+    autoCorrect: r.auto_correct ?? null,
+    autoScore: r.auto_score == null ? null : Number(r.auto_score),
+    autoDetail: r.auto_detail ?? '',
+    reviewedBy: r.reviewed_by ?? null,
+    reviewedAt: r.reviewed_at ?? null,
+    reviewNote: r.review_note ?? '',
+    confidence: r.confidence ?? null,
+  };
+
+const outArchive = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    code: r.code,
+    title: r.title ?? '',
+    ownerId: r.owner_id ?? null,
+    archivedBy: r.archived_by ?? null,
+    archivedAt: r.archived_at,
+    bytes: Number(r.bytes),
+    ...(r.data !== undefined ? { data: r.data } : {}),
+  };
+const ARCHIVE_META = 'id, session_id, code, title, owner_id, archived_by, archived_at, bytes';
+
+const inAnswer = (d) => ({
+  session_id: d.sessionId,
+  answer_key: d.answerKey,
+  roll_no: String(d.rollNo),
+  account_id: d.accountId ?? null,
+  question_id: d.questionId ?? null,
+  content_id: d.contentId ?? null,
+  topic: d.topic ?? '',
+  bloom: d.bloom,
+  kind: d.kind ?? 'mcq',
+  question_snapshot: d.questionSnapshot ?? {},
+  response: d.response ?? null,
+  attempt: d.attempt ?? 1,
+  final: d.final !== false,
+  correct: d.correct ?? null,
+  score: d.score ?? null,
+  detail: d.detail ?? '',
+  ungraded: d.ungraded === true,
+  language: d.language ?? 'en',
+  question_source: d.questionSource ?? 'llm',
+  served_at: d.servedAt ?? null,
+  answered_at: d.answeredAt ?? new Date().toISOString(),
+  review_status: d.reviewStatus ?? 'auto',
+  auto_correct: d.autoCorrect ?? null,
+  auto_score: d.autoScore ?? null,
+  auto_detail: d.autoDetail ?? '',
+  confidence: d.confidence ?? null,
+});
 
 /** Only the fields the caller actually sent, so a PATCH never blanks a column. */
 function pick(patch, map) {
@@ -341,7 +426,7 @@ export function createSupabaseRepo() {
     },
 
     async saveProfile(profile) {
-      // Upsert on (session_id, roll_no) - the unique constraint in schema.sql is
+      // Upsert on (session_id, roll_no) - the unique constraint in migrations/0000_core_tables.sql is
       // what stops a reconnecting student becoming a second row in the grid.
       const rows = unwrap(
         'saveProfile',
@@ -365,6 +450,7 @@ export function createSupabaseRepo() {
               served_tries: profile.served?.tries ?? 0,
               served_last: profile.served?.last || null,
               integrity: profile.integrity ?? [],
+              account_id: profile.accountId ?? null,
               updated_at: new Date().toISOString(),
             },
             { onConflict: 'session_id,roll_no' },
@@ -387,6 +473,109 @@ export function createSupabaseRepo() {
           String(a.rollNo).localeCompare(String(b.rollNo), undefined, { numeric: true }),
         );
     },
+
+    // -- answers (append-only evidence) --
+
+    /**
+     * Store one attempt. Idempotent on (session_id, answer_key): a resend of an
+     * attempt the server already holds returns the stored row with
+     * `duplicate: true` instead of a second row.
+     */
+    async recordAnswer(doc) {
+      const { data, error } = await db.from('answers').insert(inAnswer(doc)).select().single();
+      if (!error) return { answer: outAnswer(data), duplicate: false };
+      if (error.code === '23505') {
+        const existing = await this.getAnswerByKey(doc.sessionId, doc.answerKey);
+        if (existing) return { answer: existing, duplicate: true };
+      }
+      return fail('recordAnswer')(error);
+    },
+
+    async getAnswerByKey(sessionId, answerKey) {
+      const { data, error } = await db
+        .from('answers')
+        .select('*')
+        .eq('session_id', sessionId)
+        .eq('answer_key', String(answerKey))
+        .maybeSingle();
+      if (error) fail('getAnswerByKey')(error);
+      return outAnswer(data);
+    },
+
+    async getAnswer(id) {
+      const { data, error } = await db.from('answers').select('*').eq('id', id).maybeSingle();
+      if (error) fail('getAnswer')(error);
+      return outAnswer(data);
+    },
+
+    /** Oldest first. Filters are ANDed; at least one is expected. */
+    async listAnswers({ sessionId, sessionIds, rollNo, accountId, reviewStatus, limit = 2000, offset = 0 } = {}) {
+      let q = db.from('answers').select('*');
+      if (sessionId) q = q.eq('session_id', sessionId);
+      if (Array.isArray(sessionIds)) q = q.in('session_id', sessionIds.length ? sessionIds : ['00000000-0000-0000-0000-000000000000']);
+      if (rollNo) q = q.eq('roll_no', String(rollNo));
+      if (accountId) q = q.eq('account_id', accountId);
+      if (reviewStatus) q = q.eq('review_status', reviewStatus);
+      // Ordered on id as well, so pages never overlap or skip a row when two
+      // answers share a timestamp. PostgREST caps a request at its max-rows
+      // setting (1000 by default) whatever `limit` says: page with `offset`.
+      const rows = unwrap('listAnswers', await q
+        .order('answered_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(offset, offset + limit - 1));
+      return (rows ?? []).map(outAnswer);
+    },
+
+    // -- room archives (see memoryRepo for the contract) --
+    async saveRoomArchive(doc) {
+      const row = unwrap('saveRoomArchive', await db
+        .from('room_archives')
+        .upsert({
+          session_id: doc.sessionId,
+          code: doc.code,
+          title: doc.title ?? '',
+          owner_id: doc.ownerId ?? null,
+          archived_by: doc.archivedBy ?? null,
+          archived_at: doc.archivedAt,
+          bytes: doc.bytes,
+          data: doc.data,
+        }, { onConflict: 'session_id' })
+        .select(ARCHIVE_META)
+        .single());
+      return outArchive(row);
+    },
+
+    async listRoomArchives() {
+      const rows = unwrap('listRoomArchives', await db
+        .from('room_archives')
+        .select(ARCHIVE_META)
+        .order('archived_at', { ascending: false })
+        .limit(1000));
+      return (rows ?? []).map(outArchive);
+    },
+
+    async getRoomArchive(id) {
+      const { data, error } = await db.from('room_archives').select('*').eq('id', id).maybeSingle();
+      if (error) fail('getRoomArchive')(error);
+      return outArchive(data);
+    },
+
+    /** Review fields only: the response and the automatic assessment are immutable. */
+    async updateAnswer(id, patch) {
+      const set = pick(patch, {
+        correct: 'correct',
+        score: 'score',
+        reviewStatus: 'review_status',
+        reviewedBy: 'reviewed_by',
+        reviewedAt: 'reviewed_at',
+        reviewNote: 'review_note',
+        final: 'final',
+      });
+      if (Object.keys(set).length === 0) return this.getAnswer(id);
+      const { data, error } = await db.from('answers').update(set).eq('id', id).select().maybeSingle();
+      if (error) fail('updateAnswer')(error);
+      return outAnswer(data);
+    },
   };
 }
 
@@ -395,6 +584,17 @@ export async function probeSupabase() {
   const db = createClient(config.supabase.url, config.supabase.serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const { error } = await db.from('contents').select('id', { count: 'exact', head: true });
-  if (error) throw new Error(error.message);
+  // Every table the server writes to. One missing table would otherwise boot as
+  // "connected" and fail on the first join or answer, mid-class; this names it
+  // at boot instead, with the migration that creates it.
+  const tables = [
+    ['contents', '0000'], ['questions', '0000'], ['sessions', '0000'], ['profiles', '0000'],
+    ['accounts', '0001'], ['invites', '0002'], ['answers', '0008'], ['room_archives', '0009'],
+  ];
+  const missing = [];
+  for (const [table, file] of tables) {
+    const { error } = await db.from(table).select('*', { count: 'exact', head: true });
+    if (error) missing.push(`${table} (${file}): ${error.message}`);
+  }
+  if (missing.length) throw new Error(`not ready - ${missing.join('; ')}`);
 }

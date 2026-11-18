@@ -25,6 +25,7 @@ import {
   checkLatency,
   reportFromClient,
   noteSecondSocket,
+  checkLevelJump,
   summarise,
   REPORTED,
   OBSERVED,
@@ -126,4 +127,48 @@ test('anything the server observed raises it to watch', () => {
   assert.equal(s.level, 'watch');
   assert.equal(s.observed, 1);
   assert.ok(s.notes.some((n) => n.includes('two connections')));
+});
+
+// ------------------------------------------------------------ level-jump --
+//
+// Defined in docs/PRODUCT_DECISIONS.md: five right in a row straight after five
+// of which at most one was right. The negative cases matter more than the
+// positive one, for the reason at the top of this file.
+
+const entry = (correct, i, extra = {}) => ({
+  questionId: `q${i}`, bloom: 'understand', correct, at: `2026-11-18T10:${String(i).padStart(2, '0')}:00.000Z`, ...extra,
+});
+const historyOf = (pattern) => pattern.split('').map((c, i) => entry(c === '1', i));
+
+test('level-jump: five right straight after five mostly wrong is recorded once', () => {
+  const p = { history: historyOf('0000011111'), integrity: [] };
+  const first = checkLevelJump(p);
+  assert.ok(first, 'expected a level-jump');
+  assert.equal(p.integrity.length, 1);
+  assert.equal(p.integrity[0].kind, 'level-jump');
+  assert.equal(p.integrity[0].src, 'observed');
+  // The same window seen again (the next answer is also right) is the same swing.
+  p.history.push(entry(true, 10));
+  checkLevelJump(p);
+  assert.equal(p.integrity.filter((e) => e.kind === 'level-jump').length, 1);
+});
+
+test('level-jump: steady improvement does not fire', () => {
+  assert.equal(checkLevelJump({ history: historyOf('0101011111'), integrity: [] }), null);
+  assert.equal(checkLevelJump({ history: historyOf('1111111111'), integrity: [] }), null);
+  assert.equal(checkLevelJump({ history: historyOf('0000011110'), integrity: [] }), null);
+});
+
+test('level-jump: needs ten graded answers, and polls are not answers', () => {
+  assert.equal(checkLevelJump({ history: historyOf('000011111'), integrity: [] }), null);
+  const withPolls = [...historyOf('0000'), entry(false, 20, { ungraded: true }), ...historyOf('11111')];
+  assert.equal(checkLevelJump({ history: withPolls, integrity: [] }), null);
+});
+
+test('level-jump: the summary words it as a prompt, not a finding', () => {
+  const p = { history: historyOf('0000011111'), integrity: [] };
+  checkLevelJump(p);
+  const s = summarise(p);
+  assert.equal(s.level, 'watch');
+  assert.ok(s.notes.some((n) => n.includes('prompt to look')));
 });

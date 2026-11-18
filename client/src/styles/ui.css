@@ -1,0 +1,348 @@
+/* The component set. Every screen is assembled from these.
+   The feel is tactile: buttons sit on a darker lip they press into, cards are
+   soft and round, and the dark espresso panel is the one loud thing on a page. */
+
+/* ================================================================ button */
+
+.btn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex: none;
+  height: 38px; padding: 0 15px; border-radius: var(--r-2); cursor: pointer; white-space: nowrap;
+  font: 700 13.5px/20px var(--font); color: var(--text);
+  background: var(--surface); border: 1.5px solid var(--line-2);
+  transition: background var(--t-1) var(--ease), border-color var(--t-1) var(--ease), color var(--t-1) var(--ease), transform var(--t-1) var(--ease), box-shadow var(--t-1) var(--ease), opacity var(--t-1) var(--ease);
+}
+.btn:hover { background: var(--hover); border-color: var(--field-line); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled, .btn[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; transform: none; }
+.btn svg { flex: none; }
+
+/* The action. Terracotta on a darker lip it sinks into when pressed. */
+.btn-primary {
+  background: var(--primary); border-color: transparent; color: var(--on-primary);
+  box-shadow: inset 0 -3px 0 var(--primary-edge);
+}
+.btn-primary:hover { background: var(--primary-hover); border-color: transparent; }
+.btn-primary:active { box-shadow: inset 0 -1px 0 var(--primary-edge); }
+/* Espresso: the second voice, for "open", "start", "save". */
+.btn-ink { background: var(--text); border-color: transparent; color: var(--bg); box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.35); }
+.btn-ink:hover { background: var(--text-2); border-color: transparent; }
+/* Saffron: only on an espresso panel, where terracotta would not carry. */
+.btn-accent { background: var(--accent); border-color: transparent; color: var(--on-accent); box-shadow: inset 0 -3px 0 var(--accent-edge); }
+.btn-accent:hover { background: #FFC066; border-color: transparent; }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--text-2); }
+.btn-ghost:hover { background: var(--hover); border-color: transparent; color: var(--text); }
+.btn-danger { color: var(--bad); }
+.btn-danger:hover { border-color: var(--bad); background: var(--bad-soft); }
+.btn-danger.btn-primary { background: var(--bad-fill); color: #FFF6E0; box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.25); }
+.on-panel .btn:not(.btn-primary):not(.btn-accent):not(.btn-ink) { background: transparent; border-color: rgba(255, 239, 218, 0.28); color: var(--on-panel); }
+.on-panel .btn:not(.btn-primary):not(.btn-accent):not(.btn-ink):hover { background: rgba(255, 239, 218, 0.08); }
+.on-panel .btn-ink { background: var(--on-panel); color: var(--panel); }
+.btn-sm { height: 32px; padding: 0 11px; font-size: 12.5px; gap: 6px; border-radius: 9px; }
+.btn-lg { height: 46px; padding: 0 20px; font-size: 14.5px; border-radius: 13px; }
+.btn-xl { height: 54px; padding: 0 24px; font-size: 16px; border-radius: 15px; }
+.btn-block { width: 100%; }
+.btn-icon { width: 38px; padding: 0; }
+.btn-icon.btn-sm { width: 32px; }
+.btn-icon.btn-lg { width: 46px; }
+
+.spinner {
+  width: 15px; height: 15px; flex: none; border-radius: var(--r-full);
+  border: 2px solid color-mix(in srgb, currentColor 28%, transparent); border-top-color: currentColor;
+  animation: spin 0.75s linear infinite;
+}
+
+/* ================================================================= fields */
+
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.label { font: 700 11px/14px var(--font); letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); }
+.label .opt { font-weight: 600; letter-spacing: 0.04em; text-transform: none; color: var(--text-4); }
+.hint { font: 400 13px/19px var(--font); color: var(--text-3); }
+.input, .textarea, .select {
+  width: 100%; min-width: 0; height: 42px; padding: 0 13px; border-radius: var(--r-2);
+  font: 500 14.5px/20px var(--font); color: var(--text);
+  background: var(--surface); border: 1.5px solid var(--field-line);
+  transition: border-color var(--t-1) var(--ease), box-shadow var(--t-1) var(--ease);
+}
+.input::placeholder, .textarea::placeholder { color: var(--text-4); font-weight: 400; }
+.input:hover, .textarea:hover, .select:hover { border-color: var(--text-3); }
+.input:focus, .textarea:focus, .select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 16%, transparent); }
+.input:disabled, .textarea:disabled, .select:disabled { opacity: 0.6; cursor: not-allowed; }
+.textarea { height: auto; min-height: 120px; padding: 11px 13px; line-height: 22px; resize: vertical; }
+.select { appearance: none; cursor: pointer; padding-right: 36px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 18px, calc(100% - 13px) 18px; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+.input-lg { height: 52px; font-size: 16px; border-radius: 14px; }
+.input-code { font-family: var(--mono); letter-spacing: 0.08em; }
+.input-sm { height: 34px; font-size: 13px; padding: 0 10px; border-radius: 9px; }
+
+.check { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; font: 500 14px/20px var(--font); color: var(--text-2); }
+.check input { width: 18px; height: 18px; margin: 0; accent-color: var(--primary); cursor: pointer; }
+
+/* A box that is ticked or not: the control behind every "include this" list. */
+.tick {
+  width: 22px; height: 22px; flex: none; display: grid; place-items: center; border-radius: 7px;
+  border: 1.5px solid var(--field-line); color: var(--on-primary); background: var(--surface);
+  transition: background var(--t-1) var(--ease), border-color var(--t-1) var(--ease), transform var(--t-1) var(--spring);
+}
+.tick[data-on='true'] { background: var(--primary); border-color: var(--primary); transform: scale(1.04); }
+
+/* An on/off switch. */
+.switch {
+  position: relative; width: 44px; height: 26px; flex: none; padding: 0; border: 0; border-radius: var(--r-full);
+  background: var(--line-2); cursor: pointer; transition: background var(--t-2) var(--ease);
+}
+.switch::after {
+  content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: var(--r-full);
+  background: #FFFDF7; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform var(--t-2) var(--spring);
+}
+.switch[aria-checked='true'] { background: var(--primary); }
+.switch[aria-checked='true']::after { transform: translateX(18px); }
+.switch:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.search {
+  display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 13px; border-radius: var(--r-2);
+  background: var(--surface); border: 1.5px solid var(--field-line); color: var(--text-3);
+}
+.search:focus-within { border-color: var(--primary); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 16%, transparent); }
+.search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: 500 14px/20px var(--font); color: var(--text); }
+.search input::placeholder { color: var(--text-4); font-weight: 400; }
+
+input[type='range'] { -webkit-appearance: none; appearance: none; width: 100%; height: 26px; background: transparent; cursor: pointer; }
+input[type='range']::-webkit-slider-runnable-track { height: 6px; border-radius: var(--r-full); background: var(--line-2); }
+input[type='range']::-moz-range-track { height: 6px; border-radius: var(--r-full); background: var(--line-2); }
+input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -7px; border-radius: var(--r-full); background: var(--primary); border: 3px solid var(--surface); box-shadow: var(--sh-1); }
+input[type='range']::-moz-range-thumb { width: 18px; height: 18px; border-radius: var(--r-full); background: var(--primary); border: 3px solid var(--surface); box-shadow: var(--sh-1); }
+
+/* ================================================================ surfaces */
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-4); box-shadow: var(--sh-2); }
+.card-pad { padding: 20px 22px; }
+.card-head { display: flex; align-items: center; gap: 12px; padding: 18px 22px 14px; border-bottom: 1px solid var(--line); }
+.card-head h3, .card-head h2 { flex: 1; min-width: 0; }
+.card-body { padding: 20px 22px; }
+.card-foot { display: flex; align-items: center; gap: 12px; padding: 14px 22px; border-top: 1px solid var(--line); }
+.well { background: var(--raised); border-radius: var(--r-3); padding: 16px; }
+.well-line { border: 1px solid var(--line); }
+
+/* A section's title and what it is about, as one block. */
+.sec { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sec > h2, .sec > h3 { font: 700 20px/25px var(--display); letter-spacing: -0.02em; }
+.sec > p { font: 400 12.5px/18px var(--font); color: var(--text-3); }
+
+/* The espresso panel: the one dark, warm block a screen gets, with the glow
+   that drifts behind it. Put .on-panel on it so what sits inside turns over. */
+.panel {
+  position: relative; overflow: hidden; isolation: isolate;
+  border-radius: var(--r-5); padding: 24px 26px; background: var(--panel); color: var(--on-panel);
+  box-shadow: var(--sh-panel);
+}
+.panel::before, .panel::after {
+  content: ''; position: absolute; z-index: -1; border-radius: var(--r-full); pointer-events: none;
+}
+.panel::before { width: 420px; height: 420px; right: -110px; top: -210px; background: radial-gradient(circle, var(--glow-1), transparent 65%); animation: drift 11s ease-in-out infinite; }
+.panel::after { width: 300px; height: 300px; left: 28%; bottom: -210px; background: radial-gradient(circle, var(--glow-2), transparent 65%); animation: drift 14s ease-in-out infinite reverse; }
+.panel.quiet::after { display: none; }
+/* The terracotta version, for the student's own hero. A fixed deep
+   terracotta in both themes: the dark theme's primary is too light to carry
+   cream text. */
+.panel.warm { background: #B33A22; }
+.panel.warm::before { background: radial-gradient(circle, rgba(255, 186, 78, 0.55), transparent 65%); }
+
+/* ================================================================== chips */
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; flex: none;
+  border-radius: var(--r-full); background: var(--raised); color: var(--text-2);
+  font: 700 12px/16px var(--font); white-space: nowrap;
+}
+.chip svg { flex: none; }
+.chip-line { background: transparent; box-shadow: inset 0 0 0 1.5px var(--line-2); }
+.chip-ok { background: var(--ok-soft); color: var(--ok); }
+.chip-bad { background: var(--bad-soft); color: var(--bad); }
+.chip-warn { background: var(--warn-soft); color: var(--warn); }
+.chip-ink { background: var(--text); color: var(--bg); }
+.chip-accent { background: var(--accent); color: var(--on-accent); }
+.chip .dot { width: 7px; height: 7px; border-radius: var(--r-full); background: currentColor; }
+.chip-live .dot { position: relative; }
+.chip-live .dot::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: currentColor; animation: ping 1.6s ease-out infinite; }
+.on-panel .chip { background: rgba(255, 239, 218, 0.1); color: var(--on-panel); }
+
+/* The level mark: a short ladder lit to this level, and the level name. */
+.lv {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px 0 7px; flex: none;
+  border-radius: var(--r-full); background: var(--lv-soft); color: var(--text);
+  font: 700 12px/16px var(--font); white-space: nowrap;
+}
+.lv-solid { background: var(--lv); color: var(--lv-ink); }
+.lv-solid .ladder .rung { fill: currentColor; opacity: 0.3; }
+.lv-solid .ladder .rung.on { opacity: 1; }
+.lv-lg { height: 32px; padding: 0 13px 0 9px; font-size: 13.5px; gap: 8px; }
+button.lv { border: 0; cursor: pointer; }
+.swatch { width: 10px; height: 10px; border-radius: 3px; background: var(--lv); flex: none; box-shadow: inset 0 -1.5px 0 rgba(0, 0, 0, 0.18); }
+
+.kbd { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 6px; border: 1.5px solid var(--line-2); background: var(--surface); font: 600 11.5px/1 var(--mono); color: var(--text-2); }
+
+.avatar {
+  width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: var(--r-full);
+  background: var(--av, var(--accent-soft)); color: var(--av-ink, var(--text)); font: 700 11.5px/1 var(--font);
+}
+.avatar-lg { width: 46px; height: 46px; font-size: 15px; }
+.avatar-xl { width: 64px; height: 64px; font: 800 22px/1 var(--display); }
+
+/* ============================================================== segmented */
+
+.seg { display: inline-flex; align-self: flex-start; max-width: 100%; overflow-x: auto; padding: 3px; gap: 3px; border-radius: 12px; background: var(--raised); scrollbar-width: none; }
+.seg::-webkit-scrollbar { display: none; }
+.seg > button {
+  height: 32px; padding: 0 12px; border: 0; border-radius: 9px; cursor: pointer; background: transparent; flex: none;
+  font: 700 12.5px/20px var(--font); color: var(--text-3); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  transition: background var(--t-1) var(--ease), color var(--t-1) var(--ease), box-shadow var(--t-1) var(--ease);
+}
+.seg > button:hover { color: var(--text); }
+.seg > button:disabled { opacity: 0.5; cursor: not-allowed; }
+.seg > button[aria-pressed='true'], .seg > button[data-state='active'], .seg > button[aria-selected='true'] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(80, 30, 10, 0.18); }
+.seg > button .ct { font: 600 11.5px/16px var(--mono); color: var(--text-3); }
+.on-panel .seg { background: rgba(0, 0, 0, 0.25); }
+.on-panel .seg > button[aria-pressed='true'] { background: var(--accent); color: var(--on-accent); }
+
+/* A number you step up and down. */
+.stepper { display: inline-flex; align-items: center; gap: 2px; padding: 3px; border-radius: 13px; border: 1.5px solid var(--line-2); background: var(--surface); }
+.stepper > b { min-width: 38px; text-align: center; font: 700 18px/1 var(--display); font-variant-numeric: tabular-nums; }
+.stepper > button { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 10px; cursor: pointer; background: transparent; color: var(--text-2); }
+.stepper > button:last-child { background: var(--text); color: var(--bg); }
+.stepper > button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ================================================================== steps */
+
+/* The way through a task, as numbered pills joined by a rule. */
+.steps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 4px; }
+.step {
+  display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px 0 4px; flex: none;
+  border-radius: var(--r-full); border: 1.5px solid var(--line-2); background: var(--surface); cursor: pointer;
+  font: 700 13.5px/20px var(--font); color: var(--text-2); white-space: nowrap;
+  transition: background var(--t-2) var(--ease), border-color var(--t-2) var(--ease), color var(--t-2) var(--ease);
+}
+.step > i { width: 26px; height: 26px; display: grid; place-items: center; border-radius: var(--r-full); font: 800 12px/1 var(--display); font-style: normal; background: var(--raised); color: var(--text-2); }
+.step > small { font: 600 12px/16px var(--font); color: var(--text-3); }
+.step:hover { border-color: var(--field-line); }
+.step[aria-current='step'] { background: var(--text); border-color: var(--text); color: var(--bg); }
+.step[aria-current='step'] > i { background: var(--accent); color: var(--on-accent); }
+.step[aria-current='step'] > small { color: color-mix(in srgb, var(--bg) 70%, transparent); }
+.step[data-done='true'] > i { background: var(--ok-fill); color: #FFFDF7; }
+.step[aria-disabled='true'] { opacity: 0.55; cursor: not-allowed; }
+.step-rule { flex: 0 1 22px; min-width: 6px; height: 2px; border-radius: 1px; background: var(--line-2); }
+.step-rule[data-done='true'] { background: var(--ok-fill); }
+
+/* ================================================================== notes */
+
+.note { display: flex; gap: 11px; align-items: flex-start; padding: 13px 15px; border-radius: 14px; background: var(--raised); color: var(--text-2); font: 400 13.5px/20px var(--font); }
+.note > svg { flex: none; margin-top: 2px; color: var(--text-3); }
+.note b { font-weight: 700; color: var(--text); }
+.note-bad { background: var(--bad-soft); color: var(--text); }
+.note-bad > svg { color: var(--bad); }
+.note-ok { background: var(--ok-soft); color: var(--text); }
+.note-ok > svg { color: var(--ok); }
+.note-warn { background: var(--warn-soft); color: var(--text); }
+.note-warn > svg { color: var(--warn); }
+/* What the product says about its own reasoning: a ruled margin, no box. */
+.said { padding-left: 13px; border-left: 3px solid var(--accent); font: 400 13.5px/20px var(--font); color: var(--text-2); }
+
+/* An empty state is drawn, not just said: a stack of three level bars. */
+.empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 52px 24px; }
+.empty .ic {
+  width: 58px; height: 58px; display: grid; place-items: center; border-radius: 18px; margin-bottom: 6px;
+  background: var(--primary-soft); color: var(--primary); box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--primary) 22%, transparent);
+}
+.empty h3 { font: 700 22px/26px var(--display); letter-spacing: -0.02em; }
+.empty p { max-width: 46ch; color: var(--text-3); font-size: 14px; line-height: 21px; }
+.empty .btn { margin-top: 8px; }
+
+.skel { border-radius: var(--r-2); background: linear-gradient(90deg, var(--raised) 25%, var(--sunk) 37%, var(--raised) 63%); background-size: 400% 100%; animation: sheen 1.4s ease-in-out infinite; }
+
+/* ================================================================== lists */
+
+.rows { display: flex; flex-direction: column; }
+.rw { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 9px 12px; border-radius: 13px; min-width: 0; }
+.rows > .rw + .rw, .rows > * + .rw { box-shadow: 0 -1px 0 var(--line); }
+button.rw, a.rw, .rw.is-click { width: 100%; border: 0; background: transparent; text-align: left; cursor: pointer; transition: background var(--t-1) var(--ease); }
+button.rw:hover, a.rw:hover, .rw.is-click:hover { background: var(--hover); }
+.rw[aria-selected='true'], .rw[aria-current='true'] { background: var(--raised); box-shadow: inset 3px 0 0 var(--primary) !important; }
+.rw .rw-main { flex: 1; min-width: 0; }
+.rw .rw-acts { display: flex; gap: 4px; opacity: 0; transition: opacity var(--t-1) var(--ease); }
+.rw:hover .rw-acts, .rw:focus-within .rw-acts { opacity: 1; }
+@media (hover: none) { .rw .rw-acts { opacity: 1; } }
+
+.tbl { width: 100%; border-collapse: collapse; font: 400 13.5px/20px var(--font); }
+.tbl th { text-align: left; font: 700 11px/14px var(--font); letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-3); padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tbl td { padding: 11px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.tbl tr:last-child td { border-bottom: 0; }
+.tbl .r { text-align: right; }
+.tbl tbody tr.is-click { cursor: pointer; transition: background var(--t-1) var(--ease); }
+.tbl tbody tr.is-click:hover, .tbl tbody tr[aria-selected='true'] { background: var(--hover); }
+.tbl-wrap { overflow-x: auto; }
+
+/* A figure and what it counts. Inline, in a strip. */
+.fig { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fig b { font: 700 28px/32px var(--display); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; color: var(--text); }
+.fig span { font: 600 12.5px/18px var(--font); color: var(--text-3); }
+.fig-lg b { font-size: 46px; line-height: 48px; letter-spacing: -0.04em; }
+.figs { display: flex; flex-wrap: wrap; gap: 16px 36px; }
+.figs.ruled > .fig + .fig { padding-left: 36px; border-left: 1px solid var(--line); }
+@media (max-width: 640px) { .figs.ruled > .fig + .fig { padding-left: 0; border-left: 0; } .figs { gap: 16px 24px; } }
+
+/* A bar toward a total. */
+.meter { height: 8px; border-radius: var(--r-full); background: var(--raised); overflow: hidden; }
+.meter > i { display: block; height: 100%; border-radius: var(--r-full); background: var(--lv, var(--primary)); transition: width var(--t-3) var(--ease); }
+
+/* ================================================================ overlays */
+
+.scrim { position: fixed; inset: 0; z-index: 90; background: var(--scrim); backdrop-filter: blur(2px); animation: fade var(--t-2) var(--ease); }
+.dlg {
+  position: fixed; z-index: 91; left: 50%; top: 50%; translate: -50% -50%;
+  width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-4); box-shadow: var(--sh-3);
+  animation: pop var(--t-3) var(--ease);
+}
+.dlg:focus { outline: none; }
+.dlg-wide { width: min(900px, calc(100vw - 32px)); }
+.dlg-head { display: flex; align-items: flex-start; gap: 16px; padding: 22px 22px 0; }
+.dlg-head > div { flex: 1; min-width: 0; }
+.dlg-title { font: 700 21px/26px var(--display); letter-spacing: -0.02em; }
+.dlg-desc { margin-top: 5px; font: 400 14px/21px var(--font); color: var(--text-3); }
+.dlg-body { padding: 20px 22px 22px; overflow: auto; }
+.dlg-foot { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 14px 22px; border-top: 1px solid var(--line); }
+@media (hover: none) { .dlg-head .btn-icon { width: 42px; height: 42px; } }
+.sheet {
+  position: fixed; z-index: 91; top: 10px; right: 10px; bottom: 10px; width: min(580px, calc(100vw - 20px)); display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-4); box-shadow: var(--sh-3);
+  animation: sheet-in var(--t-3) var(--ease);
+}
+.sheet:focus { outline: none; }
+@keyframes sheet-in { from { transform: translateX(28px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.tip { z-index: 99; padding: 6px 10px; border-radius: 9px; background: var(--text); color: var(--bg); font: 600 12px/16px var(--font); animation: fade var(--t-2) var(--ease); max-width: 280px; }
+
+.menu { z-index: 95; min-width: 220px; padding: 6px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--sh-3); animation: pop var(--t-2) var(--ease); }
+.menu-item { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 10px; cursor: pointer; font: 600 13.5px/20px var(--font); color: var(--text); outline: none; }
+.menu-item[data-highlighted] { background: var(--raised); }
+.menu-item svg { color: var(--text-3); }
+.menu-item.is-danger { color: var(--bad); }
+.menu-item.is-danger svg { color: inherit; }
+.menu-label { padding: 8px 10px 6px; font: 600 12px/16px var(--font); color: var(--text-3); }
+.menu-sep { height: 1px; margin: 5px 6px; background: var(--line); }
+
+/* ============================================================ the ladder */
+
+/* Six rungs rising left to right, one per level, lit up to a level. It is the
+   level mark and, in a terracotta tile, the logo. */
+.ladder { flex: none; display: block; overflow: visible; }
+.ladder .rung { fill: var(--line-2); transition: fill var(--t-2) var(--ease), opacity var(--t-2) var(--ease); }
+.ladder .rung.on { fill: var(--rung); }
+.on-panel .ladder .rung:not(.on) { fill: rgba(255, 239, 218, 0.2); }
+
+.mark-tile {
+  display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: 11px;
+  background: var(--primary); box-shadow: inset 0 -3px 0 var(--primary-edge);
+}
+.mark-tile .ladder .rung { fill: #FFF3DF; opacity: 0.92; }
+.mark-tile .ladder .rung:last-child { fill: var(--accent); opacity: 1; }

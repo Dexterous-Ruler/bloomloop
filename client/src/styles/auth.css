@@ -1,0 +1,192 @@
+/* The two doors (sign in, sign up) and the profile. Prefix au-.
+   The frame is shell.css's .gate; this sheet only fills it. */
+
+/* ================================================================ the art */
+
+.au-art { gap: 28px; }
+.au-art-body { margin-block: auto; display: flex; flex-direction: column; gap: 22px; }
+.au-art h1 { font: 800 clamp(36px, 3.9vw, 56px)/1 var(--display); letter-spacing: -0.045em; max-width: 13ch; text-wrap: balance; }
+.au-art h1 em { font-style: normal; color: var(--accent); }
+.au-art p { font: 400 16px/25px var(--font); color: var(--on-panel-2); max-width: 42ch; }
+
+/* The date strip along the foot of the art: a ticket edge, in mono. */
+.au-strip {
+  display: flex; flex-wrap: wrap; gap: 6px 0; padding-top: 14px; border-top: 1px solid var(--panel-line);
+  font: 500 11.5px/16px var(--mono); letter-spacing: 0.1em; color: var(--on-panel-2);
+}
+.au-strip > span { white-space: nowrap; }
+.au-strip > span + span::before { content: ''; display: inline-block; width: 4px; height: 4px; margin: 0 12px 2px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
+
+/* The climb. Six landings rising left to right; each tread is its level's
+   colour and carries the level's number and name. */
+.au-stairs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); align-items: end; gap: 6px; height: 232px; }
+.au-step {
+  position: relative; height: calc(28% + var(--i) * 14.4%); min-width: 0;
+  display: flex; flex-direction: column; gap: 2px; padding: 12px 9px 0;
+  border-radius: 12px 12px 0 0; border-top: 6px solid var(--lv);
+  background: linear-gradient(to bottom, rgba(255, 239, 218, 0.11), rgba(255, 239, 218, 0.015));
+  transform-origin: bottom; animation: au-rise 0.8s var(--ease) both; animation-delay: calc(var(--i) * 80ms + 120ms);
+}
+.au-step-n { font: 600 12px/16px var(--mono); color: var(--on-panel); }
+.au-step-name { font: 700 12px/16px var(--font); color: var(--on-panel-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes au-rise { from { transform: scaleY(0.12); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* Sign-up's art: who invites whom, as a chain of three. */
+.au-chain { display: flex; flex-direction: column; gap: 0; max-width: 420px; }
+.au-link { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 0 14px; }
+.au-link-dot {
+  grid-row: 1 / span 2; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 14px;
+  background: rgba(255, 239, 218, 0.1); color: var(--on-panel); box-shadow: inset 0 0 0 1.5px rgba(255, 239, 218, 0.18);
+}
+.au-link[data-you='true'] .au-link-dot { background: var(--accent); color: var(--on-accent); box-shadow: inset 0 -3px 0 var(--accent-edge); }
+.au-link b { font: 700 17px/22px var(--display); letter-spacing: -0.01em; color: var(--on-panel); align-self: end; }
+.au-link small { font: 400 13px/18px var(--font); color: var(--on-panel-2); }
+.au-link-rule { width: 44px; height: 22px; display: grid; place-items: center; }
+.au-link-rule::before { content: ''; width: 2px; height: 100%; background: repeating-linear-gradient(to bottom, var(--on-panel-2) 0 3px, transparent 3px 7px); opacity: 0.6; }
+
+/* ============================================================ the form side */
+
+.au-card { gap: 24px; }
+.au-title { display: flex; flex-direction: column; gap: 6px; }
+.au-title h2 { font: 800 36px/38px var(--display); letter-spacing: -0.04em; }
+.au-lead { font: 400 14.5px/22px var(--font); color: var(--text-2); text-wrap: pretty; }
+
+.au-pass { position: relative; }
+.au-pass .input { padding-right: 52px; }
+/* Inside the box, not beside it, so the field lines up with the ones above. */
+.au-pass .au-reveal { position: absolute; top: 4px; right: 4px; width: 44px; height: 44px; }
+.input[aria-invalid='true'] { border-color: var(--bad); }
+
+/* An error sits under what it is about, in the server's own words. */
+.au-error { display: flex; align-items: flex-start; gap: 8px; margin-top: -4px; font: 600 13.5px/20px var(--font); color: var(--bad); }
+.au-error svg { margin-top: 2px; }
+
+/* The other ways in: quiet rows, not buttons competing with Sign in. */
+.au-doors { display: flex; flex-direction: column; gap: 8px; }
+.au-door {
+  display: flex; align-items: center; gap: 12px; padding: 11px 14px 11px 11px; border-radius: 15px;
+  border: 1.5px solid var(--line-2); background: var(--surface); color: var(--text-3);
+  transition: background var(--t-1) var(--ease), border-color var(--t-1) var(--ease), transform var(--t-1) var(--ease);
+}
+.au-door:hover { background: var(--hover); border-color: var(--field-line); }
+.au-door:active { transform: translateY(1px); }
+.au-door b { display: block; font: 700 14px/19px var(--font); color: var(--text); }
+.au-door small { display: block; font: 400 12.5px/17px var(--font); color: var(--text-3); }
+.au-door-ic { width: 38px; height: 38px; flex: none; display: grid; place-items: center; border-radius: 11px; background: var(--raised); color: var(--text-2); }
+
+.au-foot .link { display: inline-block; padding: 6px 0; }
+
+/* Sign-up: where in the two steps you are. */
+.au-progress { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.au-progress li { display: flex; flex-direction: column; gap: 7px; font: 700 12px/16px var(--font); color: var(--text-3); }
+.au-progress li::before { content: ''; height: 5px; border-radius: var(--r-full); background: var(--line-2); transition: background var(--t-3) var(--ease); }
+.au-progress li[data-done='true']::before, .au-progress li[aria-current='step']::before { background: var(--primary); }
+.au-progress li[aria-current='step'] { color: var(--text); }
+
+.au-labelrow { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+/* One wide field with the characters spaced out: eight boxes would fight the
+   phone keyboard and lose a paste. */
+.au-code { height: 64px; border-radius: 16px; border-width: 2px; text-align: center; font: 600 26px/1 var(--mono); letter-spacing: 0.3em; text-indent: 0.3em; }
+
+/* The code, once given: a stub, torn off and kept, with the way back. */
+.au-stub {
+  display: flex; align-items: center; gap: 14px; padding: 12px 12px 12px 16px; border-radius: 16px;
+  background: var(--raised); border: 1.5px dashed var(--line-2);
+}
+.au-stub-code { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.au-stub-code b { font: 600 20px/26px var(--mono); letter-spacing: 0.22em; color: var(--text); overflow-wrap: anywhere; }
+
+/* ================================================================ profile */
+
+/* The person is the heading; their ID card sits beside them. */
+.au-me { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); gap: 28px; align-items: center; padding: 8px 0 12px; }
+.au-who { display: flex; align-items: center; gap: 22px; min-width: 0; }
+.au-face { flex: none; position: relative; }
+.au-face .avatar { width: 104px; height: 104px; font: 800 38px/1 var(--display); letter-spacing: -0.02em; box-shadow: 0 0 0 6px var(--bg), 0 0 0 7.5px var(--line-2); }
+.au-face-key { width: 104px; height: 104px; display: grid; place-items: center; border-radius: 50%; background: var(--raised); color: var(--text-2); box-shadow: 0 0 0 6px var(--bg), 0 0 0 7.5px var(--line-2); }
+.au-who-text { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.au-who-text h1 { font: 800 clamp(34px, 4.4vw, 56px)/0.98 var(--display); letter-spacing: -0.045em; overflow-wrap: anywhere; }
+.au-role { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font: 600 15px/22px var(--font); color: var(--text-2); }
+.au-role .chip { height: 28px; }
+
+/* The ID card: the screen's one espresso panel. */
+.au-card-id { padding: 20px 22px 18px; display: flex; flex-direction: column; gap: 16px; min-height: 196px; }
+.au-card-id::before { width: 300px; height: 300px; right: -120px; top: -150px; }
+.au-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.au-card-top .eyebrow { color: var(--on-panel-2); }
+.au-card-code { font: 600 clamp(24px, 2.6vw, 30px)/1.1 var(--mono); letter-spacing: 0.08em; color: var(--on-panel); overflow-wrap: anywhere; }
+.au-card-foot { margin-top: auto; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.au-card-foot dl { display: flex; flex-wrap: wrap; gap: 4px 20px; }
+.au-card-foot dt { font: 700 10.5px/14px var(--font); letter-spacing: 0.12em; text-transform: uppercase; color: var(--on-panel-2); }
+.au-card-foot dd { font: 600 13.5px/20px var(--mono); color: var(--on-panel); }
+.au-card-id .ladder { opacity: 0.95; }
+.au-card-none { font: 400 14px/21px var(--font); color: var(--on-panel-2); max-width: 30ch; }
+
+/* Sections: a heading column and its content, ruled apart. */
+.au-sec { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px 36px; padding: 28px 0; border-top: 1px solid var(--line); }
+.au-sec-head { display: flex; flex-direction: column; gap: 4px; }
+.au-sec-head h2 { font: 700 21px/26px var(--display); letter-spacing: -0.02em; }
+.au-sec-head p { font: 400 13px/19px var(--font); color: var(--text-3); }
+
+.au-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.au-fact { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: var(--r-3); background: var(--surface); border: 1px solid var(--line); min-width: 0; }
+.au-fact dt { font: 700 11px/14px var(--font); letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); }
+.au-fact dd { font: 600 15px/22px var(--font); color: var(--text); overflow-wrap: anywhere; }
+.au-fact dd.mono { font: 600 15px/22px var(--mono); }
+.au-fact dd .muted { font-weight: 500; }
+
+/* Connections: one row each, state on the row, the action at its end. */
+.au-conns { padding: 6px; }
+.au-conn { display: flex; flex-direction: column; gap: 12px; padding: 14px; border-radius: 16px; }
+.au-conn + .au-conn { box-shadow: 0 -1px 0 var(--line); border-radius: 0 0 16px 16px; }
+.au-conn-main { display: flex; align-items: center; gap: 14px; }
+.au-conn-ic {
+  width: 46px; height: 46px; flex: none; display: grid; place-items: center; border-radius: 14px;
+  background: var(--raised); color: var(--text); box-shadow: inset 0 -2px 0 var(--line-2);
+}
+.au-conn-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.au-conn-text h3 { font: 700 15.5px/21px var(--font); letter-spacing: 0; }
+.au-conn-acts { flex: none; display: flex; flex-wrap: wrap; gap: 8px; }
+.au-conn-foot { margin-left: 60px; }
+
+.au-skel-chip { display: inline-block; width: 92px; height: 24px; border-radius: var(--r-full); }
+.au-skel-line { display: block; width: min(280px, 100%); height: 12px; margin: 4px 0; }
+
+/* What the account can do: the server's answer, laid out as a ledger. */
+.au-can { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 28px; }
+.au-can > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px dashed var(--line-2); min-width: 0; }
+.au-can dt { font: 500 13.5px/20px var(--font); color: var(--text-2); }
+.au-can dd { font: 700 13.5px/20px var(--font); color: var(--text); text-align: right; }
+.au-can dd[data-no='true'] { color: var(--text-3); font-weight: 500; }
+
+/* ============================================================ narrow views */
+
+@media (max-width: 1100px) {
+  .au-me { grid-template-columns: minmax(0, 1fr); }
+  .au-card-id { max-width: 460px; }
+}
+
+@media (max-width: 900px) {
+  .au-art { gap: 16px; }
+  .au-art-body { margin-block: 0; gap: 10px; }
+  .au-stairs, .au-chain { display: none; }
+  .au-art h1 { font-size: 32px; max-width: 16ch; }
+  .au-strip { padding-top: 10px; font-size: 10.5px; }
+  .gate-main { place-items: start center; }
+}
+
+@media (max-width: 760px) {
+  .au-sec { grid-template-columns: minmax(0, 1fr); padding: 22px 0; }
+  .au-can { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 640px) {
+  .au-title h2 { font-size: 30px; line-height: 32px; }
+  .au-foot .link { padding: 10px 0; }
+  .au-who { align-items: flex-start; flex-direction: column; gap: 16px; }
+  .au-face .avatar, .au-face-key { width: 80px; height: 80px; font-size: 30px; }
+  .au-conn-main { display: grid; grid-template-columns: 46px minmax(0, 1fr); align-items: start; gap: 12px 14px; }
+  .au-conn-acts { grid-column: 2; }
+  .au-conn-acts .btn { height: 40px; }
+  .au-conn-foot { margin-left: 0; }
+}

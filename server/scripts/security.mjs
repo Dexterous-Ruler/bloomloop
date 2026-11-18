@@ -2,12 +2,17 @@ import http from 'node:http';
 import { Server } from 'socket.io';
 import { io as ioClient } from 'socket.io-client';
 
-const SRC = 'file:///C:/Users/tanis/wayground/server/src';
+const SRC = new URL('../src', import.meta.url).href;
 const { initStore, getRepo, closeStore } = await import(`${SRC}/repo/index.js`);
 const { createApp } = await import(`${SRC}/app.js`);
 const { attachSockets } = await import(`${SRC}/sockets/index.js`);
 const { config } = await import(`${SRC}/config.js`);
 
+// The in-process store, always: this suite must neither touch a real database
+// nor depend on one being reachable.
+config.supabase.url = '';
+config.supabase.serviceKey = '';
+config.mongoUri = '';
 await initStore({ log: () => {} });
 const app = createApp();
 const server = http.createServer(app);
@@ -18,6 +23,21 @@ await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${server.address().port}`;
 
 const repo = getRepo();
+
+// Seed one room nobody owns (the shared key's rooms) and one a signed-in
+// professor owns. The suite used to assume a store that already held rooms,
+// and on the empty in-process store its two keyed checks failed for that
+// reason alone.
+async function seedRoom(ownerId) {
+  const content = await repo.createContent({ title: 'Security fixture', kind: 'syllabus', rawText: '', topics: ['T'], ownerId });
+  await repo.insertQuestions(Array.from({ length: 6 }, (_, i) => ({
+    contentId: content._id, text: `Fixture ${i}?`, kind: 'mcq', options: ['A', 'B', 'C', 'D'], answerIdx: 0, bloom: 'understand', topic: 'T',
+  })));
+  const code = `SEC${ownerId ? 'OWN' : 'KEY'}`;
+  return repo.createSession({ code, contentId: content._id, title: 'Fixture', status: 'open', ownerId });
+}
+await seedRoom(null);
+await seedRoom('22222222-2222-2222-2222-222222222222');
 const sessions = await repo.listSessions();
 
 // The shared key resolves to "the rows nobody owns", so the keyed-export check

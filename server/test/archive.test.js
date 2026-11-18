@@ -1,0 +1,133 @@
+// The room archive: a deleted room kept as one JSON document under 1 MB.
+
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+import { createMemoryRepo } from '../src/repo/memoryRepo.js';
+import {
+  ARCHIVE_FORMAT,
+  ARCHIVE_LIMIT_BYTES,
+  buildRoomArchive,
+  decodeRoomArchive,
+  fromTable,
+  toTable,
+} from '../src/services/archive.js';
+
+const LEVELS = ['remember', 'understand', 'apply', 'analyse', 'evaluate', 'create'];
+
+/** A room far bigger than a real class: 80 students, 60 attempts each. */
+async function bigRoom(repo, { students = 80, perStudent = 60 } = {}) {
+  const content = await repo.createContent({ title: 'Archive fixture', kind: 'syllabus', rawText: '', topics: ['Cells'] });
+  const qs = await repo.insertQuestions(Array.from({ length: 40 }, (_, i) => ({
+    contentId: content._id,
+    topic: `Topic ${i % 5}`,
+    bloom: LEVELS[i % 6],
+    kind: i % 3 === 0 ? 'open' : 'mcq',
+    text: `Question ${i}: explain the role of the mitochondrion in cellular respiration, step ${i}.`,
+    options: i % 3 === 0 ? undefined : ['Alpha option text', 'Beta option text', 'Gamma option text', 'Delta option text'],
+    answerIdx: i % 3 === 0 ? undefined : i % 4,
+  })));
+  const start = Date.parse('2026-11-18T09:00:00.000Z');
+  const session = await repo.createSession({
+    code: 'ARCH01', contentId: content._id, title: 'Archive fixture', status: 'closed', ownerId: null,
+    masteryGoal: 0.9, reattempts: 1, redemption: true,
+  });
+  session.startedAt = new Date(start).toISOString();
+  await repo.updateSession(session._id, { startedAt: session.startedAt });
+
+  for (let s = 0; s < students; s += 1) {
+    const rollNo = `23CS${String(s).padStart(3, '0')}`;
+    const history = [];
+    for (let a = 0; a < perStudent; a += 1) {
+      const q = qs[(s + a) % qs.length];
+      const { _id, contentId, createdAt, status, ...rest } = q;
+      const at = new Date(start + (s * perStudent + a) * 1000).toISOString();
+      const correct = (s + a) % 3 !== 0;
+      const answerKey = `a${s}-${a}-0000000`;
+      await repo.recordAnswer({
+        sessionId: session._id, answerKey, rollNo, questionId: q._id, contentId,
+        topic: q.topic, bloom: q.bloom, kind: q.kind, questionSnapshot: { id: String(_id), ...rest },
+        response: q.kind === 'open'
+          ? 'The mitochondrion releases energy from glucose through respiration, producing ATP for the cell.'
+          : (q.answerIdx + (correct ? 0 : 1)) % 4,
+        correct, score: correct ? 1 : 0, detail: correct ? '' : 'Not the expected answer',
+        reviewStatus: q.kind === 'open' ? 'provisional' : 'auto', autoCorrect: correct, autoScore: correct ? 1 : 0,
+        servedAt: at, answeredAt: at,
+      });
+      history.push({ questionId: String(q._id), bloom: q.bloom, topic: q.topic, kind: q.kind, answerId: answerKey, correct, score: correct ? 1 : 0, at });
+    }
+    await repo.saveProfile({
+      sessionId: session._id, rollNo, name: `Student ${s}`, accountId: null,
+      levels: { understand: { seen: 3, correct: 2 } }, workingLevel: 'apply', reason: 'Two of three right.',
+      history, served: null, integrity: [],
+    });
+  }
+  return session;
+}
+
+test('toTable drops columns nobody has a value for, and fromTable restores the rest', () => {
+  const rows = [{ a: 1, b: '', c: null }, { a: 2, b: '', c: 'x' }];
+  const t = toTable(rows);
+  assert.deepEqual(t.cols, ['a', 'c']);
+  assert.deepEqual(fromTable(t), [{ a: 1, c: null }, { a: 2, c: 'x' }]);
+});
+
+test('a room far bigger than a class archives under 1 MB, with every answer in it', async () => {
+  const repo = createMemoryRepo();
+  const session = await bigRoom(repo);
+  const answers = await repo.listAnswers({ sessionId: session._id, limit: 100000 });
+  assert.equal(answers.length, 4800, 'fixture has more answers than one page');
+
+  const { bytes, json, doc } = await buildRoomArchive(repo, await repo.getSessionByCode('ARCH01'), { archivedBy: null });
+  assert.ok(bytes < ARCHIVE_LIMIT_BYTES, `archive is ${bytes} bytes`);
+  assert.equal(Buffer.byteLength(json), bytes);
+  assert.equal(doc.data.format, ARCHIVE_FORMAT);
+  assert.equal(doc.data.counts.answers, 4800);
+  assert.equal(doc.data.counts.students, 80);
+
+  const back = decodeRoomArchive(JSON.parse(json));
+  assert.equal(back.answers.length, 4800);
+  // Field for field, apart from what the archive deliberately does not repeat
+  // (row id, session id, account id and content id).
+  const strip = ({ _id, sessionId, accountId, contentId, ...rest }) => rest;
+  const blankless = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '' && v !== null && v !== undefined));
+  for (let i = 0; i < answers.length; i += 1) {
+    assert.deepEqual(blankless(back.answers[i]), blankless(strip(answers[i])), `answer ${i}`);
+  }
+  const profiles = await repo.listProfiles(session._id);
+  for (const p of profiles) {
+    const s = back.students.find((x) => x.rollNo === p.rollNo);
+    assert.deepEqual(s.history, p.history, `history of ${p.rollNo}`);
+    assert.equal(s.workingLevel, p.workingLevel);
+    assert.deepEqual(s.levels, p.levels);
+  }
+  assert.deepEqual(back.room.settings, { masteryGoal: 0.9, reattempts: 1, redemption: true });
+});
+
+test('a room from before the evidence store keeps its questions from the bank', async () => {
+  const repo = createMemoryRepo();
+  const content = await repo.createContent({ title: 'Old', kind: 'syllabus', rawText: '', topics: ['T'] });
+  const [q] = await repo.insertQuestions([{ contentId: content._id, topic: 'T', bloom: 'remember', kind: 'mcq', text: 'Old question', options: ['a', 'b'], answerIdx: 1 }]);
+  const session = await repo.createSession({ code: 'OLD001', contentId: content._id, title: 'Old', status: 'closed' });
+  await repo.saveProfile({
+    sessionId: session._id, rollNo: '7', name: 'Seven', levels: {}, workingLevel: 'remember', reason: '',
+    history: [{ questionId: String(q._id), bloom: 'remember', correct: true, at: '2026-01-01T10:00:00.000Z' }],
+    served: null, integrity: [],
+  });
+  const { doc } = await buildRoomArchive(repo, session);
+  assert.equal(doc.data.questions.length, 1);
+  assert.equal(doc.data.questions[0].text, 'Old question');
+  const back = decodeRoomArchive(doc.data);
+  assert.equal(back.students[0].history[0].at, '2026-01-01T10:00:00.000Z');
+});
+
+test('saving twice for one room keeps one archive', async () => {
+  const repo = createMemoryRepo();
+  const meta = { sessionId: 'abc', code: 'ROOM01', title: 'R', ownerId: null, archivedBy: null, archivedAt: '2026-11-18T10:00:00.000Z' };
+  await repo.saveRoomArchive({ ...meta, bytes: 10, data: { n: 1 } });
+  const second = await repo.saveRoomArchive({ ...meta, bytes: 12, data: { n: 2 } });
+  const list = await repo.listRoomArchives();
+  assert.equal(list.length, 1);
+  assert.equal(list[0].data, undefined, 'the list carries no data');
+  assert.deepEqual((await repo.getRoomArchive(second._id)).data, { n: 2 });
+});

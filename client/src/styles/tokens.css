@@ -1,0 +1,295 @@
+/* BloomLoop design tokens - Forest (v6).
+
+   Direction
+     Calm, exact, professional: the room a good teacher keeps. A warm off-white
+     page with soft washes of colour behind it, a near-black forest sidebar,
+     hairline cards that read as glass, and one dark "brief" panel per screen
+     where the thing that matters is said in a sentence. Deep green is the
+     action; black is the second voice; mint is what lights up on dark.
+     Manrope for everything read, JetBrains Mono for codes, roll numbers and
+     figures. Reference: Karim's Goodfor design (Nov 2026).
+
+     The six Bloom levels split the way the taxonomy does. The lower-order
+     three (remember, understand, apply) are greens, light to deep; the
+     higher-order three (analyse, evaluate, create) are golds, light to deep.
+     Two families keep the split readable for colour-blind eyes, and a level
+     is never shown by colour alone - its name or number is always beside it.
+
+     Right and wrong are a green tick and a red cross, always with the word.
+     There is no purple or violet anywhere.
+
+   Two themes, both first-class. Text pairs were checked at 4.5:1 or better on
+   the surface they sit on, field borders at 3:1, in both. */
+
+:root {
+  color-scheme: light;
+
+  --bg: #F4F3EF;
+  --surface: #FFFFFF;
+  --glass: rgba(255, 255, 255, 0.78);
+  --glass-line: rgba(255, 255, 255, 0.9);
+  --raised: #F4F3EF;
+  --sunk: #EFEDE9;
+  --hover: #F7F6F2;
+  --line: #E5E3DD;
+  --line-2: #D7D4CC;
+  --field-line: #8A8E95;
+
+  --text: #14161A;
+  --text-2: #4A4E55;
+  --text-3: #62666D;
+  --text-4: #8A8E95;
+
+  --primary: #2F6B4F;
+  --primary-hover: #245640;
+  --on-primary: #FFFFFF;
+  --primary-soft: #E8F1EC;
+  --ink: #14161A;
+  --ink-hover: #2A2D33;
+  --on-ink: #FFFFFF;
+  --mint: #9CD3AE;
+  --on-mint: #0F1A15;
+
+  /* The forest: the sidebar and the one dark panel a screen gets. */
+  --side: #0F1A15;
+  --side-top: #121C17;
+  --side-line: rgba(255, 255, 255, 0.07);
+  --side-hover: rgba(255, 255, 255, 0.06);
+  --side-cur: rgba(156, 211, 174, 0.12);
+  --side-text: #DDE3DD;
+  --side-head: #8A968E;
+  --panel: #0F1A15;
+  --panel-2: #18271F;
+  --panel-line: rgba(255, 255, 255, 0.1);
+  --on-panel: #F2F4EF;
+  --on-panel-2: #C9D1CB;
+  --on-panel-3: #9AA59E;
+
+  --ok: #1B7246;
+  --ok-fill: #2F8A5B;
+  --ok-soft: #E8F1EC;
+  --bad: #B83434;
+  --bad-fill: #C43D3D;
+  --bad-soft: #FCEBEB;
+  --warn: #8A5A12;
+  --warn-fill: #E0B95E;
+  --warn-soft: #FBF3E4;
+
+  --l1: #CDE6D6; --l1-ink: #14161A;
+  --l2: #8EC5A6; --l2-ink: #14161A;
+  --l3: #4A9571; --l3-ink: #14161A;
+  --l4: #EDD58F; --l4-ink: #14161A;
+  --l5: #D9A548; --l5-ink: #14161A;
+  --l6: #93601A; --l6-ink: #FFFFFF;
+  --soft: 30%;
+
+  /* The soft washes behind the page: mint top left, sand bottom right. */
+  --wash: radial-gradient(ellipse 50% 35% at 12% 6%, rgba(156, 211, 174, 0.42), transparent 60%),
+    radial-gradient(ellipse 45% 35% at 94% 26%, rgba(196, 211, 200, 0.35), transparent 60%),
+    radial-gradient(ellipse 50% 40% at 60% 100%, rgba(224, 185, 94, 0.16), transparent 60%);
+
+  --scrim: rgba(15, 26, 21, 0.42);
+  --sh-1: 0 1px 2px rgba(20, 22, 26, 0.04);
+  --sh-2: 0 1px 2px rgba(20, 22, 26, 0.04), 0 8px 24px -12px rgba(20, 22, 26, 0.12);
+  --sh-3: 0 24px 60px -18px rgba(20, 22, 26, 0.3);
+  --sh-panel: 0 30px 60px -24px rgba(15, 26, 21, 0.55);
+  --glass-in: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+
+  --font: 'Manrope Variable', 'Noto Sans Devanagari', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --display: var(--font);
+  --mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Consolas, monospace;
+
+  --r-1: 6px;
+  --r-2: 8px;
+  --r-3: 12px;
+  --r-4: 14px;
+  --r-5: 16px;
+  --r-full: 999px;
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --t-1: 120ms;
+  --t-2: 180ms;
+  --t-3: 360ms;
+
+  --side-w: 232px;
+  --strip-h: 60px;
+  --page-w: 1400px;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #0B100D;
+  --surface: #121915;
+  --glass: rgba(18, 25, 21, 0.82);
+  --glass-line: rgba(255, 255, 255, 0.06);
+  --raised: #18211C;
+  --sunk: #080C0A;
+  --hover: #161F1A;
+  --line: #232D27;
+  --line-2: #2F3B34;
+  --field-line: #5E6B63;
+
+  --text: #EEF1EC;
+  --text-2: #C3CBC5;
+  --text-3: #9AA59E;
+  --text-4: #6E7A72;
+
+  --primary: #7CCB9F;
+  --primary-hover: #9CD3AE;
+  --on-primary: #0B100D;
+  --primary-soft: #16271E;
+  --ink: #EEF1EC;
+  --ink-hover: #FFFFFF;
+  --on-ink: #0B100D;
+  --mint: #9CD3AE;
+  --on-mint: #0F1A15;
+
+  --side: #070B09;
+  --side-top: #0A100C;
+  --side-line: rgba(255, 255, 255, 0.06);
+  --side-hover: rgba(255, 255, 255, 0.05);
+  --side-cur: rgba(156, 211, 174, 0.1);
+  --side-text: #D2DAD3;
+  --side-head: #7F8A82;
+  --panel: #13211A;
+  --panel-2: #1B2D23;
+  --panel-line: rgba(255, 255, 255, 0.09);
+  --on-panel: #F2F4EF;
+  --on-panel-2: #C9D1CB;
+  --on-panel-3: #9AA59E;
+
+  --ok: #6DCB94;
+  --ok-fill: #3E9A69;
+  --ok-soft: #132A1D;
+  --bad: #F08080;
+  --bad-fill: #D45050;
+  --bad-soft: #2E1515;
+  --warn: #E3B868;
+  --warn-fill: #E0B95E;
+  --warn-soft: #2A2112;
+
+  --l1: #D3EADC; --l1-ink: #0B100D;
+  --l2: #9CD3AE; --l2-ink: #0B100D;
+  --l3: #5DAE85; --l3-ink: #0B100D;
+  --l4: #F0D99A; --l4-ink: #0B100D;
+  --l5: #E3B15A; --l5-ink: #0B100D;
+  --l6: #C58A3A; --l6-ink: #0B100D;
+  --soft: 22%;
+
+  --wash: radial-gradient(ellipse 50% 35% at 12% 6%, rgba(62, 138, 102, 0.22), transparent 60%),
+    radial-gradient(ellipse 45% 35% at 94% 26%, rgba(62, 90, 75, 0.18), transparent 60%),
+    radial-gradient(ellipse 50% 40% at 60% 100%, rgba(224, 185, 94, 0.07), transparent 60%);
+
+  --scrim: rgba(0, 0, 0, 0.6);
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 26px -14px rgba(0, 0, 0, 0.7);
+  --sh-3: 0 24px 60px -18px rgba(0, 0, 0, 0.75);
+  --sh-panel: 0 30px 60px -24px rgba(0, 0, 0, 0.8);
+  --glass-in: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --bg: #0B100D;
+    --surface: #121915;
+    --glass: rgba(18, 25, 21, 0.82);
+    --glass-line: rgba(255, 255, 255, 0.06);
+    --raised: #18211C;
+    --sunk: #080C0A;
+    --hover: #161F1A;
+    --line: #232D27;
+    --line-2: #2F3B34;
+    --field-line: #5E6B63;
+
+    --text: #EEF1EC;
+    --text-2: #C3CBC5;
+    --text-3: #9AA59E;
+    --text-4: #6E7A72;
+
+    --primary: #7CCB9F;
+    --primary-hover: #9CD3AE;
+    --on-primary: #0B100D;
+    --primary-soft: #16271E;
+    --ink: #EEF1EC;
+    --ink-hover: #FFFFFF;
+    --on-ink: #0B100D;
+    --mint: #9CD3AE;
+    --on-mint: #0F1A15;
+
+    --side: #070B09;
+    --side-top: #0A100C;
+    --side-line: rgba(255, 255, 255, 0.06);
+    --side-hover: rgba(255, 255, 255, 0.05);
+    --side-cur: rgba(156, 211, 174, 0.1);
+    --side-text: #D2DAD3;
+    --side-head: #7F8A82;
+    --panel: #13211A;
+    --panel-2: #1B2D23;
+    --panel-line: rgba(255, 255, 255, 0.09);
+    --on-panel: #F2F4EF;
+    --on-panel-2: #C9D1CB;
+    --on-panel-3: #9AA59E;
+
+    --ok: #6DCB94;
+    --ok-fill: #3E9A69;
+    --ok-soft: #132A1D;
+    --bad: #F08080;
+    --bad-fill: #D45050;
+    --bad-soft: #2E1515;
+    --warn: #E3B868;
+    --warn-fill: #E0B95E;
+    --warn-soft: #2A2112;
+
+    --l1: #D3EADC; --l1-ink: #0B100D;
+    --l2: #9CD3AE; --l2-ink: #0B100D;
+    --l3: #5DAE85; --l3-ink: #0B100D;
+    --l4: #F0D99A; --l4-ink: #0B100D;
+    --l5: #E3B15A; --l5-ink: #0B100D;
+    --l6: #C58A3A; --l6-ink: #0B100D;
+    --soft: 22%;
+
+    --wash: radial-gradient(ellipse 50% 35% at 12% 6%, rgba(62, 138, 102, 0.22), transparent 60%),
+      radial-gradient(ellipse 45% 35% at 94% 26%, rgba(62, 90, 75, 0.18), transparent 60%),
+      radial-gradient(ellipse 50% 40% at 60% 100%, rgba(224, 185, 94, 0.07), transparent 60%);
+
+    --scrim: rgba(0, 0, 0, 0.6);
+    --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --sh-2: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 26px -14px rgba(0, 0, 0, 0.7);
+    --sh-3: 0 24px 60px -18px rgba(0, 0, 0, 0.75);
+    --sh-panel: 0 30px 60px -24px rgba(0, 0, 0, 0.8);
+    --glass-in: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+}
+
+/* Inside a forest panel the text tokens turn over, so anything placed on one
+   - a chip, a figure, a canvas reading --text - is drawn for that ground. */
+.on-panel {
+  --text: var(--on-panel);
+  --text-2: var(--on-panel-2);
+  --text-3: var(--on-panel-3);
+  --text-4: var(--on-panel-3);
+  --line: var(--panel-line);
+  --line-2: rgba(255, 255, 255, 0.18);
+  --raised: rgba(255, 255, 255, 0.07);
+  --surface: var(--panel);
+  --hover: rgba(255, 255, 255, 0.08);
+  --primary: var(--mint);
+  --primary-hover: #B3DFC1;
+  --on-primary: var(--on-mint);
+  --primary-soft: rgba(156, 211, 174, 0.14);
+  color: var(--on-panel);
+}
+
+/* Anything carrying data-level gets its level colour as --lv, the text colour
+   that sits on it as --lv-ink, a quiet tint as --lv-soft and its ordinal as
+   --lv-n. Components read these and never name a level themselves. */
+[data-level='remember']   { --lv: var(--l1); --lv-ink: var(--l1-ink); --lv-n: 1; }
+[data-level='understand'] { --lv: var(--l2); --lv-ink: var(--l2-ink); --lv-n: 2; }
+[data-level='apply']      { --lv: var(--l3); --lv-ink: var(--l3-ink); --lv-n: 3; }
+[data-level='analyse']    { --lv: var(--l4); --lv-ink: var(--l4-ink); --lv-n: 4; }
+[data-level='evaluate']   { --lv: var(--l5); --lv-ink: var(--l5-ink); --lv-n: 5; }
+[data-level='create']     { --lv: var(--l6); --lv-ink: var(--l6-ink); --lv-n: 6; }
+[data-level] { --lv-soft: color-mix(in srgb, var(--lv) var(--soft), var(--surface)); }

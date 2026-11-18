@@ -4,7 +4,7 @@
 // Two decisions carry this whole feature.
 //
 // THE SUPPORT BELONGS TO THE STUDENT, NOT TO THE ASSESSMENT. It lives on the
-// account (supabase/006_accommodations.sql) and is read on the way into a
+// account (supabase/migrations/0006_accommodations.sql) and is read on the way into a
 // session, so a professor does not build a second version of a bank for the one
 // student who needs larger type - and cannot forget it on the week it mattered.
 // Attached to the assignment it would have to be set again on every bank, every

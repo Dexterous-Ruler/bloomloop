@@ -1,0 +1,136 @@
+/* The frame: an espresso rail down the left with the product, the way
+   through it and who you are; the page beside it, headed by where you are and
+   what you can do there. Below 1024px the rail becomes a bar and a drawer. */
+
+.app { min-height: 100%; display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); }
+
+/* ---------------------------------------------------------------- the rail */
+
+.rail {
+  position: sticky; top: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column; gap: 22px;
+  padding: 22px 14px 16px; overflow-y: auto; background: var(--side); color: var(--side-text);
+  scrollbar-color: var(--side-line) transparent;
+}
+.brand { display: flex; align-items: center; gap: 11px; padding: 0 8px; color: #FFF3DF; }
+.brand-name { display: flex; flex-direction: column; min-width: 0; }
+.brand-name b { font: 800 19px/1 var(--display); letter-spacing: -0.025em; }
+.brand-name small { margin-top: 3px; font: 500 11px/14px var(--font); color: var(--side-head); white-space: nowrap; }
+
+.rail-nav { display: flex; flex-direction: column; gap: 2px; }
+.rail-head { padding: 14px 12px 6px; font: 700 10.5px/14px var(--font); letter-spacing: 0.14em; text-transform: uppercase; color: var(--side-head); }
+.rail-nav > .rail-head:first-child { padding-top: 0; }
+.rail-item {
+  position: relative; display: flex; align-items: center; gap: 11px; width: 100%; min-height: 42px; padding: 0 12px;
+  border: 0; border-radius: 12px; background: transparent; color: var(--side-text); cursor: pointer; text-align: left;
+  font: 600 14px/20px var(--font); transition: background var(--t-2) var(--ease), color var(--t-2) var(--ease);
+}
+.rail-item:hover { background: var(--side-hover); color: #FFF3DF; }
+.rail-item[aria-current='page'] { background: var(--side-cur); color: #FFF3DF; }
+.rail-item[aria-current='page']::before {
+  content: ''; position: absolute; left: -14px; top: 10px; bottom: 10px; width: 4px; border-radius: 0 4px 4px 0; background: var(--accent);
+}
+.rail-item svg { flex: none; opacity: 0.85; }
+.rail-item[aria-current='page'] svg { color: var(--accent); opacity: 1; }
+.rail-item .lab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-item.is-locked { color: color-mix(in srgb, var(--side-text) 62%, transparent); }
+.rail-badge { flex: none; min-width: 22px; height: 20px; padding: 0 7px; display: grid; place-items: center; border-radius: var(--r-full); background: var(--primary); color: #FFF6E0; font: 700 11px/1 var(--font); }
+.rail-badge[data-tone='live'] { background: var(--ok-fill); }
+.rail-badge[data-tone='quiet'] { background: var(--side-cur); color: var(--side-text); }
+.rail:focus-visible, .rail :focus-visible { outline-color: var(--accent); }
+.rail-why {
+  margin: 4px 4px 0; padding: 10px 12px; border-radius: 12px; background: var(--side-cur); color: #FFF3DF;
+  font: 500 12.5px/18px var(--font); animation: rise var(--t-3) var(--ease);
+}
+
+.rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid var(--side-line); }
+.rail-me {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: 0; border-radius: 12px;
+  background: transparent; color: #FFF3DF; cursor: pointer; text-align: left;
+}
+.rail-me:hover { background: var(--side-hover); }
+.rail-me .who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.rail-me .who b { font: 700 13.5px/18px var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-me .who small { font: 500 12px/16px var(--font); color: var(--side-head); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-me > svg { color: var(--side-head); }
+.rail-theme {
+  display: flex; align-items: center; gap: 10px; width: 100%; height: 38px; padding: 0 12px; border: 0; border-radius: 12px;
+  background: transparent; color: var(--side-text); cursor: pointer; font: 600 13px/18px var(--font);
+}
+.rail-theme:hover { background: var(--side-hover); color: #FFF3DF; }
+.rail-theme .seg-mini { margin-left: auto; display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: rgba(0, 0, 0, 0.3); }
+.rail-theme .seg-mini i { width: 24px; height: 20px; display: grid; place-items: center; border-radius: 6px; font-style: normal; }
+.rail-theme .seg-mini i[data-on='true'] { background: var(--accent); color: var(--on-accent); }
+
+/* ---------------------------------------------------------------- the page */
+
+.main { min-width: 0; display: flex; flex-direction: column; }
+.page { width: 100%; max-width: var(--page-w); margin: 0 auto; padding: 24px 32px 72px; display: flex; flex-direction: column; gap: 20px; }
+.page-narrow { max-width: 860px; }
+.page-wide { max-width: 1560px; }
+
+.page-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; }
+.page-head .ttl { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.page-head .crumb { font: 500 13px/18px var(--font); color: var(--text-3); display: flex; align-items: center; gap: 6px; min-width: 0; }
+.page-head .crumb > * { min-width: 0; }
+.page-head h1 { overflow-wrap: anywhere; }
+.page-head .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* ------------------------------------------------------- bar and drawer */
+
+.bar { display: none; }
+.drawer {
+  position: fixed; z-index: 91; top: 0; left: 0; bottom: 0; width: min(300px, 86vw); display: flex; flex-direction: column;
+  background: var(--side); animation: drawer-in var(--t-3) var(--ease);
+}
+.drawer:focus { outline: none; }
+.drawer .rail { position: static; height: 100%; }
+@keyframes drawer-in { from { transform: translateX(-24px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+@media (max-width: 1023px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .app > .rail { display: none; }
+  .bar {
+    position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 12px; height: var(--strip-h); padding: 0 12px 0 16px;
+    background: var(--side); color: #FFF3DF;
+  }
+  .bar .brand { padding: 0; }
+  .bar .brand-name small { display: none; }
+  .bar-where { flex: 1; min-width: 0; font: 600 13px/18px var(--font); color: var(--side-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar .btn-ghost { color: #FFF3DF; }
+  .bar .btn-ghost:hover { background: var(--side-hover); }
+  .page { padding: 20px 16px 64px; }
+}
+@media (max-width: 480px) {
+  .bar .brand-name { display: none; }
+}
+
+/* ----------------------------------------------------------- gate screens */
+
+/* A screen outside the frame: sign in, the console's key, a student joining.
+   Half espresso, half page. */
+.gate { min-height: 100%; display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); background: var(--bg); }
+.gate-art {
+  position: relative; overflow: hidden; isolation: isolate; display: flex; flex-direction: column; justify-content: space-between; gap: 32px;
+  padding: 36px 44px; background: var(--panel); color: var(--on-panel);
+}
+.gate-art::before { content: ''; position: absolute; z-index: -1; width: 620px; height: 620px; right: -220px; top: -260px; border-radius: 50%; background: radial-gradient(circle, var(--glow-1), transparent 65%); animation: drift 12s ease-in-out infinite; }
+.gate-art::after { content: ''; position: absolute; z-index: -1; width: 420px; height: 420px; left: -120px; bottom: -220px; border-radius: 50%; background: radial-gradient(circle, var(--glow-2), transparent 65%); animation: drift 15s ease-in-out infinite reverse; }
+.gate-art .brand { padding: 0; }
+.gate-art h1 { font: 800 clamp(40px, 4.6vw, 64px)/0.98 var(--display); letter-spacing: -0.045em; max-width: 12ch; }
+.gate-art h1 em { font-style: normal; color: var(--accent); }
+.gate-art p { max-width: 44ch; font: 400 16px/25px var(--font); color: var(--on-panel-2); }
+.gate-side { display: flex; flex-direction: column; min-width: 0; }
+.gate-top { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 18px 24px; }
+.gate-main { flex: 1; display: grid; place-items: center; padding: 16px 24px 32px; }
+.gate-card { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 22px; }
+.gate-foot { padding: 16px 24px 24px; font: 400 13px/19px var(--font); color: var(--text-3); text-align: center; }
+.or { display: flex; align-items: center; gap: 12px; font: 600 12px/16px var(--font); color: var(--text-3); }
+.or::before, .or::after { content: ''; flex: 1; height: 1px; background: var(--line-2); }
+
+@media (max-width: 900px) {
+  .gate { grid-template-columns: minmax(0, 1fr); }
+  .gate-art { padding: 22px 20px 28px; gap: 18px; }
+  .gate-art h1 { font-size: 36px; }
+  .gate-art .gate-art-extra { display: none; }
+  .gate-top { padding: 12px 16px 0; }
+}

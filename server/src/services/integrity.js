@@ -126,6 +126,47 @@ export function noteSecondSocket(profile, meta = {}) {
   record(profile, 'second-socket', { src: 'observed', ...meta });
 }
 
+/** How many graded answers make each half of a level-jump comparison. */
+export const JUMP_WINDOW = 5;
+
+/**
+ * An abrupt swing from struggling to perfect, worked out from the answers alone.
+ *
+ * Recorded when a student's last JUMP_WINDOW graded answers in this room are all
+ * right, straight after JUMP_WINDOW in which at most one was right. That is a
+ * pattern a teacher may want to look at, and nothing more: students genuinely
+ * turn a corner, and the note says so. It is OBSERVED because it comes from
+ * answers the server marked, not from anything the phone reported.
+ *
+ * Once per swing: it is not recorded again until the window that triggered it
+ * has scrolled out, so one good run is one note, not five.
+ *
+ * Decided in docs/PRODUCT_DECISIONS.md ("Defaults chosen during implementation").
+ */
+export function checkLevelJump(profile) {
+  const graded = (profile.history ?? []).filter((h) => !h.ungraded);
+  if (graded.length < JUMP_WINDOW * 2) return null;
+  const recent = graded.slice(-JUMP_WINDOW);
+  const before = graded.slice(-JUMP_WINDOW * 2, -JUMP_WINDOW);
+  if (!recent.every((h) => h.correct)) return null;
+  if (before.filter((h) => h.correct).length > 1) return null;
+
+  const lastJump = [...(profile.integrity ?? [])].reverse().find((e) => e.kind === 'level-jump');
+  // The answer that opened the current window; a jump already noted inside it is the same swing.
+  const windowStart = recent[0]?.at ?? '';
+  if (lastJump && String(lastJump.at) >= String(windowStart)) return null;
+
+  const meta = {
+    src: 'observed',
+    before: before.filter((h) => h.correct).length,
+    after: recent.length,
+    window: JUMP_WINDOW,
+    questionId: String(recent[recent.length - 1].questionId ?? ''),
+  };
+  record(profile, 'level-jump', meta);
+  return meta;
+}
+
 /**
  * A summary for the teacher: what happened, how much of it, and how much of it
  * is worth believing. Never a verdict - the wording stays descriptive on purpose.
@@ -145,6 +186,9 @@ export function summarise(profile) {
   if (count('fullscreen-exit')) notes.push('Left focus mode.');
   if (count('too-fast')) notes.push(`${count('too-fast')} answer${count('too-fast') === 1 ? '' : 's'} arrived faster than the question could be read.`);
   if (count('second-socket')) notes.push('Answered from two connections at once.');
+  if (count('level-jump')) {
+    notes.push(`${count('level-jump') === 1 ? 'Once' : `${count('level-jump')} times`}, ${JUMP_WINDOW} right in a row straight after a run of mostly wrong answers. Students do turn corners; this is a prompt to look, not a finding.`);
+  }
 
   return {
     events: events.length,

@@ -95,6 +95,15 @@ const profileSchema = new Schema(
           _id: false,
           questionId: String,
           bloom: { type: String, enum: LEVELS },
+          // Phase 0: what the analytics group by, and which kind it was, so a
+          // history entry is readable without a join back to a question that
+          // may since have been edited or deleted.
+          topic: String,
+          kind: String,
+          // The client's idempotency key for the attempt that settled this
+          // entry, so a resend can be recognised as the same answer.
+          answerId: String,
+          ungraded: Boolean,
           correct: Boolean,
           // Partial credit. A match answered 3-of-4 is not the same evidence as
           // one answered 1-of-4, and without this field Mongoose drops the
@@ -136,9 +145,51 @@ const profileSchema = new Schema(
 
     // Phase 6. Append-only integrity signals.
     integrity: { type: Array, default: [] },
+
+    // The student account this roll number maps to on the room owner's roster.
+    accountId: { type: String, default: null },
   },
   { versionKey: false },
 );
+
+// One submitted attempt. Append-only evidence: the response and the machine's
+// assessment are kept; a professor's review is written beside them.
+const answerSchema = new Schema(
+  {
+    sessionId: { type: Schema.Types.ObjectId, ref: 'Session', required: true, index: true },
+    answerKey: { type: String, required: true },
+    rollNo: { type: String, required: true },
+    accountId: { type: String, default: null, index: true },
+    questionId: { type: String, default: null, index: true },
+    contentId: { type: String, default: null },
+    topic: { type: String, default: '' },
+    bloom: { type: String, enum: LEVELS, required: true },
+    kind: { type: String, default: 'mcq' },
+    questionSnapshot: { type: Object, default: {} },
+    response: { type: Schema.Types.Mixed, default: null },
+    attempt: { type: Number, default: 1 },
+    final: { type: Boolean, default: true },
+    correct: { type: Boolean, default: null },
+    score: { type: Number, default: null },
+    detail: { type: String, default: '' },
+    ungraded: { type: Boolean, default: false },
+    language: { type: String, default: 'en' },
+    questionSource: { type: String, default: 'llm' },
+    servedAt: { type: String, default: null },
+    answeredAt: { type: String, default: () => new Date().toISOString() },
+    reviewStatus: { type: String, enum: ['auto', 'provisional', 'confirmed', 'overridden'], default: 'auto' },
+    autoCorrect: { type: Boolean, default: null },
+    autoScore: { type: Number, default: null },
+    autoDetail: { type: String, default: '' },
+    reviewedBy: { type: String, default: null },
+    reviewedAt: { type: String, default: null },
+    reviewNote: { type: String, default: '' },
+    confidence: { type: String, enum: ['sure', 'think', 'guess', null], default: null },
+  },
+  { versionKey: false },
+);
+answerSchema.index({ sessionId: 1, answerKey: 1 }, { unique: true });
+answerSchema.index({ sessionId: 1, rollNo: 1 });
 
 // roll number is the identity within a session [F4]
 profileSchema.index({ sessionId: 1, rollNo: 1 }, { unique: true });
@@ -147,5 +198,24 @@ export const Content = model('Content', contentSchema);
 export const Question = model('Question', questionSchema);
 export const Session = model('Session', sessionSchema);
 export const Profile = model('Profile', profileSchema);
+export const Answer = model('Answer', answerSchema);
+
+// A deleted room, kept as one JSON document (services/archive.js). No ref on
+// sessionId: the session it names is deleted right after this is written.
+const roomArchiveSchema = new Schema(
+  {
+    sessionId: { type: String, required: true, unique: true },
+    code: { type: String, required: true },
+    title: { type: String, default: '' },
+    ownerId: { type: String, default: null },
+    archivedBy: { type: String, default: null },
+    archivedAt: { type: Date, default: Date.now },
+    bytes: { type: Number, required: true, min: 1, max: 1024 * 1024 },
+    data: { type: Schema.Types.Mixed, required: true },
+  },
+  { minimize: false },
+);
+roomArchiveSchema.index({ ownerId: 1, archivedAt: -1 });
+export const RoomArchive = model('RoomArchive', roomArchiveSchema);
 
 export { levelCounter };

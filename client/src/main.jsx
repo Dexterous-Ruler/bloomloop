@@ -1,123 +1,86 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 
-import { useAccount } from './auth.js';
-import TeacherApp from './teacher/TeacherApp.jsx';
-import StudentApp from './student/StudentApp.jsx';
-import SignIn, { HOME_FOR } from './screens/SignIn.jsx';
-import SignUp from './screens/SignUp.jsx';
-import HodDashboard from './screens/HodDashboard.jsx';
-import ProfessorHome from './screens/ProfessorHome.jsx';
-import StudentDashboard from './screens/StudentDashboard.jsx';
-import Profile from './screens/Profile.jsx';
-import Analytics from './screens/Analytics.jsx';
-import Rooms from './screens/Rooms.jsx';
-import './styles.css';
+// Self-hosted, so the page fetches nothing from a third-party host.
+// Text and figures (OFL 1.1). Each file carries unicode-range, so a phone
+// downloads only the scripts a page actually uses.
+import '@fontsource-variable/manrope';
+import '@fontsource-variable/jetbrains-mono';
+import '@fontsource/noto-sans-devanagari/400.css';
+import '@fontsource/noto-sans-devanagari/500.css';
+import '@fontsource/noto-sans-devanagari/600.css';
 
-/**
- * The page while the account is still being fetched.
- *
- * Shaped like the dashboards behind it — a title, a row of cards, a panel — so
- * the layout does not jump when the real screen swaps in. It says nothing,
- * because the word "loading" is a slower way of showing exactly this.
- */
-function Waiting() {
-  return (
-    <div className="shell">
-      <div className="frame">
-        <div className="frame-body">
-          <div className="phead">
-            <div className="txt">
-              <div className="skel" style={{ height: 28, width: 240, borderRadius: 9 }} />
-              <div className="skel" style={{ height: 12, width: 340, borderRadius: 6, marginTop: 11 }} />
-            </div>
-          </div>
-          <div className="grid auto" style={{ marginBottom: 16 }}>
-            {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="skel" style={{ height: 182, borderRadius: 'var(--r-card)' }} />
-            ))}
-          </div>
-          <div className="skel" style={{ height: 252, borderRadius: 'var(--r-card)', marginBottom: 16 }} />
-          <div className="skel" style={{ height: 300, borderRadius: 'var(--r-panel)' }} />
-        </div>
-      </div>
-    </div>
-  );
-}
+// What every page needs. The console's and the account screens' own sheets
+// come with those screens (shell/staffStyles.js).
+import './styles/tokens.css';
+import './styles/base.css';
+import './styles/ui.css';
+import './styles/shell.css';
+import './styles/learn.css';
+import './styles/fx.css';
+import './lib/theme.js';
+// Before the router starts, so a ?key= never reaches it or stays on screen.
+import './lib/teacherKey.js';
 
-/**
- * A route only one kind of account may open.
- *
- * The server already enforces every one of these rules — ownership.js decides
- * what a token may read and GET /api/dashboard shapes itself from the role, so
- * nothing here is a security boundary and nothing here is trusted to be one.
- * This exists so that a professor who types /admin is moved to the screen that
- * is theirs instead of being shown a page whose only possible answer is 403.
- *
- * The redirect target is HOME_FOR, the same map sign-in routes on, so a role can
- * never be sent somewhere this wrapper would bounce it out of again.
- */
-function RoleRoute({ allow, children }) {
-  const { account, loading } = useAccount();
+import { TipProvider } from './ui/index.jsx';
+import Waiting from './shell/Waiting.jsx';
+// The one screen in the first download. Students open it on low-end phones on
+// slow connections, so it must not wait behind a second round trip, and
+// nothing else may ride along with it.
+import LearnApp from './learn/LearnApp.jsx';
 
-  if (loading) return <Waiting />;
-  // Signed out — or a build with no accounts configured at all, where the answer
-  // is the same and already known on the first render.
-  if (!account) return <Navigate to="/signin" replace />;
-  if (!allow.includes(account.role)) return <Navigate to={HOME_FOR[account.role] ?? '/'} replace />;
+// Every other screen loads when it is opened, with the stylesheets only those
+// screens use.
+const staff = (load) =>
+  React.lazy(() => Promise.all([load(), import('./shell/staffStyles.js')]).then(([screen]) => screen));
 
-  return children;
-}
+const TeachApp = staff(() => import('./teach/TeachApp.jsx'));
+const SignIn = staff(() => import('./account/SignIn.jsx'));
+const SignUp = staff(() => import('./account/SignUp.jsx'));
+const Department = staff(() => import('./account/Department.jsx'));
+const Overview = staff(() => import('./account/Overview.jsx'));
+const Me = staff(() => import('./account/Me.jsx'));
+const Profile = staff(() => import('./account/Profile.jsx'));
+const Analytics = staff(() => import('./account/Analytics.jsx'));
+const Rooms = staff(() => import('./account/Rooms.jsx'));
+// Lazy as well: it reads the account, which means the Supabase client.
+const RoleRoute = React.lazy(() => import('./shell/RoleRoute.jsx'));
 
-createRoot(document.getElementById('root')).render(
+// Screens with sample data, for looking at them without a database. Dev only:
+// the import is behind the flag, so none of it reaches a production bundle.
+const Gallery = import.meta.env.DEV ? staff(() => import('./dev/Gallery.jsx')) : null;
+
+// One root per page, kept across hot reloads so the dev server does not stack them.
+const host = document.getElementById('root');
+const root = host.__root ?? (host.__root = createRoot(host));
+
+root.render(
   <React.StrictMode>
-    <BrowserRouter>
-      <Routes>
-        {/* The console is deliberately unguarded: it opens on the shared teacher
-            key as well as on an account, and a key has no role to check. */}
-        <Route path="/" element={<TeacherApp />} />
-        <Route path="/join" element={<StudentApp />} />
-        <Route path="/join/:code" element={<StudentApp />} />
-        <Route path="/signin" element={<SignIn />} />
-        <Route path="/signup" element={<SignUp />} />
-        <Route
-          path="/admin"
-          element={<RoleRoute allow={['hod']}><HodDashboard /></RoleRoute>}
-        />
-        <Route
-          path="/home"
-          element={<RoleRoute allow={['professor']}><ProfessorHome /></RoleRoute>}
-        />
-        <Route
-          path="/me"
-          element={<RoleRoute allow={['student']}><StudentDashboard /></RoleRoute>}
-        />
-        {/* Unguarded on purpose, and the only signed-in screen that is. Every
-            role has a profile, and so does the shared-key path - which has no
-            role at all, and where "you are using a key, not an account" is
-            exactly the thing the screen exists to explain. */}
-        <Route path="/profile" element={<Profile />} />
-        {/* The one screen all three roles open, and the only reason it takes a
-            list rather than a single role. What each of them sees is decided by
-            GET /api/analytics from the token - professors for an HOD, students
-            for a professor, themselves for a student - so this list is about
-            which doors exist, not about who reads what. */}
-        <Route
-          path="/analytics"
-          element={<RoleRoute allow={['hod', 'professor', 'student']}><Analytics /></RoleRoute>}
-        />
-        {/* Unguarded, like /profile and for the same reason. GET /api/session
-            accepts the shared teacher key, and canWrite() grants that key
-            control of unowned rows - which is precisely what a key-path teacher
-            creates. Guarding this sent them to /signin and took away the one
-            screen that recovers a live room after a browser reload, which is
-            the failure the screen was written to prevent. The server decides
-            what each caller may act on via room.canControl; this route only
-            decides who may look. */}
-        <Route path="/rooms" element={<Rooms />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+    <TipProvider>
+      <BrowserRouter>
+        {/* The skeleton while a screen's code arrives: its shape, and no words. */}
+        <React.Suspense fallback={<Waiting />}>
+          <Routes>
+            {/* Unguarded: the console opens on the shared key as well as on an account. */}
+            <Route path="/" element={<TeachApp />} />
+            <Route path="/join" element={<LearnApp />} />
+            <Route path="/join/:code" element={<LearnApp />} />
+            <Route path="/signin" element={<SignIn />} />
+            <Route path="/signup" element={<SignUp />} />
+            <Route path="/admin" element={<RoleRoute allow={['hod']}><Department /></RoleRoute>} />
+            <Route path="/home" element={<RoleRoute allow={['professor']}><Overview /></RoleRoute>} />
+            <Route path="/me" element={<RoleRoute allow={['student']}><Me /></RoleRoute>} />
+            {/* Unguarded: the key path has a profile too. */}
+            <Route path="/profile" element={<Profile />} />
+            <Route path="/analytics" element={<RoleRoute allow={['hod', 'professor', 'student']}><Analytics /></RoleRoute>} />
+            {/* Unguarded: the key path opens rooms, and this screen recovers one after a reload. */}
+            <Route path="/rooms" element={<Rooms />} />
+            {Gallery && <Route path="/__gallery/*" element={<React.Suspense fallback={null}><Gallery /></React.Suspense>} />}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </React.Suspense>
+      </BrowserRouter>
+    </TipProvider>
   </React.StrictMode>,
 );

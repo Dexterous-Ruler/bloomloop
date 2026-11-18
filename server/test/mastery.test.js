@@ -334,15 +334,32 @@ describe('applyAnswer', () => {
     const entry = next.history.at(-1);
 
     // bloom lives on the entry so rolling accuracy needs no join back to the
-    // bank on the hot path.
+    // bank on the hot path; topic and kind for the same reason in analytics.
     assert.deepEqual(entry, {
       questionId: '42',
       bloom: 'understand',
+      topic: '',
+      kind: 'mcq',
       correct: false,
       at: '2026-08-09T09:00:00.000Z',
     });
     assert.equal(next.levels.understand.seen, 1);
     assert.equal(next.levels.understand.correct, 0);
+  });
+
+  test('carries topic, kind and the answer key on the history entry', () => {
+    const { profile: next } = applyAnswer(emptyProfile({ sessionId: 'sess-1', rollNo: '17' }), {
+      questionId: 'q1',
+      bloom: 'apply',
+      correct: true,
+      topic: 'Sliding window',
+      kind: 'match',
+      answerId: 'k-12345678',
+    });
+    const entry = next.history.at(-1);
+    assert.equal(entry.topic, 'Sliding window');
+    assert.equal(entry.kind, 'match');
+    assert.equal(entry.answerId, 'k-12345678');
   });
 
   test('throws on an unknown bloom level and leaves the profile alone', () => {

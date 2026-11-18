@@ -31,8 +31,9 @@ optional** — see [Running without keys](#running-without-keys).
 ### Supabase setup (one time)
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. **SQL Editor → New query →** paste all of [`supabase/schema.sql`](supabase/schema.sql)
-   → **Run**. It creates the four tables and is safe to re-run.
+2. **SQL Editor → New query →** run every file in [`supabase/migrations/`](supabase/migrations/)
+   in number order (`0000` … `0008`). Each file is safe to re-run; see
+   [`supabase/README.md`](supabase/README.md).
 3. **Project Settings → Data API →** copy the *Project URL* into `SUPABASE_URL`.
 4. **Project Settings → API Keys →** copy the **`service_role`** key into
    `SUPABASE_SERVICE_ROLE_KEY`.
@@ -219,6 +220,16 @@ server/src/
   seed.js               demo seeding
   scripts/smoke.mjs     end-to-end driver
 client/src/
-  teacher/              console: upload, bank review, session, live grid
-  student/              phone view: join, question, done
+  lib/                  data layer: api, auth, socket, drafts, theme, motion
+  styles/               tokens.css is the palette and the direction; one file per area
+  ui/                   component set (Radix behaviour, lucide icons) and level charts
+  shell/                the frame: top strip, bottom dock
+  fx/                   Tubes (liquid), Marbles (Rapier 2D), Drum (ammo.js + three.js), Mark (Lottie)
+  teach/                console: material, questions, room, projector, live class
+  learn/                phone view: join, question, level change, finish
+  account/              sign-in, dashboards, rooms, analytics, profile
+  dev/                  /__gallery: account screens with sample data (dev builds only)
 ```
+
+The interface was audited with the unslop passes by Damir Sokolovsky
+([@heydamir](https://x.com/heydamir)), CC BY 4.0.

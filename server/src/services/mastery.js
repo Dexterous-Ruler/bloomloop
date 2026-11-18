@@ -182,11 +182,14 @@ export function sessionSettings(session = {}) {
   };
 }
 
-export function emptyProfile({ sessionId, rollNo, name = '' }) {
+export function emptyProfile({ sessionId, rollNo, name = '', accountId = null }) {
   return {
     sessionId,
     rollNo: String(rollNo).trim(),
     name,
+    // The student account this roll number belongs to on the room owner's
+    // roster, when there is one. Null for a guest roll number.
+    accountId,
     levels: emptyLevels(),
     workingLevel: COLD_START_LEVEL,
     history: [],
@@ -212,6 +215,7 @@ export function hydrate(raw = {}) {
     reason: raw.reason ?? '',
     served: normaliseServed(raw.served),
     integrity: Array.isArray(raw.integrity) ? raw.integrity.slice() : [],
+    accountId: raw.accountId ?? null,
   };
 }
 
@@ -456,7 +460,10 @@ export function recomputeWorkingLevel(profile) {
  */
 export function applyAnswer(
   profile,
-  { questionId, bloom, correct, score = null, at = null, tries = 1, redemption = false },
+  {
+    questionId, bloom, correct, score = null, at = null, tries = 1, redemption = false,
+    topic = '', kind = 'mcq', answerId = '',
+  },
 ) {
   const next = hydrate(profile);
 
@@ -483,6 +490,11 @@ export function applyAnswer(
   const entry = {
     questionId: String(questionId),
     bloom,
+    // Carried on the entry so topic analytics and the evidence trail do not
+    // need a join back to a question that may since have been edited.
+    topic: String(topic ?? ''),
+    kind: String(kind ?? 'mcq'),
+    ...(answerId ? { answerId: String(answerId) } : {}),
     correct: Boolean(correct),
     ...(score === null ? {} : { score: Math.round(score * 100) / 100 }),
     // Written only when it is true. "Right on the third go" is different
@@ -549,7 +561,7 @@ export function applyAnswer(
  * promotion nor demotion. The working level is not even recomputed - nothing
  * happened that could have changed it.
  */
-export function recordUngraded(profile, { questionId, bloom, at = null }) {
+export function recordUngraded(profile, { questionId, bloom, at = null, topic = '', kind = 'poll', answerId = '' }) {
   const next = hydrate(profile);
   if (!LEVELS.includes(bloom)) {
     throw new Error(`recordUngraded: unknown bloom level "${bloom}"`);
@@ -562,6 +574,9 @@ export function recordUngraded(profile, { questionId, bloom, at = null }) {
       // walks the list. On an ungraded item the tag is POSITIONAL - where in the
       // lesson it sat - and `ungraded` beside it is what says so.
       bloom,
+      topic: String(topic ?? ''),
+      kind: String(kind ?? 'poll'),
+      ...(answerId ? { answerId: String(answerId) } : {}),
       ungraded: true,
       at: at ?? new Date().toISOString(),
     },

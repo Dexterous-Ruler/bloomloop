@@ -23,9 +23,13 @@ import {
   buildTree,
   countAccounts,
   createAccount,
+  getAccommodations,
+  getAccount,
   googleSubLinked,
+  setAccommodations,
   updateAccount,
 } from '../services/accounts.js';
+import { SUPPORTS } from '../accommodations.js';
 
 const router = express.Router();
 
@@ -375,6 +379,44 @@ router.patch('/account/:id', requireAuth, async (req, res, next) => {
     const account = await updateAccount(targetId, patch);
     if (!account) throw fail('No such account.', 404);
     res.json({ account });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * A student's supports: read and set by the professor they report to.
+ *
+ * Only that professor, and only for their own students: an HOD can see the
+ * account but the supports are a teaching decision made by the person in the
+ * room. The body is normalised server-side, so unknown keys and anything other
+ * than `true` are dropped before they reach the column.
+ */
+async function ownStudent(req) {
+  const viewer = await loadAccount(req);
+  const targetId = trimmed(req.params.id);
+  if (!isRecordId(targetId)) throw fail('That is not a valid account id.');
+  const target = await getAccount(targetId);
+  if (!target || target.role !== 'student' || target.reportsTo !== viewer.id) {
+    throw fail('That student is not on your roster.', 404);
+  }
+  return target;
+}
+
+router.get('/students/:id/accommodations', requireRole('professor'), async (req, res, next) => {
+  try {
+    const target = await ownStudent(req);
+    res.json({ accommodations: await getAccommodations(target.id), supports: SUPPORTS });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/students/:id/accommodations', requireRole('professor'), async (req, res, next) => {
+  try {
+    const target = await ownStudent(req);
+    const accommodations = await setAccommodations(target.id, req.body?.accommodations);
+    res.json({ accommodations });
   } catch (err) {
     next(err);
   }

@@ -24,6 +24,7 @@ import {
   REDEMPTION_RULE,
 } from '../services/mastery.js';
 import { summarise, HONESTY } from '../services/integrity.js';
+import { ARCHIVE_LIMIT_BYTES, buildRoomArchive } from '../services/archive.js';
 import { isRecordId } from '../ids.js';
 // The v2 guard, not the v1 key-only one: a professor who signed in properly
 // carries a bearer token and no shared key, and the v1 guard 401s her out of
@@ -213,6 +214,37 @@ router.post('/', requireTeacher, async (req, res, next) => {
   }
 });
 
+/**
+ * Deleted rooms, newest first: who, when and how big, without the data. Only
+ * archives of rooms the caller could read are listed, by the same ownership
+ * rule as live rooms, so a professor never sees another professor's.
+ *
+ * Declared before GET /:code, which would otherwise take "archives" as a code.
+ */
+router.get('/archives', requireTeacher, async (req, res, next) => {
+  try {
+    const archives = await readable(req.viewer, await getRepo().listRoomArchives());
+    res.json({ archives, limitBytes: ARCHIVE_LIMIT_BYTES });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** One deleted room as its JSON file. Same answer for "not yours" and "not there". */
+router.get('/archives/:id', requireTeacher, async (req, res, next) => {
+  try {
+    const id = String(req.params.id ?? '');
+    const archive = isRecordId(id) ? await getRepo().getRoomArchive(id) : null;
+    await assertCanRead(req.viewer, archive, 'That archive');
+    const day = String(archive.archivedAt ?? '').slice(0, 10) || 'undated';
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="bloomloop-${archive.code}-archive-${day}.json"`);
+    res.send(JSON.stringify(archive.data));
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:code', async (req, res, next) => {
   try {
     const repo = getRepo();
@@ -352,6 +384,12 @@ async function setPaused(req, res, next, paused) {
       io.to(`session:${session.code}`).emit(paused ? 'session:paused' : 'session:resumed', {
         code: session.code,
       });
+      // The teacher's own screens watch a different room; without this the Live
+      // screen never learned the class had been paused from elsewhere.
+      io.to(`teacher:${session.code}`).emit('teacher:status', {
+        code: session.code,
+        status: paused ? 'paused' : 'open',
+      });
     }
 
     res.json({ session: updated ?? session });
@@ -364,11 +402,16 @@ router.post('/:code/pause', requireTeacher, (req, res, next) => setPaused(req, r
 router.post('/:code/resume', requireTeacher, (req, res, next) => setPaused(req, res, next, false));
 
 /**
- * Delete a room and everything recorded in it.
+ * Delete a room, keeping everything recorded in it as a JSON archive.
  *
- * Irreversible and it takes the students' results with it, so it demands
- * ?confirm=CODE - the teacher has to type the room code back. A single click
- * that silently destroys a class's marks is not a button worth having.
+ * The room, its profiles and its answers leave the live tables, so it is gone
+ * from every list and dashboard. Before any of that, the whole room is written
+ * to one compact JSON document (services/archive.js) and the delete only goes
+ * ahead once that write has succeeded: if the archive cannot be written, or
+ * would be over the 1 MB ceiling, nothing is deleted.
+ *
+ * Still asks for ?confirm=CODE - the teacher types the room code back - because
+ * the room does disappear from the live screens for good.
  */
 router.delete('/:code', requireTeacher, async (req, res, next) => {
   try {
@@ -378,19 +421,35 @@ router.delete('/:code', requireTeacher, async (req, res, next) => {
     const typed = String(req.query.confirm ?? '').trim().toUpperCase();
     if (typed !== session.code) {
       throw fail(
-        `Deleting ${session.code} also deletes every result recorded in it. Send ?confirm=${session.code} to go ahead.`,
+        `Deleting ${session.code} removes it from your rooms; what was recorded in it is kept as a JSON archive. Send ?confirm=${session.code} to go ahead.`,
         400,
       );
     }
 
-    const profiles = await getRepo().listProfiles(session._id);
-    await getRepo().deleteSession(session._id);
+    const repo = getRepo();
+    const profiles = await repo.listProfiles(session._id);
+    // Archive first. A failure here throws before anything is deleted.
+    const { doc, bytes } = await buildRoomArchive(repo, session, { archivedBy: req.viewer?.id ?? null });
+    if (bytes > ARCHIVE_LIMIT_BYTES) {
+      throw fail(
+        `${session.code} was not deleted: its archive would be ${(bytes / (1024 * 1024)).toFixed(2)} MB, over the 1 MB limit. `
+          + 'Nothing was changed. Export the results as CSV and close the room instead.',
+        413,
+      );
+    }
+    const archive = await repo.saveRoomArchive(doc);
+    await repo.deleteSession(session._id);
     releaseSession({ sessionId: session._id, code: session.code });
 
     const io = req.app.get('io');
     if (io) io.to(`session:${session.code}`).emit('session:closed', {});
 
-    res.json({ ok: true, code: session.code, deletedProfiles: profiles.length });
+    res.json({
+      ok: true,
+      code: session.code,
+      deletedProfiles: profiles.length,
+      archive: { id: archive._id, bytes: archive.bytes, archivedAt: archive.archivedAt },
+    });
   } catch (err) {
     next(err);
   }
@@ -439,7 +498,10 @@ router.post('/:code/close', requireTeacher, async (req, res, next) => {
     releaseSession({ sessionId: session._id, code: session.code });
 
     const io = req.app.get('io');
-    if (io) io.to(`session:${session.code}`).emit('session:closed', {});
+    if (io) {
+      io.to(`session:${session.code}`).emit('session:closed', {});
+      io.to(`teacher:${session.code}`).emit('teacher:status', { code: session.code, status: 'closed' });
+    }
 
     res.json({ session: updated ?? session });
   } catch (err) {

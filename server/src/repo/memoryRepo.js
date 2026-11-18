@@ -14,6 +14,9 @@ export function createMemoryRepo() {
   const questions = new Map();
   const sessions = new Map();
   const profiles = new Map(); // key: `${sessionId}:${rollNo}`
+  const answers = new Map(); // key: _id
+  const answerKeys = new Map(); // `${sessionId}:${answerKey}` -> _id
+  const archives = new Map(); // key: _id; one per sessionId
 
   return {
     kind: 'memory',
@@ -121,6 +124,12 @@ export function createMemoryRepo() {
       for (const [pid, profile] of profiles) {
         if (String(profile.sessionId) === key) profiles.delete(pid);
       }
+      for (const [aid, answer] of answers) {
+        if (String(answer.sessionId) === key) {
+          answers.delete(aid);
+          answerKeys.delete(`${key}:${answer.answerKey}`);
+        }
+      }
       return sessions.delete(key);
     },
 
@@ -146,6 +155,99 @@ export function createMemoryRepo() {
           .filter((p) => p.sessionId === String(sessionId))
           .sort((a, b) => String(a.rollNo).localeCompare(String(b.rollNo), undefined, { numeric: true })),
       );
+    },
+
+    // -- answers (append-only evidence) --
+    // Same contract as the Postgres table: unique on (sessionId, answerKey), so a
+    // resend returns the stored row with `duplicate: true` instead of a second one.
+    async recordAnswer(doc) {
+      const k = `${doc.sessionId}:${doc.answerKey}`;
+      const held = answerKeys.get(k);
+      if (held) return { answer: clone(answers.get(held)), duplicate: true };
+      const _id = oid();
+      const rec = {
+        _id,
+        attempt: 1,
+        final: true,
+        correct: null,
+        score: null,
+        detail: '',
+        ungraded: false,
+        language: 'en',
+        questionSource: 'llm',
+        reviewStatus: 'auto',
+        autoCorrect: null,
+        autoScore: null,
+        autoDetail: '',
+        reviewedBy: null,
+        reviewedAt: null,
+        reviewNote: '',
+        confidence: null,
+        answeredAt: new Date().toISOString(),
+        ...clone(doc),
+        sessionId: String(doc.sessionId),
+        rollNo: String(doc.rollNo),
+      };
+      answers.set(_id, rec);
+      answerKeys.set(k, _id);
+      return { answer: clone(rec), duplicate: false };
+    },
+
+    async getAnswerByKey(sessionId, answerKey) {
+      const id = answerKeys.get(`${sessionId}:${answerKey}`);
+      return clone(id ? answers.get(id) : null);
+    },
+
+    async getAnswer(id) {
+      return clone(answers.get(String(id)) ?? null);
+    },
+
+    async listAnswers({ sessionId, sessionIds, rollNo, accountId, reviewStatus, limit = 2000, offset = 0 } = {}) {
+      const ids = Array.isArray(sessionIds) ? new Set(sessionIds.map(String)) : null;
+      return clone(
+        [...answers.values()]
+          .filter((a) => (!sessionId || a.sessionId === String(sessionId))
+            && (!ids || ids.has(a.sessionId))
+            && (!rollNo || a.rollNo === String(rollNo))
+            && (!accountId || a.accountId === accountId)
+            && (!reviewStatus || a.reviewStatus === reviewStatus))
+          .sort((a, b) => (a.answeredAt < b.answeredAt ? -1 : a.answeredAt > b.answeredAt ? 1 : 0))
+          .slice(offset, offset + limit),
+      );
+    },
+
+    // -- room archives: one JSON document per deleted room --
+    // Written before the room's live rows are deleted. One per room: a retried
+    // delete replaces the archive it wrote the first time rather than adding a
+    // second copy.
+    async saveRoomArchive(doc) {
+      const existing = [...archives.values()].find((a) => a.sessionId === String(doc.sessionId));
+      const _id = existing?._id ?? oid();
+      const rec = { ...clone(doc), _id, sessionId: String(doc.sessionId) };
+      archives.set(_id, rec);
+      const { data, ...meta } = rec;
+      return clone(meta);
+    },
+
+    /** Newest first, without the data: a list is for choosing one. */
+    async listRoomArchives() {
+      return clone([...archives.values()]
+        .map(({ data, ...meta }) => meta)
+        .sort((a, b) => (a.archivedAt < b.archivedAt ? 1 : -1)));
+    },
+
+    async getRoomArchive(id) {
+      return clone(archives.get(String(id)) ?? null);
+    },
+
+    // Review fields only: the response and the automatic assessment never change.
+    async updateAnswer(id, patch) {
+      const rec = answers.get(String(id));
+      if (!rec) return null;
+      for (const k of ['correct', 'score', 'reviewStatus', 'reviewedBy', 'reviewedAt', 'reviewNote', 'final']) {
+        if (patch[k] !== undefined) rec[k] = patch[k];
+      }
+      return clone(rec);
     },
   };
 }

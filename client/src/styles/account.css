@@ -1,0 +1,217 @@
+/* The three account homes: department, overview, rooms. Layout only, and only
+   what the shared component set does not already say. */
+
+/* ------------------------------------------------------------- page bands */
+
+/* The few figures that describe the whole, and what they count. */
+.dash-strip { display: flex; flex-direction: column; gap: 12px; margin-bottom: 32px; }
+.dash-strip .t-meta { max-width: 80ch; }
+@media (min-width: 1081px) {
+  .dash-figs > .fig + .fig { padding-left: 40px; border-left: 1px solid var(--line); }
+}
+/* The same figures inside an inspector: two across, so they line up. */
+.figs.dash-figs-tight { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; }
+
+/* What is in the console beside what has been run in it. The columns are the
+   same as .split, so the page keeps one grid from top to bottom. */
+.dash-top { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 24px; align-items: start; margin-bottom: 24px; }
+.dash-running { margin-bottom: 24px; }
+
+.dash-notes:empty { display: none; }
+.dash-notes { margin-bottom: 24px; }
+
+@media (max-width: 1080px) {
+  .dash-top { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Six levels in a narrow column: three and three, so the lower-order levels
+   sit over the higher-order ones and a count like 3460/4380 has room. */
+.dash-levels .lbars { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 8px; }
+
+/* ------------------------------------------------------------ small parts */
+
+.dash-pad { padding: 8px; }
+.dash-block { display: block; }
+.dash-flush > .rw { padding-left: 0; padding-right: 0; border-radius: 0; }
+.card-head.dash-wrap { flex-wrap: wrap; row-gap: 12px; }
+/* The title keeps its own width; what sits beside it is what wraps. */
+.card-head.dash-wrap h3 { flex: 1 0 auto; }
+.dash-linkbtn { padding: 0; border: 0; background: transparent; cursor: pointer; font: inherit; color: inherit; }
+.dash-sub { display: block; font: 400 12px/16px var(--font); color: var(--text-3); }
+.dash-all { user-select: all; }
+.dash-skelrows { display: flex; flex-direction: column; gap: 20px; padding: 20px; }
+
+/* Live is the one filled chip on a screen of rooms. */
+.chip.dash-live { background: var(--text); color: var(--bg); }
+
+/* A segmented control that may be wider than a phone: it scrolls in its own
+   box and never pushes the page sideways. */
+.dash-segbox { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.dash-segbox::-webkit-scrollbar { display: none; }
+.dash-segbox .seg { max-width: none; }
+
+/* Filter on the left, search on the right; stacked on a phone. */
+.dash-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+.dash-tools .search { margin-left: auto; width: 300px; max-width: 100%; }
+.dash-tools.is-inset { margin: 0; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+
+/* A name over its code, beside an avatar. */
+.dash-who { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.dash-who-txt { display: flex; flex-direction: column; min-width: 0; }
+.dash-rowbtn {
+  display: flex; align-items: center; gap: 12px; min-width: 0; max-width: 100%;
+  padding: 0; border: 0; border-radius: var(--r-1); background: transparent; text-align: left; cursor: pointer;
+}
+
+/* The numbered steps of a first run. */
+.dash-step {
+  width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: var(--r-full);
+  border: 1px solid var(--line-2); font: 500 13px/1 var(--mono); color: var(--text-2);
+}
+.dash-stepline { align-items: flex-start; gap: 16px; padding: 16px 12px; }
+.dash-stepline .rw-main { max-width: 64ch; }
+.dash-stepline .btn { margin-left: auto; }
+
+/* A room that is running, and the way back into it. */
+.dash-liverow { gap: 16px; padding: 12px; }
+
+/* A room in a narrow column: what it was and its state, then its figures. */
+.rw.dash-roomline { flex-direction: column; align-items: stretch; gap: 4px; }
+.dash-roomline-top { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.dash-roomline-top > .clip { flex: 1; }
+.dash-roomline-top > .mono { font-size: 12px; }
+
+/* ------------------------------------------------------------------ tables */
+
+.dash-tbl td.r, .dash-rooms td.r { font-variant-numeric: tabular-nums; }
+.dash-tbl td.c-main { width: 44%; max-width: 0; }
+.dash-tbl th:first-child, .dash-tbl td:first-child, .dash-rooms th:first-child, .dash-rooms td:first-child { padding-left: 20px; }
+.dash-tbl th:last-child, .dash-tbl td:last-child, .dash-rooms th:last-child, .dash-rooms td:last-child { padding-right: 20px; }
+.dash-students td.c-main { width: 70%; }
+
+.dash-rooms td.c-title { width: 34%; max-width: 0; }
+.dash-rooms td.c-when { white-space: nowrap; color: var(--text-2); }
+.dash-rooms td.r .dash-sub, .dash-rooms td.c-state .dash-sub { white-space: nowrap; }
+.dash-rooms td.c-go, .dash-rooms td.c-more { width: 1%; white-space: nowrap; }
+.dash-rooms td.c-go { padding-right: 0; text-align: right; }
+.dash-rooms td.c-more { padding-left: 4px; }
+.dash-rooms tr[aria-busy='true'] td:not(.c-go):not(.c-more) { opacity: 0.6; }
+
+/* On a phone a row of columns becomes a short stack: who or what it is on the
+   first line, then each figure with its own label. */
+@media (max-width: 760px) {
+  .dash-tbl, .dash-tbl tbody { display: block; }
+  .dash-tbl thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .dash-tbl tr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .dash-tbl tr:last-child { border-bottom: 0; }
+  .dash-tbl td, .dash-tbl td.c-main, .dash-tbl td:first-child, .dash-tbl td:last-child {
+    display: block; width: auto; max-width: none; padding: 0; border: 0; text-align: left;
+  }
+  .dash-tbl td.c-main { flex: 1 0 100%; min-width: 0; margin-bottom: 4px; }
+  .dash-tbl td[data-label]::before { content: attr(data-label); margin-right: 8px; color: var(--text-3); }
+
+  /* Two columns fit on one line: the roll number rides beside the name. */
+  .dash-students td.c-main { flex: 1 1 0; margin-bottom: 0; }
+}
+
+@media (max-width: 960px) {
+  .dash-rooms, .dash-rooms tbody { display: block; }
+  .dash-rooms thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .dash-rooms tr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .dash-rooms tr:last-child { border-bottom: 0; }
+  /* A break after the figures, so "when" and the way in share the last line. */
+  .dash-rooms tr::before { content: ''; order: 6; flex: 1 0 100%; height: 0; margin-top: -4px; }
+  .dash-rooms td, .dash-rooms td:first-child, .dash-rooms td:last-child, .dash-rooms td.c-title, .dash-rooms td.c-go, .dash-rooms td.c-more {
+    display: block; width: auto; max-width: none; padding: 0; border: 0; text-align: left;
+  }
+  .dash-rooms td:empty { display: none; }
+  .dash-rooms td.c-code { order: 1; }
+  .dash-rooms td.c-state { order: 2; display: flex; align-items: center; gap: 8px; }
+  .dash-rooms td.c-more { order: 3; margin-left: auto; }
+  .dash-rooms td.c-title { order: 4; flex: 1 0 100%; min-width: 0; }
+  .dash-rooms td.c-fact { order: 5; }
+  .dash-rooms td.c-fact::before { content: attr(data-label); margin-right: 8px; color: var(--text-3); }
+  .dash-rooms td.c-fact .dash-sub { display: inline; margin-left: 8px; }
+  .dash-rooms td.c-when { order: 7; flex: 1 1 0; white-space: normal; }
+  .dash-rooms td.c-go { order: 8; }
+}
+
+/* --------------------------------------------------------------- inspector */
+
+.dash-insp { display: flex; flex-direction: column; min-width: 0; }
+/* Held beside a long list, it must never be taller than the window: what did
+   not fit would be out of reach until the list ended. It scrolls instead, and
+   stops short of the dock. */
+@media (min-width: 1081px) {
+  .dash-insp.sticky {
+    max-height: calc(100dvh - var(--strip-h) - var(--dock-h) - 64px); overflow-y: auto;
+    scrollbar-width: thin; scrollbar-color: var(--line-2) transparent;
+  }
+}
+.dash-insp-head { display: flex; align-items: center; gap: 12px; padding: 20px; min-width: 0; }
+.dash-sec { display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-top: 1px solid var(--line); min-width: 0; }
+/* Inside a sheet the dialog already supplies the gutter. */
+.dash-insp.is-flat .dash-sec { padding-left: 0; padding-right: 0; }
+.dash-insp.is-flat .dash-sec:first-child { padding-top: 0; border-top: 0; }
+
+.dash-kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; font: 400 13px/20px var(--font); }
+.dash-kv dt { color: var(--text-3); }
+.dash-kv dd { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------------ invites */
+
+/* A code to hand over. Large, mono, selectable in one click. */
+.dash-codeblock { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+.dash-code { font: 500 28px/34px var(--mono); letter-spacing: 0.08em; color: var(--text); user-select: all; overflow-wrap: anywhere; }
+/* A code is never broken across two lines to make room for its own button. */
+@media (max-width: 560px) {
+  .dash-codeblock > .grow { flex: 1 0 100%; }
+  .dash-codeblock > .btn { flex: 1 1 100%; }
+}
+
+/* A dialog's actions. They wrap when a phone cannot hold them on one line,
+   which the shared footer on its own does not. */
+.dash-acts { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
+.dash-box { border: 1px solid var(--line); border-radius: var(--r-2); }
+.dash-box.rows { padding: 4px; }
+.dash-scroll { max-height: 280px; overflow-y: auto; }
+.dash-paste { min-height: 132px; font-family: var(--mono); font-size: 13px; }
+
+/* A roster to tick: the box, the student, the roll number that goes with them. */
+.dash-picks { display: flex; flex-direction: column; }
+.dash-pick { flex: none; display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 12px; }
+.dash-pick + .dash-pick { box-shadow: 0 -1px 0 var(--line); }
+.dash-pick label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; cursor: pointer; }
+.dash-pick input:focus-visible + .tick { outline: 2px solid var(--text); outline-offset: 2px; }
+.dash-pick .input { width: 132px; flex: none; }
+.dash-pick[data-off='true'] label { cursor: default; color: var(--text-3); }
+.dash-pick[data-off='true'] .strong { color: var(--text-3); }
+
+/* ------------------------------------------------------------------- phone */
+
+@media (max-width: 760px) {
+  /* The page's own actions take the full line, the main one widest. */
+  .page-head .acts.dash-headacts { width: 100%; margin-left: 0; }
+  .dash-headacts .btn:not(.btn-icon) { flex: 1 1 auto; }
+
+  /* Thumb-sized: nothing pressable on these screens is under 40px. */
+  .btn.dash-tap { height: 40px; min-width: 40px; }
+  .dash-segbox .seg > button { height: 40px; }
+  .dash-tools .search { width: 100%; margin-left: 0; height: 40px; }
+  .dash-tools.is-inset { padding: 12px 16px; }
+  .dash-rowbtn { min-height: 40px; }
+
+  .dash-liverow, .dash-stepline { flex-wrap: wrap; }
+  .dash-liverow .rw-main { flex: 1 0 100%; order: 3; }
+  .dash-liverow .btn { order: 4; width: 100%; }
+  .dash-stepline .rw-main { flex: 1 1 0; }
+  .dash-stepline .btn { flex: 1 1 100%; margin-left: 44px; }
+
+  .dash-acts .btn { flex: 1 1 auto; height: 40px; }
+
+  .dash-pick { flex-wrap: wrap; }
+  .dash-pick label { flex: 1 0 100%; min-height: 40px; }
+  .dash-pick .chip { margin-left: 30px; }
+  .dash-pick .input { flex: 1 1 100%; width: auto; min-width: 0; height: 40px; margin-left: 30px; }
+}

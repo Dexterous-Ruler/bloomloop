@@ -20,7 +20,7 @@ export function getRepo() {
 export async function initStore({ log = console.log } = {}) {
   if (hasSupabase()) {
     try {
-      // Probe before committing: a wrong key or an unrun schema.sql should fail
+      // Probe before committing: a wrong key or an unrun migration should fail
       // here, at boot, and not on the first student join.
       await probeSupabase();
       repo = createSupabaseRepo();
@@ -29,7 +29,7 @@ export async function initStore({ log = console.log } = {}) {
     } catch (err) {
       log(`[store] Supabase connection FAILED: ${err.message}`);
       log('[store] Check SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY, and that');
-      log('[store] supabase/schema.sql has been run in the SQL editor.');
+      log('[store] every file in supabase/migrations/ has been run, in order.');
     }
   }
 

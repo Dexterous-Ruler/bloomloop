@@ -18,6 +18,12 @@ export default defineConfig({
     // Student page weight is an explicit NFR (report 5.4, under ~100 KB before
     // questions load) - splitting the vendor chunk keeps the student route from
     // dragging in the teacher console.
+    //
+    // The route split itself is in main.jsx, which lazy-loads every screen but
+    // the student's. Do not add '@supabase/supabase-js' here: an entry in this
+    // list takes its dependencies with it, Vite's preload helper among them, so
+    // the student entry would import that chunk and download Supabase again.
+    // Left alone, Rollup keeps it in a chunk only the lazy screens load.
     rollupOptions: {
       output: {
         manualChunks: {
