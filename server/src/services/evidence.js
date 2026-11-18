@@ -85,10 +85,12 @@ export const rollKey = (value) => String(value ?? '').trim().replace(/\s+/g, ' '
  * positions, which only mean something beside the order they were shown in.
  *
  * One limit, stated rather than hidden: the fewer-choices support
- * (accommodations.js) shortens an mcq or multi list for one student, and which
- * options it removed is not stored on the answer. For a student who had it, the
- * list here is the full one, and their response is a position in the shorter
- * list they actually saw.
+ * (accommodations.js) shortens an mcq or multi list for one student. Answers
+ * stored since Phase 2's item statistics keep which options were left
+ * (`shownOptions` on the snapshot, written by the live loop), but this function
+ * does not read it yet. For a student who had the support, the list here is the
+ * full one, and their response is a position in the shorter list they actually
+ * saw; services/itemStats.js does read it, so the option counts are right.
  *
  * A snapshot too broken to rebuild (an old or hand-edited row) comes back as its
  * text alone rather than failing the whole page it is on.

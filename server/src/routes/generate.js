@@ -10,9 +10,10 @@
 import { Router } from 'express';
 
 import { getRepo } from '../repo/index.js';
-import { generateBank } from '../services/generate.js';
+import { generateBank, sourceRefFor } from '../services/generate.js';
 import { planBank, describePlan, PRESETS, CONFIRM_ABOVE } from '../services/plan.js';
 import { PAYLOAD_FIELDS, KINDS_FOR_LEVEL } from '../questionTypes.js';
+import { runChecks, failedChecks } from '../services/checks.js';
 import { assertCanRead, assertCanWrite } from '../ownership.js';
 import { startRun, updateRun, finishRun, failRun, getRun, cleanRunId } from '../services/runs.js';
 
@@ -26,6 +27,9 @@ const router = Router();
 const ownerKeyOf = (req) => String(req.viewer?.id ?? 'legacy-teacher-key');
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
+
+/** A room students are in: open, or paused with its phones still connected (as services/media.js). */
+const RUNNING = ['open', 'paused'];
 
 const cleanTopics = (topics, content) =>
   (Array.isArray(topics) ? topics : (content?.topics ?? []))
@@ -61,7 +65,14 @@ router.post('/preview', async (req, res, next) => {
     if (!list.length) throw fail('Select at least one topic first.', 400);
 
     const plan = planBank(list, spec ?? {});
-    res.json({ plan, describe: describePlan(plan), existing: content ? await repo.countQuestions(content._id) : 0 });
+    res.json({
+      plan,
+      describe: describePlan(plan),
+      existing: content ? await repo.countQuestions(content._id) : 0,
+      // A replacing generate deletes drafts too, so the screen that warns about
+      // the approved questions it replaces should count these as well.
+      existingDrafts: content ? await repo.countQuestions(content._id, { status: 'draft' }) : 0,
+    });
   } catch (err) {
     next(err);
   }
@@ -109,6 +120,22 @@ router.post('/', async (req, res, next) => {
       );
     }
 
+    // Replacing deletes the bank and writes drafts, which no room serves until a
+    // professor approves them. During a class that would leave every phone in
+    // the room with nothing to answer, so it waits for the room to finish.
+    // Checked before generating, so a refusal costs no quota.
+    if (mode === 'replace') {
+      const running = (await repo.listSessionsForContent(content._id)).filter((s) => RUNNING.includes(s.status));
+      if (running.length) {
+        throw fail(
+          `A room on "${content.title}" is running (${running.map((s) => s.code).join(', ')}), and replacing its questions now would leave `
+            + 'every phone in it with nothing to answer: new questions wait for your approval. Close the room first, '
+            + "or add these to the bank with mode 'append'.",
+          409,
+        );
+      }
+    }
+
     // Opened before the first model call so the very first poll finds it, rather
     // than 404ing for the second or two it takes to get going.
     runId = startRun({
@@ -148,23 +175,34 @@ router.post('/', async (req, res, next) => {
           kind: q.kind ?? 'mcq',
           bloom: q.bloom,
           source: q.source,
-          status: 'active',
+          // Never straight into a room: a professor approves it first
+          // (POST /api/bank/question/:id/approve, or approve-all).
+          status: 'draft',
+          model: q.model,
+          sourceRef: sourceRefFor(content, q.topic),
+          createdBy: req.viewer?.id ?? null,
         };
         // Carry whatever this kind needs. Listing only options/answerIdx here is
         // what silently stripped every match, order, blank and open payload.
         if (Array.isArray(q.options)) row.options = q.options;
         if (Number.isInteger(q.answerIdx)) row.answerIdx = q.answerIdx;
         for (const f of PAYLOAD_FIELDS) if (q[f] !== undefined) row[f] = q[f];
+        row.checks = runChecks(row);
         return row;
       }),
     );
 
+    // bankCount stays what a room can serve: approved questions only.
     const bankCount = await repo.countQuestions(content._id);
+    const drafts = await repo.countQuestions(content._id, { status: 'draft' });
     finishRun(runId, { written: inserted.length });
 
     res.json({
       runId,
       bankCount,
+      drafts,
+      // How many of the new drafts failed at least one rule check.
+      flagged: inserted.filter((q) => failedChecks(q.checks).length > 0).length,
       generated: inserted.length,
       removed,
       mode,

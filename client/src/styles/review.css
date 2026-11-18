@@ -1,0 +1,218 @@
+/* The review queue: written answers a professor confirms or changes.
+   Everything here is prefixed rv-.
+
+   One forest brief says what is waiting. Under it, two columns: the queue, as
+   separate glass items grouped by the day they were written (a title, the
+   answer itself as the muted line, a meta line, the mark on the right), and
+   the open answer held in view beside it with the decision at its foot. On a
+   narrower window the open answer comes up as a sheet instead. */
+
+/* --------------------------------------------------------------- page head */
+
+.rv-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rv-room { display: flex; min-width: 0; }
+.rv-room .select { width: auto; max-width: 280px; height: 32px; }
+.rv-crumb-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--line-2); }
+.rv-crumb-dot[data-on] { background: var(--warn-fill); }
+
+/* --------------------------------------------------------------- the brief */
+
+.rv-brief { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr); gap: 28px 36px; align-items: stretch; }
+.rv-say { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.rv-lead { font: 700 22px/1.3 var(--font); letter-spacing: -0.015em; color: var(--on-panel); max-width: 38ch; text-wrap: pretty; }
+.rv-lead em { font-style: normal; color: var(--mint); }
+.rv-say .brief { max-width: 62ch; }
+.rv-say-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 4px; }
+
+.rv-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-content: start; }
+.rv-tiles .ptile > b { white-space: nowrap; }
+.rv-tiles .ptile .spark { margin-top: auto; }
+.rv-tiles .ptile > small { flex-wrap: wrap; justify-content: flex-start; gap: 2px 6px; }
+.rv-ptile-wide { grid-column: span 2; }
+.rv-ptile-wide > b { font-size: 22px; }
+.rv-ptile-skel { min-height: 92px; }
+.rv-skel-dark { background: linear-gradient(90deg, rgba(255, 255, 255, 0.06) 25%, rgba(255, 255, 255, 0.12) 37%, rgba(255, 255, 255, 0.06) 63%); background-size: 400% 100%; }
+
+@media (max-width: 1180px) {
+  .rv-brief { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ------------------------------------------------------------ two columns */
+
+.rv-work { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 460px); gap: 20px; align-items: start; }
+.rv-work.is-solo { grid-template-columns: minmax(0, 1fr); }
+
+/* --------------------------------------------------------------- the queue */
+
+.rv-queue { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.rv-queue-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 0 4px; }
+.rv-keys { display: inline-flex; align-items: center; gap: 5px; font: 500 11.5px/1 var(--font); color: var(--text-4); }
+.rv-keys .kbd + .kbd { margin-left: 0; }
+.rv-keys .kbd:nth-of-type(3) { margin-left: 8px; }
+@media (hover: none) { .rv-keys { display: none; } }
+
+.rv-list { display: flex; flex-direction: column; gap: 22px; border-radius: var(--r-4); container-type: inline-size; }
+.rv-list:focus { outline: none; }
+.rv-day { display: flex; flex-direction: column; gap: 8px; }
+.rv-day-h { display: flex; align-items: center; gap: 10px; padding: 0 4px; font: 600 11px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
+.rv-day-h::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--primary); flex: none; }
+.rv-day-h > span { font: 500 12px/1 var(--font); letter-spacing: 0; text-transform: none; color: var(--text-4); }
+
+.rv-item {
+  position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center;
+  padding: 16px 20px; border-radius: var(--r-4); cursor: pointer;
+  background: linear-gradient(180deg, var(--glass), color-mix(in srgb, var(--glass) 80%, transparent));
+  backdrop-filter: blur(14px) saturate(1.3); -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  border: 1px solid var(--glass-line); box-shadow: var(--sh-2), var(--glass-in);
+  transition: transform var(--t-2) var(--ease), border-color var(--t-2) var(--ease), box-shadow var(--t-2) var(--ease), background var(--t-2) var(--ease);
+}
+.rv-item:hover { border-color: var(--line-2); transform: translateY(-1px); }
+.rv-item[data-open] { border-color: color-mix(in srgb, var(--primary) 55%, transparent); background: linear-gradient(180deg, color-mix(in srgb, var(--primary-soft) 70%, var(--surface)), color-mix(in srgb, var(--primary-soft) 45%, var(--surface))); }
+.rv-item[data-open]::before { content: ''; position: absolute; left: -1px; top: 14px; bottom: 14px; width: 3px; border-radius: 0 3px 3px 0; background: var(--primary); }
+/* Where the keys are, when the list has focus. */
+.rv-list:focus-visible .rv-item[aria-selected='true'] { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.rv-item-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.rv-item-t { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.rv-item-t > b { font: 600 15px/1.3 var(--font); letter-spacing: -0.01em; color: var(--text); }
+.rv-roll { flex: none; font: 500 11.5px/1 var(--mono); letter-spacing: 0.02em; color: var(--text-3); }
+.rv-item-said {
+  font: 400 13px/1.5 var(--font); color: var(--text-2); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.rv-item-note {
+  padding-left: 10px; border-left: 2px solid var(--primary); font: 400 12.5px/1.45 var(--font); color: var(--text-3);
+  display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
+}
+.rv-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; font: 400 12px/1.45 var(--font); color: var(--text-4); }
+.rv-meta .lv { height: 20px; padding: 0 7px 0 5px; font-size: 11px; }
+.rv-meta-room { max-width: 26ch; }
+.rv-code { font: 500 11.5px/1 var(--mono); letter-spacing: 0.06em; color: var(--text-2); }
+
+.rv-item-mark { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; min-width: 84px; text-align: right; }
+.rv-item-score { font: 600 22px/1 var(--font); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; color: var(--text); }
+.rv-item-mark > small { font: 500 11.5px/1.3 var(--font); color: var(--text-4); white-space: nowrap; }
+.rv-was { text-decoration: line-through; }
+
+@container (max-width: 520px) {
+  .rv-item { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 14px 16px; }
+  .rv-item-mark { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 10px; min-width: 0; padding-top: 10px; border-top: 1px solid var(--line); text-align: left; }
+  .rv-item-score { font-size: 17px; }
+  .rv-item-mark .chip { order: 9; margin-left: auto; }
+}
+
+.rv-verdict { display: inline-flex; align-items: center; gap: 4px; font: 600 12px/1 var(--font); white-space: nowrap; }
+.rv-verdict[data-v='right'] { color: var(--ok); }
+.rv-verdict[data-v='wrong'] { color: var(--bad); }
+.rv-verdict[data-v='none'] { color: var(--text-3); }
+
+.rv-more { display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 2px; }
+.rv-more .note { align-self: stretch; }
+
+.rv-skel { display: flex; flex-direction: column; gap: 8px; }
+.rv-skel-item { display: flex; gap: 24px; padding: 18px 20px; }
+
+.rv-empty .empty { padding: 56px 24px; }
+
+/* ------------------------------------------------------------- the detail */
+
+.rv-detail {
+  position: sticky; top: 16px; display: flex; flex-direction: column; min-width: 0;
+  max-height: calc(100dvh - var(--strip-h) - 32px); overflow-y: auto; overscroll-behavior: contain;
+}
+.rv-detail:focus { outline: none; }
+.rv-detail:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.rv-d-head { display: flex; flex-direction: column; gap: 8px; padding: 20px 22px 16px; border-bottom: 1px solid var(--line); }
+.rv-d-who { display: flex; align-items: center; gap: 12px; min-width: 0; margin-bottom: 4px; }
+.rv-d-who h2 { font: 700 17px/1.3 var(--font); letter-spacing: -0.01em; }
+.rv-d-who .grow { display: flex; flex-direction: column; gap: 3px; }
+
+.rv-d-sec { display: flex; flex-direction: column; gap: 8px; padding: 16px 22px; }
+.rv-d-sec + .rv-d-sec { border-top: 1px solid var(--line); }
+.rv-d-handed { padding-bottom: 0; }
+.rv-d-handed + .rv-d-head { padding-top: 16px; }
+.rv-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font: 600 11px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.rv-label-n { font: 500 11px/1 var(--mono); letter-spacing: 0; text-transform: none; color: var(--text-4); }
+
+.rv-q { font: 600 15px/1.5 var(--font); color: var(--text); overflow-wrap: anywhere; }
+.rv-answer {
+  padding: 12px 14px; border-radius: 10px; background: var(--raised); border: 1px solid var(--line);
+  font: 400 14px/1.6 var(--font); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.rv-stim { max-height: 200px; overflow: auto; padding: 10px 12px; border-left: 2px solid var(--line-2); font: 400 13px/1.6 var(--font); color: var(--text-2); }
+.rv-stim img { max-width: 100%; height: auto; border-radius: 8px; }
+.rv-stim:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.rv-rubric { display: flex; flex-direction: column; gap: 7px; counter-reset: rv-rb; }
+.rv-rubric li { display: flex; align-items: flex-start; gap: 10px; font: 400 13.5px/1.45 var(--font); color: var(--text-2); }
+.rv-rubric li::before {
+  counter-increment: rv-rb; content: counter(rv-rb); flex: none; width: 20px; height: 20px; display: grid; place-items: center; margin-top: -1px;
+  border-radius: 50%; border: 1px solid var(--line-2); font: 500 10.5px/1 var(--mono); color: var(--text-3);
+}
+.rv-model { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; }
+.rv-model p { font: 400 13.5px/1.55 var(--font); color: var(--text-2); }
+
+/* The mark's history: the machine's reading, then each decision, oldest first. */
+.rv-trail { display: flex; flex-direction: column; }
+.rv-trail li { position: relative; display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 10px; padding-bottom: 14px; }
+.rv-trail li:last-child { padding-bottom: 0; }
+.rv-trail li:not(:last-child)::after { content: ''; position: absolute; left: 6px; top: 16px; bottom: 2px; width: 1px; background: var(--line-2); }
+.rv-trail-dot { width: 13px; height: 13px; margin-top: 2px; border-radius: 50%; border: 2px solid var(--line-2); background: var(--surface); }
+.rv-trail li[data-kind='confirm'] .rv-trail-dot { border-color: var(--text-3); }
+.rv-trail li[data-kind='override'] .rv-trail-dot { border-color: var(--primary); background: var(--primary); }
+.rv-trail-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rv-trail-main > b { font: 600 13px/1.35 var(--font); color: var(--text); }
+.rv-trail-mark { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font: 600 12.5px/1.3 var(--font); color: var(--text); font-variant-numeric: tabular-nums; }
+.rv-trail-mark .muted { font-weight: 400; }
+.rv-trail-note { font: 400 12.5px/1.5 var(--font); color: var(--text-2); overflow-wrap: anywhere; }
+.rv-trail-t { font: 500 11px/1.4 var(--mono); color: var(--text-4); white-space: nowrap; }
+
+.rv-linkbtn { border: 0; padding: 0; background: none; cursor: pointer; font: inherit; font-weight: 700; }
+
+/* The decision, at the foot of the answer. */
+.rv-form {
+  display: flex; flex-direction: column; gap: 14px; padding: 18px 22px 20px; margin-top: auto;
+  border-top: 1px solid var(--line); background: color-mix(in srgb, var(--raised) 55%, transparent);
+}
+.rv-form-ro { padding-top: 16px; padding-bottom: 16px; }
+.rv-form > .seg { align-self: stretch; }
+.rv-form > .seg > button { flex: 1; justify-content: center; height: 30px; }
+.rv-change { display: flex; flex-direction: column; gap: 12px; }
+.rv-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.rv-k { min-width: 118px; font: 600 12px/1.3 var(--font); color: var(--text-2); }
+.rv-k-of { font: 500 12px/1.3 var(--font); color: var(--text-3); }
+.rv-row .seg { align-self: auto; }
+.rv-score { width: 96px; font-family: var(--mono); }
+.rv-note-h { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.rv-shown { display: inline-flex; align-items: center; gap: 5px; font: 600 11.5px/1.3 var(--font); color: var(--warn); }
+.rv-note { min-height: 84px; }
+.rv-count { align-self: flex-end; font: 500 11px/1 var(--mono); color: var(--text-4); }
+.rv-count[data-over] { color: var(--bad); }
+.rv-send { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 14px; }
+.rv-result { font: 400 13px/1.4 var(--font); color: var(--text-2); }
+.rv-result .rv-verdict { vertical-align: -2px; }
+.rv-result b { font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.rv-result-bad { color: var(--bad); font-weight: 600; }
+
+.rv-d-none { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 48px 24px; text-align: center; }
+.rv-d-none > b { font: 700 15px/1.35 var(--font); }
+.rv-d-none p { max-width: 36ch; }
+.rv-d-none-ic { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 13px; background: var(--primary-soft); color: var(--primary); }
+
+/* In a sheet the dialog carries the name, and its body the padding. */
+.rv-sheet { display: flex; flex-direction: column; margin: -18px -24px -22px; outline: none; }
+.rv-sheet .rv-d-head { padding-top: 14px; }
+
+/* ---------------------------------------------------------------- phones */
+
+@media (max-width: 640px) {
+  .rv-brief.panel { padding: 22px 18px; }
+  .rv-lead { font-size: 19px; }
+  .rv-say-acts .btn { flex: 1 1 auto; }
+  .rv-acts { width: 100%; }
+  .rv-room { flex: 1 1 160px; }
+  .rv-room .select { width: 100%; max-width: none; }
+  .rv-d-sec, .rv-d-head, .rv-form { padding-left: 16px; padding-right: 16px; }
+  .rv-k { min-width: 0; width: 100%; }
+}

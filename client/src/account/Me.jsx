@@ -5,10 +5,16 @@
  * the ladder lit to the level their last session ended at and the few figures
  * that matter beside it. Under it, their path: every session as a stop on one
  * line, each of which opens to the run of answers behind it. Then how often
- * they were right at each level, and their Google link.
+ * they were right at each level, and their Google link. Last, the evidence:
+ * every answer they gave, newest first, with their professor's note where
+ * there is one, beside the same answers counted by topic and level.
  *
  * The payload is studentDashboard() in server/src/services/dashboard.js. It is
  * shaped by the token: there is no id to pass and no other student to ask for.
+ * The evidence is GET /api/analytics/:id (its topicLevels) and
+ * GET /api/analytics/:id/answers with their own id, which is the only id a
+ * student is allowed; the answers come back with no key, rubric or machine
+ * reading in them, and nothing here leaves a space for one.
  * Two of its states are empty and both are ordinary. An account with no roll
  * number cannot be matched to any session, and one with a roll number has
  * nothing to show until its first. Neither is a failure, so neither is red.
@@ -24,12 +30,15 @@ import { Link } from 'react-router-dom';
 
 import { api } from '../lib/api.js';
 import { LABEL } from '../lib/bloom.js';
+import { reduced } from '../lib/motion.js';
 import { HOME_FOR, ROLE_LABEL } from '../lib/routes.js';
 import AccountShell from '../shell/AccountShell.jsx';
 import { useViewer } from '../shell/viewer.js';
 import { Button, Chip, Empty, Icon, Level, Note, Panel, Section, Spark } from '../ui/index.jsx';
 import { asPct, before, day, dayTime, highest, levelN, plural } from './insightData.js';
-import { BigLadder, LevelRows } from './insightParts.jsx';
+import {
+  AnswerFilters, AnswerList, BigLadder, LevelRows, TopicGrid, TopicGridSkel, useAnswers,
+} from './insightParts.jsx';
 
 /* ------------------------------------------------------------------ pieces */
 
@@ -229,9 +238,88 @@ function Path({ sessions, open, onOpen }) {
   );
 }
 
+/**
+ * Every answer they gave, newest first, beside the same answers counted by
+ * topic and level. A square in the grid narrows the list to that topic at
+ * that level; pressing it again lets go. On a narrow screen the grid comes
+ * first, because it is how the list is narrowed.
+ *
+ * @param topics  null until GET /api/analytics/:id answers, then { data: topicLevels } or { error }
+ * @param reads   how many times the page has been read; a new read asks for the answers again
+ */
+function Evidence({ topics, loadAnswers, reads, onRetry }) {
+  const answers = useAnswers(loadAnswers, loadAnswers ? 'mine' : null, 10, reads);
+  const report = topics?.data ?? null;
+  // A square narrows the list, so it is pressable only while there is a list
+  // to narrow: an empty one (rooms from before answers were kept) has none.
+  const canPick = Boolean(loadAnswers) && !(answers.status === 'ready' && !answers.items.length && !answers.filtered);
+  const list = useRef(null);
+  const pick = (cell) => {
+    answers.setFilters(cell);
+    list.current?.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' });
+  };
+
+  return (
+    <div className="in-two in-ev">
+      {loadAnswers && (
+        <section className="card card-pad in-ev-card" aria-label="Your answers" ref={list}>
+          <div className="in-ev-head">
+            <Section
+              title="Your answers"
+              sub="Every answer you have given, newest first. A written answer stays provisional until your professor has read it."
+            />
+            <AnswerFilters answers={answers} topics={(report?.topics ?? []).map((t) => t.topic)} />
+          </div>
+          <AnswerList
+            answers={answers}
+            view="student"
+            label="Your answers, newest first"
+            empty={report?.source === 'history' ? (
+              <p>
+                <b>None kept one by one yet.</b> Your rooms ran before each answer was stored, so they count in your
+                levels but have no rows here. The next room you sit starts this list.
+              </p>
+            ) : (
+              <p><b>No answers on record yet.</b> Each one you give in a room appears here, newest first, with your professor&rsquo;s note when they leave one.</p>
+            )}
+          />
+        </section>
+      )}
+
+      <section className="card card-pad in-ev-card in-ev-side" aria-label="By topic">
+        <Section
+          title="By topic"
+          sub={canPick && report?.topics?.length
+            ? 'Right of asked, for each topic at each level. Press a square to list those answers.'
+            : 'Right of asked, for each topic at each level.'}
+        />
+        {topics == null ? (
+          <TopicGridSkel />
+        ) : topics.error ? (
+          <div className="in-ans-state" role="alert">
+            <p><b>Your topics did not load.</b> {topics.error}</p>
+            <Button size="sm" icon="refresh" onClick={onRetry}>Try again</Button>
+          </div>
+        ) : report?.topics?.length ? (
+          <TopicGrid
+            report={report}
+            picked={answers.filters}
+            onPick={canPick ? pick : undefined}
+            label="Your right answers of those asked, for each topic at each level"
+          />
+        ) : (
+          <div className="in-ans-state">
+            <p><b>No topic on record yet.</b> A topic is counted when one of your marked answers carries one.</p>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 /* ---------------------------------------------------------------- the view */
 
-function Results({ dash, google }) {
+function Results({ dash, google, evidence }) {
   const sessions = dash.sessions ?? [];
   const counts = dash.counts ?? { sessions: 0, answered: 0, correct: 0, accuracy: null };
   const level = dash.workingLevel;
@@ -377,6 +465,8 @@ function Results({ dash, google }) {
         </section>
         {google}
       </div>
+
+      {started && evidence}
     </>
   );
 }
@@ -388,12 +478,18 @@ function Results({ dash, google }) {
  * @param link       the /api/classroom/link answer, or null before it arrives
  * @param linkBusy   a connect or disconnect is in flight
  * @param linkError  why the last one failed, or ''
+ * @param topics     null until their topic report answers, then { data } or { error }
+ * @param loadAnswers  (params) => a page of their own answers, or null when there is no id to ask with
+ * @param reads      how many times the page has been read
  */
-export function MeView({ dash, busy, error, onRefresh, link, linkBusy, linkError, onConnect, onDisconnect }) {
+export function MeView({
+  dash, busy, error, onRefresh, link, linkBusy, linkError, onConnect, onDisconnect, topics = null, loadAnswers = null, reads = 0,
+}) {
   const { account } = useViewer();
   const google = (
     <GoogleLink link={link} busy={linkBusy} error={linkError} onConnect={onConnect} onDisconnect={onDisconnect} />
   );
+  const evidence = <Evidence topics={topics} loadAnswers={loadAnswers} reads={reads} onRetry={onRefresh} />;
 
   // The page head: who this is about, and what can be done from here.
   const name = account?.fullName || '';
@@ -492,7 +588,7 @@ export function MeView({ dash, busy, error, onRefresh, link, linkBusy, linkError
             That refresh did not come back ({error}). This is the last answer the server gave.
           </Note>
         )}
-        <Results dash={dash} google={google} />
+        <Results dash={dash} google={google} evidence={evidence} />
       </>
     );
   }
@@ -532,6 +628,24 @@ export default function Me() {
   }, [nonce]);
 
   const isStudent = account?.role === 'student';
+  const myId = isStudent ? account?.id ?? null : null;
+
+  // Their topic report, from their own record: the one id a student may ask
+  // about is theirs. A report already on screen stays through a re-read; a
+  // failed re-read leaves it there, and the page's own note says the refresh
+  // did not come back.
+  const [topics, setTopics] = useState(null);
+  useEffect(() => {
+    if (!myId) return undefined;
+    let alive = true;
+    api.analyticsFor(myId).then(
+      (res) => { if (alive) setTopics({ data: res?.topicLevels ?? null }); },
+      (err) => { if (alive) setTopics((t) => (t?.data ? t : { error: err.message || 'The server did not answer.' })); },
+    );
+    return () => { alive = false; };
+  }, [myId, nonce]);
+
+  const loadAnswers = useCallback((params) => api.studentAnswers(myId, params), [myId]);
 
   // Resolved either way: a failed request is an answer and has to stop the
   // skeleton, or the row sits there implying the server is still thinking.
@@ -601,6 +715,9 @@ export default function Me() {
       linkError={linkError}
       onConnect={connectGoogle}
       onDisconnect={disconnectGoogle}
+      topics={topics}
+      loadAnswers={myId ? loadAnswers : null}
+      reads={nonce}
     />
   );
 }

@@ -26,6 +26,8 @@ import {
 import { summarise, HONESTY } from '../services/integrity.js';
 import { ARCHIVE_LIMIT_BYTES, buildRoomArchive } from '../services/archive.js';
 import { answerItem, pageFrom, rollKey, roomTopics } from '../services/evidence.js';
+import { roomItemStats } from '../services/itemStats.js';
+import { roomQuestionIds, servableFor } from '../services/selector.js';
 import { isRecordId } from '../ids.js';
 // The v2 guard, not the v1 key-only one: a professor who signed in properly
 // carries a bearer token and no shared key, and the v1 guard 401s her out of
@@ -45,6 +47,10 @@ const CODE_ATTEMPTS = 40;
 // Under this the adaptive loop has nothing to choose between - the first
 // student would empty the bank before the teacher finished talking.
 const MIN_BANK = 6;
+
+// A question set is picked by hand, one question at a time; a list longer than
+// this is not a pick, it is the bank, and leaving questionIds out says that.
+const MAX_SET = 500;
 
 // Ids are uuids on Supabase and 24-char hex on Mongo / in-process; isRecordId
 // accepts either. Checking the shape turns a database cast error into an
@@ -166,6 +172,43 @@ function settingsFrom(body = {}) {
   return out;
 }
 
+/**
+ * The room's question set, from a `questionIds` the caller did send (left out
+ * or null means the whole approved bank, and never reaches here). Every id must
+ * be an ACTIVE question of this chapter, or an honest 400.
+ *
+ * A draft, a rejected question, another chapter's question, another teacher's
+ * and an id that names nothing are refused in one sentence, so a set cannot be
+ * used to ask which ids exist. Stored as the bank spells the ids, each once, in
+ * the order given.
+ *
+ * No MIN_BANK floor here: that floor protects a room from a bank too thin to
+ * adapt over, and a professor who picks two questions has decided the room is
+ * those two.
+ */
+function questionSetFrom(raw, bank, title) {
+  if (!Array.isArray(raw)) {
+    throw fail('questionIds must be a list of question ids, or left out to use every approved question.', 400);
+  }
+  if (!raw.length) {
+    throw fail('questionIds is empty. Pick at least one question, or leave questionIds out to use every approved question.', 400);
+  }
+  // Any case: a uuid may be typed either way. A non-string is no id at all.
+  const ids = [...new Set(raw.map((id) => (typeof id === 'string' ? id.trim().toLowerCase() : '')))];
+  if (ids.length > MAX_SET) throw fail(`questionIds names ${ids.length} questions; ${MAX_SET} is the most a set may hold.`, 400);
+  const approved = new Map(bank.filter((q) => (q.status ?? 'active') === 'active')
+    .map((q) => [String(q._id).toLowerCase(), String(q._id)]));
+  const outside = ids.filter((id) => !approved.has(id));
+  if (outside.length) {
+    throw fail(
+      `${outside.length} of the ${ids.length} questions picked ${outside.length === 1 ? 'is' : 'are'} not an approved question of "${title}". `
+        + 'A room may only use approved questions of its own chapter: approve them in the question bank first, or leave them out.',
+      400,
+    );
+  }
+  return ids.map((id) => approved.get(id));
+}
+
 router.post('/', requireTeacher, async (req, res, next) => {
   try {
     const repo = getRepo();
@@ -177,8 +220,27 @@ router.post('/', requireTeacher, async (req, res, next) => {
     // You may only open a room over material you are allowed to touch.
     await assertCanWrite(req.viewer, content, 'That content');
 
-    const bankCount = await repo.countQuestions(contentId);
-    if (bankCount < MIN_BANK) {
+    // Checked before the bank floor, and before a code is drawn, so a bad set is
+    // a 400 that names the set rather than the size of the bank.
+    const asked = req.body?.questionIds;
+    const questionIds = asked === undefined || asked === null
+      ? null
+      : questionSetFrom(asked, await repo.listQuestions(contentId), content.title);
+
+    const bankCount = questionIds ? questionIds.length : await repo.countQuestions(contentId);
+    if (!questionIds && bankCount < MIN_BANK) {
+      // A room serves approved questions only. A bank that is mostly drafts has
+      // questions, just none a professor has let in yet - "generate first" would
+      // send them to make a second bank and replace the one waiting for review.
+      const drafts = await repo.countQuestions(contentId, { status: 'draft' });
+      if (drafts > 0) {
+        throw fail(
+          `"${content.title}" has ${drafts} generated question${drafts === 1 ? '' : 's'} waiting for your approval ` +
+            `and ${bankCount} approved. A room serves approved questions only and needs at least ${MIN_BANK}: ` +
+            'approve them in the question bank first.',
+          409,
+        );
+      }
       throw fail(
         `Only ${bankCount} active question${bankCount === 1 ? '' : 's'} in the bank for "${content.title}". ` +
           `Generate questions first - a session needs at least ${MIN_BANK}.`,
@@ -198,6 +260,7 @@ router.post('/', requireTeacher, async (req, res, next) => {
       status: 'open',
       ownerId: req.viewer?.id ?? null,
       ...settings,
+      questionIds,
     });
 
     // Read back off the stored row rather than echoed from the request, so the
@@ -209,6 +272,7 @@ router.post('/', requireTeacher, async (req, res, next) => {
       sessionId: String(session._id),
       bankCount,
       settings: sessionSettings(session),
+      questionIds: session.questionIds ?? null,
     });
   } catch (err) {
     next(err);
@@ -250,9 +314,15 @@ router.get('/:code', async (req, res, next) => {
   try {
     const repo = getRepo();
     const session = await requireSession(req.params.code);
+    // What this room serves: its set's approved questions when it has a set,
+    // the same number the phone is told on joining. The set itself stays off
+    // this route: it is open to anyone holding the code, and a list of question
+    // ids is a list of things to try answering.
     const [content, bankCount, profiles] = await Promise.all([
       repo.getContent(session.contentId),
-      repo.countQuestions(session.contentId),
+      roomQuestionIds(session)
+        ? repo.listQuestions(session.contentId).then((qs) => servableFor(session, qs).length)
+        : repo.countQuestions(session.contentId),
       repo.listProfiles(session._id),
     ]);
     // Deliberately NOT the raw session document. It carries contentId, which is
@@ -368,6 +438,27 @@ router.get('/:code/topics', requireTeacher, async (req, res, next) => {
 });
 
 /**
+ * How each question did in this room (services/itemStats.js): attempts,
+ * proportion correct, how many chose each option, mean score, a band for the
+ * class, the point-biserial against each student's other answers here, and its
+ * flag. Every question answered in the room is listed, and every question of its
+ * set, answered or not. Two segments deep, like /answers and /topics, with the
+ * same read rule and the same 404.
+ */
+router.get('/:code/items', requireTeacher, async (req, res, next) => {
+  try {
+    const session = await readableRoom(req.params.code, req.viewer);
+    res.json({
+      room: { code: session.code, title: session.title ?? '', startedAt: session.startedAt ?? null, status: session.status },
+      questionIds: session.questionIds ?? null,
+      ...(await roomItemStats(getRepo(), session)),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * Every room this viewer may see, newest first, for the management screen.
  *
  * Mounted at GET /api/session, which used to be nothing: rooms could be opened
@@ -405,6 +496,8 @@ router.get('/', requireTeacher, async (req, res, next) => {
           status: session.status,
           contentId: session.contentId,
           settings: sessionSettings(session),
+          // The room's question set, or null for its whole approved bank.
+          questionIds: session.questionIds ?? null,
           // Non-zero only in a room running redemption, and listed beside the
           // accuracy it moved so the two are never read apart.
           withdrawn,

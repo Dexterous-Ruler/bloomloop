@@ -23,6 +23,7 @@ import {
   swapsFor,
   kindSuitsLevel,
   invalidReason,
+  isUngraded,
 } from '../questionTypes.js';
 
 /**
@@ -51,7 +52,10 @@ const trimmed = (v) => (typeof v === 'string' ? collapse(v) : v);
 function tidied(q) {
   const out = { ...q };
   if (typeof out.text === 'string') out.text = collapse(out.text);
-  for (const f of ['options', 'sequence', 'accept', 'rubric']) {
+  // tokens, columns and a grid's row labels are read by position, which is one
+  // more reason nothing here ever drops an entry: a hot text's answer is a list
+  // of token indices, and losing one token would move every index after it.
+  for (const f of ['options', 'sequence', 'accept', 'rubric', 'tokens', 'columns']) {
     if (Array.isArray(out[f])) out[f] = out[f].map(trimmed);
   }
   for (const f of ['criterion', 'unit']) out[f] = trimmed(out[f]);
@@ -66,10 +70,31 @@ function tidied(q) {
     }));
   }
   if (Array.isArray(out.blanks)) {
-    out.blanks = out.blanks.map((b) => ({
-      ...b,
-      accept: Array.isArray(b?.accept) ? b.accept.map(trimmed) : b?.accept,
-    }));
+    // A cloze gap holds typed answers, a dropdown gap a list to choose from.
+    // Only the fields a gap actually carries are touched, so neither kind is
+    // handed an empty field of the other's.
+    out.blanks = out.blanks.map((b) => (b && typeof b === 'object' && !Array.isArray(b)
+      ? {
+        ...b,
+        ...(b.accept !== undefined ? { accept: Array.isArray(b.accept) ? b.accept.map(trimmed) : b.accept } : {}),
+        ...(Array.isArray(b.options) ? { options: b.options.map(trimmed) } : {}),
+      }
+      : b));
+  }
+  if (Array.isArray(out.rows)) {
+    // A grid's rows are labels; a table's are a heading and its cells. Each
+    // cell keeps exactly the keys it was sent with: a cell sent as both given
+    // and blank must still reach the validator as both, and be refused there.
+    const cell = (c) => (c && typeof c === 'object' && !Array.isArray(c)
+      ? {
+        ...c,
+        ...(c.given !== undefined ? { given: trimmed(c.given) } : {}),
+        ...(Array.isArray(c.accept) ? { accept: c.accept.map(trimmed) } : {}),
+      }
+      : c);
+    out.rows = out.rows.map((r) => (r && typeof r === 'object' && !Array.isArray(r)
+      ? { ...r, header: trimmed(r.header), ...(Array.isArray(r.cells) ? { cells: r.cells.map(cell) } : {}) }
+      : trimmed(r)));
   }
   return out;
 }
@@ -166,6 +191,47 @@ export function patchFor(q) {
   return patch;
 }
 
+// ---------------------------------------------------------------- author --
+
+/**
+ * A question a professor writes from scratch: text, level, kind and the kind's
+ * payload, validated as one whole exactly like an edit.
+ *
+ * The level still chooses the interaction. A kind from another level's set is
+ * refused with the same explanation an edit gets, because a professor's own
+ * question is held to the rule the product is built on, not exempted from it.
+ * The one exception is an ungraded kind: a poll belongs to no level's set, its
+ * tag only says where it sits in the lesson, and questionTypes.js names this
+ * route - the one that creates items outright - as the way a poll is made.
+ *
+ * `kind` may be left out, and is then the level's default.
+ *
+ * @returns {{question: object} | {reason: string}}
+ */
+export function authorQuestion(body = {}) {
+  const bloom = body.bloom;
+  if (!isLevel(bloom)) return { reason: `bad bloom "${bloom}"` };
+  const kind = body.kind === undefined || body.kind === null ? KIND_FOR_LEVEL[bloom] : String(body.kind);
+  if (!KINDS.includes(kind)) return { reason: `bad kind "${kind}"` };
+  if (!isUngraded(kind) && !kindSuitsLevel(kind, bloom)) return { reason: crossLevelReason(kind, bloom) };
+
+  const draft = { bloom, kind };
+  for (const field of EDITABLE) {
+    if (field !== 'bloom' && field !== 'kind' && body[field] !== undefined) draft[field] = body[field];
+  }
+  const clean = tidied(draft);
+  const why = invalidReason(clean);
+  return why ? { reason: why } : { question: clean };
+}
+
+/**
+ * Not yet let into rooms by anyone: a draft, or model output nobody approved.
+ * The second half is what catches a REJECTED draft, which is `discarded` like
+ * any other rejected question but has still never been reviewed - asking only
+ * for status 'draft' let its halves, or a merge with it, come out active.
+ */
+const unreviewed = (q) => q?.status === 'draft' || needsApproval(q);
+
 /** What a new row keeps from the question it came out of. */
 const inherit = (q) => ({
   contentId: q.contentId,
@@ -175,7 +241,14 @@ const inherit = (q) => ({
   // Provenance survives the edit. A half of a template item is still template
   // text, and the UI labels it from this field [CONTRACT.md section 6 rule 5].
   source: q.source ?? 'llm',
-  status: 'active',
+  // A half of a draft is still a draft. Splitting or merging is an edit, not an
+  // approval, and two active halves of an unreviewed item would be a way round
+  // the approval gate.
+  status: unreviewed(q) ? 'draft' : 'active',
+  model: q.model ?? null,
+  sourceRef: q.sourceRef ?? null,
+  approvedBy: unreviewed(q) ? null : (q.approvedBy ?? null),
+  approvedAt: unreviewed(q) ? null : (q.approvedAt ?? null),
 });
 
 // ----------------------------------------------------------------- split --
@@ -364,6 +437,16 @@ export function mergeQuestions(a, b) {
   const merged = { ...inherit(a), text: String(a.text).replace(/\s*\(part \d+\)\s*$/i, '') };
   // Either parent being template text makes the result template text.
   merged.source = a.source === 'fallback' || b.source === 'fallback' ? 'fallback' : 'llm';
+  // Either parent unreviewed makes the result unreviewed; either parent written
+  // by a model makes the result partly model-written. When `a` is unreviewed,
+  // inherit() has already made this a draft, so b's approval is never copied
+  // onto text nobody approved.
+  if (unreviewed(b)) Object.assign(merged, { status: 'draft', approvedBy: null, approvedAt: null });
+  else if (!merged.approvedAt && merged.status === 'active') {
+    Object.assign(merged, { approvedBy: b.approvedBy ?? null, approvedAt: b.approvedAt ?? null });
+  }
+  merged.model = a.model ?? b.model ?? null;
+  merged.sourceRef = a.sourceRef ?? b.sourceRef ?? null;
 
   // What the two came to between them. Said back in a refusal, because "match
   // needs 3-5 pairs" over two questions the teacher cannot see at once leaves
@@ -471,4 +554,47 @@ export function mergeQuestions(a, b) {
   const why = invalidReason(clean);
   if (why) return { reason: `Between them these two make ${size}, and ${why}. Trim one of them first.` };
   return { question: clean };
+}
+
+// ---------------------------------------------------------------- status --
+//
+// Three statuses. 'active' is served in rooms. 'draft' is a generated question
+// no professor has approved yet, and is never served. 'discarded' is rejected or
+// replaced. Every way a question becomes active goes through one of the two
+// functions below, so none of them can let model output into a room without an
+// approval on record.
+
+/**
+ * Model output that nobody has approved: a draft, or a rejected draft. A row
+ * with no model is a professor's own question or older than the approval gate,
+ * and has never needed one.
+ */
+export const needsApproval = (q) => q?.model != null && !q?.approvedAt;
+
+/**
+ * Approve: active, stamped with who and when. Approving an active question that
+ * carries no approval records one (an older question a professor has now looked
+ * at); approving one already approved changes nothing, so a repeat is safe.
+ *
+ * @returns {{patch: object, changed: boolean}}
+ */
+export function approvePatch(q, { by = null, at = new Date().toISOString() } = {}) {
+  if (q?.status === 'active' && q?.approvedAt) return { patch: {}, changed: false };
+  return { patch: { status: 'active', approvedBy: by, approvedAt: at }, changed: true };
+}
+
+/** Reject: the existing discarded status, so a restore can bring it back. */
+export function rejectPatch(q) {
+  if (q?.status === 'discarded') return { patch: {}, changed: false };
+  return { patch: { status: 'discarded' }, changed: true };
+}
+
+/**
+ * Make a question active by the older routes - a PATCH of status 'active' (the
+ * console's "restore") or a bulk restore. For model output nobody has approved,
+ * that IS the approval, so it is stamped as one; for everything else it is
+ * exactly the plain status change it always was.
+ */
+export function activatePatch(q, { by = null, at = new Date().toISOString() } = {}) {
+  return needsApproval(q) ? { status: 'active', approvedBy: by, approvedAt: at } : { status: 'active' };
 }

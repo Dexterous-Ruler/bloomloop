@@ -174,6 +174,33 @@ shell have a new composition; the data layer (`client/src/lib/*`) is untouched.
 - **Gallery (`/__gallery`, dev only):** grouped by area, with a role and one
   line per entry, and kept out of production builds.
 
+### Phase 1: evidence and review (19 Nov)
+
+- **Review answers (`/review`):** written answers waiting for a professor.
+  - It is listed in the rail for professors, the head of department and the
+    teacher key.
+  - At the top, a forest brief ("N written answers are waiting in M rooms")
+    with tiles.
+  - The queue is grouped by day, with cursor paging.
+  - A sticky detail panel shows the question, the student's answer in full,
+    the rubric and model answer, the mark so far with its log, and the
+    decision form: confirm, or change the mark by rubric points or score. The
+    note field is marked "Shown to the student".
+  - Keyboard: J/K or the arrow keys move, Enter opens, Ctrl+Enter saves.
+  - A head of department reads but cannot decide. A refusal shows the
+    server's own sentence, and the typed note is kept.
+- **Live class:** a Students | Topics switch on the heatmap card, with a
+  topic × level grid for the room that says where its numbers came from. The
+  inspector gains "Answers in this room": every attempt with its mark,
+  Provisional / Reviewed / Changed and the teacher's note, with a link to
+  review a provisional written answer.
+- **Overview and `/me`:** a student's answers across rooms (paged, filterable
+  by level and topic, with marks and notes), and a "By topic" grid. Pressing a
+  square on Overview filters the list. Analytics adds a "Topics by level" card
+  to each student's record.
+- **Student phone:** a written answer's first mark says "Your teacher may
+  review this mark."
+
 ## References and what they shaped
 
 - Karim's Goodfor design (Claude Design file, Nov 2026) shaped the direction:
@@ -243,4 +270,9 @@ opened. Behance pages gave text but no images, and Pinterest was not used.
     student moved off Understand.
   - Drag and hover on the marbles.
 - **Not run end to end:** account screens backed by Supabase (it was
-  unreachable today) were checked only through the dev gallery.
+  unreachable today) were checked only through the dev gallery. This includes
+  the Phase 1 answer history on Overview and `/me`, and the head of
+  department's read-only review.
+- **Fewer choices:** for a student given that support, a stored choose-one or
+  choose-all answer can name the wrong option text. The server keeps the full
+  option list, not the shorter list the student saw.

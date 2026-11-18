@@ -173,6 +173,36 @@ export const KIND_FOR_LEVEL = Object.fromEntries(
   LEVELS.map((level) => [level, KINDS_FOR_LEVEL[level][0]]),
 );
 
+/**
+ * How a level's questions are spread over its kinds when nobody has chosen, as
+ * relative weights. A level asked through one kind only tests one surface: a
+ * student who is good at spotting the answer among four, and nothing else,
+ * looks like a Remember student. Spreading the level over the kinds in its own
+ * set changes the surface and not the demand, which is the whole reason a level
+ * offers a set (see KINDS_FOR_LEVEL).
+ *
+ * Every level that has two or more kinds gets at least two here. Create has one,
+ * the written answer, and that is the rule this product follows rather than a
+ * gap: picking from offered options never reaches Create (Crowe et al. 2008),
+ * so no selected-response kind may ever carry that tag.
+ *
+ * Each level's first key is that level's default kind, and ties go to the
+ * earlier key, so a one-question request (a regenerate, Harder, Easier) still
+ * lands on the default exactly as before.
+ *
+ * Left out on purpose: numeric, because a chapter with no figures in it would
+ * push the model into inventing one, and categorise at Analyse, which Understand
+ * already asks. Both stay one choice away for a teacher who wants them.
+ */
+export const DEFAULT_KIND_MIX = {
+  remember: { mcq: 2, truefalse: 1 },
+  understand: { match: 1, categorise: 1 },
+  apply: { blank: 1, cloze: 1, dropdown: 1, table: 1 },
+  analyse: { multi: 1, hottext: 1, grid: 1 },
+  evaluate: { order: 1, rank: 1 },
+  create: { open: 1 },
+};
+
 export const LABEL = {
   mcq: 'Choose one',
   truefalse: 'True or false',
@@ -208,6 +238,13 @@ const uniq = (a) => new Set(a.map((s) => String(s).trim().toLowerCase())).size =
 const norm = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
+/**
+ * The words of a rubric point the open-answer marker looks for. Exported so the
+ * rule checks (services/checks.js) judge "can this point ever be found" by the
+ * marker's own rule rather than a copy of it.
+ */
+export const rubricKeys = (point) => norm(point).split(' ').filter((w) => w.length > 3);
+
 /** Blank markers, shared by blank and cloze so the two cannot disagree. */
 export const BLANK_MARK = '____';
 const blankCount = (text) => String(text ?? '').split(BLANK_MARK).length - 1;
@@ -223,6 +260,17 @@ export const STIMULUS_KINDS = ['passage', 'image'];
  * words - past that it stops being a stimulus and starts being the lesson.
  */
 export const MAX_STIMULUS_TEXT = 4000;
+
+/**
+ * Where a stimulus was taken from, as the professor types it: "NCERT Biology
+ * XI, ch. 13" or "Unit 3 slides 4-6". Optional, on a passage or an image.
+ *
+ * Text, unlike a question's own sourceRef ({kind: 'slides', slides}), because a
+ * passage is pasted from anywhere (a textbook, a paper, the deck) and a citation
+ * is read by a person, not matched by code. Teacher-side only: forStudent()
+ * rebuilds the stimulus without it, since the phone has nowhere to show it yet.
+ */
+export const MAX_STIMULUS_SOURCE = 300;
 
 /**
  * Anything but an absolute http(s) URL or a site-relative path. `javascript:`
@@ -255,6 +303,12 @@ function stimulusReason(s) {
     // unanswerable without this - the student using a screen reader gets the
     // stem, the options, and silence where the evidence should be.
     if (!str(s.alt)) return 'an image stimulus needs alt text describing it';
+  }
+
+  // Empty is allowed and means "not given": a form's blank citation box.
+  if (s.sourceRef !== undefined && s.sourceRef !== null) {
+    if (typeof s.sourceRef !== 'string') return 'stimulus sourceRef must be text saying where it came from';
+    if (s.sourceRef.length > MAX_STIMULUS_SOURCE) return `stimulus sourceRef is over ${MAX_STIMULUS_SOURCE} characters`;
   }
 
   // A stimulus is context, never content. Every payload field is answer-bearing
@@ -779,7 +833,7 @@ function scoreOne(q, response, seed = '', keep = null) {
       const said = norm(response);
       if (!said) return { score: 0, correct: false, solution: q.rubric, detail: 'no answer' };
       const found = q.rubric.filter((point) => {
-        const keys = norm(point).split(' ').filter((w) => w.length > 3);
+        const keys = rubricKeys(point);
         if (keys.length === 0) return false;
         const hit = keys.filter((w) => said.includes(w)).length;
         return hit / keys.length >= 0.5;
@@ -995,6 +1049,89 @@ const toOriginal = (positions, n, seed) => {
   const perm = permFor(n, seed);
   return positions.map((p) => (Number.isInteger(Number(p)) ? perm[Number(p)] : -1));
 };
+
+/** An index into a list of n, or null. */
+const inRange = (i, n) => (Number.isInteger(i) && i >= 0 && i < n ? i : null);
+
+/**
+ * A response in the question's OWN terms: every shown position translated back
+ * to the original index it stands for, by the same permutations forStudent()
+ * dealt and scoreOne() undoes, and read the way scoreOne() reads it.
+ *
+ * For item analysis (services/itemStats.js), which counts how many students
+ * chose each option. Counted by shown position instead, a match's "first item
+ * on the right" is a different item on every phone, and the counts would
+ * describe the shuffle rather than the class.
+ *
+ * `keep` is the fewer-choices reduction this student was served under
+ * (shownOptionIndices), or null for the full list. A position or key that names
+ * nothing on the board comes back as null, or is left out of a list; it is
+ * never guessed at.
+ *
+ *   mcq, poll        the option index, or null
+ *   multi, hottext   the indices picked, ascending, each once
+ *   truefalse        true, false or null
+ *   match            per left item, the index of the right item paired with it
+ *   categorise       per item, in the stored bucket-major order, its group index
+ *   dropdown         per gap, the option index
+ *   grid             per row, per column, whether it was ticked
+ *   anything else    null: a typed or arranged answer has no options to count
+ */
+export function toOriginalResponse(q, response, seed = '', keep = null) {
+  const kind = q?.kind ?? 'mcq';
+  const options = Array.isArray(q?.options) ? q.options : [];
+  const fromShown = (pos) => (keep ? (inRange(pos, keep.length) === null ? null : keep[pos]) : pos);
+
+  switch (kind) {
+    case 'mcq':
+      return inRange(fromShown(Number(response)), options.length);
+    case 'poll':
+      return inRange(Number(response), options.length);
+    case 'truefalse':
+      return typeof response === 'boolean' ? response : null;
+    case 'multi':
+    case 'hottext': {
+      const n = kind === 'multi' ? options.length : (Array.isArray(q.tokens) ? q.tokens.length : 0);
+      const sent = (Array.isArray(response) ? response : []).map(Number);
+      const picked = sent.map((p) => inRange(kind === 'multi' ? fromShown(p) : p, n)).filter((i) => i !== null);
+      return [...new Set(picked)].sort((a, b) => a - b);
+    }
+    case 'match': {
+      const n = Array.isArray(q.pairs) ? q.pairs.length : 0;
+      const given = Array.isArray(response) ? response.slice(0, n) : [];
+      const got = toOriginal(given, n, `${seed}:r`);
+      return Array.from({ length: n }, (_, i) => inRange(got[i], n));
+    }
+    case 'categorise': {
+      const buckets = Array.isArray(q.buckets) ? q.buckets : [];
+      const n = buckets.reduce((sum, b) => sum + (Array.isArray(b?.items) ? b.items.length : 0), 0);
+      const perm = permFor(n, `${seed}:c`);
+      const out = Array.from({ length: n }, () => null);
+      const raw = response && typeof response === 'object' && !Array.isArray(response) ? response : {};
+      for (const [pos, bucket] of Object.entries(raw)) {
+        const orig = perm[Number(pos)];
+        if (Number.isInteger(orig)) out[orig] = inRange(Number(bucket), buckets.length);
+      }
+      return out;
+    }
+    case 'dropdown': {
+      const gaps = Array.isArray(q.blanks) ? q.blanks : [];
+      const given = Array.isArray(response) ? response : [];
+      return gaps.map((b, i) => {
+        const n = Array.isArray(b?.options) ? b.options.length : 0;
+        return inRange(toOriginal([given[i]], n, `${seed}:d${i}`)[0], n);
+      });
+    }
+    case 'grid': {
+      const rows = Array.isArray(q.rows) ? q.rows.length : 0;
+      const cols = Array.isArray(q.columns) ? q.columns.length : 0;
+      const raw = response && typeof response === 'object' && !Array.isArray(response) ? response : {};
+      return Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => Boolean(raw[`${r}:${c}`])));
+    }
+    default:
+      return null;
+  }
+}
 
 /**
  * The stimulus as a phone may see it, rebuilt field by field.

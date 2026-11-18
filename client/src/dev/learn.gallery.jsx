@@ -60,6 +60,15 @@ const ORDER = {
   items: ['Electrons pass along the transport chain', 'Light excites chlorophyll', 'ATP and NADPH are formed', 'Water is split'],
 };
 
+const OPEN = {
+  _id: 'sample-open',
+  kind: 'open',
+  bloom: 'evaluate',
+  topic: 'Factors affecting the rate',
+  text: 'A farmer adds carbon dioxide to a greenhouse on a cloudy day. Will it raise the rate of photosynthesis? Justify your answer.',
+  rubric: ['light is the limiting factor', 'extra carbon dioxide has little effect', 'names the evidence'],
+};
+
 const noop = () => {};
 const ask = (question, index, extra = {}) => (
   <Question
@@ -117,6 +126,26 @@ const SCREENS = [
         {ask(MCQ, 6, {
           sent: 0,
           result: { correct: false, score: 0, solution: 1, detail: 'The light reactions carry on without carbon dioxide.', reason: 'Staying at Apply. Your next question is another Apply one.' },
+        })}
+      </Phone>
+    ),
+  },
+  {
+    id: 'phone-provisional',
+    title: 'Student phone: written answer, mark may be reviewed',
+    el: (
+      <Phone level="evaluate">
+        {ask(OPEN, 11, {
+          sent: 'On a cloudy day light is low, so adding carbon dioxide will not help much.',
+          result: {
+            correct: false,
+            score: 0.67,
+            provisional: true,
+            kind: 'open',
+            solution: ['light is the limiting factor', 'extra carbon dioxide has little effect', 'names the evidence'],
+            detail: '2/3 rubric points',
+            reason: 'Staying at Evaluate. Your next question is another Evaluate one.',
+          },
         })}
       </Phone>
     ),

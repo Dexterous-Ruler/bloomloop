@@ -18,6 +18,7 @@ export function createMemoryRepo() {
   const answerKeys = new Map(); // `${sessionId}:${answerKey}` -> _id
   const archives = new Map(); // key: _id; one per sessionId
   const reviews = new Map(); // key: _id; append-only, insertion order is review order
+  const media = new Map(); // key: _id -> { rec, data }; the bytes apart, since clone() would mangle a Buffer
 
   return {
     kind: 'memory',
@@ -47,7 +48,22 @@ export function createMemoryRepo() {
     async insertQuestions(docs) {
       const made = docs.map((d) => {
         const _id = oid();
-        const rec = { _id, status: 'active', source: 'llm', createdAt: new Date().toISOString(), ...d, contentId: String(d.contentId) };
+        // The 0013 fields default to null, as the Postgres columns and the
+        // Mongoose paths do, so a question has one shape whichever store is live.
+        const rec = {
+          _id,
+          status: 'active',
+          source: 'llm',
+          model: null,
+          sourceRef: null,
+          checks: null,
+          createdBy: null,
+          approvedBy: null,
+          approvedAt: null,
+          createdAt: new Date().toISOString(),
+          ...d,
+          contentId: String(d.contentId),
+        };
         questions.set(_id, rec);
         return rec;
       });
@@ -81,9 +97,11 @@ export function createMemoryRepo() {
       return n;
     },
 
-    async countQuestions(contentId) {
+    // Active by default: what a room can serve. `status: 'draft'` counts the
+    // generated questions still waiting for a professor's approval.
+    async countQuestions(contentId, { status = 'active' } = {}) {
       return [...questions.values()].filter(
-        (q) => q.contentId === String(contentId) && q.status === 'active',
+        (q) => q.contentId === String(contentId) && q.status === status,
       ).length;
     },
 
@@ -94,6 +112,9 @@ export function createMemoryRepo() {
         status: 'open',
         startedAt: new Date().toISOString(),
         closedAt: null,
+        // The room's question set (0015); null serves the whole approved bank,
+        // as the Postgres column and the Mongoose path default to.
+        questionIds: null,
         ...doc,
         contentId: String(doc.contentId),
       };
@@ -139,6 +160,13 @@ export function createMemoryRepo() {
 
     async listSessions() {
       return clone([...sessions.values()].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)));
+    },
+
+    /** Every room on one chapter, newest first, whatever its status. */
+    async listSessionsForContent(contentId) {
+      return clone([...sessions.values()]
+        .filter((s) => s.contentId === String(contentId))
+        .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)));
     },
 
     async getProfile(sessionId, rollNo) {
@@ -301,6 +329,26 @@ export function createMemoryRepo() {
         .filter((r) => (!answerId || r.answerId === String(answerId))
           && (!sessionId || r.sessionId === String(sessionId)))
         .sort((a, b) => (a.reviewedAt < b.reviewedAt ? -1 : a.reviewedAt > b.reviewedAt ? 1 : 0)));
+    },
+
+    // -- media: uploaded images for question stimuli (0014) --
+    // Written once and never updated, so a url always names the same bytes and a
+    // phone may cache them for good. The id is oid(): 96 random bits, which is
+    // what keeps an upload's url from being guessed (services/media.js).
+    /** Returns the row without its bytes. */
+    async createMedia(doc) {
+      const { data, ...meta } = doc;
+      const _id = oid();
+      const rec = { _id, ownerId: null, createdAt: new Date().toISOString(), ...clone(meta), contentId: String(doc.contentId) };
+      media.set(_id, { rec, data: Buffer.from(data) });
+      return clone(rec);
+    },
+
+    /** The row, with its bytes as a Buffer only when asked: a permission check needs none of them. */
+    async getMedia(id, { withData = false } = {}) {
+      const held = media.get(String(id));
+      if (!held) return null;
+      return withData ? { ...clone(held.rec), data: Buffer.from(held.data) } : clone(held.rec);
     },
   };
 }

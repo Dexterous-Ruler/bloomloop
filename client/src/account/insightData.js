@@ -156,3 +156,107 @@ export function commonWeakest(subjects) {
   const top = Object.entries(tally).sort((a, b) => b[1] - a[1] || levelN(a[0]) - levelN(b[0]))[0];
   return top && top[1] >= 2 ? { level: top[0], count: top[1] } : null;
 }
+
+/* ------------------------------------------------------- the evidence -- */
+
+/** Five steps of one green, darker for stronger. Shared with the department's map. */
+export const STEPS = [
+  { step: 1, label: 'Under 20%' },
+  { step: 2, label: '20 to 39%' },
+  { step: 3, label: '40 to 59%' },
+  { step: 4, label: '60 to 79%' },
+  { step: 5, label: '80% and over' },
+];
+export const stepOf = (acc) => (acc < 0.2 ? 1 : acc < 0.4 ? 2 : acc < 0.6 ? 3 : acc < 0.8 ? 4 : 5);
+
+/**
+ * A topic's six cells in ladder order, whatever came back. The server sends
+ * all six; a missing one is drawn as never asked rather than shifting a column.
+ */
+export const cellsOf = (topic) => LEVELS.map((level) => (topic?.levels ?? []).find((c) => c.level === level)
+  ?? { level, seen: 0, correct: 0, accuracy: null });
+
+/**
+ * The review state of a stored answer, as the list says it. `auto` (marked by
+ * the machine, nothing to review) says nothing at all.
+ */
+export const REVIEW = {
+  provisional: { label: 'Provisional', tone: 'warn', why: 'Marked by the machine. A professor may still change it.' },
+  confirmed: { label: 'Reviewed', tone: 'line', why: 'A professor read it and kept the mark.' },
+  overridden: { label: 'Changed', tone: 'accent', why: 'A professor read it and changed the mark.' },
+};
+
+/**
+ * How an answer was marked. A poll assesses nothing and carries no mark; a
+ * score strictly between 0 and 1 is partial credit, said as a share, and
+ * `correct` still says which way it counted.
+ */
+export function markOf(item) {
+  if (item?.ungraded) return { kind: 'poll', partial: false, score: null };
+  const score = typeof item?.score === 'number' && Number.isFinite(item.score) ? item.score : null;
+  return { kind: item?.correct === true ? 'right' : 'wrong', partial: score != null && score > 0 && score < 1, score };
+}
+
+const nth = (list, i, what) => {
+  const v = Array.isArray(list) ? list[Number(i)] : undefined;
+  return v == null || v === '' ? `${what} ${Number(i) + 1}` : String(v);
+};
+
+/**
+ * What a student sent, as lines a person can read. Positions are read against
+ * the question as the phone showed it, which is the shape the server rebuilds
+ * for this list. Nothing here knows or shows which answer was right.
+ * An answer with nothing in it is an empty list.
+ */
+export function saidLines(item) {
+  const r = item?.response;
+  const q = item?.question ?? {};
+  if (r == null || r === '') return [];
+  const list = Array.isArray(r) ? r : [];
+  const map = r && typeof r === 'object' && !Array.isArray(r) ? r : {};
+
+  switch (item?.kind ?? q.kind) {
+    case 'mcq':
+    case 'poll':
+      return [nth(q.options, r, 'Option')];
+    case 'truefalse':
+      return r === true ? ['True'] : r === false ? ['False'] : [];
+    case 'multi':
+      return list.map((i) => nth(q.options, i, 'Option'));
+    case 'hottext':
+      // A word picked out of a sentence, without the sentence's punctuation.
+      return list.map((i) => nth(q.tokens, i, 'Word').replace(/[,.;:!?]+$/, ''));
+    case 'order':
+    case 'rank':
+      return list.map((i, k) => `${k + 1}. ${nth(q.items, i, 'Item')}`);
+    case 'match':
+      return list.map((i, k) => `${nth(q.left, k, 'Term')} → ${nth(q.right, i, 'Item')}`);
+    case 'categorise':
+      return Object.entries(map)
+        .sort((a, b) => Number(a[1]) - Number(b[1]) || Number(a[0]) - Number(b[0]))
+        .map(([i, g]) => `${nth(q.items, i, 'Item')} → ${nth(q.groups, g, 'Group')}`);
+    case 'cloze':
+      return list.map((v, k) => `Gap ${k + 1}: ${String(v ?? '').trim() || 'left blank'}`);
+    case 'dropdown':
+      return list.map((v, k) => `Gap ${k + 1}: ${nth(q.gaps?.[k]?.options, v, 'Option')}`);
+    case 'numeric':
+      return [`${r}${q.unit ? ` ${q.unit}` : ''}`];
+    case 'table':
+      return Object.entries(map)
+        .filter(([, v]) => String(v ?? '').trim())
+        .map(([at, v]) => {
+          const [row, col] = at.split(':');
+          return `${q.rows?.[row]?.header ?? `Row ${Number(row) + 1}`}, ${nth(q.columns, col, 'Column')}: ${v}`;
+        });
+    case 'grid':
+      return Object.keys(map)
+        .filter((at) => map[at])
+        .map((at) => {
+          const [row, col] = at.split(':');
+          return `${nth(q.rows, row, 'Row')} × ${nth(q.columns, col, 'Column')}`;
+        });
+    default:
+      if (Array.isArray(r)) return r.map(String);
+      return typeof r === 'object' ? [JSON.stringify(r)] : [String(r)];
+  }
+}

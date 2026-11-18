@@ -5,3 +5,4 @@ import '../styles/live.css';
 import '../styles/account.css';
 import '../styles/auth.css';
 import '../styles/insight.css';
+import '../styles/review.css';

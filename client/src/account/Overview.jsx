@@ -9,7 +9,8 @@
  * Everything on it comes from one GET /api/dashboard. There is no id in that
  * call: the role picks the shape and the token picks the rows, so this screen
  * cannot be aimed at another professor. The selected student's level detail is
- * GET /api/analytics/:id, which the server checks against the same roster.
+ * GET /api/analytics/:id, and their stored answers GET /api/analytics/:id/answers,
+ * both checked by the server against the same roster.
  *
  * The page reads top to bottom as: the brief (what matters now, in a sentence,
  * with the figures behind it), the students beside whichever one is open, then
@@ -21,6 +22,7 @@ import { Link, useNavigate } from 'react-router-dom';
 
 import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
+import { reduced } from '../lib/motion.js';
 import AccountShell from '../shell/AccountShell.jsx';
 import { useViewer } from '../shell/viewer.js';
 import {
@@ -31,6 +33,7 @@ import {
   ago, big, busiest, byLevel, Climb, dayOf, Facts, greeting, LevelRows, meanLevel, plural, Rate, roomLink, RoomDot,
   seriesOf, share, thinnest, todayLine, useMedia,
 } from './dashParts.jsx';
+import { AnswerFilters, AnswerList, TopicGrid, TopicGridSkel, useAnswers } from './insightParts.jsx';
 
 /** The roll number, or '': the server stores it nullable and sometimes blank. */
 const rollOf = (student) => String(student?.rollNo ?? '').trim();
@@ -46,6 +49,10 @@ const FILTERS = [
 const CHAPTERS_SHOWN = 5;
 const STUDENTS_SHOWN = 12;
 const ROOMS_SHOWN = 6;
+/* The inspector is narrow: a short page of answers and the busiest topics,
+   each with a way to the rest. */
+const ANSWERS_SHOWN = 8;
+const TOPICS_SHOWN = 8;
 
 /* ------------------------------------------------------------------ pieces */
 
@@ -359,6 +366,11 @@ function Supports({ studentId, services }) {
  * One student in detail. The roll number is the whole story here: a live room
  * identifies a student by the number typed on their phone, so it is the only
  * thread between this account and the answers it gave.
+ *
+ * Under their levels sit the answers themselves: topic by level as a grid
+ * (from the same GET /api/analytics/:id), then every stored answer across
+ * your rooms, newest first, from GET /api/analytics/:id/answers. A square in
+ * the grid narrows the list to that topic at that level.
  */
 function StudentDetail({ student: s, detail, onRetry, services }) {
   const roll = rollOf(s);
@@ -366,6 +378,27 @@ function StudentDetail({ student: s, detail, onRetry, services }) {
   const level = d?.currentLevel ?? null;
   const seen = (d?.bloom ?? []).reduce((n, b) => n + (b.seen ?? 0), 0);
   const rooms = d ? [...(d.timeline ?? [])].reverse().slice(0, 4) : [];
+  const report = d?.topicLevels ?? null;
+
+  // Asked for only when there is a roll number to match on and the record
+  // itself was not refused: the list answers to the same check.
+  const readable = Boolean(roll && !detail?.error && services?.studentAnswers);
+  // "Read the overview again" re-reads this student's record. A record that
+  // arrives in place of an earlier one bumps the list's version, so the
+  // answers are read again with it. The first record does not: the list is
+  // already on its way.
+  const read = useRef({ data: null, n: 0 });
+  if (d && d !== read.current.data) {
+    read.current = { data: d, n: read.current.data ? read.current.n + 1 : read.current.n };
+  }
+  const answers = useAnswers((params) => services.studentAnswers(s.id, params), readable ? s.id : null, ANSWERS_SHOWN, read.current.n);
+  // A square narrows the list, so it is pressable only while there is a list to narrow.
+  const canPick = readable && !(answers.status === 'ready' && !answers.items.length && !answers.filtered);
+  const listRef = useRef(null);
+  const pickCell = (cell) => {
+    answers.setFilters(cell);
+    listRef.current?.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' });
+  };
 
   let reading = null;
   if (d && seen > 0) {
@@ -438,6 +471,56 @@ function StudentDetail({ student: s, detail, onRetry, services }) {
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {roll && !detail?.error && (!d || report) && (
+        <section className="ac-sec" aria-labelledby={`topics-h-${s.id}`}>
+          <div className="ac-sec-head">
+            <h3 className="ac-label" id={`topics-h-${s.id}`}>By topic</h3>
+            <span className="t-meta">right of asked, at each level</span>
+          </div>
+          {!d ? (
+            <TopicGridSkel rows={3} />
+          ) : report.topics?.length ? (
+            <>
+              <TopicGrid
+                report={report}
+                compact
+                first={TOPICS_SHOWN}
+                picked={answers.filters}
+                onPick={canPick ? pickCell : undefined}
+                label={`${s.fullName || 'This student'}: right answers of those asked, for each topic at each level`}
+              />
+              {canPick && <p className="t-meta">Press a square to list those answers below.</p>}
+            </>
+          ) : (
+            <p className="muted t-small">No topic on record yet. A topic is counted when a final, marked answer carries one.</p>
+          )}
+        </section>
+      )}
+
+      {readable && (
+        <section className="ac-sec" aria-labelledby={`answers-h-${s.id}`} ref={listRef}>
+          <div className="ac-sec-head">
+            <h3 className="ac-label" id={`answers-h-${s.id}`}>Answers</h3>
+            <span className="t-meta">newest first, every room</span>
+          </div>
+          <AnswerFilters answers={answers} topics={(report?.topics ?? []).map((t) => t.topic)} />
+          <AnswerList
+            answers={answers}
+            view="teacher"
+            compact
+            label={`${s.fullName || 'This student'}: answers, newest first`}
+            empty={report?.source === 'history' ? (
+              <p>
+                <b>None stored one by one.</b> Their rooms ran before each answer was kept, so those answers count in
+                the levels above but have no rows here.
+              </p>
+            ) : (
+              <p><b>No answers yet.</b> Nothing is stored for roll number <span className="mono">{roll}</span> in your rooms.</p>
+            )}
+          />
         </section>
       )}
 
@@ -934,9 +1017,9 @@ export function OverviewView({
 
 /* --------------------------------------------------------------- container */
 
-/* What the invite dialog and the supports panel may call. Named once, so the
-   dialog never reaches for the whole api and the dev gallery can stand in for
-   these. */
+/* What the invite dialog, the supports panel and the answer list may call.
+   Named once, so the dialog never reaches for the whole api and the dev
+   gallery can stand in for these. */
 const SERVICES = {
   invite: api.invite,
   classroomStatus: api.classroomStatus,
@@ -945,6 +1028,7 @@ const SERVICES = {
   classroomCourseStudents: api.classroomCourseStudents,
   studentAccommodations: api.studentAccommodations,
   setStudentAccommodations: api.setStudentAccommodations,
+  studentAnswers: api.studentAnswers,
 };
 
 export default function Overview() {

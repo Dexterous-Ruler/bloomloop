@@ -1,7 +1,7 @@
 // MongoDB Atlas / Mongoose implementation. This is the documented primary
 // store (report section 5.6). memoryRepo is the fallback with the same surface.
 
-import { Content, Question, Session, Profile, Answer, RoomArchive, AnswerReview } from '../models/index.js';
+import { Content, Question, Session, Profile, Answer, RoomArchive, AnswerReview, Media } from '../models/index.js';
 
 const lean = (d) => (d ? JSON.parse(JSON.stringify(d)) : null);
 
@@ -40,8 +40,9 @@ export function createMongoRepo() {
       const res = await Question.deleteMany({ contentId });
       return res?.deletedCount ?? 0;
     },
-    async countQuestions(contentId) {
-      return Question.countDocuments({ contentId, status: 'active' });
+    // `status`: see memoryRepo.
+    async countQuestions(contentId, { status = 'active' } = {}) {
+      return Question.countDocuments({ contentId, status });
     },
 
     async createSession(doc) {
@@ -68,6 +69,10 @@ export function createMongoRepo() {
 
     async listSessions() {
       return lean(await Session.find().sort({ startedAt: -1 }).lean());
+    },
+    // See memoryRepo.
+    async listSessionsForContent(contentId) {
+      return lean(await Session.find({ contentId }).sort({ startedAt: -1 }).lean()) ?? [];
     },
 
     async getProfile(sessionId, rollNo) {
@@ -177,6 +182,22 @@ export function createMongoRepo() {
       if (answerId) q.answerId = String(answerId);
       if (sessionId) q.sessionId = String(sessionId);
       return lean(await AnswerReview.find(q).sort({ reviewedAt: 1, _id: 1 }).lean()) ?? [];
+    },
+    // -- media (see memoryRepo for the contract) --
+    async createMedia(doc) {
+      const { data, ...meta } = (await Media.create({ ...doc, contentId: String(doc.contentId) })).toObject();
+      return lean(meta);
+    },
+    async getMedia(id, { withData = false } = {}) {
+      // Hydrated rather than lean when the bytes are wanted, so they arrive as a
+      // Buffer and not as a driver Binary. A uuid is a CastError here: not found.
+      if (withData) {
+        const doc = await Media.findById(id).catch(() => null);
+        if (!doc) return null;
+        const { data, ...meta } = doc.toObject();
+        return { ...lean(meta), data: Buffer.from(doc.data) };
+      }
+      return lean(await Media.findById(id).select('-data').lean().catch(() => null));
     },
   };
 }

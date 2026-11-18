@@ -66,6 +66,13 @@ export const config = {
     redirectUri: (process.env.GOOGLE_REDIRECT_URI || '').trim(),
   },
 
+  media: {
+    // Per image a professor uploads to hang a question off (routes/media.js).
+    // Every phone in the room downloads it over the same hall wifi, often at
+    // the same moment, and a photo straight off a phone camera is ten times this.
+    maxBytes: Number(process.env.MEDIA_MAX_BYTES) || 500 * 1024,
+  },
+
   uploadsDir: path.join(ROOT, 'server', 'uploads'),
   clientDist: path.join(ROOT, 'client', 'dist'),
 };

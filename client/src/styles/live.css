@@ -85,8 +85,9 @@
 .lc-grid { position: sticky; top: 16px; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 .lc-grid-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 16px; padding: 22px 24px 14px; }
 .lc-grid-head .sec { flex: 1; min-width: min(100%, 260px); }
-.lc-find { width: 220px; max-width: 100%; }
-.lc-filters { padding: 0 24px 14px; }
+/* Beside the filters when they leave room for it, else a full row of its own. */
+.lc-find { flex: 1 1 200px; max-width: 100%; }
+.lc-filters { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 0 24px 14px; }
 .lc-filters .seg { max-width: 100%; }
 
 .lc-heat-scroll { max-height: max(320px, calc(100dvh - 340px)); overflow: auto; border-top: 1px solid var(--line); background: var(--surface); }
@@ -167,6 +168,32 @@ td.lc-sigc, th.lc-sigc { width: 44px; padding-right: 20px !important; }
 .lc-key[data-cur='true'] { outline-width: 1.5px; outline-offset: 1px; border: 0; }
 .lc-legend-sig { gap: 6px; }
 .lc-legend-sig .lc-sig { margin-left: 4px; }
+/* Where the numbers came from: one quiet line under the key. */
+.lc-legend-note { flex-basis: 100%; font: 400 12px/1.45 var(--font); color: var(--text-3); text-wrap: pretty; }
+
+/* ------------------------------------------------- topics x level heatmap */
+
+/* The same table and cells as the roster; a topic in the row head, no
+   selection, so no pointer and no hover. */
+.lc-trow > * { height: 48px; padding: 0 4px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.lc-trow > th.lc-who { position: sticky; left: 0; z-index: 1; padding-left: 24px; padding-right: 12px; min-width: 210px; max-width: 280px; text-align: left; font-weight: inherit; }
+.lc-trow .lc-names > span { font: 400 11px/1.2 var(--font); color: var(--text-3); }
+.lc-trow:last-child > * { border-bottom: 0; }
+.lc-acc-of { display: block; margin-top: 2px; font: 400 10.5px/1.2 var(--mono); color: var(--text-4); }
+
+/* Counting: the table's own shape, a name and six cells a row. */
+.lc-tskel { display: flex; flex-direction: column; gap: 14px; padding: 18px 24px 22px; border-top: 1px solid var(--line); }
+.lc-tskel > div { display: grid; grid-template-columns: minmax(120px, 210px) repeat(6, 46px); gap: 10px; align-items: center; }
+.lc-tskel .skel { height: 28px; border-radius: 6px; }
+.lc-tskel .skel:first-child { height: 14px; border-radius: 4px; }
+
+/* Nothing marked yet: the six empty cells a topic would fill, and why. */
+.lc-tempty { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 28px; padding: 28px 24px 30px; border-top: 1px solid var(--line); }
+.lc-tempty-cells { display: flex; gap: 6px; }
+.lc-tempty-cells > span { display: flex; flex-direction: column; align-items: center; gap: 6px; font: 600 9.5px/1 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-4); }
+.lc-tempty-cells .lc-cell { width: 34px; height: 24px; outline: 1px dashed var(--line); outline-offset: -1px; }
+.lc-tempty p { flex: 1; min-width: min(100%, 260px); font: 400 13px/1.5 var(--font); color: var(--text-3); text-wrap: pretty; }
+.lc-tempty b { color: var(--text); font-weight: 600; }
 
 /* -------------------------------------------------- where the class is */
 
@@ -212,6 +239,69 @@ td.lc-sigc, th.lc-sigc { width: 44px; padding-right: 20px !important; }
 .lc-tries li[data-v='no'] { background: var(--bad-soft); color: var(--bad); }
 .lc-tries li[data-v='mix'] { background: var(--raised); color: var(--text-2); border: 1px solid var(--line); }
 
+/* Every attempt in the room, newest first: a mark, the question on one line,
+   what they gave, and a quiet meta line. Hairlines between, no boxes. */
+.lc-answers { display: flex; flex-direction: column; }
+.lc-ans { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); animation: rise var(--t-3) var(--ease) both; }
+.lc-ans:first-child { border-top: 0; padding-top: 2px; }
+.lc-ans[data-final='false'] .lc-ans-q, .lc-ans[data-final='false'] .lc-ans-said { color: var(--text-3); }
+
+.lc-mark { display: grid; place-items: center; width: 24px; height: 24px; margin-top: -1px; border-radius: 7px; font: 600 9.5px/1 var(--mono); letter-spacing: -0.02em; }
+.lc-mark[data-v='yes'] { background: var(--ok-soft); color: var(--ok); }
+.lc-mark[data-v='no'] { background: var(--bad-soft); color: var(--bad); }
+.lc-mark[data-v='poll'] { border: 1px dashed var(--line); color: var(--text-4); }
+.lc-mark[data-v='poll'] > i { width: 8px; border-top: 1.5px solid currentColor; }
+/* Provisional: the same mark, drawn as one that may still move. */
+.lc-mark[data-prov='true'] { background: transparent; border: 1.5px dashed currentColor; }
+
+.lc-ans-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.lc-ans-q {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; padding: 0; border: 0; background: none; cursor: pointer; text-align: left;
+  font: 600 13px/1.4 var(--font); color: var(--text);
+}
+.lc-ans-q > svg { color: var(--text-4); transition: rotate var(--t-2) var(--ease); }
+.lc-ans-q[aria-expanded='true'] > svg { rotate: 180deg; }
+.lc-ans-q:hover > .clip { text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.lc-ans-q:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+.lc-ans-said {
+  font: 400 12.5px/1.45 var(--font); color: var(--text-2); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.lc-ans-none { color: var(--text-4); font-style: italic; }
+.lc-ans-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 12px; margin-top: 2px; font: 500 11px/1.4 var(--font); color: var(--text-3); }
+.lc-ans-meta time { font-size: 10.5px; color: var(--text-4); }
+.lc-ans-lv { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); }
+.lc-ans-lv .swatch { width: 7px; height: 7px; border-radius: 2px; }
+
+/* Review state: a small word, coloured by what it means, and a way there. */
+.lc-rv { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font: 700 9.5px/1.4 var(--font); letter-spacing: 0.07em; text-transform: uppercase; }
+.lc-rv[data-tone='warn'] { color: var(--warn); }
+.lc-rv[data-tone='ok'] { color: var(--ok); }
+.lc-rv[data-tone='ink'] { color: var(--text); }
+.lc-rv-go { display: inline-flex; align-items: center; gap: 3px; font: 600 11.5px/1.4 var(--font); letter-spacing: 0; text-transform: none; color: var(--primary); text-decoration: none; }
+.lc-rv-go:hover { text-decoration: underline; text-underline-offset: 3px; }
+.lc-rv-go:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+
+.lc-ans-note { margin-top: 4px; padding-left: 10px; border-left: 2px solid var(--line); font: 400 12.5px/1.45 var(--font); color: var(--text-2); overflow-wrap: anywhere; }
+.lc-ans-note b { display: block; font: 600 9.5px/1.6 var(--font); letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); }
+
+/* The whole record of one attempt, opened under it on a ruled margin. */
+.lc-ans-more { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 8px 12px; margin: 8px 0 2px; padding-left: 12px; border-left: 2px solid var(--primary); animation: rise var(--t-2) var(--ease) both; }
+.lc-ans-more dt { padding-top: 2px; font: 500 9.5px/1.5 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-4); }
+.lc-ans-more dd { display: flex; flex-direction: column; gap: 4px; min-width: 0; font: 400 12.5px/1.5 var(--font); color: var(--text-2); overflow-wrap: anywhere; }
+.lc-ans-more dd > p:first-child { color: var(--text); }
+.lc-ans-more ul { display: flex; flex-direction: column; gap: 2px; }
+.lc-ans-stim { padding: 6px 0 2px; font-size: 12px; color: var(--text-3); white-space: pre-line; max-height: 140px; overflow-y: auto; }
+.lc-ans-kind { font: 500 11px/1.4 var(--font); color: var(--text-3); }
+.lc-ans-err { color: var(--bad); }
+
+/* Reading: three answers' worth of shape. */
+.lc-ans-wait { display: flex; flex-direction: column; gap: 14px; }
+.lc-ans-wait > div { display: grid; grid-template-columns: 24px minmax(0, 1fr); grid-template-rows: 14px 12px; gap: 6px 12px; }
+.lc-ans-wait .skel:first-child { grid-row: span 2; height: 24px; border-radius: 7px; }
+.lc-ans-wait .skel:nth-child(2) { width: 88%; }
+.lc-ans-wait .skel:nth-child(3) { width: 54%; }
+
 .lc-trail { display: flex; flex-direction: column; max-height: 320px; overflow-y: auto; }
 .lc-trail li { display: grid; grid-template-columns: 64px 64px minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--line); }
 .lc-trail li:first-child { border-top: 0; }
@@ -247,9 +337,11 @@ td.lc-sigc, th.lc-sigc { width: 44px; padding-right: 20px !important; }
   .lc-find { width: 100%; }
   .lc-filters { padding: 0 16px 12px; }
   .lc-heat-scroll { max-height: 70vh; }
-  .lc-heat thead th.lc-who, td.lc-who { padding-left: 14px !important; }
-  td.lc-who { min-width: 150px; max-width: 168px; }
+  .lc-heat thead th.lc-who, td.lc-who, .lc-trow > th.lc-who { padding-left: 14px !important; }
+  td.lc-who, .lc-trow > th.lc-who { min-width: 150px; max-width: 168px; }
   .lc-legend { padding: 12px 16px 14px; }
+  .lc-tskel, .lc-tempty { padding-left: 16px; padding-right: 16px; }
+  .lc-tskel > div { grid-template-columns: minmax(80px, 1fr) repeat(6, 30px); gap: 6px; }
   .lc-tubes, .lc-insp { padding: 18px 16px; }
   .lc-trail li { grid-template-columns: 60px minmax(0, 1fr); }
   .lc-trail-what { grid-column: 1 / -1; }

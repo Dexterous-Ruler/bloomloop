@@ -99,6 +99,34 @@ function explain(profile, level, slow, onTarget) {
 }
 
 /**
+ * A room's question set (sessions.question_ids, 0015): the ids of the only
+ * questions it may serve, or null for its whole active bank, which is what every
+ * room opened before sets existed, and every room opened without one, serves.
+ * Lower case, because a uuid may be typed either way and Postgres prints it lower.
+ */
+export function roomQuestionIds(session) {
+  const ids = session?.questionIds;
+  return Array.isArray(ids) ? ids.map((id) => String(id).toLowerCase()) : null;
+}
+
+/** May this room serve the question with this id? Only asks the set; the caller checks status. */
+export function inRoomSet(session, questionId) {
+  const set = roomQuestionIds(session);
+  return !set || set.includes(String(questionId ?? '').toLowerCase());
+}
+
+/**
+ * What a room may serve: active questions, and of those only its set's when it
+ * has one. Every serving path reads the bank through this, the live loop's bank
+ * cache and the image rule (services/media.js) alike, so selectNext() is only
+ * ever handed questions the room may serve, and a question the professor left
+ * out of the set never reaches a phone however it is asked for.
+ */
+export function servableFor(session, questions) {
+  return (questions ?? []).filter((q) => (q.status ?? 'active') === 'active' && inRoomSet(session, q._id));
+}
+
+/**
  * Serve a whole set at once (used by the seed script and the load test).
  * Selection is sequential so each pick respects the items already handed out.
  */

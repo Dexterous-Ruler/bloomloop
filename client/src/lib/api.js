@@ -74,6 +74,16 @@ const json = (method) => (path, body) =>
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
+/** `?a=1&b=2` from an object, leaving out empty values. */
+function query(params) {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') q.set(k, String(v));
+  }
+  const s = q.toString();
+  return s ? `?${s}` : '';
+}
+
 export const api = {
   health: () => req('/health'),
 
@@ -238,6 +248,19 @@ export const api = {
   // be walked to find out who else is in the database.
   analytics: () => req('/analytics'),
   analyticsFor: (id) => req(`/analytics/${encodeURIComponent(id)}`),
+
+  // Phase 1: the evidence behind the numbers. Every list is paged; the review
+  // queue by cursor (`before`), the others by offset. Empty params are left
+  // out so the server's defaults apply.
+  studentAnswers: (id, params = {}) => req(`/analytics/${encodeURIComponent(id)}/answers${query(params)}`),
+  roomAnswers: (code, params = {}) => req(`/session/${encodeURIComponent(code)}/answers${query(params)}`),
+  roomTopics: (code) => req(`/session/${encodeURIComponent(code)}/topics`),
+  reviewQueue: (params = {}) => req(`/review${query(params)}`),
+  reviewItem: (answerId) => req(`/review/${encodeURIComponent(answerId)}`),
+  // decision: 'confirm' | 'override'; an override carries `correct` and/or
+  // `score`. The note is shown to the student.
+  review: (answerId, { decision, correct, score, note } = {}) =>
+    json('POST')(`/review/${encodeURIComponent(answerId)}`, { decision, correct, score, note }),
 
   // Who may invite whom is decided from the caller's own role - an HOD gets a
   // professor, a professor gets a student - so `role` here is a statement of

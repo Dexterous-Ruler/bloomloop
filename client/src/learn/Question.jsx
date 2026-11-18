@@ -212,6 +212,12 @@ export default function Question({
               </div>
             </div>
           )}
+          {/* A written answer's first mark is the machine's reading of it
+              against the rubric, and a professor can still confirm or change
+              it. Said so plainly, so a student is not surprised later. */}
+          {result.provisional && (
+            <p className="t-small dim" role="note">Your teacher may review this mark.</p>
+          )}
           {/* The product's own sentence about what this answer did to the
               student's level. */}
           {result.reason && <p className="said">{result.reason}</p>}

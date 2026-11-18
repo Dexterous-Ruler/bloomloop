@@ -43,6 +43,7 @@ const outContent = (r) =>
     topics: Array.isArray(r.topics) ? r.topics : [],
     ownerId: r.owner_id ?? null,
     createdAt: r.created_at,
+    topicSlides: r.topic_slides && typeof r.topic_slides === 'object' ? r.topic_slides : {},
   };
 
 const inContent = (d) => ({
@@ -53,6 +54,7 @@ const inContent = (d) => ({
   // null is meaningful: it marks a pre-accounts row, which only the legacy
   // teacher-key path may reach. See ownership.js.
   owner_id: d.ownerId ?? null,
+  topic_slides: d.topicSlides && typeof d.topicSlides === 'object' && !Array.isArray(d.topicSlides) ? d.topicSlides : {},
 });
 
 // Everything kind-specific lives in one jsonb column and is spread back out on
@@ -76,6 +78,13 @@ const outQuestion = (r) =>
     status: r.status,
     source: r.source,
     createdAt: r.created_at,
+    // 0013: provenance and approval.
+    model: r.model ?? null,
+    sourceRef: r.source_ref ?? null,
+    checks: r.checks ?? null,
+    createdBy: r.created_by ?? null,
+    approvedBy: r.approved_by ?? null,
+    approvedAt: r.approved_at ?? null,
     ...(r.payload && typeof r.payload === 'object' ? r.payload : {}),
   };
 
@@ -94,6 +103,12 @@ const inQuestion = (d) => {
     status: d.status ?? 'active',
     source: d.source ?? 'llm',
     payload,
+    model: d.model ?? null,
+    source_ref: d.sourceRef ?? null,
+    checks: d.checks ?? null,
+    created_by: d.createdBy ?? null,
+    approved_by: d.approvedBy ?? null,
+    approved_at: d.approvedAt ?? null,
   };
 };
 
@@ -117,6 +132,8 @@ const outSession = (r) =>
     masteryGoal: Number(r.mastery_goal),
     reattempts: Number(r.reattempts) || 0,
     redemption: r.redemption === true,
+    // uuid[] (0015) arrives as a JSON array of strings; null is the whole bank.
+    questionIds: Array.isArray(r.question_ids) ? r.question_ids.map(String) : null,
   };
 
 const outProfile = (r) =>
@@ -215,6 +232,25 @@ const outReview = (r) =>
     reviewedBy: r.reviewed_by ?? null,
     reviewedAt: r.reviewed_at,
   };
+
+/**
+ * An uploaded image (0014). `data` is a bytea column, which PostgREST reads and
+ * writes as its text form: "\x" and two hex digits a byte. Only selected when
+ * asked for, because a permission check needs none of the half megabyte.
+ */
+const outMedia = (r) =>
+  r && {
+    _id: r.id,
+    ownerId: r.owner_id ?? null,
+    contentId: r.content_id,
+    mime: r.mime,
+    bytes: Number(r.bytes),
+    sha256: r.sha256,
+    alt: r.alt ?? '',
+    createdAt: r.created_at,
+    ...(typeof r.data === 'string' ? { data: Buffer.from(r.data.replace(/^\\x/, ''), 'hex') } : {}),
+  };
+const MEDIA_META = 'id, owner_id, content_id, mime, bytes, sha256, alt, created_at';
 
 const inAnswer = (d) => ({
   session_id: d.sessionId,
@@ -347,6 +383,11 @@ export function createSupabaseRepo() {
         topic: 'topic',
         source: 'source',
         kind: 'kind',
+        model: 'model',
+        sourceRef: 'source_ref',
+        checks: 'checks',
+        approvedBy: 'approved_by',
+        approvedAt: 'approved_at',
       });
       const payload = {};
       for (const k of PAYLOAD_KEYS) if (patch[k] !== undefined) payload[k] = patch[k];
@@ -368,12 +409,13 @@ export function createSupabaseRepo() {
       return count ?? 0;
     },
 
-    async countQuestions(contentId) {
+    // `status`: see memoryRepo.
+    async countQuestions(contentId, { status = 'active' } = {}) {
       const { count, error } = await db
         .from('questions')
         .select('id', { count: 'exact', head: true })
         .eq('content_id', contentId)
-        .eq('status', 'active');
+        .eq('status', status);
       if (error) fail('countQuestions')(error);
       return count ?? 0;
     },
@@ -398,6 +440,9 @@ export function createSupabaseRepo() {
             mastery_goal: doc.masteryGoal,
             reattempts: doc.reattempts,
             redemption: doc.redemption,
+            // Written once, for the same reason: which questions a room serves
+            // is part of what its answers mean.
+            question_ids: Array.isArray(doc.questionIds) ? doc.questionIds : null,
           })
           .select()
           .single(),
@@ -440,6 +485,16 @@ export function createSupabaseRepo() {
       const rows = unwrap(
         'listSessions',
         await db.from('sessions').select('*').order('started_at', { ascending: false }),
+      );
+      return (rows ?? []).map(outSession);
+    },
+
+    // See memoryRepo. Indexed by sessions_content_idx (0014).
+    async listSessionsForContent(contentId) {
+      if (!isUuid(contentId)) return [];
+      const rows = unwrap(
+        'listSessionsForContent',
+        await db.from('sessions').select('*').eq('content_id', contentId).order('started_at', { ascending: false }),
       );
       return (rows ?? []).map(outSession);
     },
@@ -678,6 +733,35 @@ export function createSupabaseRepo() {
         if (rows.length < PAGE) return out;
       }
     },
+
+    // -- media (see memoryRepo for the contract) --
+    async createMedia(doc) {
+      const row = unwrap('createMedia', await db
+        .from('media')
+        .insert({
+          owner_id: doc.ownerId ?? null,
+          content_id: doc.contentId,
+          mime: doc.mime,
+          bytes: doc.bytes,
+          sha256: doc.sha256,
+          alt: doc.alt,
+          data: `\\x${Buffer.from(doc.data).toString('hex')}`,
+        })
+        .select(MEDIA_META)
+        .single());
+      return outMedia(row);
+    },
+
+    async getMedia(id, { withData = false } = {}) {
+      if (!isUuid(id)) return null;
+      const { data, error } = await db
+        .from('media')
+        .select(withData ? `${MEDIA_META}, data` : MEDIA_META)
+        .eq('id', id)
+        .maybeSingle();
+      if (error) fail('getMedia')(error);
+      return outMedia(data);
+    },
   };
 }
 
@@ -692,12 +776,25 @@ export async function probeSupabase() {
   const tables = [
     ['contents', '0000'], ['questions', '0000'], ['sessions', '0000'], ['profiles', '0000'],
     ['accounts', '0001'], ['invites', '0002'], ['answers', '0008'], ['room_archives', '0009'],
-    ['answer_reviews', '0010'],
+    ['answer_reviews', '0010'], ['media', '0014'],
   ];
   const missing = [];
   for (const [table, file] of tables) {
     const { error } = await db.from(table).select('*', { count: 'exact', head: true });
     if (error) missing.push(`${table} (${file}): ${error.message}`);
+  }
+  // Columns, not tables: without 0013 every generated question fails to save
+  // (no model column), which a table probe would not notice until a professor
+  // pressed Generate.
+  const columns = [
+    ['questions', 'model, source_ref, checks, created_by, approved_by, approved_at', '0013'],
+    ['contents', 'topic_slides', '0013'],
+    // Without it every room fails to open: createSession writes the column.
+    ['sessions', 'question_ids', '0015'],
+  ];
+  for (const [table, cols, file] of columns) {
+    const { error } = await db.from(table).select(cols, { count: 'exact', head: true });
+    if (error) missing.push(`${table} columns (${file}): ${error.message}`);
   }
   if (missing.length) throw new Error(`not ready - ${missing.join('; ')}`);
 }

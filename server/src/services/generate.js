@@ -13,15 +13,14 @@ import { config, hasGemini } from '../config.js';
 import { LEVELS, LABEL, VERBS, DEFAULT_MIX, isLevel } from '../bloom.js';
 import {
   KINDS,
-  KIND_FOR_LEVEL,
   LABEL as KIND_LABEL,
   BLANK_MARK,
   MAX_STIMULUS_TEXT,
   swapsFor,
-  kindSuitsLevel,
   isUngraded,
   invalidReason,
 } from '../questionTypes.js';
+import { resolveKindMix, spreadKinds, countKinds, kindAllowedAt } from './plan.js';
 
 /**
  * The kinds this file may write. Everything the contract offers, minus the
@@ -35,6 +34,13 @@ import {
  * that. It is the teacher's to author.
  */
 const GENERATED_KINDS = KINDS.filter((kind) => !isUngraded(kind));
+
+/**
+ * What questions.model records for an item the offline templates built. A model
+ * item records the model id it was asked of (config.gemini.model), so a bank
+ * written across a model change still says which model wrote which item.
+ */
+export const OFFLINE_MODEL = 'offline-template';
 
 /** Enough of the chapter for the model to answer from, small enough to stay fast. */
 const MAX_CONTEXT_CHARS = 6000;
@@ -246,22 +252,80 @@ function resolveMix(spec) {
 }
 
 /**
- * The interaction map for one run: level -> kind, defaulted from the contract.
+ * The interactions for one run: level -> { kind: weight }.
  *
  * A level offers a SET of kinds and the caller may pick any of them, because
- * everything in a set demands the same cognitive move. A kind from another
- * level's set is dropped here rather than obeyed - "Evaluate, rendered as an
- * mcq" is the one thing this whole design exists to make impossible, and a
- * generator that quietly honoured it would undo the plan validation upstream.
+ * everything in a set demands the same cognitive move. Two shapes are taken:
+ * level -> 'kind', the whole level as one kind, which is what every caller sent
+ * before the kind mix; and level -> { kind: weight }, several kinds in
+ * proportion - a plan's per-topic counts are this shape too, and come back out
+ * as exactly those counts (spreadKinds). A level not named gets the default
+ * mix. A kind from another level's set is dropped here rather than obeyed -
+ * "Evaluate, rendered as an mcq" is the one thing this whole design exists to
+ * make impossible, and a generator that quietly honoured it would undo the
+ * plan validation upstream.
  */
 function sanitiseKinds(kinds) {
-  const out = { ...KIND_FOR_LEVEL };
-  if (!kinds || typeof kinds !== 'object') return out;
+  const one = {};
+  const mix = {};
+  if (kinds && typeof kinds === 'object') {
+    for (const level of LEVELS) {
+      const v = kinds[level];
+      if (v && typeof v === 'object') mix[level] = v;
+      else if (typeof v === 'string') one[level] = v;
+    }
+  }
+  return resolveKindMix({ kinds: one, kindMix: mix });
+}
+
+/** level -> { kind: count }, exactly plan[level] questions at each level. */
+function slotsFor(plan, kindMix) {
+  const out = {};
   for (const level of LEVELS) {
-    const want = collapse(kinds[level]).toLowerCase();
-    if (want && kindSuitsLevel(want, level)) out[level] = want;
+    const n = plan[level] || 0;
+    if (n > 0) out[level] = countKinds(spreadKinds(kindMix[level], n));
   }
   return out;
+}
+
+/** What is still missing per level and kind, once `items` are counted against `slots`. */
+function slotShortfall(slots, items) {
+  const out = {};
+  for (const level of LEVELS) {
+    const left = { ...(slots[level] ?? {}) };
+    for (const item of items) {
+      if (item?.bloom === level && left[item.kind] > 0) left[item.kind] -= 1;
+    }
+    for (const k of Object.keys(left)) if (left[k] <= 0) delete left[k];
+    if (Object.keys(left).length) out[level] = left;
+  }
+  return out;
+}
+
+/** level -> { kind: count } summed to level -> count. */
+const levelTotals = (slots) =>
+  LEVELS.reduce((acc, level) => ({
+    ...acc,
+    [level]: Object.values(slots[level] ?? {}).reduce((a, b) => a + b, 0),
+  }), {});
+
+/**
+ * The kinds to try for one slot, in order: the one this slot asked for, the
+ * others planned at the level, then the rest of the level's own set. If this
+ * chapter cannot carry a Sort honestly it may still carry a Match, and both are
+ * Understand - so the item survives without the level being lied about.
+ * Dropping to an mcq at a level that does not offer one is NOT in this list:
+ * that is the taxonomy going decorative, which is the failure this product
+ * exists to prevent, and it would happen precisely on the thin material where
+ * the level tags matter most.
+ */
+const tryOrder = (level, asked, planned) =>
+  [...new Set([asked, ...planned, ...swapsFor(level)])].filter((k) => k && kindAllowedAt(k, level));
+
+/** Take one slot for a kind just built: its own if one is waiting, else the slot at the head. */
+function takeSlot(pending, kind) {
+  const at = pending.indexOf(kind);
+  pending.splice(at >= 0 ? at : 0, 1);
 }
 
 function shortfall(plan, items) {
@@ -333,6 +397,31 @@ export function contextForTopic(rawText, topic, maxChars = MAX_CONTEXT_CHARS) {
 }
 
 /**
+ * Where in the uploaded deck a question's topic was read from, for
+ * questions.source_ref: {kind: 'slides', slides: [3, 4]}, or null.
+ *
+ * The topic's slides, not the exact sentence the item was built from: the
+ * generator is handed the topic's part of the whole chapter (contextForTopic),
+ * so this is where the topic lives in the deck, which is what a professor needs
+ * to open beside the draft. Null for pasted text, a topic the professor renamed
+ * after upload, and a deck uploaded before slides were kept.
+ *
+ * Matched the way the generator names a topic - collapsed, clipped to the same
+ * length, case ignored - so a long slide title still finds its slides.
+ */
+export function sourceRefFor(content, topic) {
+  const map = content?.topicSlides;
+  const want = normKey(topic);
+  if (!want || !map || typeof map !== 'object') return null;
+  for (const [name, slides] of Object.entries(map)) {
+    if (normKey(name) !== want && normKey(clip(name, MAX_TOPIC_CHARS)) !== want) continue;
+    const numbers = [...new Set((Array.isArray(slides) ? slides : []).filter((n) => Number.isInteger(n) && n > 0))];
+    if (numbers.length) return { kind: 'slides', slides: numbers.sort((a, b) => a - b) };
+  }
+  return null;
+}
+
+/**
  * A newline ends a *line*, not a sentence. Source text arrives hard-wrapped -
  * a pasted syllabus, or one line per DrawingML paragraph out of a deck - so
  * splitting on every newline chopped sentences mid-clause and put fragments
@@ -391,7 +480,10 @@ function mineTerms(topic, contextText) {
   const entries = new Map();
   let order = 0;
 
-  const put = (rawTerm, gloss, score) => {
+  // `defined` marks a term some sentence of the source defines outright ("X is
+  // ..."). The hot-text template asks a student to pick exactly these out of a
+  // line, so it has to be a fact about the text, not a guess from the score.
+  const put = (rawTerm, gloss, score, defined = false) => {
     const term = collapse(rawTerm)
       .replace(/^(?:the|a|an)\s+/i, '')
       .replace(/[^\w\s\-/()]+$/, '')
@@ -404,9 +496,10 @@ function mineTerms(topic, contextText) {
     if (existing) {
       if (gloss && (!existing.gloss || score > existing.score)) existing.gloss = gloss;
       existing.score = Math.max(existing.score, score);
+      existing.defined = existing.defined || defined;
       return;
     }
-    entries.set(key, { term, key, gloss: gloss || '', score, order: (order += 1) });
+    entries.set(key, { term, key, gloss: gloss || '', score, defined, order: (order += 1) });
   };
 
   // The topic itself is always a legitimate subject for a question.
@@ -414,7 +507,7 @@ function mineTerms(topic, contextText) {
 
   for (const sentence of sentences) {
     const match = sentence.match(DEFINITION);
-    if (match) put(match[1], match[2], 5);
+    if (match) put(match[1], match[2], 5, true);
   }
   for (const sentence of sentences) {
     for (const match of sentence.matchAll(PROPER_PHRASE)) put(match[1], '', 2);
@@ -453,7 +546,7 @@ function mineTerms(topic, contextText) {
     .slice(0, MAX_TERMS);
 
   if (!ranked.length) {
-    ranked.push({ term: collapse(topic), key: normKey(topic), gloss: '', score: 6, order: 1 });
+    ranked.push({ term: collapse(topic), key: normKey(topic), gloss: '', score: 6, defined: false, order: 1 });
   }
 
   return ranked.map((entry) => ({
@@ -677,7 +770,7 @@ function passageIn(contextText, terms) {
  * @returns {Map<string, object[]>} level -> at most one anchored item, empty
  *          unless at least two levels landed
  */
-function anchoredForPassage({ topic, contextText, terms, plan, kindMap, avoid }) {
+function anchoredForPassage({ topic, contextText, terms, plan, orderFor, avoid }) {
   const none = new Map();
   const passage = passageIn(contextText, terms);
   if (!passage) return none;
@@ -690,7 +783,7 @@ function anchoredForPassage({ topic, contextText, terms, plan, kindMap, avoid })
   LEVELS.forEach((level, levelIdx) => {
     if ((plan[level] || 0) <= 0) return;
     const stems = STEMS[level];
-    const order = [kindMap[level], ...swapsFor(level).filter((k) => k !== kindMap[level])];
+    const order = orderFor(level);
 
     for (let attempt = 0; attempt < subjects.length; attempt += 1) {
       const term = subjects[(levelIdx + attempt) % subjects.length];
@@ -735,7 +828,7 @@ function anchoredForPassage({ topic, contextText, terms, plan, kindMap, avoid })
 export function fallbackForTopic({ topic, contextText = '', mix, kinds, avoidTexts = [] } = {}) {
   const cleanTopic = clip(collapse(topic) || 'this chapter', MAX_TOPIC_CHARS);
   const plan = resolveMix(mix);
-  const kindMap = sanitiseKinds(kinds);
+  const kindMix = sanitiseKinds(kinds);
   const terms = mineTerms(cleanTopic, contextText);
   const avoid = new Set(avoidTexts.map(normKey));
   const items = [];
@@ -746,12 +839,32 @@ export function fallbackForTopic({ topic, contextText = '', mix, kinds, avoidTex
   const withoutTopic = terms.filter((entry) => entry.key !== normKey(cleanTopic));
   const subjects = withoutTopic.length >= 3 ? withoutTopic : terms;
 
+  // Which kind each of a level's questions should be, in fill order. A level
+  // spread over two kinds asks for both; a kind this chapter cannot carry
+  // honestly gives its slot to a sibling, never to another level's kind.
+  const slots = LEVELS.reduce((acc, level) => ({ ...acc, [level]: spreadKinds(kindMix[level], plan[level] || 0) }), {});
+  const planned = (level) => [...new Set(slots[level])];
+
   // The offline path gets the shared reading too. A venue with no wifi is
   // exactly when a teacher would notice the bank had quietly become flatter
   // than the one they were shown last week, and "one passage, three levels" is
   // the capability this phase is for - it must not be a thing that only happens
   // when the API answers.
-  const anchored = anchoredForPassage({ topic: cleanTopic, contextText, terms, plan, kindMap, avoid });
+  //
+  // The reading may only use the kinds the plan asked of a level, never the
+  // rest of the level's set: a passage is short, and on a level with one slot
+  // it would otherwise turn the plan's "Rank them" into the "Put these in
+  // order" the passage happens to carry, every time. The main pass below is
+  // where a sibling may stand in, and only when the whole chapter cannot carry
+  // the kind asked.
+  const anchored = anchoredForPassage({
+    topic: cleanTopic,
+    contextText,
+    terms,
+    plan,
+    orderFor: (level) => [...new Set([slots[level][0], ...planned(level)])].filter((k) => k && kindAllowedAt(k, level)),
+    avoid,
+  });
 
   LEVELS.forEach((level, levelIdx) => {
     const want = plan[level] || 0;
@@ -766,16 +879,12 @@ export function fallbackForTopic({ topic, contextText = '', mix, kinds, avoidTex
     made.forEach((item) => avoid.add(normKey(item.text)));
     const budget = (want + avoid.size + 2) * stems.length + subjects.length;
 
-    // The asked-for kind first, then the rest of the level's own set. If this
-    // chapter cannot carry a Sort honestly it may still carry a Match, and both
-    // are Understand - so the item survives without the level being lied about.
-    // Dropping to an mcq at a level that does not offer one is NOT in this list:
-    // that is the taxonomy going decorative, which is the failure this product
-    // exists to prevent, and it would happen precisely on the thin material
-    // where the level tags matter most.
-    const order = [kindMap[level], ...swapsFor(level).filter((k) => k !== kindMap[level])];
+    const pending = slots[level].slice();
+    made.forEach((item) => takeSlot(pending, item.kind));
 
     for (let attempt = 0; made.length < want && attempt < budget; attempt += 1) {
+      // The slot at the head of the queue asks first; see tryOrder for the rest.
+      const order = tryOrder(level, pending[0], planned(level));
       // Offset by level so the six levels do not all open on the same term,
       // while still keeping every level near the top of the ranked list.
       const term = subjects[(levelIdx + attempt) % subjects.length];
@@ -812,6 +921,7 @@ export function fallbackForTopic({ topic, contextText = '', mix, kinds, avoidTex
       if (!candidate) continue;
 
       made.push(candidate);
+      takeSlot(pending, candidate.kind);
     }
 
     items.push(...made);
@@ -864,6 +974,36 @@ function countOf(body, key) {
 
 /** A word as it is compared, with the punctuation it is displayed with removed. */
 const tokenCore = (token) => String(token).toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '');
+
+/**
+ * A term as it should read in a gap: capitalised at the start of a line, and
+ * otherwise as the source itself writes it mid-sentence. A term mined from the
+ * start of a sentence arrives capitalised ("Multiplexing"); if the source also
+ * writes it in lower case it is an ordinary word and is lowered, and if not it
+ * is a name ("Reno") and keeps its capital.
+ */
+function inCase(label, start, source) {
+  const lower = label ? label[0].toLowerCase() + label.slice(1) : label;
+  // Collapsed first: source text arrives hard-wrapped, and "flow\ncontrol"
+  // is still the source writing "flow control" in lower case.
+  const ordinary = /^[A-Z][^A-Z]*$/.test(label)
+    && new RegExp(`\\b${lower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(collapse(source));
+  const plain = ordinary ? lower : label;
+  return start && plain ? plain[0].toUpperCase() + plain.slice(1) : plain;
+}
+
+/**
+ * Ideas worth a column of their own: ones the material defines, or names in
+ * more than one word, or abbreviates. A lone capitalised word ("Connection") is
+ * usually just the first word of a sentence, which makes a weak heading. Falls
+ * back to every idea when fewer than two strong ones exist.
+ */
+const isStrong = (t) => t.defined || /\s/.test(t.key) || /^[A-Z0-9]{2,}$/.test(t.term);
+
+function strongIdeas(ideas) {
+  const strong = ideas.filter(isStrong);
+  return strong.length >= 2 ? strong : ideas;
+}
 
 /**
  * Which sentences of the source each mined term appears in.
@@ -1292,6 +1432,299 @@ function buildNonMcq({ kind, term, terms, topic, contextText, seed, n = 0 }) {
       };
     }
 
+    case 'hottext': {
+      // One line of the source, and the student picks out every word that names
+      // a term the material defines outright ("X is ..."). Checkable against the
+      // text: each right pick has a definition sentence in the chapter, and no
+      // wrong one does. Single words only, because a student who taps "port" out
+      // of "port number" has half of a right answer and no way to give it.
+      const defined = new Set(
+        terms.filter((t) => t.defined && isNamed(t) && /^[a-z0-9][a-z0-9-]*$/.test(t.key)).map((t) => t.key),
+      );
+      if (!defined.size) return null;
+      // Named vocabulary of more than one word, defined or not, leaves a line
+      // open to the same argument, so a line carrying any is not used.
+      const phrases = terms.filter((t) => isNamed(t) && /\s/.test(t.key)).map((t) => t.key);
+      const hosts = sentencesOf(contextText).filter((s) => !looksLikeHeading(s) && s.length >= 40 && s.length <= 240);
+
+      const usable = [];
+      for (const host of hosts) {
+        const tokens = collapse(host).split(' ');
+        if (tokens.length < 6 || tokens.length > 40) continue;
+        if (phrases.some((p) => countOf(normKey(host), p))) continue;
+
+        let unclear = false;
+        const answerIdxs = [];
+        tokens.forEach((token, i) => {
+          if (defined.has(tokenCore(token))) {
+            answerIdxs.push(i);
+            return;
+          }
+          // "TCP's", "UDP-based", "sockets" beside a defined "socket": a word
+          // that carries a defined term without being it. Whichever way it was
+          // marked, a student could fairly argue the other.
+          const parts = token.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+          if (parts.some((p) => defined.has(p) || defined.has(p.replace(/e?s$/, '')))) unclear = true;
+        });
+        if (unclear || answerIdxs.length === 0 || answerIdxs.length >= tokens.length) continue;
+        usable.push({ host, tokens, answerIdxs, definition: DEFINITION.test(host) });
+      }
+      if (!usable.length) return null;
+
+      // Lines that are not themselves a definition first: "Multiplexing is ..."
+      // points straight at its own answer, so those come last. The nth item
+      // takes the nth line, so a second hot text in a topic is a second line.
+      usable.sort((a, b) => Number(a.definition) - Number(b.definition));
+      const { host, tokens, answerIdxs } = usable[n % usable.length];
+      return {
+        // Worded by the line, not by n: the same line asked twice must read the
+        // same, so the bank's duplicate check catches it instead of shipping
+        // one question under two stems.
+        text: pick(
+          [
+            `Read this line from ${here} and pick out every word that names a term the material defines.`,
+            `Which words in this line from ${here} name a term the material defines? Pick each one.`,
+            `Pick every word in this line from ${here} that is a term the material gives a definition of.`,
+          ],
+          hashString(host),
+        ),
+        tokens,
+        criterion: 'every word that names a term the material defines',
+        answerIdxs,
+      };
+    }
+
+    case 'dropdown': {
+      // The cloze scan with the typing taken away: each gap offers the term that
+      // was there and named terms from elsewhere in the chapter. The wrong ones
+      // are terms this line never mentions, so none of them is another gap's
+      // answer - two terms that could swap places would make both readings right
+      // and mark one of them wrong.
+      const pool = terms.filter((t) => isNamed(t) && t.key.length >= 4);
+      const offered = terms.filter(isNamed);
+      // Every line that can carry the gaps, and the nth item takes the nth: a
+      // second dropdown in a topic is a second line, not the first one again
+      // with other wrong options.
+      const lines = [...gapHosts(contextText, pool, 0)];
+
+      for (let k = 0; k < lines.length; k += 1) {
+        const { flat, picked } = lines[(n + k) % lines.length];
+        const body = normKey(flat);
+        const elsewhere = offered.filter((t) => !countOf(body, t.key));
+        // Fixed by the line, for the same reason as the line itself.
+        const turn = hashString(flat);
+        const blanks = [];
+        for (const [i, hit] of picked.entries()) {
+          // Every option in the case the gap's position calls for. A term mined
+          // from the start of a sentence arrives capitalised ("Multiplexing"),
+          // and in mid-line that capital alone would point at the answer.
+          const shape = (label) => inCase(label, hit.at === 0, contextText);
+          const answer = shape(clip(hit.term, 40));
+          const options = [answer];
+          for (const t of rotate(elsewhere, turn + i)) {
+            if (options.length >= 4) break;
+            const label = shape(clip(t.term, 40));
+            // "port" offered beside "port number" is half of the right answer.
+            if (options.some((o) => nested(normKey(o), normKey(label)))) continue;
+            options.push(label);
+          }
+          if (options.length < 3) break;
+          // The phone shuffles each gap again per student; this only keeps the
+          // stored order from always putting the answer first.
+          const order = shuffled(options, mulberry32((turn ^ Math.imul(0x2545f491, i + 1)) >>> 0));
+          blanks.push({ options: order, answerIdx: order.indexOf(answer) });
+        }
+        if (blanks.length !== picked.length) continue;
+
+        const text = `${pick(
+          [
+            `Choose the right term for each gap in this line from ${here}:`,
+            `Complete this line from ${here} by choosing a term for each gap:`,
+            `Pick the term that belongs in each gap of this line from ${here}:`,
+          ],
+          turn,
+        )} ${gapped(flat, picked)}`;
+        // Read positionally against the markers, like cloze.
+        if (text.split(BLANK_MARK).length - 1 !== picked.length) continue;
+        return { text, blanks };
+      }
+      return null;
+    }
+
+    case 'table': {
+      // One rule applied row by row, which is what makes completing a table
+      // Apply: which of two ideas the chapter discusses each term alongside -
+      // the same co-occurrence categorise sorts by, so every cell can be checked
+      // by reading the chapter. The first row is filled in as the worked
+      // example; the rest are typed.
+      //
+      // Beside each term is a line of the source that names it and names
+      // neither idea: context that is true by construction and cannot give the
+      // answer away. Not the miner's gloss, which is the first line containing
+      // the term's letters - "connection" inside "connectionless" - and a given
+      // cell describing a term wrongly is worse than no cell.
+      const { sentences, where } = whereEach(terms, contextText);
+      if (sentences.length < 3) return null;
+      // Not rotated by n, unlike `real`: the nth table is the nth layout found
+      // below, so the same layout always comes out the same and the bank's
+      // duplicate check sees it, rather than as its rows in another order.
+      const steady = terms.filter((t) => !t.generic && t.gloss);
+      // An idea is typed as the answer, so it must fit a cell unclipped.
+      const ideas = recurringIdeas(steady, where).filter((t) => t.term.length <= 40);
+      const lines = sentencesOf(contextText).filter((s) => !looksLikeHeading(s));
+      const QUOTE = 90;
+      const quoteFor = (t, a, b) => {
+        // The term has to be in the part of the line a cell shows; a long line
+        // clipped before it is a quote about something else.
+        const fits = lines.filter((s) => {
+          const body = normKey(s);
+          if (!countOf(body, t.key) || countOf(body, a.key) || countOf(body, b.key)) return false;
+          const at = body.search(new RegExp(`\\b${t.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`));
+          return at >= 0 && at + t.key.length <= QUOTE - 8;
+        });
+        return fits.length ? clip(fits[0], QUOTE) : null;
+      };
+      const described = steady.filter(isNamed);
+
+      const layouts = [];
+      for (let i = 0; i < ideas.length && i < 6; i += 1) {
+        for (let j = i + 1; j < ideas.length && j < 6; j += 1) {
+          const [a, b] = [ideas[i], ideas[j]];
+          if (nested(a.key, b.key)) continue;
+          const rows = [];
+          const labels = new Set();
+          for (const t of described) {
+            if (rows.length >= 5) break;
+            // A term that spells out an idea answers its own row.
+            if (nested(t.key, a.key) || nested(t.key, b.key)) continue;
+            const at = where.get(t.key);
+            if (!at) continue;
+            const inA = meets(at, where.get(a.key));
+            const inB = meets(at, where.get(b.key));
+            // Company kept with both is company kept with neither, as in categorise.
+            if (inA === inB) continue;
+            const label = clip(t.term, 40);
+            if (labels.has(normKey(label))) continue;
+            const quote = quoteFor(t, a, b);
+            if (!quote) continue;
+            labels.add(normKey(label));
+            rows.push({ label, quote, idea: inA ? a : b });
+          }
+          const toA = rows.filter((r) => r.idea === a).length;
+          const toB = rows.length - toA;
+          // One worked row and at least two to do, with both ideas among the
+          // answers: a column with one right answer is filled without reading.
+          if (rows.length < 3 || !toA || !toB) continue;
+          layouts.push({
+            a, b, rows, toA, toB,
+            // Strong ideas first (strongIdeas), then balance, then size.
+            strength: Number(isStrong(a)) + Number(isStrong(b)),
+            evenness: Math.min(toA, toB),
+          });
+        }
+      }
+      if (!layouts.length) return null;
+      layouts.sort((x, y) => y.strength - x.strength || y.evenness - x.evenness || y.rows.length - x.rows.length);
+      const best = layouts[n % layouts.length];
+
+      // The worked row comes from the larger side, so the rows left to do still
+      // need both ideas.
+      const big = best.toA >= best.toB ? best.a : best.b;
+      const first = best.rows.findIndex((r) => r.idea === big);
+      const rows = [best.rows[first], ...best.rows.filter((_, i) => i !== first)];
+      const [A, B] = [best.a.term, best.b.term];
+
+      return {
+        // Worded by the layout, not by n, for the reason given at `steady`.
+        text: pick(
+          [
+            `The material on ${here} discusses each term below alongside either "${A}" or "${B}". Complete the table with the one it goes with. The first row is done for you.`,
+            `For each term from ${here}, write whether the material discusses it alongside "${A}" or "${B}". The first row is done for you.`,
+            `Complete the table: each of these terms from ${here} is discussed alongside "${A}" or "${B}" in the material. Write which. The first row shows how.`,
+          ],
+          hashString(`${A}|${B}|${rows.map((r) => r.label).join('|')}`),
+        ),
+        columns: ['Where the material names it', 'Discussed alongside'],
+        rows: rows.map((r, i) => ({
+          header: r.label,
+          cells: [
+            { given: r.quote },
+            i === 0 ? { given: r.idea.term } : { accept: acceptFor(r.idea.term) },
+          ],
+        })),
+      };
+    }
+
+    case 'grid': {
+      // The same judgement across a whole matrix: for every term and every idea,
+      // does the material discuss the two together? Each tick is checked by
+      // finding a sentence that holds both, and each box left alone by finding
+      // none - which is why a grid is marked on both (questionTypes.js).
+      const { sentences, where } = whereEach(terms, contextText);
+      if (sentences.length < 3) return null;
+      // Not rotated by n, as in the table: the nth grid is the nth layout.
+      const steady = terms.filter((t) => !t.generic && t.gloss);
+      const ideas = strongIdeas(recurringIdeas(steady, where).filter((t) => t.term.length <= 40)).slice(0, 6);
+      const candidates = terms.filter(isNamed);
+
+      /** Rows for these columns, or null when they do not make a fair grid. */
+      const gridFor = (columns) => {
+        const rows = [];
+        for (const t of candidates) {
+          if (rows.length >= 5) break;
+          if (columns.some((c) => nested(c.key, t.key))) continue;
+          // "Flow" and "Flow control" as two rows are one term asked twice.
+          if (rows.some((r) => nested(r.key, t.key))) continue;
+          const at = where.get(t.key);
+          if (!at) continue;
+          const marks = columns.map((c) => meets(at, where.get(c.key)));
+          // A row of all ticks or no ticks makes no distinction of its own.
+          if (marks.every(Boolean) || !marks.some(Boolean)) continue;
+          rows.push({ key: t.key, label: clip(t.term, 40), marks });
+        }
+        if (rows.length < 3) return null;
+        // Nor may a column: one ticked all the way down is answered without
+        // reading a single row.
+        const mixed = columns.every((_, c) => rows.some((r) => r.marks[c]) && rows.some((r) => !r.marks[c]));
+        return mixed ? rows : null;
+      };
+
+      // Every fair layout, three columns before two; the nth grid takes the
+      // nth, so a second grid in a topic asks about other ideas.
+      const sets = [];
+      for (let i = 0; i < ideas.length; i += 1) {
+        for (let j = i + 1; j < ideas.length; j += 1) {
+          for (let k = j + 1; k < ideas.length; k += 1) sets.push([ideas[i], ideas[j], ideas[k]]);
+        }
+      }
+      for (let i = 0; i < ideas.length; i += 1) {
+        for (let j = i + 1; j < ideas.length; j += 1) sets.push([ideas[i], ideas[j]]);
+      }
+      const layouts = [];
+      for (const set of sets) {
+        if (set.some((a, x) => set.some((b, y) => x < y && nested(a.key, b.key)))) continue;
+        const found = gridFor(set);
+        if (found) layouts.push({ columns: set, rows: found });
+      }
+      if (!layouts.length) return null;
+      const { columns, rows } = layouts[n % layouts.length];
+
+      return {
+        // Worded by the layout, not by n, so the same grid always reads the same.
+        text: pick(
+          [
+            `Tick every box where the material on ${here} discusses the term in the row alongside the idea in the column.`,
+            `For each term from ${here}, tick every idea the material discusses it alongside.`,
+            `Which of these ideas does the material on ${here} discuss each term alongside? Tick every one that does.`,
+          ],
+          hashString(`${columns.map((c) => c.key).join('|')}#${rows.map((r) => r.key).join('|')}`),
+        ),
+        rows: rows.map((r) => r.label),
+        columns: columns.map((c) => c.term),
+        answers: rows.map((r) => r.marks),
+      };
+    }
+
     default:
       return null;
   }
@@ -1307,7 +1740,7 @@ export function validateItems(raw, topic = '', kinds) {
   const valid = [];
   const errors = [];
   const label = collapse(topic) ? `"${collapse(topic)}"` : 'response';
-  const kindMap = sanitiseKinds(kinds);
+  const kindMix = sanitiseKinds(kinds);
 
   const list = Array.isArray(raw)
     ? raw
@@ -1331,12 +1764,25 @@ export function validateItems(raw, topic = '', kinds) {
       return;
     }
 
-    // The kind is a property of the level, not a free choice. The caller's map -
-    // the plan the teacher approved - decides it, and an item that declares
-    // something else is judged against the map rather than its own claim. A
-    // caller may only choose within the level's own set; sanitiseKinds has
-    // already dropped anything from another level.
-    const kind = kindMap[bloom];
+    // The kind is a property of the level, not a free choice. The caller's plan
+    // - the one the teacher approved - names the kinds each level is asked as,
+    // and sanitiseKinds has already dropped anything from another level's set.
+    // An item declaring one of the planned kinds is that kind. Where the plan
+    // names just one, an item declaring something else is judged against the
+    // plan rather than its own claim, exactly as before the kind mix; where it
+    // names several, there is no telling which was meant, so the item is
+    // refused rather than guessed at.
+    const planned = Object.keys(kindMix[bloom] ?? {});
+    const declared = typeof item?.kind === 'string' ? collapse(item.kind).toLowerCase() : '';
+    let kind;
+    if (planned.includes(declared)) kind = declared;
+    else if (planned.length === 1) [kind] = planned;
+    else {
+      errors.push(
+        `${label} item ${i + 1} rejected: kind "${declared || 'none'}" is not one this plan asks ${bloom} as (${planned.join(', ')}).`,
+      );
+      return;
+    }
 
     const clean = {
       topic: collapse(topic),
@@ -1349,6 +1795,23 @@ export function validateItems(raw, topic = '', kinds) {
 
     const strings = (v) =>
       Array.isArray(v) && v.every((s) => typeof s === 'string') ? v.map((s) => collapse(s)).filter(Boolean) : null;
+    // For lists read by position (tokens, options with an index into them, the
+    // labels a grid's answers line up with): collapsed, never filtered, so an
+    // empty entry is refused by the validator instead of shifting the key.
+    const positional = (v) => (Array.isArray(v) ? v.map((s) => (typeof s === 'string' ? collapse(s) : s)) : []);
+    // A table cell from the model: given or blank. The schema makes both fields
+    // optional, so an empty `given` or an empty `accept` beside the other is
+    // the schema's noise, not a second claim, and is set aside. Both filled, or
+    // neither, is left as it came and refused by the validator.
+    const tableCell = (c) => {
+      if (!c || typeof c !== 'object' || Array.isArray(c)) return c;
+      const out = {};
+      if (typeof c.given === 'string' && collapse(c.given)) out.given = collapse(c.given);
+      else if (c.given !== undefined && c.given !== null && c.given !== '') out.given = c.given;
+      if (Array.isArray(c.accept) && c.accept.length) out.accept = positional(c.accept);
+      else if (c.accept !== undefined && c.accept !== null && !Array.isArray(c.accept)) out.accept = c.accept;
+      return out;
+    };
 
     // Parsed leniently, exactly as score() parses a student's "3,000" - the same
     // number written the same way must not be right from a phone and wrong from
@@ -1403,14 +1866,47 @@ export function validateItems(raw, topic = '', kinds) {
       clean.unit = typeof item?.unit === 'string' ? collapse(item.unit) : '';
     } else if (kind === 'open') {
       clean.rubric = strings(item?.rubric) ?? [];
+    } else if (kind === 'hottext') {
+      // Collapsed but never filtered: the answer is a list of POSITIONS in the
+      // sentence, so dropping an empty token would quietly move every index
+      // after it onto the wrong word. An empty one stays and is refused.
+      clean.tokens = positional(item?.tokens);
+      clean.criterion = typeof item?.criterion === 'string' ? collapse(item.criterion) : '';
+      clean.answerIdxs = Array.isArray(item?.answerIdxs) ? item.answerIdxs : [];
+    } else if (kind === 'dropdown') {
+      // `gaps` in the model's schema, so it cannot be confused with cloze's
+      // typed `blanks`; stored as `blanks` like every other gapped kind.
+      const gaps = Array.isArray(item?.gaps) ? item.gaps : Array.isArray(item?.blanks) ? item.blanks : [];
+      clean.blanks = gaps.map((g) => ({ options: positional(g?.options), answerIdx: g?.answerIdx }));
+    } else if (kind === 'table') {
+      clean.columns = positional(item?.columns);
+      const rows = Array.isArray(item?.tableRows) ? item.tableRows : Array.isArray(item?.rows) ? item.rows : [];
+      clean.rows = rows.map((r) => ({
+        header: typeof r?.header === 'string' ? collapse(r.header) : '',
+        cells: Array.isArray(r?.cells) ? r.cells.map(tableCell) : [],
+      }));
+    } else if (kind === 'grid') {
+      clean.rows = positional(Array.isArray(item?.gridRows) ? item.gridRows : item?.rows);
+      clean.columns = positional(item?.columns);
+      // A stringified boolean still means what it says, as for truefalse;
+      // anything else stays as it came and is refused.
+      clean.answers = Array.isArray(item?.answers)
+        ? item.answers.map((row) => (Array.isArray(row)
+          ? row.map((v) => (v === 'true' ? true : v === 'false' ? false : v))
+          : row))
+        : [];
     }
 
     const problems = [];
     const why = invalidReason(clean);
     if (why) problems.push(why);
 
-    // The banned-option rule applies wherever options are shown.
-    if ((kind === 'mcq' || kind === 'multi') && clean.options.some((o) => BANNED_OPTIONS.some((rx) => rx.test(o)))) {
+    // The banned-option rule applies wherever options are shown, and a
+    // dropdown shows a list at every gap.
+    const shownOptions = kind === 'mcq' || kind === 'multi'
+      ? clean.options
+      : kind === 'dropdown' ? clean.blanks.flatMap((g) => g.options) : [];
+    if (shownOptions.some((o) => typeof o === 'string' && BANNED_OPTIONS.some((rx) => rx.test(o)))) {
       problems.push('"all of the above" / "none of the above" options are forbidden');
     }
 
@@ -1446,7 +1942,7 @@ const ITEM_SCHEMA = {
       text: {
         type: Type.STRING,
         description:
-          'The question stem. kind "blank": it must contain exactly one ____ where the answer goes. kind "cloze": it is one passage containing 2 to 4 ____ markers. kind "truefalse": it is a STATEMENT to be judged, never a question, and must not end in "?".',
+          'The question stem. kind "blank": it must contain exactly one ____ where the answer goes. kinds "cloze" and "dropdown": it is one passage containing 2 to 4 ____ markers. kind "truefalse": it is a STATEMENT to be judged, never a question, and must not end in "?".',
       },
       options: {
         type: Type.ARRAY,
@@ -1457,7 +1953,8 @@ const ITEM_SCHEMA = {
       answerIdxs: {
         type: Type.ARRAY,
         items: { type: Type.INTEGER },
-        description: 'kind "multi" only: indices of every correct option (at least 2, never all of them).',
+        description:
+          'kind "multi": indices of every correct option (at least 2, never all of them). kind "hottext": indices into "tokens" of every word that meets the criterion (at least 1, never all of them).',
       },
       pairs: {
         type: Type.ARRAY,
@@ -1524,7 +2021,75 @@ const ITEM_SCHEMA = {
       criterion: {
         type: Type.STRING,
         description:
-          'kind "rank" only: the yardstick the items are ranked against, e.g. "most to least secure". Required - ranking with no stated criterion is unanswerable.',
+          'kind "rank": the yardstick the items are ranked against, e.g. "most to least secure". Required - ranking with no stated criterion is unanswerable. kind "hottext": which words to pick, e.g. "every word that names a transport protocol".',
+      },
+      // The four kinds below have their own field names wherever a shared name
+      // would need two shapes: a schema property has one type, and cloze's
+      // `blanks` are typed answers where a dropdown's gaps are lists to choose
+      // from; a table's rows are objects where a grid's are labels.
+      tokens: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+        description:
+          'kind "hottext" only: ONE sentence from the source split into its words, in reading order, 3 to 40 of them, punctuation kept on the word it follows.',
+      },
+      gaps: {
+        type: Type.ARRAY,
+        description: 'kind "dropdown" only: one entry per ____ marker in "text", IN THE SAME ORDER as the markers.',
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            options: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description: '2 to 5 short words or phrases to choose from at this gap, all different.',
+            },
+            answerIdx: { type: Type.INTEGER, description: 'Index of the one option that belongs in this gap.' },
+          },
+          required: ['options', 'answerIdx'],
+        },
+      },
+      columns: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+        description: 'kind "table": 2 to 4 column headings. kind "grid": 2 to 5 column labels.',
+      },
+      tableRows: {
+        type: Type.ARRAY,
+        description: 'kind "table" only: 2 to 6 rows, each with a heading and exactly one cell per column.',
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            header: { type: Type.STRING, description: 'The row heading.' },
+            cells: {
+              type: Type.ARRAY,
+              description: 'One per column. A cell is EITHER given (shown to the student) OR a blank to fill, never both.',
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  given: { type: Type.STRING, description: 'The text shown in a given cell. Leave out for a blank.' },
+                  accept: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                    description: 'Every answer accepted in a blank cell. Leave out for a given cell.',
+                  },
+                },
+              },
+            },
+          },
+          required: ['header', 'cells'],
+        },
+      },
+      gridRows: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+        description: 'kind "grid" only: 2 to 6 row labels.',
+      },
+      answers: {
+        type: Type.ARRAY,
+        items: { type: Type.ARRAY, items: { type: Type.BOOLEAN } },
+        description:
+          'kind "grid" only: one array per row of "gridRows", each with one true or false per column - true where that row and that column go together.',
       },
       accept: {
         type: Type.ARRAY,
@@ -1541,6 +2106,7 @@ const ITEM_SCHEMA = {
     propertyOrdering: [
       'bloom', 'kind', 'text', 'options', 'answerIdx', 'answerIdxs', 'answerBool', 'pairs',
       'buckets', 'blanks', 'value', 'tolerance', 'unit', 'sequence', 'criterion', 'accept', 'rubric',
+      'tokens', 'gaps', 'columns', 'tableRows', 'gridRows', 'answers',
     ],
   },
 };
@@ -1573,6 +2139,14 @@ const KIND_RULES = {
     '3 to 5 items in "sequence", written in the CORRECT order, which the student sees shuffled. Order by a sequence the source text itself settles: the steps of a process, the stages of an argument, the order of events.',
   rank: '3 to 5 items in "sequence" in the CORRECT order, plus "criterion": the yardstick they are ranked against, stated plainly ("most to least secure"). Say the criterion in the stem too. Ranking with no stated criterion is unanswerable and is rejected.',
   open: 'the student writes a short answer. Give 2 to 5 "rubric" points, each a few significant words naming something a full answer must contain. Rubric points are matched against the student\'s own words, so use the content words a correct answer would really use.',
+  hottext:
+    '"tokens" is ONE sentence taken from the source, split into its words in reading order (3 to 40), "criterion" says plainly which words to pick ("every word that names a transport protocol"), and "answerIdxs" holds the index of every token that meets it - at least one, never all of them. The criterion must be one the source settles, so a student who has read it can defend every pick and every word left alone; never one that turns on a word only half meeting it.',
+  dropdown:
+    'ONE passage in "text" with 2 to 4 ____ markers, and one "gaps" entry per marker IN THE SAME ORDER: each gap has 2 to 5 short "options" and "answerIdx", the index of the one that belongs there. Wrong options are real terms from the source that do not fit that gap - never a synonym of the right one, and never another gap\'s answer if the two could swap places and still read true.',
+  table:
+    '2 to 4 "columns" and 2 to 6 "tableRows", each {header, cells} with exactly one cell per column. A cell is either given ({"given": text}) or a blank for the student to fill ({"accept": [every accepted answer]}), never both and never neither. Every row follows one rule the source settles, so the given cells show the rule and the blanks ask for it to be applied; fill at least one row completely as a worked example, and keep blank answers short enough to type.',
+  grid:
+    '2 to 6 "gridRows" and 2 to 5 "columns", and "answers": one array per row with one true or false per column, true exactly where the source says that row and that column go together. At least one true and at least one false, every row and every column checkable against the source - a grid ticked all the way down a column is answered without reading.',
 };
 
 function buildSystemPrompt({ topic, contextText, mix, kinds, avoidTexts }) {
@@ -1593,16 +2167,22 @@ function buildSystemPrompt({ topic, contextText, mix, kinds, avoidTexts }) {
 
   // Only the levels this call is actually asking for. The mapping is the whole
   // feature - the interaction is chosen by the LEVEL, not by the question - so
-  // it is stated as an instruction and not as a menu.
+  // it is stated as an instruction and not as a menu. `kinds` here is counts,
+  // level -> { kind: n }, and each count is said out loud: a level asked as two
+  // kinds gets exactly that many of each, which is what the plan approved.
+  const asked = LEVELS.filter((level) => (mix[level] || 0) > 0);
+  const used = [...new Set(asked.flatMap((level) => Object.keys(kinds[level] ?? {})))];
   const kindRules = `
-The INTERACTION is fixed by the level. Never choose it yourself - for this bank use exactly this mapping:
+The INTERACTION is fixed by the level and by this plan. Never choose it yourself - for this bank use exactly these kinds, in exactly these numbers:
 
-${LEVELS.filter((level) => (mix[level] || 0) > 0)
-    .map(
-      (level) =>
-        `- ${level} -> kind "${kinds[level]}" (${KIND_LABEL[kinds[level]]}): ${KIND_RULES[kinds[level]]}`,
-    )
-    .join('\n')}`;
+${asked
+    .map((level) => `- ${level}: ${Object.entries(kinds[level] ?? {})
+      .map(([kind, n]) => `${n} as kind "${kind}" (${KIND_LABEL[kind]})`)
+      .join(', ')}`)
+    .join('\n')}
+
+What each kind must carry:
+${used.map((kind) => `- "${kind}": ${KIND_RULES[kind]}`).join('\n')}`;
 
   return `You write assessment items for an undergraduate class. You are building part of a question bank for the topic "${topic}".
 
@@ -1615,7 +2195,7 @@ ${counts}
 
 Rules, all of them mandatory:
 1. Every item carries exactly one bloom tag, lower-case, from the list above. Use the British spelling "analyse" - never "analyze".
-2. Every item's "kind" must be the one the mapping above gives for its bloom level, and it must carry that kind's payload fields and no others.
+2. Every item's "kind" must be one the plan above gives for its bloom level, in the numbers it gives, and it must carry that kind's payload fields and no others.
 3. The tag must match the cognitive demand of the stem. Use the exemplar verbs as your guide: a "remember" item asks the student to recall or identify, an "analyse" item asks them to differentiate or attribute, and so on. Do not tag a recall question as "evaluate" to fill a quota.
 4. Every question and its correct answer must be answerable from the source text below and from nothing else. No outside facts, no trivia, no knowledge the text does not contain.
 5. Everything wrong must be plausible: wrong options, unmatched pairs, false statements and items that could be mis-sorted are all real ideas, terms or steps drawn from the same source text that a student who half-understands the material would genuinely pick. Never use filler, joke options, obviously absurd answers, or near-duplicates of the correct answer.
@@ -1681,32 +2261,42 @@ export async function generateForTopic({
 } = {}) {
   const cleanTopic = clip(collapse(topic) || 'this chapter', MAX_TOPIC_CHARS);
   const plan = resolveMix(mix);
-  const kindMap = sanitiseKinds(kinds);
+  const kindMix = sanitiseKinds(kinds);
+  // Exactly how many of each kind every level gets. The model is asked for
+  // these numbers, and anything it does not deliver is topped up per kind.
+  const slots = slotsFor(plan, kindMix);
   const focus = contextForTopic(contextText, cleanTopic);
   const warnings = [];
+  // Read once, at the call: the id the model calls below are made with.
+  const modelId = config.gemini.model;
 
+  // Template items are built here; model items are stamped as they arrive.
+  // `wanted` is level -> { kind: count }; handed over as the kind weights, it
+  // comes back out of spreadKinds as exactly those counts.
   const buildFallback = (wanted, avoid) =>
-    fallbackForTopic({ topic: cleanTopic, contextText: focus, mix: wanted, kinds: kindMap, avoidTexts: avoid });
+    fallbackForTopic({ topic: cleanTopic, contextText: focus, mix: levelTotals(wanted), kinds: wanted, avoidTexts: avoid })
+      .map((item) => ({ ...item, model: OFFLINE_MODEL }));
 
   // A level whose template could not be built honestly comes back short rather
   // than as an mcq wearing an Evaluate tag. Say so: a thin chapter producing
   // fewer Understand items is a fact about the chapter, and the teacher can act
   // on it - a bank that silently flattened to one interaction is undebuggable.
   const reportShort = (wanted, made) => {
-    const short = shortfall(wanted, made);
+    const short = shortfall(levelTotals(wanted), made);
     for (const level of LEVELS) {
       if (short[level] > 0) {
+        const as = Object.keys(wanted[level] ?? {}).map((k) => KIND_LABEL[k]).join(' or ');
         warnings.push(
-          `"${cleanTopic}": the material could not carry ${short[level]} more ${LABEL[level]} item${short[level] === 1 ? '' : 's'} as ${KIND_LABEL[kindMap[level]]}, so that level is short.`,
+          `"${cleanTopic}": the material could not carry ${short[level]} more ${LABEL[level]} item${short[level] === 1 ? '' : 's'} as ${as}, so that level is short.`,
         );
       }
     }
   };
 
   if (!hasGemini()) {
-    const questions = buildFallback(plan, avoidTexts);
+    const questions = buildFallback(slots, avoidTexts);
     warnings.push('GEMINI_API_KEY is not set - questions came from the offline template bank.');
-    reportShort(plan, questions);
+    reportShort(slots, questions);
     return { questions, source: 'fallback', warnings };
   }
 
@@ -1716,8 +2306,8 @@ export async function generateForTopic({
   let used = 0;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const need = shortfall(plan, collected);
-    if (totalOf(need) === 0) break;
+    const need = slotShortfall(slots, collected);
+    if (totalOf(levelTotals(need)) === 0) break;
 
     const left = deadline ? deadline - Date.now() : CALL_TIMEOUT_MS;
     if (left <= 0) {
@@ -1731,42 +2321,45 @@ export async function generateForTopic({
       const raw = await callModel({
         topic: cleanTopic,
         contextText: focus,
-        mix: need,
-        kinds: kindMap,
+        mix: levelTotals(need),
+        kinds: need,
         avoidTexts: [...avoidTexts, ...collected.map((item) => item.text)],
         timeoutMs: Math.min(CALL_TIMEOUT_MS, left),
       });
-      const { valid, errors } = validateItems(raw, cleanTopic, kindMap);
+      const { valid, errors } = validateItems(raw, cleanTopic, need);
       warnings.push(...errors);
 
       // Valid items from earlier attempts are kept, so a retry only has to cover
-      // what is still missing instead of starting the topic from scratch.
+      // what is still missing instead of starting the topic from scratch. Room
+      // is counted per kind as well as per level: two "Choose one" items where
+      // the plan asked one of those and one "True or false" fill one slot, and
+      // the other is asked for again.
       for (const item of valid) {
-        const room = shortfall(plan, collected)[item.bloom] > 0;
+        const room = (slotShortfall(slots, collected)[item.bloom]?.[item.kind] ?? 0) > 0;
         const key = normKey(item.text);
         if (!room || taken.has(key)) continue;
         taken.add(key);
-        collected.push({ ...item, source: 'llm' });
+        collected.push({ ...item, source: 'llm', model: modelId });
       }
     } catch (err) {
       warnings.push(`"${cleanTopic}" attempt ${attempt} of ${attempts} failed: ${err.message}.`);
     }
 
-    if (attempt < attempts && totalOf(shortfall(plan, collected)) > 0) await sleep(300 * attempt);
+    if (attempt < attempts && totalOf(levelTotals(slotShortfall(slots, collected))) > 0) await sleep(300 * attempt);
   }
 
-  const missing = shortfall(plan, collected);
+  const missing = slotShortfall(slots, collected);
 
   if (collected.length === 0) {
     warnings.push(
       `"${cleanTopic}" fell back to the template bank after ${used} failed attempt${used === 1 ? '' : 's'}.`,
     );
-    const questions = buildFallback(plan, avoidTexts);
-    reportShort(plan, questions);
+    const questions = buildFallback(slots, avoidTexts);
+    reportShort(slots, questions);
     return { questions, source: 'fallback', warnings };
   }
 
-  if (totalOf(missing) > 0) {
+  if (totalOf(levelTotals(missing)) > 0) {
     // Partial success: keep the real model items and top the topic up so the
     // bank still hits its target size. Each topped-up item carries its own
     // source:'fallback' tag, which is what the UI actually labels from.
@@ -1812,8 +2405,15 @@ export async function generateBank({ content, topics, perTopic, plan: approved, 
   // Its own cap replaces the blanket MAX_TOPICS truncation, which used to drop
   // topics the teacher had explicitly ticked without telling them clearly.
   const mixFor = new Map();
+  // And how planBank() divided each topic's levels over their kinds, so the
+  // bank written is the bank the teacher was shown, kind for kind.
+  const kindsFor = new Map();
   if (approved?.topics?.length) {
-    for (const t of approved.topics) mixFor.set(clip(collapse(t.topic), MAX_TOPIC_CHARS), t.mix);
+    for (const t of approved.topics) {
+      const key = clip(collapse(t.topic), MAX_TOPIC_CHARS);
+      mixFor.set(key, t.mix);
+      if (t.kinds && typeof t.kinds === 'object') kindsFor.set(key, t.kinds);
+    }
     // Keep only what the plan budgeted for; a topic given zero questions is a
     // decision, not an omission.
     for (let i = list.length - 1; i >= 0; i -= 1) {
@@ -1830,7 +2430,21 @@ export async function generateBank({ content, topics, perTopic, plan: approved, 
   // refused anything outside a level's own set, and sanitiseKinds refuses it
   // again on the way in - the rule is worth enforcing at both ends, since this
   // is also the door a script or a stale client comes through.
-  const kinds = sanitiseKinds(approved?.kinds);
+  const kinds = sanitiseKinds(approved?.kindMix ?? approved?.kinds);
+  // A topic the plan did not divide - a run with no plan, or a plan object made
+  // before the kind mix - is divided here exactly as planBank() would: one
+  // rotation per level, carried across the topics in order, so a level with one
+  // question a topic does not open every topic on the same kind.
+  const carry = LEVELS.reduce((acc, level) => ({ ...acc, [level]: {} }), {});
+  for (const topic of list) {
+    if (kindsFor.has(topic)) continue;
+    const mix = resolveMix(mixFor.get(topic) ?? fallbackMix);
+    const divided = {};
+    for (const level of LEVELS) {
+      if (mix[level] > 0) divided[level] = countKinds(spreadKinds(kinds[level], mix[level], carry[level]));
+    }
+    kindsFor.set(topic, divided);
+  }
   const deadline = Date.now() + BANK_BUDGET_MS;
 
   // Reported as topics land, not at the end. The console shows a clock against
@@ -1855,12 +2469,14 @@ export async function generateBank({ content, topics, perTopic, plan: approved, 
 
   const results = await mapWithConcurrency(list, CONCURRENCY, async (topic) => {
     const mix = mixFor.get(topic) ?? fallbackMix;
+    const topicKinds = kindsFor.get(topic);
     let result;
     try {
-      result = await generateForTopic({ topic, contextText: rawText, mix, kinds, deadline });
+      result = await generateForTopic({ topic, contextText: rawText, mix, kinds: topicKinds, deadline });
     } catch (err) {
       result = {
-        questions: fallbackForTopic({ topic, contextText: contextForTopic(rawText, topic), mix, kinds }),
+        questions: fallbackForTopic({ topic, contextText: contextForTopic(rawText, topic), mix, kinds: topicKinds })
+          .map((item) => ({ ...item, model: OFFLINE_MODEL })),
         source: 'fallback',
         warnings: [`"${topic}" generation threw (${err.message}) - template items used instead.`],
       };

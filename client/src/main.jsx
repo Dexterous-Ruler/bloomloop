@@ -44,6 +44,7 @@ const Me = staff(() => import('./account/Me.jsx'));
 const Profile = staff(() => import('./account/Profile.jsx'));
 const Analytics = staff(() => import('./account/Analytics.jsx'));
 const Rooms = staff(() => import('./account/Rooms.jsx'));
+const Review = staff(() => import('./account/Review.jsx'));
 // Lazy as well: it reads the account, which means the Supabase client.
 const RoleRoute = React.lazy(() => import('./shell/RoleRoute.jsx'));
 
@@ -76,6 +77,9 @@ root.render(
             <Route path="/analytics" element={<RoleRoute allow={['hod', 'professor', 'student']}><Analytics /></RoleRoute>} />
             {/* Unguarded: the key path opens rooms, and this screen recovers one after a reload. */}
             <Route path="/rooms" element={<Rooms />} />
+            {/* Unguarded: the shared key may review the rooms nobody owns. The
+                screen itself makes a head of department read-only. */}
+            <Route path="/review" element={<Review />} />
             {Gallery && <Route path="/__gallery/*" element={<React.Suspense fallback={null}><Gallery /></React.Suspense>} />}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

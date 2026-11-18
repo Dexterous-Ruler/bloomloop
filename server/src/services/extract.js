@@ -182,35 +182,61 @@ function boilerplateKeys(groups) {
 }
 
 /**
- * Turn slides ([{n, title, text}]) or plain sections ([String]) into the
- * de-duplicated topic list the teacher curates before generation.
+ * Each topic with the slides it was read from: [{topic, slides: [n]}], in order.
+ * A slide whose topic repeats an earlier one is added to that topic's slides,
+ * since a repeated title means the slide continues the previous one. Slides are
+ * the `n` of each item; plain sections have none.
  */
-export function deriveTopics(items = []) {
+function assignTopics(items = []) {
   const source = Array.isArray(items) ? items : [items];
   const groups = source.map(candidateLines);
   const boilerplate = boilerplateKeys(groups);
 
   const topics = [];
-  const seen = new Set();
+  const byKey = new Map();
 
-  for (const lines of groups) {
-    if (topics.length >= MAX_TOPICS) break;
+  groups.forEach((lines, i) => {
     for (const line of lines) {
       const topic = cleanTopic(line);
       if (!topic) continue;
       const key = topicKey(topic);
       if (isJunk(topic, key) || boilerplate.has(key)) continue;
-      if (!seen.has(key)) {
-        seen.add(key);
-        topics.push(topic);
+      let entry = byKey.get(key);
+      // Past the cap no new topic is started, but a later slide can still
+      // continue one already on the list.
+      if (!entry && topics.length < MAX_TOPICS) {
+        entry = { topic, slides: [] };
+        byKey.set(key, entry);
+        topics.push(entry);
       }
+      const n = source[i]?.n;
+      if (entry && Number.isInteger(n)) entry.slides.push(n);
       // One topic per slide either way - a repeated title means that slide
       // continues the previous one, not that it has a second subject.
       break;
     }
-  }
+  });
 
-  return topics.slice(0, MAX_TOPICS);
+  return topics;
+}
+
+/**
+ * Turn slides ([{n, title, text}]) or plain sections ([String]) into the
+ * de-duplicated topic list the teacher curates before generation.
+ */
+export function deriveTopics(items = []) {
+  return assignTopics(items).map((entry) => entry.topic);
+}
+
+/**
+ * Which slides each topic came from, {"<topic>": [3, 4]}, so a question
+ * generated on a topic later can say where in the deck it comes from
+ * (questions.source_ref). Only topics with at least one numbered slide.
+ */
+export function topicSlides(items = []) {
+  return Object.fromEntries(
+    assignTopics(items).filter((entry) => entry.slides.length).map((entry) => [entry.topic, entry.slides]),
+  );
 }
 
 /**
@@ -279,6 +305,7 @@ export async function extractFromPptx(buffer, { ocr = 'auto' } = {}) {
       rawText: ordered.map((s) => s.text).filter(Boolean).join('\n\n'),
       slides: ordered,
       topics: deriveTopics(ordered),
+      topicSlides: topicSlides(ordered),
       slideCount: ordered.length,
       readBy: 'text',
       warnings: [],

@@ -162,7 +162,10 @@ async function ownedContents(ownerIds, { includeUnowned = false } = {}) {
       title: c.title,
       kind: c.kind,
       topics: Array.isArray(c.topics) ? c.topics.length : 0,
+      // Approved questions only, the ones a room can serve; `drafts` are
+      // generated ones still waiting for approval.
       questions: await repo.countQuestions(c._id),
+      drafts: await repo.countQuestions(c._id, { status: 'draft' }),
       ownerId: c.ownerId ?? c.owner_id ?? null,
       createdAt: c.createdAt ?? c.created_at ?? null,
     })),

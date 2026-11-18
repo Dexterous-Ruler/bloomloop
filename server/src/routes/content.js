@@ -111,7 +111,7 @@ router.post('/', readUpload, async (req, res, next) => {
         ? String(req.query.ocr)
         : 'auto';
 
-      const { rawText, topics, slideCount, readBy, ocr, warnings } = await extractFromPptx(
+      const { rawText, topics, topicSlides, slideCount, readBy, ocr, warnings } = await extractFromPptx(
         req.file.buffer,
         { ocr: mode },
       );
@@ -120,6 +120,10 @@ router.post('/', readUpload, async (req, res, next) => {
         kind: 'pptx',
         rawText,
         topics,
+        // The deck itself is thrown away after this request, so the slide each
+        // topic came from has to be kept now or never: generation runs later and
+        // stamps it on every question (questions.source_ref).
+        topicSlides,
         // Stamped from the verified token, never from the request body.
         ownerId: req.viewer?.id ?? null,
       });
@@ -184,7 +188,12 @@ router.get('/', async (req, res, next) => {
         kind: content.kind,
         topics: content.topics ?? [],
         createdAt: content.createdAt,
+        // Approved questions, the ones a room can serve.
         questionCount: await repo.countQuestions(content._id),
+        // Generated and waiting for approval. Without it a freshly generated
+        // deck reads as having no bank, and generating again (which replaces
+        // the bank) would throw the drafts away.
+        draftCount: await repo.countQuestions(content._id, { status: 'draft' }),
       })),
     );
     res.json({ contents: rows });

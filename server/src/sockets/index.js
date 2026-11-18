@@ -20,7 +20,8 @@ import {
   applyReview,
   REVIEW_MARKS,
 } from '../services/mastery.js';
-import { selectNext } from '../services/selector.js';
+import { selectNext, servableFor, inRoomSet } from '../services/selector.js';
+import { needsApproval } from '../services/edits.js';
 import { buildGridRow } from '../routes/session.js';
 import { isRecordId } from '../ids.js';
 import { score, forStudent, countsTowardMastery, shownOptionIndices } from '../questionTypes.js';
@@ -188,6 +189,10 @@ async function loadSession(rawCode) {
 /**
  * One bank read per session, shared by every student in it. The promise itself
  * is cached so ten simultaneous joins issue one query, not ten.
+ *
+ * The bank is what the ROOM may serve: active, and inside its question set when
+ * it has one (servableFor). Selection, the resumed pin and the bank count a
+ * phone is told all read this, so none of them can reach outside the set.
  */
 function loadBank(session) {
   const id = String(session._id);
@@ -195,7 +200,7 @@ function loadBank(session) {
   if (!pending) {
     pending = getRepo()
       .listQuestions(session.contentId)
-      .then((questions) => questions.filter((q) => (q.status ?? 'active') === 'active'));
+      .then((questions) => servableFor(session, questions));
     // A failed read must not poison the cache for the rest of the session.
     pending.catch(() => bankCache.delete(id));
     bankCache.set(id, pending);
@@ -218,9 +223,23 @@ async function gridRows(session) {
  * what a student was actually asked must not change with them. Teacher-only:
  * this lives in the answers store, which no student route reads.
  */
-function snapshotOf(question) {
-  const { _id, contentId, createdAt, status, ...rest } = question ?? {};
-  return { id: String(_id ?? ''), ...rest };
+function snapshotOf(question, shownOptions = null) {
+  // `checks` is the professor's review advice, not part of what was asked, and
+  // at a kilobyte or so it would be copied into every answer row. Who approved
+  // the question and when describe the bank's row, not what was asked, and they
+  // change without the question changing (an older question approved during a
+  // class): kept here, they split one unchanged question into two versions in
+  // the item report and two copies in a room's archive. The model and the slides
+  // stay - they say where the question came from, and never change on a row.
+  const { _id, contentId, createdAt, status, checks, approvedBy, approvedAt, ...rest } = question ?? {};
+  // With the fewer-choices support an mcq or multi is shown as a shorter list,
+  // and the response is a position in THAT list. Which options were left is
+  // derived from the student's supports at the moment of serving, and those can
+  // change afterwards, so it is kept here (original indices, in shown order):
+  // without it a later reading of the response, item analysis's option counts
+  // above all, would put the student's pick on the wrong option. Absent for
+  // everyone shown the full list, which is everyone without the support.
+  return { id: String(_id ?? ''), ...rest, ...(shownOptions ? { shownOptions } : {}) };
 }
 
 /**
@@ -607,9 +626,21 @@ async function handleAnswer(io, socket, payload) {
     // content: the fallback used to take any question id in the database, so a
     // phone could answer another professor's question, be sent its key as the
     // solution, and put that question and its rubric into this room's evidence.
+    // Nor may it be a draft. A draft has never been active, so it was never in
+    // a bank and never served: an answer naming one names an id no phone was
+    // given, and must not put an unapproved question into the evidence.
+    // Nor model output nobody approved: a REJECTED draft is discarded, which is
+    // the status this fallback exists for, but it was never served either. On
+    // the Mongo store one batch's ids are consecutive, so a phone that has seen
+    // one served id can work out its rejected siblings'.
+    // Nor may it be outside the room's question set: the bank above already
+    // leaves those out, and this fallback would otherwise take them back in.
     const found =
       bank.find((q) => String(q._id) === questionId) ?? (await repo.getQuestion(questionId));
-    const question = found && String(found.contentId) === String(session.contentId) ? found : null;
+    const question = found && String(found.contentId) === String(session.contentId) && found.status !== 'draft'
+      && !needsApproval(found) && inRoomSet(session, found._id)
+      ? found
+      : null;
     if (!question) {
       logIgnored('student:answer', `question ${questionId} is not in this bank`);
       // Unfreeze the phone by moving it on rather than leaving it stuck.
@@ -660,7 +691,7 @@ async function handleAnswer(io, socket, payload) {
       topic: question.topic ?? '',
       bloom: question.bloom,
       kind,
-      questionSnapshot: snapshotOf(question),
+      questionSnapshot: snapshotOf(question, shownOptionIndices(question, seed, supports)),
       response,
       attempt,
       servedAt: profile.served?.at ?? null,

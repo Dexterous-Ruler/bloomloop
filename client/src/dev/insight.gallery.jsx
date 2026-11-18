@@ -9,6 +9,11 @@
  * shape its route returns.
  *
  * One liberty: answers here carry a topic, so the Topics section can be seen.
+ *
+ * The stored answers (GET /api/analytics/:id/answers) are written from the
+ * same simulated answers, so a list, its grid and the levels above it agree.
+ * storedAnswer() is exported for the dashboard gallery, which draws a
+ * professor's view of the same kind of row.
  */
 
 import { Fragment, useState } from 'react';
@@ -67,7 +72,7 @@ function sitting(r, skill, room, n) {
     levels[bloom].seen += 1;
     if (correct) { levels[bloom].correct += 1; right += 1; }
     history.push({ questionId: `${room.code}-${i + 1}`, bloom, correct, at: new Date(t0 + (i + 1) * 70000).toISOString() });
-    asked.push({ topic: room.topics[Math.floor(r() * room.topics.length)], correct });
+    asked.push({ topic: room.topics[Math.floor(r() * room.topics.length)], bloom, correct, at: history[history.length - 1].at });
 
     run.push(correct);
     if (run.length >= 3 && run.slice(-3).every(Boolean) && at < 5) { at += 1; run = []; }
@@ -127,6 +132,44 @@ function topicsOf(sat) {
 
 const accuracyOf = (s) => (s.seen ? s.correct / s.seen : null);
 
+/**
+ * The topic report (topicLevels), as services/evidence.js folds it: per topic
+ * and per level, every topic carrying all six levels in ladder order, most
+ * answered first. `rows` are { topic, level, correct } for final, marked answers.
+ */
+export function topicReportOf(rows, students = 1) {
+  const by = new Map();
+  for (const { topic, level, correct } of rows) {
+    let t = by.get(topic);
+    if (!t) {
+      t = { topic, seen: 0, correct: 0, levels: Object.fromEntries(LEVELS.map((l) => [l, { seen: 0, correct: 0 }])) };
+      by.set(topic, t);
+    }
+    t.seen += 1;
+    t.levels[level].seen += 1;
+    if (correct) { t.correct += 1; t.levels[level].correct += 1; }
+  }
+  const rate = (c) => (c.seen ? c.correct / c.seen : null);
+  const topics = [...by.values()]
+    .map((t) => ({
+      topic: t.topic, seen: t.seen, correct: t.correct, accuracy: rate(t), students,
+      levels: LEVELS.map((level) => ({ level, ...t.levels[level], accuracy: rate(t.levels[level]) })),
+    }))
+    .sort((a, b) => b.seen - a.seen || a.topic.localeCompare(b.topic));
+  return {
+    source: rows.length ? 'answers' : 'none',
+    counted: { answers: rows.length, history: 0 },
+    students: rows.length ? students : 0,
+    untagged: 0,
+    topics,
+  };
+}
+
+/** The first twelve, in the old shape, read off the report as the server does. */
+const topicsFrom = (topicLevels) => topicLevels.topics
+  .slice(0, 12)
+  .map(({ topic, seen, correct, accuracy }) => ({ topic, seen, correct, accuracy }));
+
 /** GET /api/analytics/:id for a student. */
 function studentRecord(subject, sat) {
   const base = {
@@ -136,6 +179,7 @@ function studentRecord(subject, sat) {
     bloom: report([]),
     best: null, weakest: null, confident: false,
     topics: [],
+    topicLevels: topicReportOf([]),
     timeline: [],
   };
   if (!subject.rollNo) {
@@ -151,6 +195,7 @@ function studentRecord(subject, sat) {
     workingLevel: s.workingLevel, banded: s.banded,
   }));
   const rep = report(sat);
+  const topicLevels = topicReportOf(sat.flatMap((s) => s.asked.map((a) => ({ topic: a.topic, level: a.bloom, correct: a.correct }))));
   return {
     ...base,
     counts: {
@@ -161,7 +206,8 @@ function studentRecord(subject, sat) {
     },
     bloom: rep,
     ...extremes(rep),
-    topics: topicsOf(sat),
+    topics: topicsFrom(topicLevels),
+    topicLevels,
     timeline,
     currentLevel: timeline.length ? timeline[timeline.length - 1].workingLevel : null,
   };
@@ -245,6 +291,194 @@ function dashboardOf(who, sat) {
   };
 }
 
+/* -------------------------------------------------------- stored answers -- */
+
+/* The kinds each level is asked through, as KINDS_FOR_LEVEL on the server. */
+const KINDS = {
+  remember: ['mcq', 'truefalse'],
+  understand: ['match', 'categorise'],
+  apply: ['blank', 'cloze', 'numeric', 'dropdown'],
+  analyse: ['multi', 'hottext'],
+  evaluate: ['order', 'rank'],
+  create: ['open'],
+};
+/* Kinds marked in parts, so a wrong answer can still carry some credit. */
+const PARTIAL = new Set(['match', 'categorise', 'cloze', 'dropdown', 'multi', 'hottext', 'order', 'rank', 'open']);
+
+/** "Flow control" reads as "flow control" mid-sentence; "TCP handshake" and "802.11" stay as they are. */
+const mid = (topic) => (/[A-Z0-9]/.test(String(topic).slice(1)) || /^\d/.test(topic) ? topic : topic.charAt(0).toLowerCase() + topic.slice(1));
+
+/*
+ * One question per kind, worded around the topic. Each has the fields the
+ * phone was shown (`shown`), a right response (`ok`) and wrong ones (`no`),
+ * all in shown positions, as the server stores them.
+ */
+const ASK = {
+  mcq: (t) => ({
+    text: `Which statement about ${t} is true?`,
+    shown: { options: ['It trades extra work now for fewer failures later', 'It removes the need for any checking', 'It only matters on a single machine', 'It is decided once and never revisited'] },
+    ok: 0, no: [1, 3, 2],
+  }),
+  truefalse: (t) => ({ text: `Using ${t} always makes the system faster.`, shown: {}, ok: false, no: [true] }),
+  match: (t) => ({
+    text: `Match each term from ${t} to its meaning.`,
+    shown: { left: ['Precondition', 'Invariant', 'Cost'], right: ['What it spends to work', 'What must hold before it starts', 'What stays true throughout'] },
+    ok: [1, 2, 0], no: [[2, 1, 0], [1, 0, 2]],
+  }),
+  categorise: (t) => ({
+    text: `Sort these into what is guaranteed with ${t} and what is left to chance.`,
+    shown: { groups: ['Guaranteed', 'Left to chance'], items: ['Speed under load', 'A correct result', 'Fairness between users', 'Safety from the failure it targets', 'The lowest memory use'] },
+    ok: { 0: 1, 1: 0, 2: 1, 3: 0, 4: 1 }, no: [{ 0: 0, 1: 0, 2: 1, 3: 0, 4: 0 }, { 0: 0, 1: 1, 2: 0, 3: 1, 4: 1 }],
+  }),
+  blank: (t) => ({
+    text: `Complete the sentence: with ${t}, a ____ is checked before the system goes ahead.`,
+    shown: { blankCount: 1 }, ok: 'condition', no: ['shortcut', 'guess'],
+  }),
+  cloze: (t) => ({
+    text: `With ${t}, the system keeps a ____ of the current state and refuses any step that would leave it ____.`,
+    shown: { blankCount: 2 }, ok: ['record', 'unsafe'], no: [['copy', 'unsafe'], ['guess', 'faster']],
+  }),
+  numeric: () => ({
+    text: 'Five jobs need 2, 4, 1, 3 and 5 units of time. Run one after another, how many units pass before the last one finishes?',
+    shown: { unit: 'units' }, ok: '15', no: ['12', '5'],
+  }),
+  dropdown: (t) => ({
+    text: `When a check in ${t} finds a problem, the system ____ the request and ____ the reason.`,
+    shown: { blankCount: 2, gaps: [{ options: ['grants', 'refuses', 'queues'] }, { options: ['hides', 'logs', 'ignores'] }] },
+    ok: [1, 1], no: [[0, 1], [2, 0]],
+  }),
+  multi: (t) => ({
+    text: `Which of these would change the behaviour of ${t}? Choose all that apply.`,
+    shown: { options: ['How much load there is', 'The colour of the interface', 'The order requests arrive in', 'The name of the file', 'The size of each request'] },
+    ok: [0, 2, 4], no: [[0, 1], [2, 3, 4]],
+  }),
+  hottext: (t) => ({
+    text: `In this sentence about ${t}, pick the words that name a risk.`,
+    shown: { tokens: ['It', 'guards', 'the', 'system', 'against', 'loss', 'and', 'conflict,', 'not', 'delay.'], criterion: 'what it protects against' },
+    ok: [5, 7], no: [[5, 9], [1]],
+  }),
+  order: (t) => ({
+    text: `Put the steps of ${t} in the order they happen.`,
+    shown: { items: ['Check the request against the rules', 'Record the new state', 'Receive the request', 'Carry it out'] },
+    ok: [2, 0, 3, 1], no: [[0, 2, 3, 1], [2, 3, 0, 1]],
+  }),
+  rank: (t) => ({
+    text: `Rank these changes to ${t} from most to least effective.`,
+    shown: { criterion: 'How often it fails', items: ['Retrying faster', 'Checking earlier', 'Logging more', 'Adding memory'] },
+    ok: [1, 3, 0, 2], no: [[0, 1, 3, 2], [2, 0, 1, 3]],
+  }),
+  open: (t) => ({
+    text: `Design a small test that shows ${t} doing its job. Say what you would measure and why.`,
+    shown: { hint: '3 points to cover' },
+    ok: 'Run the same workload twice, once with it and once without, and count how often the failure it targets happens. Keep everything else fixed so any difference comes from it alone.',
+    no: ['Run it and see if it works.', 'Check that nothing crashes while it runs, and look at the logs afterwards.'],
+  }),
+};
+
+/* What a professor decided on a written answer, newest first: the latest not
+   read yet, then changed, kept, kept without a word, and changed the other way. */
+const REVIEWS = [
+  { status: 'provisional', note: '' },
+  { status: 'overridden', note: 'The comparison is the right idea even without numbers, so this counts as right.', correct: true, score: 0.8 },
+  { status: 'confirmed', note: 'Good: you said what you would measure and why. Keep the workload fixed next time too.' },
+  { status: 'confirmed', note: '' },
+  { status: 'overridden', note: 'This says what to run but not what to measure. Name the failure you would count.', correct: false, score: 0.33 },
+];
+
+const hex = (r) => Array.from({ length: 24 }, () => Math.floor(r() * 16).toString(16)).join('');
+
+/**
+ * One stored answer as GET /api/analytics/:id/answers lists it: the student's
+ * view, or with `teacher` the professor's (who answered, the snapshot and the
+ * machine's first reading beside the mark in force).
+ *
+ * @param n     which of the kinds and wrong answers to use, so a list varies
+ * @param open  for a written answer, how many written answers are newer: it picks the review
+ */
+export function storedAnswer({ r, room, topic, level, correct, at, n, open = 0, teacher = null, attempt = 1, final = true }) {
+  const kinds = KINDS[level];
+  const kind = kinds[n % kinds.length];
+  const q = ASK[kind](mid(topic));
+  const parts = PARTIAL.has(kind);
+  const autoScore = correct ? (parts && n % 3 === 0 ? 0.8 : 1) : parts ? [0.33, 0.5, 0][n % 3] : 0;
+  const decided = kind === 'open' ? REVIEWS[open % REVIEWS.length] : null;
+  const mark = decided?.status === 'overridden' ? { correct: decided.correct, score: decided.score } : { correct, score: autoScore };
+  const answerId = hex(r);
+  const item = {
+    answerId,
+    room: { code: room.code, title: room.title, startedAt: room.startedAt },
+    topic,
+    level,
+    kind,
+    question: { text: q.text, bloom: level, topic, kind, source: 'llm', ...q.shown },
+    response: correct ? q.ok : q.no[n % q.no.length],
+    correct: mark.correct,
+    score: mark.score,
+    ungraded: false,
+    review: {
+      status: decided?.status ?? 'auto',
+      note: decided?.note ?? '',
+      reviewedAt: decided && decided.status !== 'provisional' ? new Date(Date.parse(at) + 26 * 3600000).toISOString() : null,
+    },
+    attempt,
+    final,
+    answeredAt: at,
+  };
+  if (!teacher) return item;
+  return {
+    ...item,
+    student: { rollNo: teacher.rollNo, name: '', accountId: teacher.accountId ?? null },
+    questionId: hex(r),
+    // The key is in here, as the server stores it. No screen draws it.
+    snapshot: { id: answerId, text: q.text, kind, bloom: level, topic, source: 'llm', ...(kind === 'open' ? { rubric: ['same workload twice', 'count the failure it targets', 'keep everything else fixed'] } : {}) },
+    detail: '',
+    auto: { correct, score: autoScore, detail: '' },
+    review: { ...item.review, reviewedBy: decided && decided.status !== 'provisional' ? 'acc-prf-014' : null },
+    servedAt: new Date(Date.parse(at) - 40000).toISOString(),
+    questionSource: 'llm',
+  };
+}
+
+/** A page of answers, as the route pages them: newest first, narrowed, `hasMore` from one row over. */
+export function pageOf(items, { limit = 50, offset = 0, level, topic } = {}) {
+  const hit = items.filter((a) => (!level || a.level === level) && (!topic || a.topic === topic));
+  return {
+    view: items[0]?.snapshot ? 'teacher' : 'student',
+    filters: { topic: topic || null, level: level || null, code: null },
+    items: hit.slice(offset, offset + limit),
+    limit,
+    offset,
+    hasMore: offset + limit < hit.length,
+  };
+}
+
+/** One student's sittings as their stored answers, newest first, with one retried attempt among them. */
+function answersOf(sat, seed) {
+  const r = rng(seed);
+  const rows = [];
+  let n = 0;
+  let open = sat.reduce((k, s) => k + s.asked.filter((a) => a.bloom === 'create').length, 0);
+  sat.forEach((s) => s.asked.forEach((a) => {
+    if (a.bloom === 'create') open -= 1;
+    const row = storedAnswer({ r, room: s.room, topic: a.topic, level: a.bloom, correct: a.correct, at: a.at, n, open });
+    n += 1;
+    rows.push(row);
+  }));
+  // A wrong first go, then the retry that counted: stored, and said to be.
+  const last = rows.filter((x) => x.correct && x.kind === 'mcq').pop();
+  if (last) {
+    const first = { ...last, answerId: hex(r), response: 3, correct: false, score: 0, attempt: 1, final: false, answeredAt: new Date(Date.parse(last.answeredAt) - 25000).toISOString() };
+    rows.splice(rows.indexOf(last), 1, first, { ...last, attempt: 2 });
+  }
+  return rows.reverse();
+}
+
+/** The answer list's stand-in: a pause long enough to see the skeleton, then a page. */
+const answersFrom = (items, { fail = '', never = false } = {}) => (params) => new Promise((resolve, reject) => {
+  if (never) return;
+  setTimeout(() => (fail ? reject(new Error(fail)) : resolve(pageOf(items, params))), 650);
+});
+
 /* ------------------------------------------------- Prof. Arjun Rao's class */
 
 const ARJUN = { id: 'acc-prf-014', kind: 'professor', name: 'Prof. Arjun Rao', code: 'BL-PRF014', active: true };
@@ -262,7 +496,7 @@ const NAMES = [
    support band, one with two answers to her name, one who has sat nothing,
    a deactivated account, and an account with no roll number. */
 const CAST = {
-  'Isha Deshmukh': { skill: [0.96, 0.9, 0.82, 0.62, 0.45, 0.3], attend: 1, answers: 14 },
+  'Isha Deshmukh': { skill: [0.98, 0.95, 0.92, 0.86, 0.8, 0.5], attend: 1, answers: 20, seed: 9103 },
   'Farhan Sheikh': { skill: [0.42, 0.3, 0.2, 0.1, 0.1, 0.1], attend: 1 },
   'Meher Kaur': { skill: skillOf(0.6), only: 1, answers: 2 },
   'Pranav Hegde': { only: 0 },
@@ -281,7 +515,7 @@ const CLASS = NAMES.map((name, i) => {
     code: `BL-STU${203 - 11 + i}`,
     rollNo: cast.noRoll ? null : `CSF${String(31 + i).padStart(3, '0')}`,
     active: cast.active !== false,
-    sat: sittings(9000 + i * 17, cast.skill ?? skillOf(0.38 + r() * 0.5), rooms, { attend: cast.attend ?? 0.88, answers: cast.answers }),
+    sat: sittings(cast.seed ?? 9000 + i * 17, cast.skill ?? skillOf(0.38 + r() * 0.5), rooms, { attend: cast.attend ?? 0.88, answers: cast.answers }),
   };
 });
 
@@ -309,6 +543,17 @@ const NO_ROLL_OVERVIEW = { role: 'student', subjects: [NO_ROLL], detail: student
 
 const DASH = dashboardOf({ ...WHO, rollNo: ISHA.rollNo }, ISHA.sat);
 const DASH_BAND = dashboardOf({ ...WHO, rollNo: FARHAN.rollNo }, FARHAN.sat);
+
+/* Their evidence: GET /api/analytics/:id's topicLevels, and the answer pages. */
+const ISHA_TOPICS = { data: STUDENT_RECORDS[ISHA.id].topicLevels };
+const FARHAN_TOPICS = { data: STUDENT_RECORDS[FARHAN.id].topicLevels };
+const ISHA_ANSWERS = answersOf(ISHA.sat, 4242);
+const FARHAN_ANSWERS = answersOf(FARHAN.sat, 4343);
+// Rooms that ran before each answer was kept: the report reads them from the
+// sittings, and the answer list has nothing to show.
+const HISTORY_TOPICS = {
+  data: { ...ISHA_TOPICS.data, source: 'history', counted: { answers: 0, history: ISHA_TOPICS.data.counted.answers } },
+};
 const DASH_NEW = dashboardOf({ ...WHO, rollNo: ISHA.rollNo }, []);
 const DASH_NO_ROLL = {
   ...dashboardOf({ department: 'Computer Science', professor: null, rollNo: '' }, []),
@@ -368,20 +613,24 @@ const HOD_OVERVIEW = {
 
 /* ------------------------------------------------------------- the screens */
 
-function MeDemo({ dash, link: first = LINK, loading = false, error = '' }) {
+function MeDemo({ dash, link: first = LINK, loading = false, error = '', topics = null, answers = null }) {
   const [busy, setBusy] = useState(loading);
   const [link, setLink] = useState(first);
+  const [reads, setReads] = useState(0);
   return (
     <MeView
       dash={dash}
       busy={busy}
       error={error}
-      onRefresh={() => { setBusy(true); setTimeout(() => setBusy(loading), 700); }}
+      onRefresh={() => { setBusy(true); setReads((n) => n + 1); setTimeout(() => setBusy(loading), 700); }}
       link={link}
       linkBusy={false}
       linkError=""
       onConnect={() => setLink(LINKED)}
       onDisconnect={() => setLink(LINK)}
+      topics={topics}
+      loadAnswers={answers}
+      reads={reads}
     />
   );
 }
@@ -411,9 +660,9 @@ function AnalyticsDemo({ role, overview = null, records = {}, open = '', error =
 }
 
 const SCREENS = [
-  { id: 'me', title: 'Me: eight sessions', role: 'student', note: 'A student with eight sessions: the brief, the path and the six levels.', el: <MeDemo dash={DASH} /> },
+  { id: 'me', title: 'Me: eight sessions', role: 'student', note: 'A student with eight sessions: the brief, the path, the six levels, their answers with their professor’s notes, and the topic grid.', el: <MeDemo dash={DASH} topics={ISHA_TOPICS} answers={answersFrom(ISHA_ANSWERS)} /> },
   { id: 'me-new', title: 'Me: brand-new student', role: 'student', note: 'No sessions yet: the designed first-time page.', el: <MeDemo dash={DASH_NEW} /> },
-  { id: 'me-band', title: 'Me: support band, Google linked', role: 'student', note: 'Under 40% last session, so the support band is explained.', el: <MeDemo dash={DASH_BAND} link={LINKED} /> },
+  { id: 'me-band', title: 'Me: support band, Google linked', role: 'student', note: 'Under 40% last session, so the support band is explained.', el: <MeDemo dash={DASH_BAND} link={LINKED} topics={FARHAN_TOPICS} answers={answersFrom(FARHAN_ANSWERS)} /> },
   { id: 'me-no-roll', title: 'Me: no roll number', role: 'student', note: 'The server cannot match this account to any session.', el: <MeDemo dash={DASH_NO_ROLL} /> },
   { id: 'analytics-hod', title: 'Analytics: head of department', role: 'hod', note: 'The department brief, the professors and one professor in full.', el: <AnalyticsDemo overview={HOD_OVERVIEW} records={PROFESSOR_RECORDS} open={ARJUN.id} /> },
   { id: 'analytics-professor', title: 'Analytics: professor', role: 'professor', note: 'The class brief, thirty students and one student in full.', el: <AnalyticsDemo overview={PROFESSOR_OVERVIEW} records={STUDENT_RECORDS} open={ISHA.id} /> },
@@ -422,7 +671,9 @@ const SCREENS = [
   // The states nobody sees until something is missing or broken.
   { id: 'me-loading', title: 'Me: first read', role: 'student', note: 'The shaped skeleton before the first answer.', el: <MeDemo dash={null} loading link={null} /> },
   { id: 'me-failed', title: 'Me: did not load', role: 'student', note: 'The server could not be asked.', el: <MeDemo dash={null} error="Failed to fetch" link={null} /> },
-  { id: 'me-stale', title: 'Me: refresh failed', role: 'student', note: 'A refresh failed; the last answer stays, and an unconfirmed Google link.', el: <MeDemo dash={DASH} error="Failed to fetch" link={{ ...LINKED, source: 'roster' }} /> },
+  { id: 'me-stale', title: 'Me: refresh failed', role: 'student', note: 'A refresh failed; the last answer stays, an unconfirmed Google link, and the answers and topics that did not load.', el: <MeDemo dash={DASH} error="Failed to fetch" link={{ ...LINKED, source: 'roster' }} topics={{ error: 'Failed to fetch' }} answers={answersFrom([], { fail: 'Failed to fetch' })} /> },
+  { id: 'me-evidence-waiting', title: 'Me: answers on their way', role: 'student', note: 'The page is in; the answers and the topic grid are still loading.', el: <MeDemo dash={DASH} answers={answersFrom([], { never: true })} /> },
+  { id: 'me-evidence-history', title: 'Me: rooms from before answers were kept', role: 'student', note: 'The topic report comes from older sittings, so the answer list explains why it is empty.', el: <MeDemo dash={DASH} topics={HISTORY_TOPICS} answers={answersFrom([])} /> },
   { id: 'me-wrong-role', title: 'Me: opened by a professor', role: 'professor', note: 'A professor who typed /me is sent to their own dashboard.', el: <MeDemo dash={{ role: 'professor' }} link={null} /> },
   { id: 'analytics-loading', title: 'Analytics: first read', role: 'professor', note: 'The shaped skeleton before the list arrives.', el: <AnalyticsDemo role="professor" /> },
   { id: 'analytics-failed', title: 'Analytics: did not load', role: 'professor', note: 'The list did not come back.', el: <AnalyticsDemo role="professor" error="Failed to fetch" /> },

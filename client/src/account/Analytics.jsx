@@ -44,7 +44,7 @@ import { LevelSpread } from '../ui/viz.jsx';
 import {
   BAND, MIN_EVIDENCE, RANGES, arrange, asPct, commonWeakest, day, levelN, mean, plural, scope,
 } from './insightData.js';
-import { Hardest, InWords, LevelPairs, Spread, TrendChart } from './insightParts.jsx';
+import { Hardest, InWords, LevelPairs, Spread, TopicGrid, TrendChart } from './insightParts.jsx';
 
 /** Everything that is worded differently for the three roles, in one table. */
 const FRAMING = {
@@ -592,6 +592,21 @@ function RecordBody({ full, mine, isProf, range }) {
             : <p className="hint">No topics recorded. A topic is counted when the questions answered carry one.</p>}
         </section>
       </div>
+
+      {/* A student's record carries the topic report per level; a professor's
+          does not, and an empty one is already said by the card above. */}
+      {!isProf && full.topicLevels?.topics?.length > 0 && (
+        <section className="card card-pad in-card" aria-label="Topics by level">
+          <Section
+            title="Topics by level"
+            sub="Right of asked, for each topic at each level, across every session. Darker is stronger; an empty square was never asked."
+          />
+          <TopicGrid
+            report={full.topicLevels}
+            label={`${mine ? 'Your' : 'Their'} right answers of those asked, for each topic at each level`}
+          />
+        </section>
+      )}
 
       {isProf && (
         <section className="card card-pad in-card" aria-label="Their students">

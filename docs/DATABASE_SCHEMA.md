@@ -28,14 +28,31 @@ Last revised 19 November 2026.
 | `0010_answer_reviews.sql` | `answer_reviews`, the append-only log of professor review decisions; index `answers_open_queue_idx` for the review queue | new |
 | `0011_roll_no_normalised_unique.sql` | `accounts_department_roll_key`: one roll number per department as a room reads it (trimmed, single-spaced, upper case). Not created, with a WARNING, while existing accounts clash; re-run once they are corrected | new |
 | `0012_evidence_guards.sql` | Triggers: an answer's evidence is written once, `answer_reviews` is append-only, a review names its answer's room | new |
+| `0013_question_provenance_and_approval.sql` | `questions.status` may be `draft`; `questions.model`, `source_ref`, `checks`, `created_by`, `approved_by`, `approved_at`; `contents.topic_slides`; their checks and indexes. Changes no row | new (Phase 2) |
+| `0014_media.sql` | `media`, images uploaded for question stimuli (bytea, at most the server's limit); `sessions_content_idx`; trigger `media_bytes_written_once`. Changes no row | new (Phase 2) |
+| `0015_room_question_sets.sql` | `sessions.question_ids` (nullable `uuid[]`): the only questions a room may serve, null for the whole approved bank; check `sessions_question_ids_shape`. Changes no row: every existing room gets null | new (Phase 2) |
 
 The SQL of every moved file is unchanged; only header comments were updated.
 
-`0010` to `0012` have run only on PGlite (`npm run migrations`, 204 of 204 on
-19 November 2026). The live project has been unreachable since 18 November, so
-whether it has them could not be checked. Apply them in order before deploying the
-Phase 1 server: the boot probe falls back to the in-process store when
-`answer_reviews` is missing (last section).
+`0010` to `0015` have run only on PGlite (`npm run migrations`, 270 of 270 on
+19 November 2026, rerun after the Phase 2 review fixes). `0010` to `0012` are
+committed with Phase 1 (`05daf56`); `0013` to `0015` are not yet committed. The
+live project has been unreachable since 18 November, so whether it has any of them
+could not be checked. Apply them in order before deploying the Phase 1 and 2
+server: the boot probe falls back to the in-process store when `answer_reviews`,
+any `0013` column, the `media` table or `sessions.question_ids` is missing (last
+section).
+
+What the migration test holds `0013` to `0015` to (the suite grew by 25, 24 and 17
+checks with them). Each builds on a fresh database and runs again unchanged. A v1
+database holding data is upgraded with every existing question still `active` and
+nothing recorded on it, and every existing room's `question_ids` null. Each new
+check constraint refuses what it should: a status outside the three, a non-object
+`source_ref` or `topic_slides`, `checks` that are not an array, an approver with no
+approval time, an SVG, a size or digest that does not match the bytes, a blank or
+missing alt, and an empty, two-dimensional, null-holding or non-uuid set. The
+`media` trigger refuses a change to an image's bytes, type or chapter (the three
+tested; it covers size and digest too) while letting its alt change.
 
 ## Tables
 
@@ -55,11 +72,14 @@ A chapter: an uploaded `.pptx` or a syllabus.
 | `topics` | jsonb | not null, default `[]` |
 | `owner_id` | uuid | null; references `accounts(id)`, no delete action. Null = made before accounts; only the legacy teacher-key path reaches it (`ownership.js`) |
 | `created_at` | timestamptz | not null, default now() |
+| `topic_slides` | jsonb | not null, default `{}`; must be an object (`contents_topic_slides_object`). Deck only: each extracted topic and the slide numbers it was read from, `{"<topic>": [3, 4]}` (`0013`) |
 
-Written by: repo `createContent` from `routes/content.js` (upload) and `seed.js`;
-`updateContent` (title, raw text, topics).
+Written by: repo `createContent` from `routes/content.js` (upload; `topic_slides`
+from `topicSlides()` in `services/extract.js`, since the deck itself is not kept)
+and `seed.js`; `updateContent` (title, raw text, topics; never `topic_slides`, so a
+topic renamed after upload loses its slides).
 
-### questions (0000, 0001)
+### questions (0000, 0001, 0013)
 
 | Column | Type | Rules |
 |---|---|---|
@@ -71,17 +91,34 @@ Written by: repo `createContent` from `routes/content.js` (upload) and `seed.js`
 | `options` | jsonb | **null** for kinds without options; 4 for mcq, 4 to 6 for multi, 2 to 6 for poll |
 | `answer_idx` | smallint | null; 0 to 3 when set (mcq only) |
 | `bloom` | text | not null; `remember`, `understand`, `apply`, `analyse`, `evaluate`, `create` |
-| `status` | text | not null, default `active`; `active` or `discarded` |
+| `status` | text | not null, default `active`; `active`, `discarded` or (since `0013`) `draft` (`questions_status_check`). Only `active` is served |
 | `source` | text | not null, default `llm`; `llm` or `fallback` |
-| `payload` | jsonb | not null, default `{}`. Every `PAYLOAD_FIELDS` entry (answers included): teacher-only data |
+| `payload` | jsonb | not null, default `{}`. Every `PAYLOAD_FIELDS` entry (answers included): teacher-only data. `stimulus` is here too: a passage (`text`, optional `sourceRef`) or an image (`url`, `alt`, optional `sourceRef`); an uploaded image's url is `/api/media/<id>` (`media`, `0014`). Hot text, dropdown, table and grid, generated since Phase 2, keep `tokens`, `blanks`, `columns`, `rows` and `answers` here, so they needed no migration. (The Mongo fallback's schema did drop them on save; fixed in `server/src/models/index.js`, not run against a Mongo database) |
 | `created_at` | timestamptz | not null, default now() |
+| `model` | text | null. The model id that wrote it, `offline-template` for the offline generator, null for a professor's own question **and every row older than `0013`** (`0013`) |
+| `source_ref` | jsonb | null; an object when set (`questions_source_ref_object`). `{"kind": "slides", "slides": [3, 4]}`: the slides the topic was read from (`0013`) |
+| `checks` | jsonb | null; an array when set (`questions_checks_array`). The rule checks, `[{id, ok, message}]`, advice only; null = never checked (`0013`) |
+| `created_by` | uuid | null; references `accounts(id)` on delete set null. Who made the row; null on the shared key (`0013`) |
+| `approved_by` | uuid | null; references `accounts(id)` on delete set null. Null on the shared key (`0013`) |
+| `approved_at` | timestamptz | null. Set whenever `approved_by` is (`questions_approval_pair`) (`0013`) |
 
-Written by: repo `insertQuestions` from `routes/generate.js` (generation) and
-`routes/bank.js` (split, merge, regenerate); `updateQuestion` from `routes/bank.js`
-(edit, bulk discard, restore, retag); `deleteQuestions` from `routes/generate.js`
-(replace mode).
+Indexes: `questions_content_idx`; partial `questions_active_idx` (`status =
+'active'`, what a room reads); partial `questions_draft_idx` (`status = 'draft'`);
+`questions_created_by_idx` and `questions_approved_by_idx` (where not null, for the
+foreign keys).
 
-### sessions (0000, 0001, 0005, 0007)
+Written by: repo `insertQuestions` from `routes/generate.js` (generation: every row
+a `draft` with `model`, `source_ref`, `checks`, `created_by`) and `routes/bank.js`
+(split and merge keep the parent's status and provenance, and a rejected draft's
+halves or merge are drafts; regenerate and Harder/Easier write drafts;
+write-your-own writes `active` with `model` null); `updateQuestion` from
+`routes/bank.js` (edit, bulk discard, restore, retag, approve, approve-all,
+reject); `deleteQuestions` from `routes/generate.js` (replace mode, which deletes
+drafts too, and is refused while a room on the chapter is open or paused). Every way to `active` records an approval on model
+output nobody approved (`approvePatch`, `activatePatch` in `services/edits.js`).
+`0013` changed no row: every question already there kept its status.
+
+### sessions (0000, 0001, 0005, 0007, 0015)
 
 A room.
 
@@ -99,10 +136,18 @@ A room.
 | `mastery_goal` | numeric(3,2) | not null, default 0.80; 0.80, 0.90 or 1.00 |
 | `reattempts` | smallint | not null, default 0; 0 to 2 |
 | `redemption` | boolean | not null, default false |
+| `question_ids` | uuid[] | null. The room's question set: the only questions it may serve. Null is the whole approved bank, which every room before `0015` keeps. When set: one dimension, at least one id, no null (`sessions_question_ids_shape`). No foreign key (Postgres has none for array elements): the server checks each id is an approved question of the room's chapter when the room opens, and a question discarded or deleted later simply stops being served (`0015`) |
 
-Written by: repo `createSession` from `routes/session.js` (the settings are written
-here only, never updated); `updateSession` (status, title, closed/paused times);
-`deleteSession`.
+Written by: repo `createSession` from `routes/session.js` (the settings and the
+question set are written here only, never updated); `updateSession` (status, title,
+closed/paused times); `deleteSession`. `question_ids` is read on every bank load of
+the live loop (`servableFor` in `services/selector.js`) and by the image rule
+(`servedToPhones`), and returned by `POST /api/session`, `GET /api/session` and
+`GET /api/session/:code/items`, never by the phones' `GET /api/session/:code`.
+
+Index `sessions_content_idx` on `content_id` (`0014`): `listSessionsForContent`,
+which serving an image to a phone asks on every request (is a room running on this
+chapter?), and the cascade from deleting a chapter.
 
 ### profiles (0000, 0005, 0007)
 
@@ -150,7 +195,7 @@ One row per submitted attempt; append-only evidence.
 | `topic` | text | not null, default `''` |
 | `bloom` | text | not null; one of the six levels |
 | `kind` | text | not null, default `mcq` |
-| `question_snapshot` | jsonb | not null, default `{}`; the question as answered, answer key included (teacher-only) |
+| `question_snapshot` | jsonb | not null, default `{}`; the question as answered, answer key included (teacher-only). Since `0013` it also carries the question's `model`, `sourceRef` and `createdBy`, but not its `checks`; rows stored before the Phase 2 review also carry `approvedBy`/`approvedAt`, which later rows leave out (they change without the question changing). Since the item statistics (Phase 2, no migration) it carries `shownOptions` when the fewer-choices support shortened an mcq or multi for that student: the original indices of the options shown, in shown order. Absent for a full list and on every older row |
 | `response` | jsonb | null; what the student sent, never discarded |
 | `attempt` | smallint | not null, default 1 |
 | `final` | boolean | not null, default true; false for a wrong attempt followed by a retry |
@@ -213,6 +258,12 @@ linked to a different account is never matched by its roll number. Readers
   table and are counted from `profiles.history` instead; the reply's `source` says
   `answers`, `history`, `mixed` or `none`.
 - `GET /api/session/:code/answers`: every row in one room, full snapshot, paged.
+- `GET /api/session/:code/items` and `GET /api/bank/:contentId/stats` (Phase 2):
+  item statistics from final, graded rows of one room, or of every room on a
+  chapter the caller may read (`services/itemStats.js`), each response read back in
+  the question's own option order through the student's seed and `shownOptions`.
+  They read whole rooms in pages of 1000 (`allAnswers`, `final` filter), using
+  `answers_session_idx`; no index was added.
 
 No index was added for these: the student query uses `answers_account_idx` and
 `answers_session_roll_idx`, and the room query `answers_session_idx`.
@@ -294,6 +345,46 @@ names those columns. Measured: a class of 60 students with 30 answers each is ab
 Read by `GET /api/session/archives` (list, no data) and
 `GET /api/session/archives/:id` (the `.json` file), both under the same ownership
 rule as rooms.
+
+### media (0014)
+
+One image a professor uploaded to hang a question off, served at
+`/api/media/<id>` (`server/src/routes/media.js`; the rule for who may load it is
+`servedToPhones` in `server/src/services/media.js`, and `docs/API.md` says it in
+full). The bytes are in the row, so all three stores take uploads with no new
+service.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key, `gen_random_uuid()`. Random on purpose: a phone loads an image by its url alone |
+| `owner_id` | uuid | null; references `accounts(id)` on delete set null. Who uploaded it; null on the shared key. Who may read it is decided by the chapter's owner |
+| `content_id` | uuid | not null, references `contents(id)` on delete cascade. A question may only show an image of its own chapter |
+| `mime` | text | not null; `image/png`, `image/jpeg` or `image/webp` (`media_mime_check`), as the bytes' signature says |
+| `bytes` | integer | not null; above 0 and equal to `octet_length(data)` (`media_bytes_check`). The ceiling is the server's (`config.media.maxBytes`, 500 KB by default), not repeated here |
+| `sha256` | text | not null; the hex SHA-256 of `data`, and must be (`media_sha256_check`). The ETag phones cache under |
+| `data` | bytea | not null. PostgREST reads and writes it as text, `\x` and hex; the repo converts. The upload with its metadata (Exif, XMP, text chunks, comments) taken out by the server before it is written, the JPEG orientation kept; rows written before that change hold the bytes as sent |
+| `alt` | text | not null and not blank (`media_alt_check`). Copied onto a question that shows the image with no alt text of its own |
+| `created_at` | timestamptz | not null, default now() |
+
+Indexes: `media_content_idx` (`content_id`); `media_owner_idx` (`owner_id`, where
+not null, for the foreign key). RLS on, no policies.
+
+Trigger `media_bytes_written_once` (function `media_bytes_written_once()`), `before
+update`: refuses (23001) any change to `data`, `mime`, `bytes`, `sha256` or
+`content_id`, from any connection. Phones cache an image under its url for a year,
+so the bytes under a url must never change; a new picture is a new upload. `alt`
+may change, and `owner_id` is cleared when the uploader's account is deleted.
+
+Written by: repo `createMedia` from `POST /api/media` only. There is no update or
+delete in the server. Read by `getMedia` (without `data` for the permission
+checks, with it to serve the bytes) from `GET /api/media/:id`, and from
+`withUpload` when a question is given an image stimulus (`routes/bank.js`).
+Deleting a chapter deletes its images (cascade); no route deletes a chapter today.
+
+Questions refer to an image by its url in `questions.payload.stimulus.url`
+(`/api/media/<id>`), not by a foreign key: the stimulus lives in the payload like
+every other kind-specific field, and an answer's `question_snapshot` keeps the url
+as it was shown.
 
 ### accounts (0001, 0003, 0006)
 
@@ -428,4 +519,9 @@ Fixed on 18 Nov 2026: `README.md`, `.env.example`, `server/src/repo/supabaseRepo
 (`probeSupabase`) now checks every table the server writes, not only `contents`, and
 names the migration that creates any that is missing. Since `0010` that includes
 `answer_reviews`: a server deployed before `0010` has been applied falls back to the
-in-process store at boot, so apply the migration first.
+in-process store at boot, so apply the migration first. Since `0013` it also probes
+the new `questions` and `contents` columns, because without them every generated
+question would fail to save; the same fallback applies. Since `0014` it also probes
+the `media` table, so apply `0014` before deploying a server that serves uploads.
+Since `0015` it also probes `sessions.question_ids`, because `createSession` writes
+it and without it no room could open.

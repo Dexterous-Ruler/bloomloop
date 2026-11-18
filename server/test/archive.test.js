@@ -163,6 +163,36 @@ test('a room\'s review log is archived with it, each decision against its answer
   assert.equal((await repo.listAnswerReviews({ sessionId: session._id })).length, 0);
 });
 
+// The live loop records on each answer which options a fewer-choices student was
+// left with (`shownOptions`, different per student). Kept inside the question,
+// it made the archive store one copy of the question per such student.
+test('a question answered by fewer-choices students is stored once, and each answer gets its own shown list back', async () => {
+  const repo = createMemoryRepo();
+  const content = await repo.createContent({ title: 'Choices', kind: 'syllabus', rawText: '', topics: ['T'] });
+  const [q] = await repo.insertQuestions([{
+    contentId: content._id, topic: 'T', bloom: 'remember', kind: 'mcq', text: 'Which layer carries segments?',
+    options: ['Network', 'Transport', 'Link', 'Physical'], answerIdx: 1,
+  }]);
+  const session = await repo.createSession({ code: 'FEW001', contentId: content._id, title: 'Choices', status: 'closed' });
+  const snap = { id: String(q._id), topic: 'T', text: q.text, kind: 'mcq', bloom: 'remember', options: q.options, answerIdx: 1 };
+  const shown = [[1, 3], [0, 1], null, [1, 2]];
+  for (const [i, keep] of shown.entries()) {
+    await repo.recordAnswer({
+      sessionId: session._id, answerKey: `few-000${i}`, rollNo: `0${i}`, questionId: q._id, topic: 'T', bloom: 'remember', kind: 'mcq',
+      questionSnapshot: keep ? { ...snap, shownOptions: keep } : snap, response: 0, correct: false, score: 0,
+    });
+  }
+
+  const { doc, json } = await buildRoomArchive(repo, session);
+  assert.equal(doc.data.questions.length, 1, 'one question, however many shorter lists it was shown as');
+  assert.equal('shownOptions' in doc.data.questions[0], false);
+  const back = decodeRoomArchive(JSON.parse(json));
+  // By key: four answers stored in one millisecond come back in either order.
+  const byKey = Object.fromEntries(back.answers.map((a) => [a.answerKey, a.questionSnapshot]));
+  assert.deepEqual(shown.map((_, i) => byKey[`few-000${i}`].shownOptions), [[1, 3], [0, 1], undefined, [1, 2]]);
+  assert.deepEqual(Object.values(byKey).map(({ shownOptions, ...rest }) => rest), shown.map(() => snap));
+});
+
 test('saving twice for one room keeps one archive', async () => {
   const repo = createMemoryRepo();
   const meta = { sessionId: 'abc', code: 'ROOM01', title: 'R', ownerId: null, archivedBy: null, archivedAt: '2026-11-18T10:00:00.000Z' };

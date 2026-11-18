@@ -22,6 +22,7 @@ import sessionRoutes from './routes/session.js';
 import exportRoutes from './routes/export.js';
 import classroomRoutes from './routes/classroom.js';
 import reviewRoutes from './routes/review.js';
+import mediaRoutes from './routes/media.js';
 
 /**
  * Any successful write to a question bank drops the live loop's cached copy of
@@ -117,6 +118,13 @@ export function createApp() {
   // snapshots with their rubrics. Which rooms a teacher may read or decide on is
   // checked inside, per answer, by ownership.js.
   app.use('/api/review', requireTeacher, reviewRoutes);
+
+  // Mixed, like /api/session: the upload is the teacher's and gated inside;
+  // GET /:id is open at the mount, because a phone's <img> carries no
+  // credential, and each image is let through or refused by the rule in
+  // services/media.js (a room running on its chapter, an approved question
+  // showing it).
+  app.use('/api/media', mediaRoutes);
 
   // The export router is mounted at /api per the contract, so the guard is
   // scoped to its one path instead of the whole prefix.

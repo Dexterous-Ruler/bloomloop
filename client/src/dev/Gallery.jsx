@@ -29,6 +29,7 @@ const AREAS = {
   learn: { title: 'Student phone', line: 'What a student sees on their phone in a live room. No account.' },
   dash: { title: 'Dashboards', line: 'Where a head of department and a professor run things.' },
   insight: { title: 'Insight', line: 'A student’s own results, and analytics for all three roles.' },
+  review: { title: 'Review', line: 'Written answers a professor confirms or changes.' },
   auth: { title: 'Auth', line: 'Sign in, sign up and the profile.' },
 };
 

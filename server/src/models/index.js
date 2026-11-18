@@ -1,9 +1,11 @@
 // Mongoose schemas - exactly the data model in completion.md section 5 and
 // chapter 5 of the project report. Do not drift: the report is submitted.
 
+import crypto from 'node:crypto';
 import mongoose from 'mongoose';
 import { LEVELS } from '../bloom.js';
 import { KINDS } from '../questionTypes.js';
+import { IMAGE_TYPES } from '../services/media.js';
 
 const { Schema, model } = mongoose;
 
@@ -15,6 +17,8 @@ const contentSchema = new Schema(
     kind: { type: String, enum: ['pptx', 'syllabus'], required: true },
     rawText: { type: String, default: '' },
     topics: { type: [String], default: [] },
+    // Deck only: each topic and the slide numbers it was read from (0013).
+    topicSlides: { type: Schema.Types.Mixed, default: undefined },
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: false } },
 );
@@ -40,17 +44,38 @@ const questionSchema = new Schema(
     pairs: { type: [{ _id: false, left: String, right: String }], default: undefined }, // match
     buckets: { type: [{ _id: false, name: String, items: [String] }], default: undefined }, // categorise
     sequence: { type: [String], default: undefined },  // order and rank, in correct order
-    criterion: { type: String, default: undefined },   // rank - what it is ranked against
+    criterion: { type: String, default: undefined },   // rank, hottext - what it is ranked against / which words to pick
     accept: { type: [String], default: undefined },    // blank
-    blanks: { type: [{ _id: false, accept: [String] }], default: undefined }, // cloze, one per marker
+    // cloze gaps carry {accept}, dropdown gaps {options, answerIdx}. Typed as
+    // the first shape, Mongoose cast every dropdown gap to {accept: []} on save
+    // and dropped its options and answer, so it is Mixed: invalidReason() has
+    // already checked the shape for the kind before anything is written.
+    blanks: { type: Schema.Types.Mixed, default: undefined },
     value: { type: Number, default: undefined },       // numeric
     tolerance: { type: Number, default: undefined },   // numeric
     unit: { type: String, default: undefined },        // numeric
     rubric: { type: [String], default: undefined },    // open
+    // The rest of PAYLOAD_FIELDS. Undeclared, each was silently dropped on
+    // write, so a hot text, table or grid saved to Mongo came back with nothing
+    // to answer and a stimulus vanished on save.
+    tokens: { type: [String], default: undefined },    // hottext, in reading order
+    columns: { type: [String], default: undefined },   // table and grid
+    rows: { type: Schema.Types.Mixed, default: undefined }, // table: [{header, cells}], grid: [label]
+    answers: { type: Schema.Types.Mixed, default: undefined }, // grid: one row of booleans per row
+    stimulus: { type: Schema.Types.Mixed, default: undefined }, // passage or image, any kind
     bloom: { type: String, enum: LEVELS, required: true },
-    status: { type: String, enum: ['active', 'discarded'], default: 'active' },
+    // 'draft': generated and not yet approved, never served (supabase/migrations/0013).
+    status: { type: String, enum: ['active', 'discarded', 'draft'], default: 'active' },
     // [D] provenance, so the UI can never pass a template item off as an LLM one
     source: { type: String, enum: ['llm', 'fallback'], default: 'llm' },
+    // 0013. Declared because Mongoose drops every path it has no schema for, and
+    // a draft that lost its model or its approval on save would be undetectable.
+    model: { type: String, default: null },
+    sourceRef: { type: Schema.Types.Mixed, default: null },
+    checks: { type: Schema.Types.Mixed, default: null },
+    createdBy: { type: String, default: null },
+    approvedBy: { type: String, default: null },
+    approvedAt: { type: String, default: null },
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: false } },
 );
@@ -74,6 +99,14 @@ const sessionSchema = new Schema(
     masteryGoal: { type: Number, enum: [0.8, 0.9, 1.0], default: 0.8 },
     reattempts: { type: Number, min: 0, max: 2, default: 0 },
     redemption: { type: Boolean, default: false },
+
+    // Phase 2 (supabase/migrations/0015). The only questions this room may
+    // serve; absent means the whole approved bank. Declared for the same reason
+    // as the settings above: an undeclared path is dropped on save, and a room
+    // the professor limited to two questions would quietly serve all of them.
+    // `default: undefined`, because a Mongoose array otherwise defaults to [],
+    // which would read as a set of nothing.
+    questionIds: { type: [String], default: undefined },
   },
   { versionKey: false },
 );
@@ -240,5 +273,24 @@ const answerReviewSchema = new Schema(
 );
 answerReviewSchema.index({ answerId: 1, reviewedAt: 1 });
 export const AnswerReview = model('AnswerReview', answerReviewSchema);
+
+// An image uploaded for a question stimulus (supabase/migrations/0014). The id
+// is drawn at random, not left to Mongo: a default ObjectId is a timestamp, a
+// per-process constant and a counter, so one upload's url would give away its
+// neighbours', and a phone loads an upload by its url alone (services/media.js).
+const mediaSchema = new Schema(
+  {
+    _id: { type: Schema.Types.ObjectId, default: () => new mongoose.Types.ObjectId(crypto.randomBytes(12).toString('hex')) },
+    ownerId: { type: String, default: null },
+    contentId: { type: String, required: true, index: true },
+    mime: { type: String, enum: IMAGE_TYPES, required: true },
+    bytes: { type: Number, required: true, min: 1 },
+    sha256: { type: String, required: true, match: /^[0-9a-f]{64}$/ },
+    data: { type: Buffer, required: true },
+    alt: { type: String, required: true },
+  },
+  { timestamps: { createdAt: 'createdAt', updatedAt: false }, versionKey: false },
+);
+export const Media = model('Media', mediaSchema);
 
 export { levelCounter };

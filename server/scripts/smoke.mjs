@@ -195,9 +195,14 @@ async function main() {
   const gen = await post('/api/generate', { contentId, topics });
   timings.generate = Date.now() - t2;
   check('generation succeeded', gen.res.status < 300, `status ${gen.res.status} ${gen.body.error || ''}`);
-  check('generated 40+ items', (gen.body.bankCount ?? 0) >= 40,
-    `${gen.body.bankCount} items in ${(timings.generate / 1000).toFixed(1)}s (source: ${gen.body.source})`);
+  check('generated 40+ items', (gen.body.generated ?? 0) >= 40,
+    `${gen.body.generated} items in ${(timings.generate / 1000).toFixed(1)}s (source: ${gen.body.source})`);
   check('under the 2-minute claim', timings.generate < 120000, `${(timings.generate / 1000).toFixed(1)}s`);
+  // Generated questions are drafts until a professor approves them; a room
+  // serves approved questions only.
+  const approval = await post(`/api/bank/${contentId}/approve-all`, {});
+  check('every draft approved', approval.res.status < 300 && approval.body.approved === gen.body.generated,
+    `${approval.body.approved} of ${gen.body.generated}`);
 
   const bank = await get(`/api/bank/${contentId}`);
   const items = bank.body.questions || [];

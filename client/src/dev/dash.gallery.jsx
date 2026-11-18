@@ -3,7 +3,8 @@
  *
  * Every object here has the shape the server returns - GET /api/dashboard for
  * an HOD and for a professor, GET /api/analytics/:id for one professor and one
- * student, GET /api/session for the room list, POST /api/auth/invite and the
+ * student (with a student's topicLevels), GET /api/analytics/:id/answers for a
+ * student's stored answers, GET /api/session for the room list, POST /api/auth/invite and the
  * Classroom routes for the invite dialog - so what is drawn is what the real
  * screens draw. Nothing in this file talks to the server: the callbacks wait a
  * moment and change local state, which is enough to see every in-flight state
@@ -16,6 +17,7 @@ import { DepartmentView } from '../account/Department.jsx';
 import { OverviewView } from '../account/Overview.jsx';
 import { RoomsView } from '../account/Rooms.jsx';
 import { LEVELS } from '../lib/bloom.js';
+import { pageOf, storedAnswer, topicReportOf } from './insight.gallery.jsx';
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -307,7 +309,63 @@ const PROFESSOR_EMPTY = {
   recentSessions: [],
 };
 
-/** GET /api/analytics/:id for one student. */
+/* The topics each chapter's rooms were written from. */
+const ROOM_TOPICS = {
+  'Unit III: Transport layer': ['Flow control', 'Congestion windows', 'Three-way handshake'],
+  'Process scheduling': ['Round-robin scheduling', 'Context switches', 'Priority inversion'],
+  'Normalisation and keys': ['Functional dependencies', 'Third normal form', 'Candidate keys'],
+  Deadlocks: ['Banker’s algorithm', 'Resource graphs', 'Deadlock prevention'],
+};
+
+/**
+ * One student's stored answers, in the professor's view, newest first: one
+ * per answer their levels count, shared out over the rooms they sat in
+ * proportion to each room's own count, and climbing the ladder inside each
+ * room as a live room does.
+ */
+function evidenceOf(s, bloom, timeline, r) {
+  const rows = [];
+  bloom.forEach((b) => { for (let k = 0; k < b.seen; k += 1) rows.push({ level: b.level, correct: k < b.correct }); });
+  for (let i = rows.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(r() * (i + 1));
+    [rows[i], rows[j]] = [rows[j], rows[i]];
+  }
+  const total = timeline.reduce((n, t) => n + t.answered, 0) || 1;
+  const out = [];
+  let k = 0;
+  let n = 0;
+  // Counted down, so the newest written answer is the one not reviewed yet.
+  let open = rows.filter((x) => x.level === 'create').length;
+  timeline.forEach((room, ri) => {
+    const take = ri === timeline.length - 1 ? rows.length - k : Math.min(rows.length - k, Math.round((room.answered / total) * rows.length));
+    const here = rows.slice(k, k + take).sort((a, b) => LEVELS.indexOf(a.level) - LEVELS.indexOf(b.level));
+    k += take;
+    const topics = ROOM_TOPICS[room.title] ?? ['General'];
+    here.forEach((row, i) => {
+      if (row.level === 'create') open -= 1;
+      const a = storedAnswer({
+        r,
+        room: { code: room.code, title: room.title, startedAt: room.startedAt },
+        topic: topics[(i + LEVELS.indexOf(row.level)) % topics.length],
+        level: row.level,
+        correct: row.correct,
+        at: new Date(Date.parse(room.startedAt) + (i + 1) * 70000).toISOString(),
+        n,
+        open,
+        teacher: { rollNo: s.rollNo, accountId: s.id },
+      });
+      n += 1;
+      out.push(a);
+    });
+  });
+  return out.reverse();
+}
+
+/**
+ * GET /api/analytics/:id for one student, and their stored answers for
+ * GET /api/analytics/:id/answers. The topic report is read off the answers,
+ * as the server reads it, so the grid and the list agree.
+ */
 function studentDetail(s, index) {
   const r = seeded(1200 + index);
   const subject = { id: s.id, name: s.fullName, code: s.code, rollNo: String(s.rollNo ?? '').trim() || null };
@@ -315,16 +373,22 @@ function studentDetail(s, index) {
 
   if (!subject.rollNo) {
     return {
-      kind: 'student', subject, counts: { sessions: 0, answered: 0, correct: 0, accuracy: null }, bloom: empty,
-      best: null, weakest: null, confident: false, topics: [], timeline: [],
-      reason: 'No roll number on this account, and a live session identifies a student by the number they type on their phone - so there is nothing to match their results against yet.',
+      answers: [],
+      record: {
+        kind: 'student', subject, counts: { sessions: 0, answered: 0, correct: 0, accuracy: null }, bloom: empty,
+        best: null, weakest: null, confident: false, topics: [], topicLevels: topicReportOf([]), timeline: [],
+        reason: 'No roll number on this account, and a live session identifies a student by the number they type on their phone - so there is nothing to match their results against yet.',
+      },
     };
   }
   // One student who holds an account and has not sat a room yet.
   if (index === 30) {
     return {
-      kind: 'student', subject, counts: { sessions: 0, answered: 0, correct: 0, accuracy: null }, bloom: empty,
-      best: null, weakest: null, confident: false, topics: [], timeline: [], currentLevel: null,
+      answers: [],
+      record: {
+        kind: 'student', subject, counts: { sessions: 0, answered: 0, correct: 0, accuracy: null }, bloom: empty,
+        best: null, weakest: null, confident: false, topics: [], topicLevels: topicReportOf([]), timeline: [], currentLevel: null,
+      },
     };
   }
 
@@ -345,22 +409,30 @@ function studentDetail(s, index) {
     return { code: m.code, title: m.title, startedAt: m.startedAt, answered: a, correct: c, accuracy: c / a, workingLevel: level, banded: c / a < 0.4 };
   });
 
+  const answers = evidenceOf(s, bloom, timeline, r);
+  const topicLevels = topicReportOf(answers.filter((a) => a.final).map((a) => ({ topic: a.topic, level: a.level, correct: a.correct })));
+
   return {
-    kind: 'student',
-    subject,
-    counts: { sessions: timeline.length, answered, correct, accuracy: timeline.reduce((n, t) => n + t.accuracy, 0) / timeline.length },
-    bloom,
-    ...extremes(bloom),
-    topics: [
-      { topic: 'Flow control', seen: 9, correct: 7, accuracy: 7 / 9 },
-      { topic: 'Banker’s algorithm', seen: 7, correct: 3, accuracy: 3 / 7 },
-    ],
-    timeline,
-    currentLevel: LEVELS[reached],
+    answers,
+    record: {
+      kind: 'student',
+      subject,
+      counts: { sessions: timeline.length, answered, correct, accuracy: timeline.reduce((n, t) => n + t.accuracy, 0) / timeline.length },
+      bloom,
+      ...extremes(bloom),
+      topics: topicLevels.topics.slice(0, 12).map(({ topic, seen: n, correct: c, accuracy }) => ({ topic, seen: n, correct: c, accuracy })),
+      topicLevels,
+      timeline,
+      currentLevel: LEVELS[reached],
+    },
   };
 }
 
-const CLASS_DETAIL = Object.fromEntries(ROSTER.map((s, i) => [s.id, studentDetail(s, i)]));
+const CLASS_BUILT = ROSTER.map((s, i) => [s.id, studentDetail(s, i)]);
+const CLASS_DETAIL = Object.fromEntries(CLASS_BUILT.map(([id, b]) => [id, b.record]));
+const CLASS_ANSWERS = Object.fromEntries(CLASS_BUILT.map(([id, b]) => [id, b.answers]));
+// One student whose answers the server fails to send, so the failed state can be seen.
+const ANSWERS_FAIL = ROSTER[3].id;
 
 // GET /api/classroom/course/:id/students. Two already hold an account.
 const GOOGLE_ROSTER = [
@@ -419,6 +491,13 @@ function fakeServices({ classroom = 'connected' } = {}) {
       return { accommodations: { largerText: true, noTimer: true }, supports: SUPPORTS };
     },
     setStudentAccommodations: async (_id, accommodations) => { await wait(300); return { accommodations }; },
+    // GET /api/analytics/:id/answers, the professor's view, one page at a time.
+    studentAnswers: async (id, params = {}) => {
+      await wait(550);
+      if (id === ANSWERS_FAIL) throw new Error('Failed to fetch');
+      const subject = CLASS_DETAIL[id]?.subject;
+      return { subject, ...pageOf(CLASS_ANSWERS[id] ?? [], params), view: 'teacher' };
+    },
   };
 }
 

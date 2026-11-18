@@ -17,13 +17,21 @@
  * Everything under the head is fed by a socket, so the moment the socket is
  * gone none of it is current. The page says so in a banner and fades the data,
  * because a quiet class and a dead page otherwise look identical.
+ *
+ * Two reads are not the socket's: the stored record. The heatmap card turns
+ * to topics, counted by the server from final, marked answers; the inspector
+ * lists the selected student's every attempt with the question as their phone
+ * showed it. Both are read over HTTP, and read again only when the roster says
+ * there is something new to read.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import Marbles from '../fx/Marbles.jsx';
 import { api } from '../lib/api.js';
 import { LABEL, LEVELS, pct } from '../lib/bloom.js';
+import { KIND_LABEL } from '../lib/kinds.js';
 import { Avatar, Button, Dialog, Field, Fig, Icon, Level, Menu, Note, Num, Panel, Segmented, Spark } from '../ui/index.jsx';
 import Draw from './Draw.jsx';
 import useRoomFeed from './useRoomFeed.js';
@@ -155,6 +163,415 @@ function Radar({ mine = {}, theirs = {}, goal, current, who }) {
   );
 }
 
+/* ------------------------------------------------- the stored record */
+
+const PAGE = 8;
+// The topic report is read at most this often while the class is answering.
+const TOPICS_EVERY = 10_000;
+const NO_TOPICS = { status: 'idle', data: null, error: '', at: 0 };
+
+const list = (v) => (Array.isArray(v) ? v : []);
+const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+const str = (v) => (v === null || v === undefined ? '' : String(v));
+const label = (x) => (typeof x === 'string' ? x : str(x?.header ?? x?.label ?? x?.name));
+const LETTER = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+/** An option by its position, lettered; a position with no option says so. */
+const option = (opts, i) => {
+  const n = Number(i);
+  return Number.isInteger(n) && opts[n] !== undefined ? `${LETTER[n] ?? n + 1}. ${opts[n]}` : `position ${str(i)}, not an option`;
+};
+const cellAt = (at) => str(at).split(':').map(Number);
+// A response may arrive as an array or as an object keyed by position.
+const nth = (r, i) => (Array.isArray(r) ? r[i] : obj(r)[i]);
+
+/**
+ * What the student gave, line by line, read against the question as their
+ * phone showed it: positions are positions in that shown order. A response
+ * that does not have the shape its kind expects is printed as it was stored,
+ * rather than read as nothing.
+ */
+function given(a) {
+  const r = a.response;
+  if (r === null || r === undefined || r === '') return [];
+  const lines = readAs(a.kind || a.question?.kind || 'mcq', a.question || {}, r).filter((line) => str(line).trim());
+  return lines.length ? lines : [typeof r === 'object' ? JSON.stringify(r) : str(r)];
+}
+
+function readAs(kind, q, r) {
+  switch (kind) {
+    case 'mcq': case 'poll': return [option(list(q.options), r)];
+    case 'multi': return list(r).map((i) => option(list(q.options), i));
+    case 'truefalse': return [typeof r === 'boolean' ? (r ? 'True' : 'False') : str(r)];
+    case 'match': return list(q.left).map((l, i) => {
+      const pos = nth(r, i);
+      return `${l} → ${pos === undefined ? 'left unmatched' : list(q.right)[Number(pos)] ?? `position ${pos}`}`;
+    });
+    case 'categorise': return Object.entries(obj(r)).map(([pos, g]) => `${list(q.items)[Number(pos)] ?? `item ${pos}`} → ${list(q.groups)[Number(g)] ?? `group ${g}`}`);
+    case 'blank': return [str(Array.isArray(r) ? r[0] : r)];
+    case 'cloze': return list(r).map((v, i) => `${i + 1}. ${str(v) || 'left empty'}`);
+    case 'numeric': return [`${str(r)}${q.unit ? ` ${q.unit}` : ''}`];
+    case 'order': case 'rank': return list(r).map((p, i) => `${i + 1}. ${list(q.items)[Number(p)] ?? `position ${p}`}`);
+    case 'open': return [str(r)];
+    case 'hottext': return [list(r).map((i) => list(q.tokens)[Number(i)] ?? `word ${i}`).join(', ')];
+    case 'dropdown': return list(r).map((p, i) => `${i + 1}. ${list(list(q.gaps)[i]?.options)[Number(p)] ?? `position ${p}`}`);
+    case 'table': return Object.entries(obj(r)).map(([at, v]) => {
+      const [ri, ci] = cellAt(at);
+      return `${label(list(q.rows)[ri]) || `Row ${ri + 1}`}, ${label(list(q.columns)[ci]) || `column ${ci + 1}`}: ${str(v) || 'left empty'}`;
+    });
+    case 'grid': return Object.keys(obj(r)).filter((k) => r[k]).map((at) => {
+      const [ri, ci] = cellAt(at);
+      return `${label(list(q.rows)[ri]) || `Row ${ri + 1}`} × ${label(list(q.columns)[ci]) || `column ${ci + 1}`}`;
+    });
+    default: return [typeof r === 'object' ? JSON.stringify(r) : str(r)];
+  }
+}
+
+/** The answer key, from the question as it was stored when it was served. */
+function keyOf(s = {}) {
+  const kind = s.kind || 'mcq';
+  const opts = list(s.options);
+  const out = (() => {
+    switch (kind) {
+      case 'mcq': return [option(opts, s.answerIdx)];
+      case 'multi': return list(s.answerIdxs).map((i) => option(opts, i));
+      case 'truefalse': return typeof s.answerBool === 'boolean' ? [s.answerBool ? 'True' : 'False'] : [];
+      case 'match': return list(s.pairs).map((p) => `${str(p?.left)} → ${str(p?.right)}`);
+      case 'categorise': return list(s.buckets).map((b) => `${str(b?.name)}: ${list(b?.items).join(', ')}`);
+      case 'order': case 'rank': return [
+        ...(kind === 'rank' && s.criterion ? [`Ranked by ${s.criterion}`] : []),
+        ...list(s.sequence).map((t, i) => `${i + 1}. ${t}`),
+      ];
+      case 'blank': return [list(s.accept).join(' / ')];
+      case 'cloze': return list(s.blanks).map((b, i) => `${i + 1}. ${list(b?.accept).join(' / ')}`);
+      case 'numeric': {
+        const tol = Number(s.tolerance);
+        return Number.isFinite(Number(s.value)) ? [`${s.value}${tol > 0 ? ` ± ${tol}` : ''}${s.unit ? ` ${s.unit}` : ''}`] : [];
+      }
+      case 'open': return list(s.rubric);
+      case 'hottext': return [list(s.answerIdxs).map((i) => list(s.tokens)[Number(i)]).filter(Boolean).join(', ')];
+      case 'dropdown': return list(s.blanks).map((b, i) => `${i + 1}. ${list(b?.options)[Number(b?.answerIdx)] ?? '—'}`);
+      case 'table': return list(s.rows).flatMap((row, ri) => list(row?.cells).map((c, ci) => (
+        c?.accept === undefined ? null : `${label(row) || `Row ${ri + 1}`}, ${label(list(s.columns)[ci]) || `column ${ci + 1}`}: ${list(c.accept).join(' / ')}`
+      )));
+      case 'grid': return list(s.answers).flatMap((row, ri) => list(row).map((v, ci) => (
+        v ? `${label(list(s.rows)[ri]) || `Row ${ri + 1}`} × ${label(list(s.columns)[ci]) || `column ${ci + 1}`}` : null
+      )));
+      default: return [];
+    }
+  })();
+  return out.filter((line) => line && String(line).trim());
+}
+
+const share = (score) => `${Math.round(Number(score) * 100)}%`;
+const partial = (score) => Number.isFinite(Number(score)) && Number(score) > 0 && Number(score) < 1;
+
+/** The mark in force, as a glyph and as words. */
+function markOf(a) {
+  if (a.ungraded) return { v: 'poll', label: 'A poll: nothing to mark' };
+  if (typeof a.correct !== 'boolean') return { v: 'poll', label: 'No mark recorded' };
+  if (partial(a.score)) return { v: a.correct ? 'yes' : 'no', text: share(a.score), label: `${a.correct ? 'Counted as right' : 'Counted as wrong'}, ${share(a.score)} of the marks` };
+  return { v: a.correct ? 'yes' : 'no', icon: a.correct ? 'check' : 'close', label: a.correct ? 'Right' : 'Wrong' };
+}
+const markWords = (m) => (m && typeof m.correct === 'boolean'
+  ? `${m.correct ? 'right' : 'wrong'}${partial(m.score) ? ` (${share(m.score)})` : ''}`
+  : 'no mark');
+
+// Only written answers are reviewed; everything else is marked by the
+// machine alone and says nothing here.
+const REVIEW = {
+  provisional: { label: 'Provisional', tone: 'warn', say: 'A written answer marked by the machine and not yet reviewed. The mark may change.' },
+  confirmed: { label: 'Reviewed', tone: 'ok', say: 'Reviewed: the machine’s mark was kept.' },
+  overridden: { label: 'Changed', tone: 'ink', say: 'Reviewed: the mark was changed.' },
+};
+
+/**
+ * The selected student's every attempt in this room, newest first: retries
+ * and polls too, because this is the record and not a report. Keyed on the
+ * student by its parent, so a late page can never land on someone else.
+ * `signature` moves when the roster shows them answering (or a review moving
+ * their numbers); only then is the first page read again and merged in.
+ */
+function RoomAnswers({ code, roll, signature }) {
+  const [state, setState] = useState({ status: 'loading', items: [], hasMore: false, error: '' });
+  const [more, setMore] = useState(false);
+  const [moreError, setMoreError] = useState('');
+  const [open, setOpen] = useState(() => new Set());
+  const req = useRef(0);
+
+  const load = useCallback(() => {
+    const id = ++req.current;
+    api.roomAnswers(code, { rollNo: roll, limit: PAGE }).then(
+      (res) => {
+        if (req.current !== id) return;
+        const fresh = list(res?.items);
+        setState((s) => {
+          if (!s.items.length) return { status: 'ready', items: fresh, hasMore: Boolean(res?.hasMore), error: '' };
+          const ids = new Set(fresh.map((a) => a.answerId));
+          // More arrived than one page holds: the gap cannot be stitched, so
+          // the list starts again from the newest.
+          if (res?.hasMore && !s.items.some((a) => ids.has(a.answerId))) return { status: 'ready', items: fresh, hasMore: true, error: '' };
+          return { status: 'ready', items: [...fresh, ...s.items.filter((a) => !ids.has(a.answerId))], hasMore: s.hasMore, error: '' };
+        });
+      },
+      (err) => {
+        if (req.current !== id) return;
+        setState((s) => ({ ...s, status: s.items.length ? 'ready' : 'error', error: err.message }));
+      },
+    );
+  }, [code, roll]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // A short wait folds a burst of roster pushes into one read.
+  const lastSig = useRef(signature);
+  useEffect(() => {
+    if (lastSig.current === signature) return undefined;
+    lastSig.current = signature;
+    const timer = setTimeout(load, 700);
+    return () => clearTimeout(timer);
+  }, [signature, load]);
+
+  async function showMore() {
+    setMore(true); setMoreError('');
+    try {
+      const res = await api.roomAnswers(code, { rollNo: roll, limit: PAGE, offset: state.items.length });
+      setState((s) => {
+        const have = new Set(s.items.map((a) => a.answerId));
+        return { ...s, items: [...s.items, ...list(res?.items).filter((a) => !have.has(a.answerId))], hasMore: Boolean(res?.hasMore) };
+      });
+    } catch (err) { setMoreError(`Could not load more: ${err.message}`); }
+    finally { setMore(false); }
+  }
+
+  const retry = () => { setState((s) => ({ ...s, status: 'loading', error: '' })); load(); };
+  const toggle = (id) => setOpen((o) => { const n = new Set(o); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const { status, items, hasMore, error } = state;
+
+  return (
+    <div className="lc-insp-sec" aria-busy={status === 'loading' || undefined}>
+      <div className="lc-insp-h">
+        <h3>Answers in this room</h3>
+        <span className="t-meta">{items.length ? 'newest first' : ''}</span>
+      </div>
+
+      {status === 'loading' ? (
+        <div className="lc-ans-wait" aria-label={`Reading ${roll}'s answers`}>
+          {[0, 1, 2].map((i) => (
+            <div key={i}><span className="skel" /><span className="skel" /><span className="skel" /></div>
+          ))}
+        </div>
+      ) : status === 'error' ? (
+        <Note tone="bad">
+          Could not read {roll}'s answers: {error}
+          <div style={{ marginTop: 8 }}><Button size="sm" icon="refresh" onClick={retry}>Try again</Button></div>
+        </Note>
+      ) : items.length === 0 ? (
+        <p className="hint">No answer from {roll} is stored in this room yet. Each one lands here with the question exactly as their phone showed it.</p>
+      ) : (
+        <>
+          <ol className="lc-answers">
+            {items.map((a) => {
+              const m = markOf(a);
+              const said = given(a);
+              const rv = REVIEW[a.review?.status];
+              const isOpen = open.has(a.answerId);
+              const panel = `lc-ans-${a.answerId}`;
+              const q = a.question || {};
+              const key = keyOf(a.snapshot);
+              const note = str(a.review?.note).trim();
+              const reading = str(a.auto?.detail || a.detail).trim();
+              return (
+                <li key={a.answerId} className="lc-ans" data-final={a.final === false ? 'false' : undefined}>
+                  <span className="lc-mark" data-v={m.v} data-prov={a.review?.status === 'provisional' ? 'true' : undefined} title={m.label}>
+                    {m.icon ? <Icon name={m.icon} size={13} /> : m.text ?? <i aria-hidden="true" />}
+                    <span className="sr-only">{m.label}</span>
+                  </span>
+                  <div className="lc-ans-main">
+                    <button type="button" className="lc-ans-q" aria-expanded={isOpen} aria-controls={panel} onClick={() => toggle(a.answerId)}>
+                      <span className="clip">{q.text || a.snapshot?.text || 'Question text not stored'}</span>
+                      <Icon name="chevron" size={14} />
+                    </button>
+                    <p className="lc-ans-said">
+                      <span className="sr-only">Their answer: </span>
+                      {said.length ? said.join('; ') : <span className="lc-ans-none">No answer given</span>}
+                    </p>
+                    <div className="lc-ans-meta">
+                      {a.level && <span className="lc-ans-lv" data-level={a.level}><i className="swatch" />{LABEL[a.level] ?? a.level}</span>}
+                      <span>Attempt {a.attempt ?? 1}{a.final === false ? ', retried' : ''}</span>
+                      <time className="mono" dateTime={a.answeredAt}>{stamp(a.answeredAt)}</time>
+                      {rv && (
+                        <span className="lc-rv" data-tone={rv.tone} title={rv.say}>
+                          {rv.label}
+                          {a.review.status === 'provisional' && (
+                            <Link className="lc-rv-go" to={`/review?code=${encodeURIComponent(code)}`}>Review<Icon name="forward" size={12} /></Link>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                    {note && <p className="lc-ans-note"><b>Note to the student</b>{note}</p>}
+
+                    {isOpen && (
+                      <dl className="lc-ans-more" id={panel}>
+                        <dt>Asked</dt>
+                        <dd>
+                          <p>{q.text || a.snapshot?.text}</p>
+                          {q.stimulus?.text && <p className="lc-ans-stim">{q.stimulus.text}</p>}
+                          <span className="lc-ans-kind">{KIND_LABEL[a.kind] ?? a.kind}{a.topic ? ` · ${a.topic}` : ''}</span>
+                        </dd>
+                        <dt>Gave</dt>
+                        <dd>{said.length ? <ul>{said.map((line, i) => <li key={i}>{line}</li>)}</ul> : 'Nothing.'}</dd>
+                        <dt>Key</dt>
+                        <dd>{key.length ? <ul>{key.map((line, i) => <li key={i}>{line}</li>)}</ul> : a.ungraded ? 'A poll has no key.' : 'No key was stored with this question.'}</dd>
+                        <dt>Mark</dt>
+                        <dd>
+                          {a.final === false
+                            ? 'Wrong, and followed by a retry: this attempt did not count.'
+                            : a.ungraded ? 'Not marked. A poll counts towards nothing.' : `${m.label}.`}
+                          {reading && <> The machine read it as {reading}.</>}
+                          {a.review?.status === 'overridden' && a.auto && (
+                            <> First marked {markWords(a.auto)}; changed to {markWords(a)}{a.review.reviewedAt ? ` at ${stamp(a.review.reviewedAt)}` : ''}.</>
+                          )}
+                          {a.review?.status === 'confirmed' && a.review.reviewedAt && <> Reviewed at {stamp(a.review.reviewedAt)}.</>}
+                          {rv && a.review.status === 'provisional' && <> {rv.say}</>}
+                        </dd>
+                      </dl>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+          {hasMore && (
+            <div><Button size="sm" variant="ghost" icon="chevron" busy={more} onClick={showMore}>Show more</Button></div>
+          )}
+          {moreError && <p className="hint lc-ans-err">{moreError}</p>}
+          {error && <p className="hint lc-ans-err">Could not read the newest answers just now ({error}). What is shown was read earlier.</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The topic report as a heatmap: one row per topic, one cell per level. */
+function TopicGrid({ topics, onRetry, closed }) {
+  const { status, data, error, at } = topics;
+  if (status === 'idle' || (status === 'loading' && !data)) {
+    return (
+      <div className="lc-tskel" aria-busy="true" aria-label="Counting answers by topic">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i}><span className="skel" />{LEVELS.map((l) => <span key={l} className="skel" />)}</div>
+        ))}
+      </div>
+    );
+  }
+  if (status === 'error' && !data) {
+    return (
+      <div className="lc-none" role="alert">
+        <Icon name="alert" />
+        <div>
+          <b>Could not count the topics.</b> {error}
+          <div style={{ marginTop: 8 }}><Button size="sm" icon="refresh" onClick={onRetry}>Try again</Button></div>
+        </div>
+      </div>
+    );
+  }
+
+  const rowsT = list(data?.topics);
+  const counted = data?.counted ?? {};
+  const untagged = Number(data?.untagged) || 0;
+  const source = data?.source;
+  const read = at ? ` Read at ${CLOCK.format(at)}.` : '';
+  const whence = source === 'history'
+    ? `Counted from each student’s running record, not answer by answer: this room ran before answers were stored one at a time.${read}`
+    : source === 'mixed'
+      ? `${counted.answers ?? 0} from stored answers, ${counted.history ?? 0} from the older running record kept before them; nothing is counted twice.${read}`
+      : source === 'answers'
+        ? `From ${counted.answers ?? 0} final, marked ${plural(counted.answers ?? 0, 'answer')}.${read}`
+        : read.trim();
+
+  if (!rowsT.length) {
+    return (
+      <div className="lc-tempty">
+        <div className="lc-tempty-cells" aria-hidden="true">
+          {LEVELS.map((l, i) => <span key={l}><i className="lc-cell" data-heat={0} />{SHORT[i]}</span>)}
+        </div>
+        <p>
+          <b>{untagged ? 'No topic to show.' : 'No marked answers yet.'}</b>{' '}
+          {untagged
+            ? `${untagged} marked ${plural(untagged, 'answer is', 'answers are')} stored, but none of their questions carries a topic.`
+            : closed
+              ? 'The room closed before a final answer was marked.'
+              : 'A topic gets a row as soon as a final answer on it is marked. Retries and polls are not counted.'}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="lc-heat-scroll" role="region" aria-label="Topics by level" tabIndex={0}>
+        <table className="lc-heat lc-topics">
+          <thead>
+            <tr>
+              <th className="lc-who" scope="col">Topic</th>
+              {LEVELS.map((l, i) => (
+                <th key={l} className="lc-lv" scope="col" data-level={l} title={LABEL[l]}>
+                  <span><i className="swatch" />{SHORT[i]}</span>
+                </th>
+              ))}
+              <th className="lc-acc" scope="col">Acc.</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rowsT.map((t) => {
+              const byL = Object.fromEntries(list(t.levels).map((x) => [x.level, x]));
+              return (
+                <tr key={t.topic} className="lc-trow">
+                  <th scope="row" className="lc-who">
+                    <span className="lc-names">
+                      <b className="clip" title={t.topic}>{t.topic}</b>
+                      <span>{t.students} {plural(t.students, 'student')}</span>
+                    </span>
+                  </th>
+                  {LEVELS.map((l) => {
+                    const c = byL[l] || ZERO;
+                    return (
+                      <td key={l} className="lc-lv">
+                        <span
+                          className="lc-cell"
+                          data-heat={heat(c.seen, c.correct)}
+                          title={c.seen ? `${t.topic} at ${LABEL[l]}: ${c.correct} of ${c.seen} right (${pct(c.seen, c.correct)})` : `${t.topic} at ${LABEL[l]}: nothing marked yet`}
+                        >
+                          {c.seen ? `${c.correct}/${c.seen}` : ''}
+                        </span>
+                      </td>
+                    );
+                  })}
+                  <td className="lc-acc">
+                    <span className="mono">{pct(t.seen, t.correct)}</span>
+                    <span className="lc-acc-of">of {t.seen}</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="lc-legend">
+        <span className="lc-legend-k">Accuracy</span>
+        {HEAT_KEY.map(([h, words]) => (
+          <span key={h}><i className="lc-cell lc-key" data-heat={h} />{words}</span>
+        ))}
+        <p className="lc-legend-note">
+          {whence}
+          {untagged > 0 && ` ${untagged} ${plural(untagged, 'answer')} had no topic and ${untagged === 1 ? 'is' : 'are'} left out.`}
+          {status === 'error' && ` The last read failed (${error}); this is the one before it.`}
+        </p>
+      </div>
+    </>
+  );
+}
+
 export default function Live({ code, title, closed, onClosed, onProjector }) {
   const { rows, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus } = useRoomFeed(code);
   const paused = roomStatus === 'paused';
@@ -164,6 +581,9 @@ export default function Live({ code, title, closed, onClosed, onProjector }) {
 
   const [pickedRoll, setPickedRoll] = useState('');
   const [drawing, setDrawing] = useState(false);
+  // The heatmap card's two readings: the roster, or the room by topic.
+  const [lens, setLens] = useState('students');
+  const [topics, setTopics] = useState(NO_TOPICS);
   const [filter, setFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [classroom, setClassroom] = useState(null);
@@ -283,6 +703,35 @@ export default function Live({ code, title, closed, onClosed, onProjector }) {
   // Met the room's goal at one level or more, by the server's own reckoning.
   const met = rows.filter((r) => Array.isArray(r.mastered) && r.mastered.length > 0).length;
   const goal = rows.find((r) => Number(r.masteryGoal) > 0)?.masteryGoal ?? null;
+
+  // ---- the topic report ------------------------------------------------------
+  // Read when the Topics side of the card is first opened, then again only
+  // when the roster shows new answers or a review moved a mark, and never more
+  // often than TOPICS_EVERY. A newer read always wins over an older one.
+  const topicsReq = useRef(0);
+  const topicsFor = useRef({ sig: null, at: 0 });
+  const topicsSig = `${seen}:${correct}`;
+  const sigNow = useRef(topicsSig);
+  sigNow.current = topicsSig;
+  const loadTopics = useCallback(() => {
+    const id = ++topicsReq.current;
+    topicsFor.current = { sig: sigNow.current, at: Date.now() };
+    setTopics((t) => ({ ...t, status: t.data ? t.status : 'loading' }));
+    api.roomTopics(code).then(
+      (data) => { if (topicsReq.current === id) setTopics({ status: 'ready', data, error: '', at: Date.now() }); },
+      (err) => { if (topicsReq.current === id) setTopics((t) => ({ ...t, status: 'error', error: err.message })); },
+    );
+  }, [code]);
+  useEffect(() => {
+    topicsReq.current += 1;
+    topicsFor.current = { sig: null, at: 0 };
+    setTopics(NO_TOPICS);
+  }, [code]);
+  useEffect(() => {
+    if (lens !== 'topics' || topicsFor.current.sig === topicsSig) return undefined;
+    const timer = setTimeout(loadTopics, Math.max(0, topicsFor.current.at + TOPICS_EVERY - Date.now()));
+    return () => clearTimeout(timer);
+  }, [lens, topicsSig, loadTopics]);
 
   // ---- what this page has seen happen --------------------------------------
   // The hook's own empty start is not a delivery, so it is told apart by
@@ -664,130 +1113,155 @@ export default function Live({ code, title, closed, onClosed, onProjector }) {
             <section className="card lc-grid" style={fade} aria-labelledby="lc-grid-h">
               <div className="lc-grid-head">
                 <div className="sec">
-                  <h2 id="lc-grid-h">Students × Bloom level</h2>
-                  <p>
-                    {shown.length === rows.length ? `${rows.length} joined` : `${shown.length} of ${rows.length}`}
-                    {closed ? ', final standing' : stale ? ', frozen' : ''}. Accuracy at each level; the ring is the level served now.
-                  </p>
+                  <h2 id="lc-grid-h">{lens === 'topics' ? 'Topics × Bloom level' : 'Students × Bloom level'}</h2>
+                  {lens === 'topics' ? (
+                    <p>
+                      {topics.data && list(topics.data.topics).length
+                        ? `${list(topics.data.topics).length} ${plural(list(topics.data.topics).length, 'topic')} across ${topics.data.students} ${plural(topics.data.students, 'student')}${closed ? ', final' : ''}. `
+                        : ''}
+                      Accuracy at each level, from final, marked answers.
+                    </p>
+                  ) : (
+                    <p>
+                      {shown.length === rows.length ? `${rows.length} joined` : `${shown.length} of ${rows.length}`}
+                      {closed ? ', final standing' : stale ? ', frozen' : ''}. Accuracy at each level; the ring is the level served now.
+                    </p>
+                  )}
                 </div>
-                <label className="search lc-find">
-                  <Icon name="search" />
-                  <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a student" aria-label="Find a student" />
-                </label>
-              </div>
-              <div className="lc-filters">
-                <Segmented label="Narrow the roster" value={filter} onChange={setFilter} options={FILTERS.map((f) => ({ id: f.id, label: f.label, count: rows.filter(f.match).length }))} />
+                <Segmented
+                  label="Read the class by"
+                  value={lens}
+                  onChange={setLens}
+                  options={[
+                    { id: 'students', label: 'Students', count: rows.length },
+                    { id: 'topics', label: 'Topics', count: topics.data ? list(topics.data.topics).length : undefined },
+                  ]}
+                />
               </div>
 
-              {shown.length === 0 ? (
-                <div className="lc-none">
-                  <Icon name="search" />
-                  <div><b>No student matches.</b> Clear the search, or switch back to Everyone.</div>
-                </div>
+              {lens === 'topics' ? (
+                <TopicGrid topics={topics} onRetry={loadTopics} closed={closed} />
               ) : (
-                <div className="lc-heat-scroll" role="region" aria-label="Students by level" tabIndex={0}>
-                  <table className="lc-heat">
-                    <thead>
-                      <tr>
-                        <th className="lc-who" scope="col">Student</th>
-                        {LEVELS.map((l, i) => (
-                          <th key={l} className="lc-lv" scope="col" data-level={l} title={LABEL[l]}>
-                            <span><i className="swatch" />{SHORT[i]}</span>
-                          </th>
-                        ))}
-                        <th className="lc-acc" scope="col">Acc.</th>
-                        <th className="lc-sigc" scope="col"><span className="sr-only">Signals</span></th>
-                      </tr>
-                    </thead>
-                    {groups.map((g) => {
-                      const gp = pooled(g.rows);
-                      const gs = LEVELS.reduce((n, l) => n + gp[l].seen, 0);
-                      const gc = LEVELS.reduce((n, l) => n + gp[l].correct, 0);
-                      return (
-                        <tbody key={g.id}>
-                          <tr className="lc-band">
-                            <th colSpan={9} scope="rowgroup">
-                              <span className="lc-band-in">
-                                {g.level ? <Level level={g.level} /> : <span className="t-meta">Not placed yet</span>}
-                                <span className="lc-band-n">{g.rows.length} {plural(g.rows.length, 'student')}</span>
-                                <span className="lc-band-acc">{pct(gs, gc)} <i>of {gs}</i></span>
-                              </span>
-                            </th>
+                <>
+                  <div className="lc-filters">
+                    <Segmented label="Narrow the roster" value={filter} onChange={setFilter} options={FILTERS.map((f) => ({ id: f.id, label: f.label, count: rows.filter(f.match).length }))} />
+                    <label className="search lc-find">
+                      <Icon name="search" />
+                      <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a student" aria-label="Find a student" />
+                    </label>
+                  </div>
+
+                  {shown.length === 0 ? (
+                    <div className="lc-none">
+                      <Icon name="search" />
+                      <div><b>No student matches.</b> Clear the search, or switch back to Everyone.</div>
+                    </div>
+                  ) : (
+                    <div className="lc-heat-scroll" role="region" aria-label="Students by level" tabIndex={0}>
+                      <table className="lc-heat">
+                        <thead>
+                          <tr>
+                            <th className="lc-who" scope="col">Student</th>
+                            {LEVELS.map((l, i) => (
+                              <th key={l} className="lc-lv" scope="col" data-level={l} title={LABEL[l]}>
+                                <span><i className="swatch" />{SHORT[i]}</span>
+                              </th>
+                            ))}
+                            <th className="lc-acc" scope="col">Acc.</th>
+                            <th className="lc-sigc" scope="col"><span className="sr-only">Signals</span></th>
                           </tr>
-                          {g.rows.map((r) => {
-                            const total = r.total || ZERO;
-                            const sig = sigOf(r);
-                            const sigTitle = sig.notes.length
-                              ? `${sig.notes.join(' ')} Open ${r.rollNo} for the full trail.`
-                              : `${sig.events} recorded. Open ${r.rollNo} for the full trail.`;
-                            return (
-                              <tr
-                                key={r.rollNo}
-                                className="lc-row"
-                                tabIndex={0}
-                                aria-selected={sel?.rollNo === r.rollNo}
-                                title={r.reason || undefined}
-                                onClick={() => setPickedRoll(r.rollNo)}
-                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPickedRoll(r.rollNo); } }}
-                              >
-                                <td className="lc-who">
-                                  <span className="lc-person" data-off={r.online ? undefined : 'true'}>
-                                    <span className="lc-av">
-                                      <Avatar name={r.name || r.rollNo} title={r.online ? 'connected' : 'not connected'} />
-                                      <i aria-hidden="true" />
-                                      <span className="sr-only">{r.online ? 'connected' : 'not connected'}</span>
-                                    </span>
-                                    <span className="lc-names">
-                                      <b className="clip">{r.name || r.rollNo}</b>
-                                      {r.name && <span className="mono">{r.rollNo}</span>}
-                                    </span>
+                        </thead>
+                        {groups.map((g) => {
+                          const gp = pooled(g.rows);
+                          const gs = LEVELS.reduce((n, l) => n + gp[l].seen, 0);
+                          const gc = LEVELS.reduce((n, l) => n + gp[l].correct, 0);
+                          return (
+                            <tbody key={g.id}>
+                              <tr className="lc-band">
+                                <th colSpan={9} scope="rowgroup">
+                                  <span className="lc-band-in">
+                                    {g.level ? <Level level={g.level} /> : <span className="t-meta">Not placed yet</span>}
+                                    <span className="lc-band-n">{g.rows.length} {plural(g.rows.length, 'student')}</span>
+                                    <span className="lc-band-acc">{pct(gs, gc)} <i>of {gs}</i></span>
                                   </span>
-                                </td>
-                                {LEVELS.map((l) => {
-                                  const c = (r.levels || {})[l] || ZERO;
-                                  return (
-                                    <td key={l} className="lc-lv">
-                                      <span
-                                        className="lc-cell"
-                                        data-heat={heat(c.seen, c.correct)}
-                                        data-cur={r.workingLevel === l ? 'true' : undefined}
-                                        title={c.seen ? `${LABEL[l]}: ${c.correct} of ${c.seen} right (${pct(c.seen, c.correct)})` : `${LABEL[l]}: not answered yet`}
-                                      >
-                                        {c.seen ? `${c.correct}/${c.seen}` : ''}
+                                </th>
+                              </tr>
+                              {g.rows.map((r) => {
+                                const total = r.total || ZERO;
+                                const sig = sigOf(r);
+                                const sigTitle = sig.notes.length
+                                  ? `${sig.notes.join(' ')} Open ${r.rollNo} for the full trail.`
+                                  : `${sig.events} recorded. Open ${r.rollNo} for the full trail.`;
+                                return (
+                                  <tr
+                                    key={r.rollNo}
+                                    className="lc-row"
+                                    tabIndex={0}
+                                    aria-selected={sel?.rollNo === r.rollNo}
+                                    title={r.reason || undefined}
+                                    onClick={() => setPickedRoll(r.rollNo)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPickedRoll(r.rollNo); } }}
+                                  >
+                                    <td className="lc-who">
+                                      <span className="lc-person" data-off={r.online ? undefined : 'true'}>
+                                        <span className="lc-av">
+                                          <Avatar name={r.name || r.rollNo} title={r.online ? 'connected' : 'not connected'} />
+                                          <i aria-hidden="true" />
+                                          <span className="sr-only">{r.online ? 'connected' : 'not connected'}</span>
+                                        </span>
+                                        <span className="lc-names">
+                                          <b className="clip">{r.name || r.rollNo}</b>
+                                          {r.name && <span className="mono">{r.rollNo}</span>}
+                                        </span>
                                       </span>
                                     </td>
-                                  );
-                                })}
-                                <td className="lc-acc">
-                                  <span className="mono">{pct(total.seen, total.correct)}</span>
-                                  {r.slowLearner && <span className="lc-support">support</span>}
-                                </td>
-                                <td className="lc-sigc">
-                                  {sig.level !== 'clear' && <span className="lc-sig" data-level={sig.level} title={sigTitle}>{sig.notes.length || null}</span>}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      );
-                    })}
-                  </table>
-                </div>
-              )}
+                                    {LEVELS.map((l) => {
+                                      const c = (r.levels || {})[l] || ZERO;
+                                      return (
+                                        <td key={l} className="lc-lv">
+                                          <span
+                                            className="lc-cell"
+                                            data-heat={heat(c.seen, c.correct)}
+                                            data-cur={r.workingLevel === l ? 'true' : undefined}
+                                            title={c.seen ? `${LABEL[l]}: ${c.correct} of ${c.seen} right (${pct(c.seen, c.correct)})` : `${LABEL[l]}: not answered yet`}
+                                          >
+                                            {c.seen ? `${c.correct}/${c.seen}` : ''}
+                                          </span>
+                                        </td>
+                                      );
+                                    })}
+                                    <td className="lc-acc">
+                                      <span className="mono">{pct(total.seen, total.correct)}</span>
+                                      {r.slowLearner && <span className="lc-support">support</span>}
+                                    </td>
+                                    <td className="lc-sigc">
+                                      {sig.level !== 'clear' && <span className="lc-sig" data-level={sig.level} title={sigTitle}>{sig.notes.length || null}</span>}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          );
+                        })}
+                      </table>
+                    </div>
+                  )}
 
-              <div className="lc-legend">
-                <span className="lc-legend-k">Accuracy</span>
-                {HEAT_KEY.map(([h, label]) => (
-                  <span key={h}><i className="lc-cell lc-key" data-heat={h} />{label}</span>
-                ))}
-                <span><i className="lc-cell lc-key" data-cur="true" data-heat={0} />level served now</span>
-                {rows.some((r) => sigOf(r).level !== 'clear') && (
-                  <span className="lc-legend-sig">
-                    <i className="lc-sig" data-level="note" /> reported by the browser
-                    <i className="lc-sig" data-level="watch" /> worked out by the server
-                  </span>
-                )}
-              </div>
+                  <div className="lc-legend">
+                    <span className="lc-legend-k">Accuracy</span>
+                    {HEAT_KEY.map(([h, label]) => (
+                      <span key={h}><i className="lc-cell lc-key" data-heat={h} />{label}</span>
+                    ))}
+                    <span><i className="lc-cell lc-key" data-cur="true" data-heat={0} />level served now</span>
+                    {rows.some((r) => sigOf(r).level !== 'clear') && (
+                      <span className="lc-legend-sig">
+                        <i className="lc-sig" data-level="note" /> reported by the browser
+                        <i className="lc-sig" data-level="watch" /> worked out by the server
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
             </section>
 
             <div className="lc-side">
@@ -860,6 +1334,13 @@ export default function Live({ code, title, closed, onClosed, onProjector }) {
                       <p className="hint">Nothing yet. Each answer {sel.rollNo} gives from now on lands here as a tick or a cross.</p>
                     )}
                   </div>
+
+                  <RoomAnswers
+                    key={sel.rollNo}
+                    code={code}
+                    roll={sel.rollNo}
+                    signature={`${typeof sel.answered === 'number' ? sel.answered : ''}:${selTotal.seen}:${selTotal.correct}`}
+                  />
 
                   <div className="lc-insp-sec">
                     <div className="lc-insp-h">

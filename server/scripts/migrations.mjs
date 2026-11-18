@@ -134,7 +134,7 @@ function sameSnapshot(label, a, b) {
 async function rowCounts(db) {
   const out = {};
   for (const table of ['contents', 'questions', 'sessions', 'profiles', 'accounts', 'invites', 'answers', 'room_archives',
-    'answer_reviews']) {
+    'answer_reviews', 'media']) {
     const exists = await db.query(`select to_regclass('public.${table}') is not null as ok`);
     if (!exists.rows[0].ok) continue;
     out[table] = Number((await db.query(`select count(*)::int as n from public.${table}`)).rows[0].n);
@@ -146,11 +146,11 @@ async function rowCounts(db) {
 // and server/src/routes/auth.js read or write. A column added there without a
 // migration should be added here too, and this check then says so.
 const COLUMNS_THE_SERVER_USES = {
-  contents: ['id', 'title', 'kind', 'raw_text', 'topics', 'owner_id', 'created_at'],
+  contents: ['id', 'title', 'kind', 'raw_text', 'topics', 'owner_id', 'created_at', 'topic_slides'],
   questions: ['id', 'content_id', 'topic', 'text', 'kind', 'options', 'answer_idx', 'bloom', 'status',
-    'source', 'payload', 'created_at'],
+    'source', 'payload', 'created_at', 'model', 'source_ref', 'checks', 'created_by', 'approved_by', 'approved_at'],
   sessions: ['id', 'code', 'content_id', 'title', 'status', 'owner_id', 'started_at', 'closed_at', 'paused_at',
-    'mastery_goal', 'reattempts', 'redemption'],
+    'mastery_goal', 'reattempts', 'redemption', 'question_ids'],
   profiles: ['id', 'session_id', 'roll_no', 'name', 'levels', 'working_level', 'reason', 'history', 'served_id',
     'served_at', 'served_why', 'served_tries', 'served_last', 'integrity', 'account_id', 'updated_at'],
   answers: ['id', 'session_id', 'answer_key', 'roll_no', 'account_id', 'question_id', 'content_id', 'topic', 'bloom',
@@ -165,6 +165,7 @@ const COLUMNS_THE_SERVER_USES = {
   room_archives: ['id', 'session_id', 'code', 'title', 'owner_id', 'archived_by', 'archived_at', 'bytes', 'data'],
   answer_reviews: ['id', 'answer_id', 'session_id', 'decision', 'correct', 'score', 'note', 'reviewed_by',
     'reviewed_at'],
+  media: ['id', 'owner_id', 'content_id', 'mime', 'bytes', 'sha256', 'data', 'alt', 'created_at'],
 };
 
 // The fields outAccount() in services/accounts.js reads off an accounts_below() row.
@@ -651,6 +652,193 @@ section('evidence guards (0012)');
   check('and leaves none behind', rows[0].n === 0);
 }
 
+section('question provenance and approval (0013)');
+
+{
+  // The columns the generate, regenerate, write-your-own and approve routes
+  // write (server/src/routes/generate.js, bank.js).
+  const insertDraft = (q = {}) => db.query(
+    `insert into public.questions (content_id, topic, text, kind, options, answer_idx, bloom, status, source, payload,
+       model, source_ref, checks, created_by)
+     values ($1, 'Sets', $2, 'mcq', '["a","b","c","d"]', 1, 'remember', $3, 'fallback', '{}', $4, $5, $6, $7)
+     returning *`,
+    [content?.id, q.text ?? 'A draft', given(q, 'status', 'draft'), given(q, 'model', 'offline-template'),
+      given(q, 'sourceRef', JSON.stringify({ kind: 'slides', slides: [3, 4] })),
+      given(q, 'checks', JSON.stringify([{ id: 'longest-option-is-key', ok: true, message: 'fine' }])),
+      given(q, 'createdBy', PROF)],
+  );
+
+  const [draft] = (await accepts('a generated question saved as a draft, with its model, slides and checks', () =>
+    insertDraft())) ?? [];
+  check('the provenance reads back as written',
+    draft?.status === 'draft' && draft?.model === 'offline-template' && draft?.source_ref?.slides?.[1] === 4
+    && Array.isArray(draft?.checks) && draft?.checks[0]?.ok === true && draft?.created_by === PROF
+    && draft?.approved_by === null && draft?.approved_at === null);
+  await accepts('a professor\'s own question: active, no model, no slides', () =>
+    insertDraft({ status: 'active', model: null, sourceRef: null }));
+  await accepts('a draft from the shared key: no creator', () => insertDraft({ createdBy: null }));
+  await rejects('a status outside active/discarded/draft', () => insertDraft({ status: 'pending' }),
+    { code: '23514', match: /questions_status_check/ });
+  await rejects('a source_ref that is not an object', () => insertDraft({ sourceRef: '[3, 4]' }),
+    { code: '23514', match: /questions_source_ref_object/ });
+  await rejects('checks that are not an array', () => insertDraft({ checks: '{"ok": true}' }),
+    { code: '23514', match: /questions_checks_array/ });
+
+  await accepts('approving a draft: active, with who and when', () =>
+    db.query(`update public.questions set status = 'active', approved_by = $1, approved_at = now() where id = $2`,
+      [PROF, draft?.id]));
+  await accepts('approving from the shared key: a time and no account', () =>
+    db.query(`update public.questions set approved_by = null, approved_at = now() where id = $1`, [draft?.id]));
+  await rejects('an approver with no approval time', () =>
+    db.query(`update public.questions set approved_by = $1, approved_at = null where id = $2`, [PROF, draft?.id]),
+  { code: '23514', match: /questions_approval_pair/ });
+  await rejects('a creator who is not an account', () => insertDraft({ createdBy: randomUUID() }), { code: '23503' });
+
+  // A professor who approved questions and later leaves: the questions stay,
+  // unattributed, and stay in rooms.
+  const APPROVER = randomUUID();
+  await db.query('insert into auth.users (id) values ($1)', [APPROVER]);
+  await insertAccount({ id: APPROVER, role: 'professor', fullName: 'Approver', email: 'appr@example.test',
+    code: 'BL-AP0001', reportsTo: HOD });
+  const [made] = (await insertDraft({ createdBy: APPROVER })).rows;
+  await db.query(`update public.questions set status = 'active', approved_by = $1, approved_at = now() where id = $2`,
+    [APPROVER, made.id]);
+  await db.query('delete from auth.users where id = $1', [APPROVER]);
+  {
+    const { rows } = await db.query('select status, created_by, approved_by, approved_at from public.questions where id = $1',
+      [made.id]);
+    check('deleting the approver\'s account keeps the question active, with created_by and approved_by cleared',
+      rows[0]?.status === 'active' && rows[0]?.created_by === null && rows[0]?.approved_by === null
+      && rows[0]?.approved_at instanceof Date);
+  }
+
+  const idx = await db.query(`select indexdef from pg_indexes where schemaname = 'public' and indexname = 'questions_draft_idx'`);
+  check('a bank\'s drafts have their own index', /WHERE \(status = 'draft'::text\)/.test(idx.rows[0]?.indexdef ?? ''),
+    idx.rows[0]?.indexdef ?? 'missing');
+
+  const [deck] = (await accepts('a deck with the slides each topic was read from', () =>
+    db.query(`insert into public.contents (title, kind, topics, topic_slides, owner_id)
+              values ('Deck', 'pptx', '["Sets", "Maps"]', '{"Sets": [2, 3], "Maps": [4]}', $1) returning *`, [PROF]))) ?? [];
+  check('topic_slides reads back', deck?.topic_slides?.Sets?.[1] === 3);
+  const pasted = await db.query(`insert into public.contents (title, kind) values ('Pasted', 'syllabus') returning topic_slides`);
+  check('pasted text gets an empty topic_slides', JSON.stringify(pasted.rows[0]?.topic_slides) === '{}');
+  await rejects('topic_slides that is not an object', () =>
+    db.query(`insert into public.contents (title, kind, topic_slides) values ('Bad', 'pptx', '[1, 2]')`),
+  { code: '23514', match: /contents_topic_slides_object/ });
+}
+
+section('uploaded images (0014)');
+
+{
+  // A real 1x1 PNG, sent in bytea's text form ("\x" and hex), as the Supabase
+  // repo sends it through PostgREST.
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  const sha = (await import('node:crypto')).createHash('sha256').update(png).digest('hex');
+  const insertMedia = (m = {}) => db.query(
+    `insert into public.media (owner_id, content_id, mime, bytes, sha256, data, alt)
+     values ($1, $2, $3, $4, $5, $6::text::bytea, $7)
+     returning id, owner_id, content_id, mime, bytes, sha256, alt, created_at, data::text as hex`,
+    [given(m, 'ownerId', PROF), given(m, 'contentId', content?.id), given(m, 'mime', 'image/png'),
+      given(m, 'bytes', png.length), given(m, 'sha256', sha), given(m, 'data', `\\x${png.toString('hex')}`),
+      given(m, 'alt', 'A one-pixel test image')],
+  );
+
+  const [image] = (await accepts('an uploaded PNG with its digest, size and alt text', () => insertMedia())) ?? [];
+  check('it reads back as written, in the text form the repo decodes',
+    image?.mime === 'image/png' && image?.bytes === png.length && image?.sha256 === sha && image?.owner_id === PROF
+    && image?.hex === `\\x${png.toString('hex')}` && image?.created_at instanceof Date);
+  {
+    const { rows } = await db.query('select data from public.media where id = $1', [image?.id]);
+    check('the bytes are the image, byte for byte', Buffer.from(rows[0]?.data ?? []).equals(png));
+  }
+  await accepts('an image from the shared key: no owner', () => insertMedia({ ownerId: null }));
+  await rejects('an SVG', () => insertMedia({ mime: 'image/svg+xml' }), { code: '23514', match: /media_mime_check/ });
+  await rejects('a size that is not the size of the bytes', () => insertMedia({ bytes: png.length + 1 }),
+    { code: '23514', match: /media_bytes_check/ });
+  await rejects('a digest that is not the digest of the bytes', () => insertMedia({ sha256: 'a'.repeat(64) }),
+    { code: '23514', match: /media_sha256_check/ });
+  await rejects('blank alt text', () => insertMedia({ alt: '   ' }), { code: '23514', match: /media_alt_check/ });
+  await rejects('no alt text', () => insertMedia({ alt: null }), { code: '23502' });
+  await rejects('a chapter that does not exist', () => insertMedia({ contentId: randomUUID() }), { code: '23503' });
+
+  await accepts('its alt text can be corrected', () =>
+    db.query(`update public.media set alt = 'A single grey pixel' where id = $1`, [image?.id]));
+  const RESTRICT = { code: '23001', match: /upload a new image/ };
+  await rejects('its bytes cannot be changed under its url', () =>
+    db.query(`update public.media set data = '\\x00', bytes = 1, sha256 = encode(sha256('\\x00'::bytea), 'hex') where id = $1`,
+      [image?.id]), RESTRICT);
+  await rejects('nor its type', () => db.query(`update public.media set mime = 'image/webp' where id = $1`, [image?.id]), RESTRICT);
+  {
+    const other = (await db.query(`insert into public.contents (title, kind) values ('Other', 'syllabus') returning id`)).rows[0];
+    await rejects('nor moved to another chapter', () =>
+      db.query('update public.media set content_id = $1 where id = $2', [other.id, image?.id]), RESTRICT);
+  }
+
+  // The uploader leaves: the image stays, unattributed, and keeps its bytes.
+  const UPLOADER = randomUUID();
+  await db.query('insert into auth.users (id) values ($1)', [UPLOADER]);
+  await insertAccount({ id: UPLOADER, role: 'professor', fullName: 'Uploader', email: 'up@example.test',
+    code: 'BL-MD0001', reportsTo: HOD });
+  const [theirs] = (await insertMedia({ ownerId: UPLOADER })).rows;
+  await db.query('delete from auth.users where id = $1', [UPLOADER]);
+  {
+    const { rows } = await db.query('select owner_id, bytes from public.media where id = $1', [theirs.id]);
+    check('deleting the uploader\'s account keeps the image, with owner_id cleared',
+      rows.length === 1 && rows[0].owner_id === null && rows[0].bytes === png.length);
+  }
+
+  // A chapter's images go with it.
+  const gone = (await db.query(`insert into public.contents (title, kind) values ('Going', 'syllabus') returning id`)).rows[0];
+  await insertMedia({ contentId: gone.id });
+  await db.query('delete from public.contents where id = $1', [gone.id]);
+  {
+    const { rows } = await db.query('select count(*)::int as n from public.media where content_id = $1', [gone.id]);
+    check('deleting a chapter deletes its images', rows[0].n === 0);
+  }
+
+  const idx = await db.query(`select indexname from pg_indexes where schemaname = 'public'
+                              and indexname in ('media_content_idx', 'sessions_content_idx')`);
+  check('images by chapter and rooms by chapter have their indexes', idx.rows.length === 2,
+    idx.rows.map((r) => r.indexname).join(', '));
+}
+
+section('a question set per room (0015)');
+
+{
+  // The insert createSession() sends (server/src/repo/supabaseRepo.js), with
+  // the set as PostgREST hands a JSON array of ids to a uuid[] column.
+  const [q1, q2] = [randomUUID(), randomUUID()];
+  const openRoom = (code, ids) => db.query(
+    `insert into public.sessions (code, content_id, title, status, owner_id, mastery_goal, reattempts, redemption, question_ids)
+     values ($1, $2, 'Set room', 'open', $3, 0.80, 0, false, $4::uuid[]) returning *`,
+    [code, content?.id, PROF, ids]);
+
+  const [setRoom] = (await accepts('a room limited to two questions', () => openRoom('SET001', [q1, q2]))) ?? [];
+  check('its set reads back as the two ids, in order',
+    Array.isArray(setRoom?.question_ids) && setRoom.question_ids.length === 2
+    && setRoom.question_ids[0] === q1 && setRoom.question_ids[1] === q2, JSON.stringify(setRoom?.question_ids));
+  const [whole] = (await accepts('a room with no set (the whole approved bank)', () => openRoom('SET002', null))) ?? [];
+  check('reads back null', whole?.question_ids === null);
+  {
+    const { rows } = await db.query(`insert into public.sessions (code, content_id) values ('SET003', $1) returning question_ids`,
+      [content?.id]);
+    check('a room opened without naming the column gets null, the whole bank', rows[0]?.question_ids === null);
+  }
+  const SHAPE = { code: '23514', match: /sessions_question_ids_shape/ };
+  await rejects('an empty set (a room that could serve nothing)', () => openRoom('SET004', []), SHAPE);
+  await rejects('a set holding a null', () => openRoom('SET005', [q1, null]), SHAPE);
+  await rejects('a set of sets', () =>
+    db.query(`insert into public.sessions (code, content_id, question_ids) values ('SET006', $1, $2::uuid[])`,
+      [content?.id, `{{${q1}},{${q2}}}`]), SHAPE);
+  await rejects('an id that is not a uuid', () => openRoom('SET007', ['not-a-uuid']), { code: '22P02' });
+  {
+    // updateSession() never writes it; the room's other fields still change.
+    await db.query(`update public.sessions set status = 'closed', closed_at = now() where id = $1`, [setRoom?.id]);
+    const { rows } = await db.query('select status, question_ids from public.sessions where id = $1', [setRoom?.id]);
+    check('closing a set room keeps its set', rows[0]?.status === 'closed' && rows[0]?.question_ids?.length === 2);
+  }
+}
+
 section('deleting');
 
 await rejects('deleting the sign-in of a professor who owns material and students', () =>
@@ -707,10 +895,19 @@ section('upgrading a v1 database that already holds data');
     check('v1 questions read as mcq with an empty payload and their options untouched',
       q.rows[0]?.kind === 'mcq' && JSON.stringify(q.rows[0]?.payload) === '{}'
       && q.rows[0]?.options?.length === 4 && q.rows[0]?.answer_idx === 1);
-    const s = await old.query('select owner_id, mastery_goal, reattempts, redemption, status from public.sessions');
+    const p13 = await old.query(
+      'select status, model, source_ref, checks, created_by, approved_by, approved_at from public.questions');
+    check('v1 questions stay active, with no model, slides, checks or approval recorded (0013)',
+      p13.rows[0]?.status === 'active' && p13.rows[0]?.model === null && p13.rows[0]?.source_ref === null
+      && p13.rows[0]?.checks === null && p13.rows[0]?.created_by === null && p13.rows[0]?.approved_by === null
+      && p13.rows[0]?.approved_at === null);
+    const c13 = await old.query('select topic_slides from public.contents');
+    check('v1 contents get an empty topic_slides', JSON.stringify(c13.rows[0]?.topic_slides) === '{}');
+    const s = await old.query('select owner_id, mastery_goal, reattempts, redemption, status, question_ids from public.sessions');
     check('v1 rooms stay unowned and get the settings they were run under',
       s.rows[0]?.owner_id === null && Number(s.rows[0]?.mastery_goal) === 0.8 && s.rows[0]?.reattempts === 0
       && s.rows[0]?.redemption === false && s.rows[0]?.status === 'closed');
+    check('v1 rooms get no question set: they go on serving the whole bank (0015)', s.rows[0]?.question_ids === null);
     const p = await old.query('select integrity, served_tries, account_id, history from public.profiles');
     check('v1 profiles keep their history and get empty integrity, no pin, no account',
       JSON.stringify(p.rows[0]?.integrity) === '[]' && p.rows[0]?.served_tries === 0 && p.rows[0]?.account_id === null
@@ -752,8 +949,11 @@ section('0011 on a department that already holds two spellings of one roll numbe
     (await clash.query(`select to_regclass('public.accounts_department_roll_key') is not null as ok`)).rows[0].ok;
   const counts = await rowCounts(clash);
   const ok = await applyAll(clash, files.filter((f) => f.name >= '0011'), 'over the clash');
+  // Tables the later files create (media, 0014) are left out of the comparison:
+  // a new empty table is not a row changed or removed.
   check('the rest of the set still applies, and no row is changed or removed',
-    ok && JSON.stringify(counts) === JSON.stringify(await rowCounts(clash)));
+    ok && JSON.stringify(counts) === JSON.stringify(
+      Object.fromEntries(Object.entries(await rowCounts(clash)).filter(([t]) => t in counts))));
   check('the index is left uncreated rather than forced over the clash', (await indexed()) === false);
   await clash.query(`update public.accounts set roll_no = '21CS02' where id = $1`, [S2]);
   await applyAll(clash, files.filter((f) => f.name.startsWith('0011')), 'once corrected');

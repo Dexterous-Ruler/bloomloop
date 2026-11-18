@@ -13,7 +13,10 @@
  *   tables     every list is { cols, rows }: field names once, then one array
  *              per record. A column with no value in any record is left out.
  *   questions  the question as the student saw it is stored once; an answer
- *              row points at it by position (`q`).
+ *              row points at it by position (`q`). A fewer-choices student's
+ *              shorter list (`shownOptions`) differs per student, so it sits on
+ *              the answer row and is put back into the snapshot on decode. Added
+ *              after v1 shipped; an archive without the column had none.
  *   students   answer and history rows point at their student by position
  *              (`s`) instead of repeating the roll number.
  *   history    a history entry points at the answer it records (`a`), so the
@@ -190,8 +193,12 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
   // (on the student's row) and the content id (on the room).
   const answerRows = answers.map((a) => {
     const { _id, sessionId: _s, accountId, contentId, questionSnapshot, ...rest } = a;
+    // Which options a fewer-choices student was left with is theirs, not the
+    // question's, and differs per student: left in the snapshot it made one
+    // copy of the question per such student. Kept on the answer row instead.
+    const { shownOptions, ...asked } = questionSnapshot ?? {};
     const s = studentIndex.get(String(a.rollNo));
-    return { ...rest, q: snapOf(questionSnapshot), ...(s === undefined ? {} : { s }) };
+    return { ...rest, q: snapOf(asked), ...(shownOptions ? { shownOptions } : {}), ...(s === undefined ? {} : { s }) };
   });
   const answerDerived = [
     ...dropDerivable(answerRows, FROM_QUESTION, (r) => questions[r.q]),
@@ -245,6 +252,8 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
         reattempts: session.reattempts,
         redemption: session.redemption,
       },
+      // The question set (0015), null for the whole bank: what the room could serve.
+      questionIds: session.questionIds ?? null,
     },
     counts: { students: profiles.length, answers: answers.length, history: historyRows.length, reviews: reviews.length },
     derived: { answers: answerDerived, history: historyDerived },
@@ -282,14 +291,16 @@ export function decodeRoomArchive(data) {
   const studentList = fromTable(data.students);
 
   const answers = fromTable(data.answers).map((row) => {
-    const { q, s, ...rest } = withTimes(row, ANSWER_TIMES, (v) => fromOffset(v, base));
+    const { q, s, shownOptions, ...rest } = withTimes(row, ANSWER_TIMES, (v) => fromOffset(v, base));
     const snap = questions[q] ?? {};
     const out = { ...rest };
     for (const [field, rebuild] of Object.entries(FROM_QUESTION)) {
       if (derivedAnswers.has(field)) out[field] = rebuild(snap);
     }
     if (derivedAnswers.has('rollNo')) out.rollNo = studentList[s]?.rollNo;
-    out.questionSnapshot = snap;
+    // Back where the live loop wrote it. An archive from before this column, or
+    // a student shown the full list, has none.
+    out.questionSnapshot = Array.isArray(shownOptions) ? { ...snap, shownOptions } : snap;
     return out;
   });
 

@@ -43,6 +43,7 @@ const ACCOUNT_NAV = {
 };
 const SHARED_NAV = [
   { id: 'rooms', label: 'Rooms', icon: 'rooms' },
+  { id: 'review', label: 'Review answers', icon: 'checklist' },
   { id: 'analytics', label: 'Analytics', icon: 'analytics' },
 ];
 
@@ -263,11 +264,14 @@ export default function TeachApp() {
         : s.id === 'live' && session ? (closed ? 'Closed' : 'Live') : undefined,
       tone: s.id === 'live' && session ? (closed ? 'quiet' : 'live') : undefined,
     })),
+    // The shared key reviews the rooms nobody owns, so it gets the queue too.
+    ...(role ? [] : [{ id: 'review', label: 'Review answers', icon: 'checklist', group: 'teach' }]),
   ];
 
   const go = (id) => {
     if (id === 'dashboard') navigate(HOME_FOR[role] ?? '/');
     else if (id === 'rooms') navigate('/rooms');
+    else if (id === 'review') navigate('/review');
     else if (id === 'analytics') navigate('/analytics');
     else setView(id);
   };

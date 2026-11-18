@@ -68,7 +68,11 @@ export function useCount(target, duration = 0.5) {
       onUpdate: () => setShown(state.v),
       onComplete: () => { from.current = target; setShown(target); },
     });
-    return () => { from.current = state.v; tween.kill(); };
+    // A tab starved of animation frames (in the background, or throttled)
+    // would leave the figure part way. A timer is not frame-bound, so it
+    // lands the true value, as useEnter does for its entrance.
+    const guard = setTimeout(() => tween.progress(1), duration * 1000 + 600);
+    return () => { clearTimeout(guard); from.current = state.v; tween.kill(); };
   }, [target, duration]);
 
   return shown;

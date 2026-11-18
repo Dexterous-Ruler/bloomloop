@@ -1,11 +1,17 @@
-// Round-trip check for all eleven question kinds.
+// Round-trip check for all sixteen question kinds.
 // invalidReason -> null, score(correct) -> 1, score(wrong) -> 0, forStudent -> no answer fields.
+//
+// A poll has no wrong answer to give. Its "wrong" response here is one that is
+// not an answer at all - a position off the end of its list - which records
+// nothing and scores 0, the nearest honest thing to a wrong answer it has.
 
 import { KINDS, invalidReason, score, forStudent } from 'file:///C:/Users/tanis/wayground/server/src/questionTypes.js';
 
+// `answers` is a grid's whole key. A table's key is `accept` inside its cells,
+// already listed, and the deep scan below finds it at any depth.
 const FORBIDDEN = [
   'answerBool', 'value', 'tolerance', 'accept', 'rubric', 'sequence',
-  'pairs', 'answerIdx', 'answerIdxs', 'buckets', 'blanks',
+  'pairs', 'answerIdx', 'answerIdxs', 'buckets', 'blanks', 'answers',
 ];
 
 // one question of every kind, at a level that legitimately offers it
@@ -75,6 +81,43 @@ const Q = {
     text: 'Design an experiment to show that light affects the rate of photosynthesis.',
     rubric: ['change light intensity', 'measure oxygen bubbles', 'keep temperature constant'],
   },
+  hottext: {
+    _id: 'q-hot', bloom: 'analyse', kind: 'hottext', topic: 'Cells',
+    text: 'Pick out every word in this sentence that names an organelle.',
+    tokens: ['The', 'nucleus', 'sends', 'instructions', 'to', 'the', 'ribosome', 'in', 'the', 'cytoplasm.'],
+    criterion: 'every word that names an organelle',
+    answerIdxs: [1, 6],
+  },
+  dropdown: {
+    _id: 'q-drop', bloom: 'apply', kind: 'dropdown', topic: 'Cells',
+    text: 'In daylight a leaf takes in ____ and gives out ____ .',
+    blanks: [
+      { options: ['carbon dioxide', 'oxygen', 'nitrogen'], answerIdx: 0 },
+      { options: ['carbon dioxide', 'oxygen', 'water vapour', 'helium'], answerIdx: 1 },
+    ],
+  },
+  table: {
+    _id: 'q-table', bloom: 'apply', kind: 'table', topic: 'Cells',
+    text: 'Complete the table. The first row is done for you.',
+    columns: ['Found in', 'Job'],
+    rows: [
+      { header: 'Chloroplast', cells: [{ given: 'Plant cells' }, { given: 'Photosynthesis' }] },
+      { header: 'Mitochondrion', cells: [{ given: 'Both' }, { accept: ['respiration', 'releases energy'] }] },
+      { header: 'Cell wall', cells: [{ accept: ['plant cells', 'plants'] }, { given: 'Support' }] },
+    ],
+  },
+  grid: {
+    _id: 'q-grid', bloom: 'analyse', kind: 'grid', topic: 'Cells',
+    text: 'Tick every cell type each structure is found in.',
+    rows: ['Cell wall', 'Nucleus', 'Chloroplast'],
+    columns: ['Plant', 'Animal'],
+    answers: [[true, false], [true, true], [true, false]],
+  },
+  poll: {
+    _id: 'q-poll', bloom: 'understand', kind: 'poll', topic: 'Cells',
+    text: 'How sure are you about the difference between plant and animal cells?',
+    options: ['Very sure', 'Fairly sure', 'Not sure yet'],
+  },
 };
 
 // a fully correct response, and a fully wrong one, per kind
@@ -90,6 +133,11 @@ const RIGHT = {
   order: [0, 1, 2, 3],
   rank: [0, 1, 2],
   open: 'I would change the light intensity, measure the oxygen bubbles given off, and keep the temperature constant throughout.',
+  hottext: [1, 6],
+  // table and grid are addressed by real coordinates, never shuffled.
+  table: { '1:1': 'Respiration', '2:0': 'plants' },
+  grid: { '0:0': true, '1:0': true, '1:1': true, '2:0': true },
+  poll: 1,
 };
 
 const WRONG = {
@@ -104,6 +152,10 @@ const WRONG = {
   order: [3, 2, 1, 0],       // exact reverse
   rank: [2, 1, 0],
   open: 'banana',
+  hottext: [0, 2],           // only words that are not organelles
+  table: { '1:1': 'photosynthesis', '2:0': 'animal cells' },
+  grid: { '0:1': true, '2:1': true }, // every false cell and no true one
+  poll: 3,                   // off the end of a three-option list: not an answer
 };
 
 // deep scan: a forbidden key nested inside an item is still a leak
@@ -150,6 +202,9 @@ function rightFor(kind, q) {
     view.items.forEach((t, pos) => { out[pos] = q.buckets.findIndex((b) => b.items.includes(t)); });
     return out;
   }
+  // Each gap is shuffled on its own seed, so the answer is the shown position
+  // of the right word in that gap's own list.
+  if (kind === 'dropdown') return q.blanks.map((b, i) => view.gaps[i].options.indexOf(b.options[b.answerIdx]));
   return RIGHT[kind];
 }
 
@@ -162,6 +217,8 @@ function wrongFor(kind, q) {
     const groups = q.buckets.length;
     return Object.fromEntries(Object.entries(r).map(([k, v]) => [k, (Number(v) + 1) % groups]));
   }
+  // The next shown option along at every gap, which is never the right one.
+  if (kind === 'dropdown') return r.map((pos, i) => (pos + 1) % q.blanks[i].options.length);
   return WRONG[kind];
 }
 

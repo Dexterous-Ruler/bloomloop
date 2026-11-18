@@ -5,7 +5,15 @@ other SQL files to run.
 
 ## Applying
 
-Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0012`).
+Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0015`).
+
+`0013` must be in place before the Phase 2 server is deployed: every generated
+question is saved with columns it adds, and the server's boot probe falls back to
+the in-process store (nothing saved) when they are missing. The same goes for
+`0014`: the probe also checks the `media` table that image uploads are kept in. And
+for `0015`: every room is opened with `sessions.question_ids`, so the probe checks
+that column too. `0015` changes no row; existing rooms keep serving their whole
+approved bank.
 
 `0011` creates its index only if no two accounts in one department hold the same
 roll number once trimmed, single-spaced and upper-cased. If some do, it raises a
