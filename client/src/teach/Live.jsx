@@ -1,29 +1,36 @@
 /**
  * Step four: the class, live.
  *
- * The bench is the page: six tubes of marbles, one marble per student, and a
- * marble changes tube when its student changes level. Under it is the roster
- * as a table, and beside both is whoever is selected - their level, the
- * server's own sentence for why, accuracy by level, and what was recorded
- * about the session.
+ * The page opens on a forest brief: one sentence on where the class is right
+ * now, the numbers behind it, and a strip of what just changed - all of it
+ * worked out from the feed, nothing written in advance. The sparklines are
+ * sampled here, from the moment this page opened, so they start empty and only
+ * ever show what this page actually saw.
  *
- * Everything under the counters is fed by a socket, so the moment the socket
- * is gone none of it is current. The page says so in a banner and fades the
- * data, because a quiet class and a dead page otherwise look identical.
+ * Under it, the roster as a heatmap: one row per student, one cell per level,
+ * the cell's green as deep as their accuracy there and a ring on the level they
+ * are being served now. Beside it the class as marbles in six tubes, and
+ * whoever is selected - their level, the server's own sentence for why, how
+ * they compare with the class, what they answered since this page opened, and
+ * what was recorded about the session.
+ *
+ * Everything under the head is fed by a socket, so the moment the socket is
+ * gone none of it is current. The page says so in a banner and fades the data,
+ * because a quiet class and a dead page otherwise look identical.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import Marbles from '../fx/Marbles.jsx';
 import { api } from '../lib/api.js';
 import { LABEL, LEVELS, pct } from '../lib/bloom.js';
-import { Button, Chip, Dialog, Empty, Fig, Field, Icon, Level, Menu, Note, Segmented } from '../ui/index.jsx';
-import { LevelBars } from '../ui/viz.jsx';
+import { Avatar, Button, Dialog, Field, Fig, Icon, Level, Menu, Note, Num, Panel, Segmented, Spark } from '../ui/index.jsx';
 import Draw from './Draw.jsx';
 import useRoomFeed from './useRoomFeed.js';
 
 const ZERO = { seen: 0, correct: 0 };
 const SHORT = ['Rem', 'Und', 'App', 'Ana', 'Eva', 'Cre'];
+const levelAt = (l) => LEVELS.indexOf(l);
 
 // What a row carries when the server sent no summary: 'clear', so the absence
 // of data never renders as a signal.
@@ -65,12 +72,88 @@ const skippedLabel = (e) => (e === null || typeof e !== 'object' ? String(e) : S
 const CLOCK = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const stamp = (iso) => { const at = new Date(iso); return Number.isNaN(at.getTime()) ? '—' : CLOCK.format(at); };
 const forHuman = (s) => (s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`);
-
-const tone = (seen, correct) => {
-  if (!seen) return 'none';
-  const a = correct / seen;
-  return a >= 0.7 ? 'hi' : a >= 0.4 ? 'mid' : 'lo';
+const ago = (at, now) => {
+  const s = Math.max(0, Math.round((now - at) / 1000));
+  return s < 15 ? 'just now' : s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : `${Math.floor(s / 3600)}h ago`;
 };
+const byRoll = (a, b) => String(a.rollNo).localeCompare(String(b.rollNo), undefined, { numeric: true });
+const plural = (n, one, many = `${one}s`) => (n === 1 ? one : many);
+
+// Four steps of one green, deepest for the best. Unanswered is a step of its
+// own with no fill, so "not asked yet" can never read as "got it wrong".
+const heat = (seen, correct) => {
+  if (!seen) return 0;
+  const a = correct / seen;
+  return a >= 0.8 ? 4 : a >= 0.6 ? 3 : a >= 0.4 ? 2 : 1;
+};
+const HEAT_KEY = [[1, 'under 40%'], [2, '40 to 59%'], [3, '60 to 79%'], [4, '80% or more']];
+
+// The brief's sparklines: one sample every ten seconds from this page's own
+// view of the feed, ten minutes kept. Nothing before the page opened exists.
+const SAMPLE_MS = 10_000;
+const KEEP = 60;
+const NO_SERIES = { online: [], answers: [], acc: [], met: [] };
+const sample = (s, f) => ({
+  online: [...s.online, f.online].slice(-KEEP),
+  answers: [...s.answers, f.answers].slice(-KEEP),
+  acc: f.acc === null ? s.acc : [...s.acc, Math.round(f.acc * 1000) / 10].slice(-KEEP),
+  met: [...s.met, f.met].slice(-KEEP),
+});
+
+/** Pooled seen/correct per level across a set of rows. */
+function pooled(list) {
+  const out = Object.fromEntries(LEVELS.map((l) => [l, { seen: 0, correct: 0 }]));
+  list.forEach((r) => LEVELS.forEach((l) => {
+    const c = (r.levels || {})[l];
+    if (c) { out[l].seen += c.seen || 0; out[l].correct += c.correct || 0; }
+  }));
+  return out;
+}
+
+/**
+ * Six axes, one per level: this student's accuracy against the class's pooled
+ * accuracy, with the room's mastery goal drawn as a dashed ring. A level with
+ * no answers sits at the centre and its label says so.
+ */
+function Radar({ mine = {}, theirs = {}, goal, current, who }) {
+  const S = 264;
+  const C = S / 2;
+  const R = 84;
+  const at = (i, v) => {
+    const a = ((-90 + i * 60) * Math.PI) / 180;
+    return [C + Math.cos(a) * R * v, C + Math.sin(a) * R * v];
+  };
+  const poly = (vals) => vals.map((v, i) => at(i, v).map((n) => n.toFixed(1)).join(',')).join(' ');
+  const acc = (c) => (c?.seen ? c.correct / c.seen : 0);
+  const me = LEVELS.map((l) => acc(mine[l]));
+  const all = LEVELS.map((l) => acc(theirs[l]));
+  const said = LEVELS.map((l, i) => `${LABEL[l]} ${mine[l]?.seen ? `${Math.round(me[i] * 100)}%` : 'not answered'}, class ${theirs[l]?.seen ? `${Math.round(all[i] * 100)}%` : 'not answered'}`);
+  return (
+    <svg className="lc-radar" viewBox={`0 0 ${S} ${S}`} role="img" aria-label={`${who} against the class, by level: ${said.join('; ')}.`}>
+      {[0.25, 0.5, 0.75, 1].map((f) => <polygon key={f} className="lc-radar-ring" points={poly(LEVELS.map(() => f))} />)}
+      {LEVELS.map((l, i) => { const [x, y] = at(i, 1); return <line key={l} className="lc-radar-axis" x1={C} y1={C} x2={x} y2={y} />; })}
+      {goal > 0 && <polygon className="lc-radar-goal" points={poly(LEVELS.map(() => goal))} />}
+      <polygon className="lc-radar-class" points={poly(all)} />
+      <polygon className="lc-radar-me" points={poly(me)} />
+      {me.map((v, i) => {
+        if (!mine[LEVELS[i]]?.seen) return null;
+        const [x, y] = at(i, v);
+        return <circle key={LEVELS[i]} className="lc-radar-pt" cx={x.toFixed(1)} cy={y.toFixed(1)} r={3} />;
+      })}
+      {LEVELS.map((l, i) => {
+        const [x, y] = at(i, 1.3);
+        const anchor = i === 0 || i === 3 ? 'middle' : i < 3 ? 'start' : 'end';
+        const seen = mine[l]?.seen;
+        return (
+          <g key={l} className="lc-radar-lab" data-current={current === l ? 'true' : undefined}>
+            <text x={x.toFixed(1)} y={(y - 3).toFixed(1)} textAnchor={anchor}>{SHORT[i]}</text>
+            <text className="lc-radar-val" x={x.toFixed(1)} y={(y + 10).toFixed(1)} textAnchor={anchor}>{seen ? `${Math.round(me[i] * 100)}%` : '—'}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
 
 export default function Live({ code, title, closed, onClosed, onProjector }) {
   const { rows, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus } = useRoomFeed(code);
@@ -96,6 +179,13 @@ export default function Live({ code, title, closed, onClosed, onProjector }) {
   const [trail, setTrail] = useState(null);
   const [trailBusy, setTrailBusy] = useState(false);
   const [trailError, setTrailError] = useState('');
+
+  // What this page has watched happen since it opened: arrivals, level moves
+  // and each student's answers, worked out by comparing one roster with the
+  // next. Kept here only; a reload starts it again from nothing.
+  const [feed, setFeed] = useState({ events: [], tries: {}, up: 0, down: 0 });
+  const [series, setSeries] = useState(NO_SERIES);
+  const [now, setNow] = useState(() => Date.now());
 
   // Checked on arrival and again whenever this window regains focus, which is
   // when the teacher comes back from the Google consent tab.
@@ -188,6 +278,66 @@ export default function Live({ code, title, closed, onClosed, onProjector }) {
   // Pooled, not a mean of per-student accuracies: two answers must not weigh the same as twenty.
   const seen = rows.reduce((n, r) => n + (r.total || ZERO).seen, 0);
   const correct = rows.reduce((n, r) => n + (r.total || ZERO).correct, 0);
+  const counts = LEVELS.map((l) => rows.filter((r) => r.workingLevel === l).length);
+  const byLevel = useMemo(() => pooled(rows), [rows]);
+  // Met the room's goal at one level or more, by the server's own reckoning.
+  const met = rows.filter((r) => Array.isArray(r.mastered) && r.mastered.length > 0).length;
+  const goal = rows.find((r) => Number(r.masteryGoal) > 0)?.masteryGoal ?? null;
+
+  // ---- what this page has seen happen --------------------------------------
+  // The hook's own empty start is not a delivery, so it is told apart by
+  // reference. The first real delivery is the baseline: nobody already in the
+  // room when the page opened "joins".
+  const start = useRef(rows);
+  const before = useRef(null);
+  useEffect(() => {
+    if (rows === start.current) return;
+    const snap = new Map(rows.map((r) => [r.rollNo, { level: r.workingLevel, seen: (r.total || ZERO).seen, correct: (r.total || ZERO).correct }]));
+    const prev = before.current;
+    before.current = snap;
+    if (!prev) return;
+    const at = Date.now();
+    const evs = [];
+    const tries = {};
+    let up = 0;
+    let down = 0;
+    rows.forEach((r) => {
+      const was = prev.get(r.rollNo);
+      const is = snap.get(r.rollNo);
+      if (!was) { evs.push({ kind: 'join', rollNo: r.rollNo, name: r.name, level: is.level, at }); return; }
+      if (is.seen > was.seen) {
+        // One answer between two rosters is a tick or a cross. More than one
+        // (after a reconnect) is kept as a count: their order is not known.
+        tries[r.rollNo] = { at, n: is.seen - was.seen, k: Math.max(0, is.correct - was.correct), level: was.level };
+      }
+      if (is.level !== was.level) {
+        const rose = levelAt(is.level) > levelAt(was.level);
+        if (rose) up += 1; else down += 1;
+        evs.push({ kind: rose ? 'up' : 'down', rollNo: r.rollNo, name: r.name, level: is.level, at });
+      }
+    });
+    if (!evs.length && !Object.keys(tries).length) return;
+    setFeed((f) => {
+      const next = { ...f.tries };
+      Object.entries(tries).forEach(([roll, t]) => { next[roll] = [...(next[roll] ?? []), t].slice(-24); });
+      return {
+        events: [...evs.map((e, i) => ({ ...e, id: `${at}-${i}-${e.rollNo}` })).reverse(), ...f.events].slice(0, 12),
+        tries: next,
+        up: f.up + up,
+        down: f.down + down,
+      };
+    });
+  }, [rows]);
+
+  // Pausing, resuming and closing belong on the strip too.
+  const lastStatus = useRef('');
+  useEffect(() => {
+    const was = lastStatus.current;
+    lastStatus.current = roomStatus;
+    if (!was || !roomStatus || was === roomStatus) return;
+    const at = Date.now();
+    setFeed((f) => ({ ...f, events: [{ kind: 'status', status: roomStatus, at, id: `${at}-status` }, ...f.events].slice(0, 12) }));
+  }, [roomStatus]);
 
   // Default to a student in the support band: that is who the teacher is most
   // likely looking for, and they should not have to hunt.
@@ -208,6 +358,16 @@ export default function Live({ code, title, closed, onClosed, onProjector }) {
     return rows.filter((r) => match(r) && (!q || `${r.rollNo} ${r.name || ''}`.toLowerCase().includes(q)));
   }, [rows, filter, query]);
 
+  // Grouped by the level each student is working at, lowest first, so the
+  // rings step down and to the right like the ladder they are on. Inside a
+  // group the order is the roll, which does not move while the class answers.
+  const groups = useMemo(() => {
+    const out = LEVELS.map((l) => ({ id: l, level: l, rows: shown.filter((r) => r.workingLevel === l).sort(byRoll) }));
+    const rest = shown.filter((r) => !LEVELS.includes(r.workingLevel)).sort(byRoll);
+    if (rest.length) out.push({ id: 'none', level: null, rows: rest });
+    return out.filter((g) => g.rows.length);
+  }, [shown]);
+
   const ready = Boolean(classroom?.configured && classroom?.connected);
   const needsAuth = Boolean(classroom?.configured && !classroom?.connected);
   const empty = rows.length === 0;
@@ -215,27 +375,95 @@ export default function Live({ code, title, closed, onClosed, onProjector }) {
   const stale = Boolean(downSince) && !closed;
   const fade = stale ? { opacity: 0.5 } : undefined;
 
-  const state = closed ? <Chip>Room closed</Chip>
-    : paused && !stale ? <Chip icon="pause">Paused</Chip>
-    : stopped ? <Chip tone="bad">Not connected</Chip>
-      : stale ? <Chip tone="bad"><span className="spinner" style={{ width: 10, height: 10 }} />Reconnecting, {forHuman(downFor)}</Chip>
-        : live ? <Chip tone="ok" dot>Live</Chip>
-          : <Chip><span className="spinner" style={{ width: 10, height: 10 }} />Connecting</Chip>;
+  // ---- the sparklines -------------------------------------------------------
+  const figs = useRef(null);
+  figs.current = { online, answers, acc: seen ? correct / seen : null, met };
+  const sampling = rows.length > 0 && !stale && !closed;
+  const sampleOn = useRef(false);
+  sampleOn.current = sampling;
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now());
+      // Presence is unknown while the socket is down, so nothing is sampled.
+      if (sampleOn.current) setSeries((s) => sample(s, figs.current));
+    }, SAMPLE_MS);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (sampling) setSeries((s) => (s.answers.length ? s : sample(s, figs.current)));
+  }, [sampling]);
+  const perStep = series.answers.slice(1).map((v, i) => Math.max(0, v - series.answers[i]));
+  const minuteBack = series.answers.length > 6 ? series.answers[series.answers.length - 7] : series.answers[0];
+  const lately = series.answers.length ? Math.max(0, answers - minuteBack) : null;
+
+  // ---- the brief, from the numbers ----------------------------------------
+  const most = Math.max(0, ...counts);
+  const atMost = LEVELS.filter((_, i) => counts[i] === most && most > 0);
+  // Only a reason when there is something to explain: a level with enough
+  // answers to say anything, under the room's goal, and not the only one.
+  const bar = goal ?? 0.8;
+  const judged = LEVELS.map((l, i) => ({ l, i, ...byLevel[l] })).filter((x) => x.seen >= 5);
+  const weakest = judged.length > 1
+    ? judged.sort((a, b) => a.correct / a.seen - b.correct / b.seen).find((x) => x.correct / x.seen < bar)
+    : undefined;
+  const support = rows.filter((r) => r.slowLearner)
+    .sort((a, b) => ((a.total || ZERO).correct / ((a.total || ZERO).seen || 1)) - ((b.total || ZERO).correct / ((b.total || ZERO).seen || 1)));
+  const first = support[0];
+  const watching = rows.filter((r) => sigOf(r).level === 'watch').length;
+
+  const lead = closed ? (
+    <>The room is closed. {rows.length} {plural(rows.length, 'student')} answered {answers} {plural(answers, 'question')}, and {pct(seen, correct)} of {plural(seen, 'answer')} were right.</>
+  ) : atMost.length === 0 ? (
+    <>{rows.length} joined, and nobody has been placed at a level yet.</>
+  ) : atMost.length === 1 ? (
+    <>
+      {most * 2 > rows.length ? 'Most of the class is' : 'The largest group is'} working at <em>{LABEL[atMost[0]]}</em>: {most} of {rows.length}.
+      {(feed.up > 0 || feed.down > 0) && <> Since this page opened, {[feed.up && `${feed.up} moved up`, feed.down && `${feed.down} moved down`].filter(Boolean).join(' and ')}.</>}
+    </>
+  ) : (
+    <>
+      The class is split between {atMost.map((l, i) => <span key={l}>{i > 0 && (i === atMost.length - 1 ? ' and ' : ', ')}<em>{LABEL[l]}</em></span>)}, {most} each.
+      {(feed.up > 0 || feed.down > 0) && <> Since this page opened, {[feed.up && `${feed.up} moved up`, feed.down && `${feed.down} moved down`].filter(Boolean).join(' and ')}.</>}
+    </>
+  );
+
+  const status = closed ? { tone: 'closed', text: 'Room closed' }
+    : paused && !stale ? { tone: 'paused', text: 'Paused' }
+      : stopped ? { tone: 'bad', text: 'Not connected' }
+        : stale ? { tone: 'bad', text: `Reconnecting, ${forHuman(downFor)}`, spin: true }
+          : live ? { tone: 'live', text: 'Live' }
+            : { tone: 'wait', text: 'Connecting', spin: true };
+
+  const eventText = (e) => {
+    if (e.kind === 'status') return e.status === 'paused' ? 'The room was paused' : e.status === 'closed' ? 'The room was closed' : 'The room was resumed';
+    if (e.kind === 'join') return 'joined';
+    return `moved ${e.kind} to ${LABEL[e.level] ?? e.level}`;
+  };
+
+  const selTries = sel ? feed.tries[sel.rollNo] ?? [] : [];
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <div className="eyebrow">{title || 'Live room'}</div>
-          <h1 className="cluster cluster-3">Class <span className="mono muted">{code}</span> {state}</h1>
+      <div className="page-head lc-head">
+        <div className="ttl">
+          <div className="crumb lc-state" data-tone={status.tone} role="status">
+            {status.spin ? <span className="spinner" style={{ width: 10, height: 10 }} /> : <i className={status.tone === 'live' ? 'live-dot' : 'lc-dot'} />}
+            <span>{status.text}</span>
+            <span aria-hidden="true">·</span>
+            <span>room <span className="mono">{code}</span></span>
+          </div>
+          <h1>{title || 'Live room'}</h1>
+          <p className="sub">
+            {closed ? 'Where everyone finished, level by level. It stays readable for as long as the room exists.' : 'Who is working at which level, who just moved, and who needs you next.'}
+          </p>
         </div>
         <div className="acts">
-          <Button variant="primary" icon="draw" disabled={empty || closed} onClick={() => setDrawing(true)}>Draw a student</Button>
           {!closed && (
             <Button icon={paused ? 'play' : 'pause'} busy={toggling} onClick={togglePause}>
               {paused ? 'Resume' : 'Pause'}
             </Button>
           )}
+          <Button variant="primary" icon="draw" disabled={empty || closed} onClick={() => setDrawing(true)}>Draw a student</Button>
           <Button icon="projector" disabled={closed} onClick={onProjector}>Projector</Button>
           <Menu
             trigger={<Button icon="more" aria-label="More actions" />}
@@ -250,219 +478,431 @@ export default function Live({ code, title, closed, onClosed, onProjector }) {
         </div>
       </div>
 
-      <div className="stack stack-2" style={{ marginBottom: 16 }}>
-        {stopped && !closed && (
-          <Note tone="bad" role="alert">
-            <b>The live connection has stopped and is not retrying.</b> Retries never give up on their own, so this is the
-            server refusing this console or hanging up on it, not the wifi.{wireError ? ` It said: ${wireError}.` : ''} The
-            class is unaffected: students are still answering and every answer is saved as it is given. What is below is
-            frozen{downSince ? ` at ${CLOCK.format(downSince)}` : ''}.
-            <div style={{ marginTop: 8 }}><Button size="sm" onClick={retry}>Try again</Button></div>
-          </Note>
-        )}
-        {stale && !stopped && (
-          <Note tone="bad" role="alert">
-            <b>The live connection dropped {forHuman(downFor)} ago.</b> Nothing below is updating: it is the roster as it
-            stood at {CLOCK.format(downSince)}. The class has not stopped, and every answer is saved the moment it is given.
-            It is reconnecting on its own.
-          </Note>
-        )}
-        {rejoined && <Note tone="ok" role="status">Reconnected. The roster was read again just now, including everything answered while this page was out.</Note>}
-        {wireError && !everLive && !stopped && (
-          <Note tone="bad">The live connection could not open: {wireError}. The roster below was read once and will not move until it does.</Note>
-        )}
-        {error && <Note tone="bad">{error}</Note>}
-        {classroomError && <Note tone="bad">{classroomError}</Note>}
-        {posted && (
-          <Note tone="ok">
-            Posted to Classroom{posted.courseWorkId ? ` (${posted.courseWorkId})` : ''}: {posted.posted} rows
-            {posted.skipped?.length ? `, ${posted.skipped.length} skipped (${posted.skipped.map(skippedLabel).join(', ')})` : ''}.
-          </Note>
-        )}
-      </div>
+      {(stopped && !closed) || (stale && !stopped) || rejoined || (wireError && !everLive && !stopped) || error || classroomError || posted ? (
+        <div className="stack stack-2">
+          {stopped && !closed && (
+            <Note tone="bad" role="alert">
+              <b>The live connection has stopped and is not retrying.</b> Retries never give up on their own, so this is the
+              server refusing this console or hanging up on it, not the wifi.{wireError ? ` It said: ${wireError}.` : ''} The
+              class is unaffected: students are still answering and every answer is saved as it is given. What is below is
+              frozen{downSince ? ` at ${CLOCK.format(downSince)}` : ''}.
+              <div style={{ marginTop: 8 }}><Button size="sm" onClick={retry}>Try again</Button></div>
+            </Note>
+          )}
+          {stale && !stopped && (
+            <Note tone="bad" role="alert">
+              <b>The live connection dropped {forHuman(downFor)} ago.</b> Nothing below is updating: it is the roster as it
+              stood at {CLOCK.format(downSince)}. The class has not stopped, and every answer is saved the moment it is given.
+              It is reconnecting on its own.
+            </Note>
+          )}
+          {rejoined && <Note tone="ok" role="status">Reconnected. The roster was read again just now, including everything answered while this page was out.</Note>}
+          {wireError && !everLive && !stopped && (
+            <Note tone="bad">The live connection could not open: {wireError}. The roster below was read once and will not move until it does.</Note>
+          )}
+          {error && <Note tone="bad">{error}</Note>}
+          {classroomError && <Note tone="bad">{classroomError}</Note>}
+          {posted && (
+            <Note tone="ok">
+              Posted to Classroom{posted.courseWorkId ? ` (${posted.courseWorkId})` : ''}: {posted.posted} rows
+              {posted.skipped?.length ? `, ${posted.skipped.length} skipped (${posted.skipped.map(skippedLabel).join(', ')})` : ''}.
+            </Note>
+          )}
+        </div>
+      ) : null}
 
-      {empty && !connecting ? (
-        <Empty
-          icon={stale ? 'alert' : 'live'}
-          title={closed ? 'The room closed before anyone joined' : stale ? 'Nobody can appear here while the connection is down' : 'Waiting for the first student'}
-          action={closed ? undefined : <Button variant="primary" icon="projector" onClick={onProjector}>Put the code on the projector</Button>}
-        >
-          {closed
-            ? 'Nobody answered in this room, so there is nothing to export.'
-            : stale
-              ? `Students joining ${code} are still being let in and their answers are still being saved. This page cannot see them yet.`
-              : `Share the room code ${code}. Students appear here the moment they join.`}
-        </Empty>
+      {connecting ? (
+        <div className="lc-wait" aria-busy="true" aria-label="Opening the live roster">
+          <div className="skel lc-wait-brief" />
+          <div className="lc-cols">
+            <div className="skel lc-wait-grid" />
+            <div className="stack stack-3"><div className="skel lc-wait-side" /><div className="skel lc-wait-insp" /></div>
+          </div>
+        </div>
+      ) : empty ? (
+        <Panel className="lc-empty" style={fade}>
+          <div className="lc-empty-main">
+            <span className="tag-mint">{closed ? 'Room closed' : stale ? 'Connection down' : 'Waiting for the class'}</span>
+            <h2 className="lc-lead">
+              {closed ? 'The room closed before anyone joined.' : stale ? 'Nobody can appear here while the connection is down.' : 'Waiting for the first student.'}
+            </h2>
+            <p className="lc-empty-sub">
+              {closed
+                ? 'Nobody answered in this room, so there is nothing to export.'
+                : stale
+                  ? `Students joining ${code} are still being let in and their answers are still being saved. This page cannot see them yet.`
+                  : `Share the room code. Students appear here the moment they join, one marble each.`}
+            </p>
+            {!closed && (
+              <div className="cluster">
+                <Button variant="accent" icon="projector" onClick={onProjector}>Put the code on the projector</Button>
+              </div>
+            )}
+          </div>
+          {!closed && (
+            <div className="lc-empty-code" aria-label={`Room code ${code.split('').join(' ')}`}>
+              <span>Room code</span>
+              <b className="mono">{code}</b>
+            </div>
+          )}
+        </Panel>
       ) : (
         <>
-          <div className="figs ruled" style={{ marginBottom: 24, ...fade }}>
-            <Fig value={rows.length} label="joined" />
-            {/* Presence is the socket's own knowledge: with the socket down it
-                is not stale, it is unknown, and a confident number would mislead. */}
-            <Fig value={stale ? '—' : online} label={stale ? 'answering now: not known' : 'answering now'} />
-            <Fig value={pct(seen, correct)} label="accuracy, all answers" />
-            <Fig value={inBand} label="in the support band" />
-            <Fig value={answers} label="questions served" />
-          </div>
-
-          <div className="split wide">
-            <div className="stack">
-              <section className="card card-pad" style={fade}>
-                <div className="cluster between baseline" style={{ marginBottom: 12 }}>
-                  <h3>Where the class is working</h3>
-                  <span className="t-meta">One marble is one student. It changes tube when they change level.</span>
-                </div>
-                <Marbles rows={rows} selected={sel?.rollNo} onSelect={setPickedRoll} frozen={stale || closed} height={232} />
-              </section>
-
-              <section className="card" style={fade}>
-                <div className="card-head roster-head">
-                  <h3>Roster</h3>
-                  <span className="t-meta">
-                    {shown.length === rows.length ? `${rows.length} joined` : `${shown.length} of ${rows.length}`}
-                    {closed ? ', final standing' : stale ? ', frozen' : ''}
-                  </span>
-                  <label className="search push" style={{ width: 220, maxWidth: '100%' }}>
-                    <Icon name="search" />
-                    <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a roll number" aria-label="Find a student" />
-                  </label>
-                </div>
-                <div className="roster-filters">
-                  <Segmented label="Narrow the roster" value={filter} onChange={setFilter} options={FILTERS.map((f) => ({ id: f.id, label: f.label, count: rows.filter(f.match).length }))} />
-                </div>
-
-                {connecting ? (
-                  <div className="stack stack-2" style={{ padding: 16 }}>{[0, 1, 2, 3, 4].map((i) => <div key={i} className="skel" style={{ height: 40 }} />)}</div>
-                ) : shown.length === 0 ? (
-                  <Empty icon="search" title="No student matches">Clear the search, or switch back to Everyone.</Empty>
-                ) : (
-                  <div className="tbl-wrap">
-                    <table className="tbl roster">
-                      <thead>
-                        <tr>
-                          <th>Student</th>
-                          {SHORT.map((s, i) => <th key={s} className="lvcol" title={LABEL[LEVELS[i]]}>{s}</th>)}
-                          <th>Working at</th>
-                          <th className="r">Accuracy</th>
-                          <th>Signals</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {shown.map((r) => {
-                          const total = r.total || ZERO;
-                          const sig = sigOf(r);
-                          const sigTitle = sig.notes.length
-                            ? `${sig.notes.join(' ')} Open ${r.rollNo} for the full trail.`
-                            : `${sig.events} recorded. Open ${r.rollNo} for the full trail.`;
-                          return (
-                            <tr
-                              key={r.rollNo}
-                              className="is-click"
-                              tabIndex={0}
-                              aria-selected={sel?.rollNo === r.rollNo}
-                              title={r.reason || undefined}
-                              onClick={() => setPickedRoll(r.rollNo)}
-                              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPickedRoll(r.rollNo); } }}
-                            >
-                              <td>
-                                <span className="who" data-off={r.online ? undefined : 'true'}>
-                                  <i className="who-dot" aria-label={r.online ? 'connected' : 'not connected'} />
-                                  <span className="mono strong">{r.rollNo}</span>
-                                  {r.name && <span className="muted clip">{r.name}</span>}
-                                </span>
-                              </td>
-                              {LEVELS.map((l) => {
-                                const c = (r.levels || {})[l] || ZERO;
-                                return (
-                                  <td key={l} className="lvcol">
-                                    <span className="cell" data-tone={tone(c.seen, c.correct)} data-cur={r.workingLevel === l ? 'true' : undefined}>
-                                      {c.seen ? `${c.correct}/${c.seen}` : '·'}
-                                    </span>
-                                  </td>
-                                );
-                              })}
-                              <td><Level level={r.workingLevel} /></td>
-                              <td className="r mono">{pct(total.seen, total.correct)}{r.slowLearner && <span className="band-tag">support</span>}</td>
-                              <td>
-                                {sig.level !== 'clear' && <span className="sig" data-level={sig.level} title={sigTitle}>{sig.notes.length || null}</span>}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+          <Panel className="lc-brief" aria-label="The class right now" style={fade}>
+            <div className="lc-brief-main">
+              <div className="cluster">
+                <span className="tag-mint">{closed ? 'Final standing' : 'Class right now'}</span>
+                <span className="lc-brief-meta">
+                  {rows.length} joined{closed ? '' : stale ? ', presence not known' : `, ${online} answering now`}
+                </span>
+              </div>
+              <p className="lc-lead">{lead}</p>
+              <div className="brief">
+                {closed ? (goal ? (
+                  <>
+                    <b>What</b>
+                    <span>{met} of {rows.length} met the {Math.round(goal * 100)}% goal at one level or more.</span>
+                  </>
+                ) : null) : (
+                  <>
+                    <b>What</b>
+                    <span>{pct(seen, correct)} of {seen} {plural(seen, 'answer')} right so far{goal ? `; ${met} of ${rows.length} have met the ${Math.round(goal * 100)}% goal at a level` : ''}.</span>
+                  </>
                 )}
-                {rows.some((r) => sigOf(r).level !== 'clear') && (
-                  <p className="hint" style={{ padding: '12px 20px' }}>
-                    Under Signals, a hollow ring is something the student's browser reported, a solid dot is something the
-                    server worked out itself, and the number is how many notes there are to read.
-                  </p>
-                )}
-              </section>
-            </div>
-
-            {sel && (
-              <aside className="card sticky" style={fade}>
-                <div className="card-body stack">
-                  <div className="stack stack-2">
-                    <div className="cluster">
-                      <h2 className="mono">{sel.rollNo}</h2>
-                      {!sel.online && <Chip>not connected</Chip>}
-                      {sel.slowLearner && <Chip className="chip-line">support band</Chip>}
-                    </div>
-                    {sel.name && <span className="dim">{sel.name}</span>}
-                  </div>
-                  <div><Level level={sel.workingLevel} size="lg" /></div>
-                  {sel.reason && <p className="said">{sel.reason}</p>}
-                  <div className="figs">
-                    <Fig value={pct(selTotal.seen, selTotal.correct)} label="accuracy" />
-                    <Fig value={typeof sel.answered === 'number' ? sel.answered : selTotal.seen} label="answered" />
-                  </div>
-                  <LevelBars byLevel={sel.levels} current={sel.workingLevel} short />
-                </div>
-
-                <div className="card-body stack stack-3" style={{ borderTop: '1px solid var(--line)' }}>
-                  <div className="cluster between baseline">
-                    <h4>Signals</h4>
-                    <span className="t-meta">
-                      {selSig.events === 0 ? 'nothing recorded' : `${selSig.reported} reported, ${selSig.observed} observed`}
+                {weakest && (
+                  <>
+                    <b>Why</b>
+                    <span>
+                      Accuracy is lowest at {LABEL[weakest.l]}: {pct(weakest.seen, weakest.correct)} of {weakest.seen} answers,
+                      {counts[weakest.i] ? ` with ${counts[weakest.i]} working there now.` : ' though nobody is working there now.'}
                     </span>
-                  </div>
-                  {selSig.events === 0 ? (
-                    <p className="hint">This student's browser has reported nothing, and nothing has been worked out from their answers.</p>
-                  ) : selSig.notes.length ? (
-                    <ul className="stack stack-2">{selSig.notes.map((note) => <li key={note} className="said">{note}</li>)}</ul>
-                  ) : (
-                    <p className="hint">Nothing recorded has crossed the threshold for a note. The trail lists every one of the {selSig.events} events.</p>
-                  )}
-                  {selSig.events > 0 && (
-                    <div><Button size="sm" icon="checklist" busy={trailBusy} onClick={() => loadTrail(sel.rollNo)}>{shownTrail ? 'Load the trail again' : 'Load the full trail'}</Button></div>
-                  )}
-                  {trailError && <Note tone="bad">{trailError}</Note>}
-                  {trailBusy && !shownTrail && <div className="stack stack-1">{[0, 1, 2].map((i) => <div key={i} className="skel" style={{ height: 36 }} />)}</div>}
-                  {shownTrail && (
+                  </>
+                )}
+                {!closed && (
+                  <>
+                    <b>Now</b>
+                    <span>
+                      {first
+                        ? <>{inBand} {plural(inBand, 'student is', 'students are')} in the support band. Start with <span className="mono">{first.rollNo}</span>{first.name ? ` (${first.name})` : ''}: {pct((first.total || ZERO).seen, (first.total || ZERO).correct)} over {(first.total || ZERO).seen} answers.</>
+                        : watching
+                          ? <>Nobody is in the support band. {watching} {plural(watching, 'student has', 'students have')} something recorded worth a look.</>
+                          : <>Nobody is in the support band. A good moment to draw a student to explain an answer aloud.</>}
+                    </span>
+                  </>
+                )}
+              </div>
+              {!closed && (
+                <div className="cluster lc-brief-acts">
+                  {first ? (
                     <>
-                      {/* The server's own caveat travels with the events. */}
-                      <Note>{shownTrail.honesty}</Note>
-                      {shownTrail.events.length === 0 ? (
-                        <p className="hint">Nothing is on record for {shownTrail.rollNo}.</p>
-                      ) : (
-                        <ul className="trail">
-                          {shownTrail.events.map((e, i) => (
-                            <li key={`${e.at}-${e.kind}-${i}`}>
-                              <span className="mono t-meta">{stamp(e.at)}</span>
-                              <span className="trail-src" data-observed={isObserved(e) ? 'true' : undefined}>{isObserved(e) ? 'observed' : 'reported'}</span>
-                              <span className="trail-what">{eventLine(e)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
+                      <Button variant="accent" icon="forward" onClick={() => setPickedRoll(first.rollNo)}>Open {first.rollNo}</Button>
+                      <Button onClick={() => setFilter('band')}>Show the support band</Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button variant="accent" icon="draw" onClick={() => setDrawing(true)}>Draw a student</Button>
+                      {watching > 0 && <Button onClick={() => setFilter('signals')}>Show who has signals</Button>}
                     </>
                   )}
                 </div>
-              </aside>
-            )}
+              )}
+            </div>
+
+            <div className="lc-tiles">
+              <div className="ptile">
+                <span>Joined</span>
+                <b><Num value={rows.length} /></b>
+                <Spark values={series.online} label={series.online.length > 1 ? 'Students answering, sampled every ten seconds since this page opened' : undefined} />
+                {!closed && series.online.length < 2 && <i className="lc-spark-wait" aria-hidden="true" />}
+                <small>{stale ? '—' : online} <i>answering now</i></small>
+              </div>
+              <div className="ptile" style={{ '--d': '0.6s' }}>
+                <span>Answers</span>
+                <b><Num value={answers} /></b>
+                <Spark values={perStep} label={perStep.length > 1 ? 'Answers per ten seconds since this page opened' : undefined} />
+                {!closed && perStep.length < 2 && <i className="lc-spark-wait" aria-hidden="true" />}
+                {closed
+                  ? <small>{rows.length ? (answers / rows.length).toFixed(1) : '—'} <i>per student</i></small>
+                  : <small>{lately === null ? '—' : `+${lately}`} <i>{series.answers.length > 6 ? 'last minute' : 'since this page opened'}</i></small>}
+              </div>
+              <div className="ptile" style={{ '--d': '1.2s' }}>
+                <span>Class accuracy</span>
+                <b><Num value={pct(seen, correct)} /></b>
+                <Spark values={series.acc} label={series.acc.length > 1 ? 'Class accuracy, sampled every ten seconds since this page opened' : undefined} />
+                {!closed && series.acc.length < 2 && <i className="lc-spark-wait" aria-hidden="true" />}
+                <small>{correct} <i>right of {seen}</i></small>
+              </div>
+              <div className="ptile" style={{ '--d': '1.8s' }}>
+                <span>{goal ? `At the ${Math.round(goal * 100)}% goal` : 'At the goal'}</span>
+                <b><Num value={met} /></b>
+                <Spark values={series.met} label={series.met.length > 1 ? 'Students at the goal, sampled every ten seconds since this page opened' : undefined} />
+                {!closed && series.met.length < 2 && <i className="lc-spark-wait" aria-hidden="true" />}
+                <small>of {rows.length} <i>at a level or more</i></small>
+              </div>
+            </div>
+
+            <div className="lc-ticker">
+              <span className="lc-ticker-tag">Latest</span>
+              {feed.events.length ? (
+                <ol className="lc-ticker-list" aria-label="What changed most recently, newest first">
+                  {feed.events.map((e) => (
+                    <li key={e.id}>
+                      {e.kind === 'status' ? <i className="lc-tdot" data-status={e.status} /> : <i className="lc-tdot" data-level={e.level} />}
+                      {e.rollNo && <b className="mono">{e.rollNo}</b>}
+                      <span>{eventText(e)}</span>
+                      <time>{ago(e.at, now)}</time>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <span className="lc-ticker-none">{closed ? 'The room is closed. Nothing here will change again.' : 'Arrivals and level changes appear here as they happen.'}</span>
+              )}
+            </div>
+          </Panel>
+
+          <div className="lc-cols">
+            <section className="card lc-grid" style={fade} aria-labelledby="lc-grid-h">
+              <div className="lc-grid-head">
+                <div className="sec">
+                  <h2 id="lc-grid-h">Students × Bloom level</h2>
+                  <p>
+                    {shown.length === rows.length ? `${rows.length} joined` : `${shown.length} of ${rows.length}`}
+                    {closed ? ', final standing' : stale ? ', frozen' : ''}. Accuracy at each level; the ring is the level served now.
+                  </p>
+                </div>
+                <label className="search lc-find">
+                  <Icon name="search" />
+                  <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a student" aria-label="Find a student" />
+                </label>
+              </div>
+              <div className="lc-filters">
+                <Segmented label="Narrow the roster" value={filter} onChange={setFilter} options={FILTERS.map((f) => ({ id: f.id, label: f.label, count: rows.filter(f.match).length }))} />
+              </div>
+
+              {shown.length === 0 ? (
+                <div className="lc-none">
+                  <Icon name="search" />
+                  <div><b>No student matches.</b> Clear the search, or switch back to Everyone.</div>
+                </div>
+              ) : (
+                <div className="lc-heat-scroll" role="region" aria-label="Students by level" tabIndex={0}>
+                  <table className="lc-heat">
+                    <thead>
+                      <tr>
+                        <th className="lc-who" scope="col">Student</th>
+                        {LEVELS.map((l, i) => (
+                          <th key={l} className="lc-lv" scope="col" data-level={l} title={LABEL[l]}>
+                            <span><i className="swatch" />{SHORT[i]}</span>
+                          </th>
+                        ))}
+                        <th className="lc-acc" scope="col">Acc.</th>
+                        <th className="lc-sigc" scope="col"><span className="sr-only">Signals</span></th>
+                      </tr>
+                    </thead>
+                    {groups.map((g) => {
+                      const gp = pooled(g.rows);
+                      const gs = LEVELS.reduce((n, l) => n + gp[l].seen, 0);
+                      const gc = LEVELS.reduce((n, l) => n + gp[l].correct, 0);
+                      return (
+                        <tbody key={g.id}>
+                          <tr className="lc-band">
+                            <th colSpan={9} scope="rowgroup">
+                              <span className="lc-band-in">
+                                {g.level ? <Level level={g.level} /> : <span className="t-meta">Not placed yet</span>}
+                                <span className="lc-band-n">{g.rows.length} {plural(g.rows.length, 'student')}</span>
+                                <span className="lc-band-acc">{pct(gs, gc)} <i>of {gs}</i></span>
+                              </span>
+                            </th>
+                          </tr>
+                          {g.rows.map((r) => {
+                            const total = r.total || ZERO;
+                            const sig = sigOf(r);
+                            const sigTitle = sig.notes.length
+                              ? `${sig.notes.join(' ')} Open ${r.rollNo} for the full trail.`
+                              : `${sig.events} recorded. Open ${r.rollNo} for the full trail.`;
+                            return (
+                              <tr
+                                key={r.rollNo}
+                                className="lc-row"
+                                tabIndex={0}
+                                aria-selected={sel?.rollNo === r.rollNo}
+                                title={r.reason || undefined}
+                                onClick={() => setPickedRoll(r.rollNo)}
+                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPickedRoll(r.rollNo); } }}
+                              >
+                                <td className="lc-who">
+                                  <span className="lc-person" data-off={r.online ? undefined : 'true'}>
+                                    <span className="lc-av">
+                                      <Avatar name={r.name || r.rollNo} title={r.online ? 'connected' : 'not connected'} />
+                                      <i aria-hidden="true" />
+                                      <span className="sr-only">{r.online ? 'connected' : 'not connected'}</span>
+                                    </span>
+                                    <span className="lc-names">
+                                      <b className="clip">{r.name || r.rollNo}</b>
+                                      {r.name && <span className="mono">{r.rollNo}</span>}
+                                    </span>
+                                  </span>
+                                </td>
+                                {LEVELS.map((l) => {
+                                  const c = (r.levels || {})[l] || ZERO;
+                                  return (
+                                    <td key={l} className="lc-lv">
+                                      <span
+                                        className="lc-cell"
+                                        data-heat={heat(c.seen, c.correct)}
+                                        data-cur={r.workingLevel === l ? 'true' : undefined}
+                                        title={c.seen ? `${LABEL[l]}: ${c.correct} of ${c.seen} right (${pct(c.seen, c.correct)})` : `${LABEL[l]}: not answered yet`}
+                                      >
+                                        {c.seen ? `${c.correct}/${c.seen}` : ''}
+                                      </span>
+                                    </td>
+                                  );
+                                })}
+                                <td className="lc-acc">
+                                  <span className="mono">{pct(total.seen, total.correct)}</span>
+                                  {r.slowLearner && <span className="lc-support">support</span>}
+                                </td>
+                                <td className="lc-sigc">
+                                  {sig.level !== 'clear' && <span className="lc-sig" data-level={sig.level} title={sigTitle}>{sig.notes.length || null}</span>}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      );
+                    })}
+                  </table>
+                </div>
+              )}
+
+              <div className="lc-legend">
+                <span className="lc-legend-k">Accuracy</span>
+                {HEAT_KEY.map(([h, label]) => (
+                  <span key={h}><i className="lc-cell lc-key" data-heat={h} />{label}</span>
+                ))}
+                <span><i className="lc-cell lc-key" data-cur="true" data-heat={0} />level served now</span>
+                {rows.some((r) => sigOf(r).level !== 'clear') && (
+                  <span className="lc-legend-sig">
+                    <i className="lc-sig" data-level="note" /> reported by the browser
+                    <i className="lc-sig" data-level="watch" /> worked out by the server
+                  </span>
+                )}
+              </div>
+            </section>
+
+            <div className="lc-side">
+              <section className="card lc-tubes" style={fade} aria-labelledby="lc-tubes-h">
+                <div className="sec">
+                  <h2 id="lc-tubes-h">Where the class is</h2>
+                  <p>One marble is one student. It changes tube when they change level.</p>
+                </div>
+                <Marbles rows={rows} selected={sel?.rollNo} onSelect={setPickedRoll} frozen={stale || closed} height={196} />
+              </section>
+
+              {sel && (
+                <aside className="card lc-insp" style={fade} aria-label={`${sel.rollNo} in detail`}>
+                  <div className="lc-insp-who">
+                    <Avatar name={sel.name || sel.rollNo} size="lg" />
+                    <div className="grow">
+                      <h2 className="clip">{sel.name || sel.rollNo}</h2>
+                      <div className="lc-insp-sub">
+                        {sel.name && <span className="mono">{sel.rollNo}</span>}
+                        <span className="lc-presence" data-off={sel.online ? undefined : 'true'}><i />{sel.online ? 'connected' : 'not connected'}</span>
+                        {sel.slowLearner && <span className="lc-support">support band</span>}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="lc-insp-now">
+                    <span className="t-meta">Working at</span>
+                    <Level level={sel.workingLevel} size="lg" />
+                  </div>
+                  {sel.reason && <p className="said">{sel.reason}</p>}
+
+                  <div className="figs ruled lc-insp-figs">
+                    <Fig value={pct(selTotal.seen, selTotal.correct)} label="accuracy" />
+                    <Fig value={typeof sel.answered === 'number' ? sel.answered : selTotal.seen} label="answered" />
+                    {Array.isArray(sel.mastered) && <Fig value={sel.mastered.length} label={goal ? `${plural(sel.mastered.length, 'level')} at ${Math.round(goal * 100)}%` : plural(sel.mastered.length, 'level') + ' met'} />}
+                  </div>
+
+                  <div className="lc-insp-sec">
+                    <div className="lc-insp-h">
+                      <h3>Against the class</h3>
+                      <span className="lc-radar-key">
+                        <span><i className="lc-k-me" />{sel.rollNo}</span>
+                        <span><i className="lc-k-class" />class</span>
+                        {goal ? <span><i className="lc-k-goal" />{Math.round(goal * 100)}% goal</span> : null}
+                      </span>
+                    </div>
+                    <Radar mine={sel.levels} theirs={byLevel} goal={goal ?? 0} current={sel.workingLevel} who={sel.rollNo} />
+                  </div>
+
+                  <div className="lc-insp-sec">
+                    <div className="lc-insp-h">
+                      <h3>Answers since this page opened</h3>
+                      <span className="t-meta">{selTries.length ? `${selTries.reduce((n, t) => n + t.k, 0)} of ${selTries.reduce((n, t) => n + t.n, 0)} right` : ''}</span>
+                    </div>
+                    {selTries.length ? (
+                      <ol className="lc-tries" aria-label="Oldest first">
+                        {selTries.map((t, i) => (
+                          <li
+                            key={`${t.at}-${i}`}
+                            data-v={t.n > 1 ? 'mix' : t.k ? 'yes' : 'no'}
+                            data-level={t.level}
+                            title={`${t.n > 1 ? `${t.k} of ${t.n} right, order not known` : t.k ? 'Right' : 'Wrong'} at ${LABEL[t.level] ?? t.level}, ${CLOCK.format(t.at)}`}
+                          >
+                            {t.n > 1 ? <span className="mono">{t.k}/{t.n}</span> : <Icon name={t.k ? 'check' : 'close'} size={12} />}
+                            <span className="sr-only">{t.n > 1 ? `${t.k} of ${t.n} right` : t.k ? 'right' : 'wrong'}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="hint">Nothing yet. Each answer {sel.rollNo} gives from now on lands here as a tick or a cross.</p>
+                    )}
+                  </div>
+
+                  <div className="lc-insp-sec">
+                    <div className="lc-insp-h">
+                      <h3>Signals</h3>
+                      <span className="t-meta">
+                        {selSig.events === 0 ? 'nothing recorded' : `${selSig.reported} reported, ${selSig.observed} observed`}
+                      </span>
+                    </div>
+                    {selSig.events === 0 ? (
+                      <p className="hint">This student's browser has reported nothing, and nothing has been worked out from their answers.</p>
+                    ) : selSig.notes.length ? (
+                      <ul className="stack stack-2">{selSig.notes.map((note) => <li key={note} className="said">{note}</li>)}</ul>
+                    ) : (
+                      <p className="hint">Nothing recorded has crossed the threshold for a note. The trail lists every one of the {selSig.events} events.</p>
+                    )}
+                    {selSig.events > 0 && (
+                      <div><Button size="sm" icon="checklist" busy={trailBusy} onClick={() => loadTrail(sel.rollNo)}>{shownTrail ? 'Load the trail again' : 'Load the full trail'}</Button></div>
+                    )}
+                    {trailError && <Note tone="bad">{trailError}</Note>}
+                    {trailBusy && !shownTrail && <div className="stack stack-1">{[0, 1, 2].map((i) => <div key={i} className="skel" style={{ height: 36 }} />)}</div>}
+                    {shownTrail && (
+                      <>
+                        {/* The server's own caveat travels with the events. */}
+                        <Note>{shownTrail.honesty}</Note>
+                        {shownTrail.events.length === 0 ? (
+                          <p className="hint">Nothing is on record for {shownTrail.rollNo}.</p>
+                        ) : (
+                          <ul className="lc-trail">
+                            {shownTrail.events.map((e, i) => (
+                              <li key={`${e.at}-${e.kind}-${i}`}>
+                                <span className="mono">{stamp(e.at)}</span>
+                                <span className="lc-trail-src" data-observed={isObserved(e) ? 'true' : undefined}>{isObserved(e) ? 'observed' : 'reported'}</span>
+                                <span className="lc-trail-what">{eventLine(e)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </aside>
+              )}
+            </div>
           </div>
         </>
       )}

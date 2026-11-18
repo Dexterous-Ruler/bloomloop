@@ -1,7 +1,10 @@
 # Implementation status
 
-Last revalidated: 18 November 2026, against the working tree (the November client
-rebuild is uncommitted on `main`; the last commit is `a5590e5`).
+Last revalidated: 19 November 2026, against the working tree on branch
+`roadmap-phase0-evidence`. The last commit, `b4585a0`, holds Phase 0, the answers
+table and the room archive. The Phase 1 review queue, the answer reads, the fixes and
+migrations `0010` to `0012` are uncommitted. Every suite below was rerun on
+19 November 2026.
 
 Source of truth for the plan: `reports/BloomLoop gap analysis and roadmap.md`.
 Decisions that need the owner: `docs/PRODUCT_DECISIONS.md`.
@@ -50,6 +53,9 @@ or resume and does not hear the events.
 - Accounts (Supabase only): HOD, professor and student roles, invites, Google Classroom
   posting, student Google link, dashboards, analytics, rooms management.
 - Client: rebuilt November 2026 with light and dark themes; not committed.
+- Evidence (server only): every attempt stored, a review queue for written answers,
+  and reads of the stored answers and per topic × level reports. Endpoints in
+  `docs/API.md`. No screen uses them yet, except the room archive on `/rooms`.
 
 ## Partially implemented
 
@@ -59,11 +65,13 @@ or resume and does not hear the events.
 | `poll` | Server scoring and ungraded handling in `mastery.js` | Any way to create one; the live handler ignores the ungraded rule (defect 6) |
 | Room settings | Server validation and storage | Applying them (defect 3); any UI |
 | Accommodations | Catalogue and account column | Reading them on join, phone rendering, teacher UI |
-| Cross-room student history | Analytics by account | Rows for students without accounts; topic; the actual responses |
+| Cross-room student history | Analytics by account; topic × level; the actual responses (`/api/analytics/:id/answers`, server only) | Rows for students without accounts; any test with a real account; a screen |
 
 ## Absent (by roadmap phase)
 
-- **Phase 1:** an answer store that keeps the response; a teacher review queue for written answers.
+- **Phase 1:** the model that wrote each item; each student's last answers in the
+  live grid; every Phase 1 screen (the review queue, a student's answer history, the
+  topic report, the phone's "provisional" label). See the checklist at the end.
 - **Phase 2:** write-your-own question, approval gate for AI drafts, item statistics, per-room question sets.
 - **Phase 3:** roster, attendance, observations, raised hands, Teacher-led and Mixed modes, waiting room, class analytics, projector modes.
 - **Phase 4:** course outcomes and attainment exports.
@@ -88,28 +96,37 @@ Missing before this pass: room settings in the live loop, poll handling, ownersh
 `teacher:watch`, idempotent answer submission, migrations building a fresh database,
 the client (no client tests exist).
 
-Added in this pass (all passing on 18 Nov 2026):
+Results, rerun on 19 November 2026 (Node 24.22.3, in-process store and PGlite; no
+network service). Phase 0 ended at 103 unit, 11 security and 142 migration checks.
 
 | Suite | Command | Result |
 |---|---|---|
-| Unit (adds `archive.test.js`, level-jump, history topic) | `cd server && npm test` | 103 / 103 |
-| Live loop: ownership, evidence, idempotency, polls, retries, redemption, status, room archive | `node server/scripts/liveloop.mjs` | 41 / 41 (15 clean runs in a row: 12 before the archive checks were added, 3 after) |
-| Security harness | `node server/scripts/security.mjs` | 11 / 11 |
-| Migrations on PGlite: fresh build, re-run, upgrade, constraints | `cd server && npm run migrations` | 142 / 142 |
-| Resume, integrity | `node server/scripts/resume.mjs`, `integrity.mjs` | pass |
-| Question kinds round trip | `node server/scripts/roundtrip.mjs` | 5 failures, unchanged from baseline (fixtures; Phase 2) |
+| Unit: mastery, selector, edits, integrity, accounts, archive, reviews (`applyReview`), evidence reads (redaction for all 16 kinds, topic report, one student's answers), the three repos | `cd server && npm test` | 172 / 172 |
+| Live loop: ownership, evidence, idempotency, polls, retries, redemption, status, room archive | `node server/scripts/liveloop.mjs` | 41 / 41 on each of 5 runs |
+| Security harness, including a phone answering another room's question | `node server/scripts/security.mjs` | 13 / 13 |
+| Migrations on PGlite: fresh build, re-run, upgrade, constraints, `0010` to `0012` | `cd server && npm run migrations` | 204 / 204 |
+| Review queue, end to end with the shared key | `node server/scripts/review.mjs` | 83 / 83 on each of 5 runs |
+| Evidence reads, end to end with the shared key | `node server/scripts/evidence.mjs` | 37 / 37 on each of 5 runs |
+| Resume, integrity | `node server/scripts/resume.mjs`, `integrity.mjs` | pass (7 and 6 mandated steps, no failures) |
+| Question kinds round trip | `node server/scripts/roundtrip.mjs` | 5 failures, the same as the baseline: no fixtures for `hottext`, `dropdown`, `table`, `grid`, `poll` (Phase 2) |
 
 Still missing: any automated client test; an account-path test for anything that
-needs Supabase (account linking, accommodations from a real account, CSV export
-with a bearer token, the student redirect on `/`).
+needs Supabase. That means account linking, accommodations from a real account, CSV
+export with a bearer token, and the student redirect on `/`. From Phase 1 it also
+means: a bearer-token caller on the review queue (including an HOD's 403),
+`GET /api/analytics/:id/answers` and `topicLevels` for a real professor or student,
+and the Mongo and Supabase repo methods against a real database (only the query
+each would send is checked).
 
 ## Risks found while revalidating
 
 - **Supabase unreachable.** The project's hostname does not resolve (checked against
   public DNS on 18 November 2026). Every account feature is untestable locally and
   broken on the deployed site until the project is restored.
-- **Uncommitted rebuild.** The whole client rebuild and this work sit uncommitted on
-  `main`; one bad checkout loses both.
+- **Uncommitted work.** Phase 0 is committed (`b4585a0`, branch
+  `roadmap-phase0-evidence`), but the Phase 1 server work and the UI rebuild in
+  progress are not; one bad checkout loses both.
+- **Phase 1 review findings on ids and paging: fixed.** Fixed on 19 November 2026: the Supabase repo answers a non-uuid id with "not found" (`isUuid` guard on every single-row read), and `offset` is capped at 100,000 (`MAX_OFFSET` in `services/evidence.js`, a 400 beyond it; unit-tested). The id guard is traced, not run against Supabase.
 - **Answer keys and seeds.** The shuffle seed is `rollNo:questionId`, so anyone who
   knows a roll number and a question id can reproduce a board. Acceptable for a class
   activity; noted for any future high-stakes use.
@@ -150,14 +167,70 @@ test covers it.
 - [x] Pause and resume on the Live screen (live loop for the status events; checked in
   the browser: the teacher's chip and the phone's paused screen both follow)
 
-### Phase 1 (started)
+### Phase 1 (in progress)
 
-- [x] Evidence store: every attempt kept in `answers` with response, question
-  snapshot, topic, level, attempt, key, timestamps (`0008`; live loop)
-- [x] Written answers stored as `provisional`, machine mark kept beside any review
-  (`auto_*` columns; migration test)
+Roadmap step 1: keep the response, topic, time, language and item source with every
+answer; an idempotency key; each student's last answers in the live grid; written
+marks provisional, with a review queue for the professor. "End to end" below means
+over HTTP or the socket on a real server, on the in-process store. Nothing here has
+run against Supabase or with a signed-in account; where that matters, it is said.
+Endpoints: `docs/API.md`.
+
+- [x] Evidence store: every attempt kept in `answers` with the response, the question
+  snapshot, topic, level, attempt, key, served and answered times, language and the
+  question's source (`0008`; live loop). Language is always `en`, the only one there
+  is
+- [ ] The model that wrote each item. **Absent:** an answer records whether its
+  question came from the model or the offline templates (`question_source`), but no
+  model name is stored, on questions or on answers
+- [ ] Each student's last answers in the live grid. **Absent:** the grid row carries
+  none. `GET /api/session/:code/answers?rollNo=` returns them over HTTP
+  (`scripts/evidence.mjs`), with no screen
+- [x] Written answers stored as `provisional`, with the machine's mark kept beside any
+  review (`auto_*` columns; migration test). The phone's result says
+  `provisional: true` (`scripts/review.mjs`); the phone does not show it yet
 - [x] Deleting a room keeps it as a JSON archive under 1 MB, by the owner's decision
-  (decision 9; `0009`; unit + live loop)
-- [ ] Teacher review queue for written answers (absent)
-- [ ] Student profile across sessions, with the actual answers (absent)
-- [ ] Retrieval APIs over `answers` (absent)
+  (decision 9; `0009`; unit + live loop; the review log is archived with the room,
+  unit + `scripts/review.mjs`)
+- [ ] Teacher review queue for written answers. **Server done and tested end to end
+  with the shared key; UI absent.** `GET /api/review` (paged by a `before` cursor;
+  `offset` refused), `GET` and `POST /api/review/:answerId` (`routes/review.js`), the
+  `answer_reviews` log (`0010`, append-only in the database since `0012`), and the
+  profile adjustment (`applyReview`, unit). `scripts/review.mjs`, 83 checks, covers
+  confirm and override, the log, idempotent repeats, the grid and CSV following the
+  human mark, a review racing a live answer, and a review during a room delete. The
+  review note is shown to the student; the UI must say so. **Not tested:** any
+  bearer-token caller, including an HOD's 403, and the Supabase and Mongo repo
+  methods against a database. A non-uuid id on Supabase is now a 404 (fixed 19 Nov; traced, not run). **Differs from the roadmap:** the roadmap says
+  keyword marks stop moving levels until confirmed. Here they count at once and a
+  review moves the numbers by the difference. That is a default awaiting the owner
+  (`PRODUCT_DECISIONS.md`)
+- [x] Fixes from the Phase 1 review (19 Nov 2026): a student's own answer list is
+  matched by account only; one roll number per department in the room's form
+  (`0011`); keyless answers keyed per student; `student:answer` refuses a question
+  from another room's content; a resend rebuilt from a reviewed row keeps the
+  review; nothing is written into a room while it is archived and deleted; the
+  queue pages by cursor; the evidence and the review log are guarded by the
+  database (`0012`). Each has a check, and every one of those checks passes. The
+  fixing session reported that each check also fails with its fix switched off; that
+  was not repeated in this pass
+- [ ] Linking a room profile to an account from a typed roll number lets a student
+  who types a classmate's roll number put answers in the classmate's history.
+  Needs a signed-in join (client) and decision 7. Not built
+- [ ] Student profile across sessions, with the actual answers. **Server done,
+  account path untested, UI absent:** `GET /api/analytics/:id/answers` (paged,
+  newest first, `?topic=&level=&code=`; matched by account or by an unlinked roll
+  number for a professor, by account only for the student themself; a student gets
+  their own answers redacted) and a per topic × per level
+  `topicLevels` on `GET /api/analytics/:id`. Tested: the redaction for all 16
+  kinds, the lister and the topic report on the in-process store
+  (`test/evidence.test.js`), the shared key's 404 (`scripts/evidence.mjs`), and
+  the filter each of the Mongo and Supabase repos would send. Not tested: a real
+  professor or student account calling it, which needs Supabase. `offset` is capped
+  at 100,000 (fixed 19 Nov; unit-tested)
+- [x] Retrieval APIs over `answers` for a room: `GET /api/session/:code/answers`
+  (every attempt, full snapshot, paged, `?rollNo=`) and
+  `GET /api/session/:code/topics` (per topic × level, from answers, falling back to
+  history for rooms older than the store, with the source named)
+  (`scripts/evidence.mjs`, 37 checks). Ticked as APIs: no screen calls them yet.
+  `offset` is capped at 100,000 (fixed 19 Nov; unit-tested)

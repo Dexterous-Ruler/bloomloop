@@ -1,27 +1,56 @@
 /**
- * The front door of the console. One column: the mark, one sentence, one field.
- * Two ways in, because a build with no accounts configured still has to open
- * with the key the server prints when it starts.
+ * The front door of the console. A forest half that says what this is, and on
+ * the page one field and one button. Two ways in, because a build with no
+ * accounts configured still has to open with the key the server prints when
+ * it starts.
  */
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
+import { LABEL, LEVELS } from '../lib/bloom.js';
 import { supabase } from '../lib/auth.js';
 import { ThemeToggle } from '../shell/AppShell.jsx';
-import { Button, Field, Loop } from '../ui/index.jsx';
+import { Button, Field, Flow, Mark } from '../ui/index.jsx';
 
-export function GateFrame({ children, foot }) {
+/**
+ * The split frame: the art on forest, the form on the page. `art` replaces
+ * the default sentence and ladder.
+ */
+function GateFrame({ children, foot, art }) {
   return (
     <div className="gate">
-      <div className="gate-top">
-        <span className="brand"><Loop size={22} /><span>BloomLoop</span></span>
-        <ThemeToggle />
+      <section className="gate-art on-panel" aria-label="BloomLoop">
+        <Flow />
+        <span className="brand">
+          <Mark size={28} />
+          <span className="brand-name">BloomLoop</span>
+        </span>
+        {art ?? (
+          <>
+            <div className="stack stack-3">
+              <h1>Every student, at the level they have <em>reached</em>.</h1>
+              <p className="gate-art-extra">
+                Questions are picked for the level each student has reached and move with them as they answer. The
+                teacher sees who moved, level by level.
+              </p>
+            </div>
+            <div className="tc-gate-ladder" aria-hidden="true">
+              {LEVELS.map((l) => (
+                <div key={l} data-level={l}><i /><span>{LABEL[l]}</span></div>
+              ))}
+            </div>
+          </>
+        )}
+      </section>
+
+      <div className="gate-side">
+        <div className="gate-top"><ThemeToggle /></div>
+        <main className="gate-main">
+          <div className="gate-card">{children}</div>
+        </main>
+        <div className="gate-foot">{foot}</div>
       </div>
-      <main className="gate-main">
-        <div className="gate-card">{children}</div>
-      </main>
-      <div className="gate-foot">{foot}</div>
     </div>
   );
 }
@@ -34,20 +63,16 @@ export default function Gate({ onUnlock }) {
     <GateFrame
       foot={<>Students do not need a key. <Link className="link" to="/join">Join a room with its code</Link></>}
     >
-      <div className="gate-mark">
-        <Loop size={56} stroke={7} className="loop-draw" />
-        <div className="stack stack-2">
-          <h1>Open the teacher console</h1>
-          <p className="t-lead">
-            Every student gets questions at the level they have reached. You see who moved.
-          </p>
-        </div>
-      </div>
-
       <form
-        className="stack"
+        className="tc-gate-form"
         onSubmit={(e) => { e.preventDefault(); if (ready) onUnlock(draft.trim()); }}
       >
+        <div className="stack stack-2">
+          <span className="eyebrow">Teacher console</span>
+          <h2>Open the console</h2>
+          <p className="t-lead">Read a chapter, write the questions, open a room. The key keeps it yours.</p>
+        </div>
+
         <Field
           label="Teacher key"
           htmlFor="key"
@@ -57,6 +82,7 @@ export default function Gate({ onUnlock }) {
               useless, and the real key in the bundle is readable by anyone. */}
           <input
             id="key"
+            type="password"
             className="input input-lg input-code"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -65,15 +91,15 @@ export default function Gate({ onUnlock }) {
             spellCheck={false}
           />
         </Field>
-        <Button type="submit" variant="primary" size="lg" block disabled={!ready}>Open the console</Button>
-      </form>
+        <Button type="submit" variant="primary" size="xl" block disabled={!ready}>Open the console</Button>
 
-      {supabase && (
-        <>
-          <div className="or">or</div>
-          <Link className="btn btn-lg btn-block" to="/signin">Sign in with your account</Link>
-        </>
-      )}
+        {supabase && (
+          <>
+            <div className="or">or</div>
+            <Link className="btn btn-lg btn-block" to="/signin">Sign in with your account</Link>
+          </>
+        )}
+      </form>
     </GateFrame>
   );
 }

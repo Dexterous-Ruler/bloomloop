@@ -53,12 +53,56 @@ export function Ladder({ level, size = 16, className = '', title }) {
 }
 export const Loop = Ladder;
 
-/** The logo: the ladder on a terracotta tile. */
-export function Mark({ size = 38 }) {
+/** The logo: the ladder on a green tile. */
+export function Mark({ size = 28 }) {
   return (
-    <span className="mark-tile" style={{ width: size, height: size, borderRadius: size * 0.29 }} aria-hidden="true">
-      <Ladder size={Math.round(size * 0.5)} />
+    <span className="mark-tile" style={{ width: size, height: size, borderRadius: Math.round(size * 0.29) }} aria-hidden="true">
+      <Ladder size={Math.round(size * 0.54)} />
     </span>
+  );
+}
+
+/** The lines that drift behind a forest panel. Decoration only. */
+export function Flow() {
+  return (
+    <svg className="flow" viewBox="0 0 1200 320" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      <path d="M0,250 C200,180 300,290 500,220 S800,120 1000,200 S1150,260 1200,240" />
+      <path d="M0,290 C250,240 350,310 600,260 S850,170 1050,240 S1150,290 1200,280" />
+      <path d="M0,200 C180,140 320,230 520,170 S780,80 980,150 S1120,220 1200,190" />
+    </svg>
+  );
+}
+
+/**
+ * The one dark panel a screen gets: forest glass with lines drifting behind
+ * it. What sits inside is drawn for a dark ground.
+ */
+export function Panel({ as: Tag = 'section', className = '', children, ...rest }) {
+  return (
+    <Tag className={`panel on-panel ${className}`} {...rest}>
+      <Flow />
+      {children}
+    </Tag>
+  );
+}
+
+/**
+ * A sparkline from real numbers: a line that draws itself in, and an area
+ * under it. `values` is a plain array; fewer than two points draws nothing.
+ */
+export function Spark({ values = [], height = 26, area = false, className = '', label }) {
+  const nums = values.map(Number).filter(Number.isFinite);
+  if (nums.length < 2) return null;
+  const lo = Math.min(...nums);
+  const hi = Math.max(...nums);
+  const span = hi - lo || 1;
+  const pts = nums.map((v, i) => [(i / (nums.length - 1)) * 100, 30 - ((v - lo) / span) * 28]);
+  const line = pts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
+  return (
+    <svg className={`spark ${className}`} viewBox="0 0 100 32" preserveAspectRatio="none" style={{ height }} role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true}>
+      {area && <polygon points={`0,32 ${line} 100,32`} className="spark-area" />}
+      <polyline points={line} className="spark-line" />
+    </svg>
   );
 }
 
@@ -138,7 +182,7 @@ export function Empty({ icon = 'info', title, children, action }) {
 
 // Warm tints for initials, picked by name so a student keeps theirs. None of
 // them is a level colour, so a face is never read as a level.
-const AV = ['#F6D9A0', '#F2BCA2', '#CFE3C8', '#F4C9BD', '#E9CFAE', '#C8DAE6', '#E5D6A0'];
+const AV = ['#D5E8DC', '#E9E3D3', '#DCE6EC', '#EFE2C4', '#E4E1DA', '#CFE3D8', '#F0E6D8'];
 const tintFor = (name) => {
   let h = 0;
   for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
@@ -148,7 +192,7 @@ const tintFor = (name) => {
 export function Avatar({ name = '', size, href, title }) {
   const initials = String(name).split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
   const cls = `avatar${size === 'lg' ? ' avatar-lg' : size === 'xl' ? ' avatar-xl' : ''}`;
-  const style = { '--av': tintFor(name), '--av-ink': '#36180E' };
+  const style = { '--av': tintFor(name), '--av-ink': '#14161A' };
   return href
     ? <a className={cls} href={href} title={title ?? name} style={style}>{initials}</a>
     : <span className={cls} title={title ?? name} style={style}>{initials}</span>;

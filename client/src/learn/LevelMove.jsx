@@ -38,7 +38,10 @@ export default function LevelMove({ result, busy, onNext }) {
       tl.to(moving.reverse(), { scaleY: 0.12, opacity: 0.35, duration: 0.55, ease: EASE, stagger: 0.14 });
     }
     tl.fromTo(tower.current.querySelector('[data-here] i'), { scale: 1 }, { scale: 1.08, duration: 0.18, yoyo: true, repeat: 1, ease: 'power2.out' });
-    return () => tl.kill();
+    // A phone that backgrounds the tab stops animation frames, and the tower
+    // would sit half-drawn. A timer is not frame-bound, so it finishes the move.
+    const guard = setTimeout(() => tl.progress(1), 2600);
+    return () => { clearTimeout(guard); tl.kill(); };
   }, [still, fromN, toN, up]);
 
   const lo = Math.min(fromN, toN);
@@ -47,7 +50,7 @@ export default function LevelMove({ result, busy, onNext }) {
   return (
     <>
       <div className="ln-move on-panel">
-        <span className="eyebrow">{up ? 'Moving up' : 'Re-aiming'}</span>
+        <span className="tag-mint">{up ? 'Moving up' : 'Re-aiming'}</span>
 
         <div className="ln-tower" ref={tower} role="img" aria-label={`Level ${toN} of 6: ${LABEL[to] ?? to}`}>
           {LEVELS.map((l, i) => {

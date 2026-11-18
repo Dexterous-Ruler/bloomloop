@@ -36,6 +36,18 @@ const SHORT = ['Rem', 'Und', 'App', 'Ana', 'Eva', 'Cre'];
 
 const levelIndex = (l) => Math.max(0, LEVELS.indexOf(l));
 
+// One engine per page. Rapier's init() only checks whether it is loaded before
+// it starts, so two boards (or one board rebuilt while the first load is in
+// flight) would each instantiate it, and the later one swaps the WebAssembly
+// memory out from under a world the earlier one already built.
+let engine = null;
+function loadEngine() {
+  engine ??= import('@dimforge/rapier2d-compat')
+    .then(async (mod) => { const R = mod.default ?? mod; await R.init(); return R; })
+    .catch((err) => { engine = null; throw err; });
+  return engine;
+}
+
 /** The largest marble that lets the fullest bin fit in four fifths of the height. */
 function radiusFor(binW, height, counts) {
   const most = Math.max(1, ...counts);
@@ -112,10 +124,15 @@ export default function Marbles({ rows, selected, onSelect, frozen = false, heig
     st.layout.at.forEach((p, roll) => st.beads.set(roll, { ...p }));
     sim.current = st;
 
+    // Read from the stage itself, not the page root, so a board placed on a
+    // forest panel (.on-panel) is drawn in that panel's turned-over tokens.
     const readTones = () => {
+      const el = stage.current ?? undefined;
       st.tone = {
-        fills: LEVELS.map((_, i) => token(`--l${i + 1}`)),
-        text: token('--text'), line: token('--line-2'), glass: token('--raised'),
+        fills: LEVELS.map((_, i) => token(`--l${i + 1}`, el)),
+        text: token('--text', el), line: token('--line-2', el), glass: token('--raised', el),
+        // The tray is one colour: the projector shows who has arrived, never how anyone is doing.
+        tray: token('--primary', el),
       };
     };
     readTones();
@@ -123,11 +140,12 @@ export default function Marbles({ rows, selected, onSelect, frozen = false, heig
     const draw = () => {
       const { rows: list, selected: sel } = latest.current;
       const r = st.layout.radius;
-      const { fills, text, line, glass } = st.tone;
+      const { fills, text, line, glass, tray: one } = st.tone;
       const now = performance.now();
       ctx.clearRect(0, 0, width, height);
 
-      // The tubes: a tinted glass per bin, open at the top.
+      // The tubes: a tinted glass per bin, open at the top, with a faint
+      // highlight down the left wall and a floor line so they read as glass.
       for (let i = 0; i < bins; i += 1) {
         const x0 = i * st.layout.binW + 4;
         const w = st.layout.binW - 8;
@@ -135,18 +153,30 @@ export default function Marbles({ rows, selected, onSelect, frozen = false, heig
         ctx.roundRect(x0, 8, w, height - 8, [8, 8, 18, 18]);
         ctx.fillStyle = glass; ctx.fill();
         ctx.strokeStyle = line; ctx.lineWidth = 1; ctx.stroke();
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath(); ctx.moveTo(x0 + 4.5, 18); ctx.lineTo(x0 + 4.5, height - 22);
+        ctx.strokeStyle = line; ctx.lineWidth = 1; ctx.stroke();
+        ctx.globalAlpha = 1;
       }
 
       let flashing = false;
       list.forEach((row) => {
         const b = st.beads.get(row.rollNo);
         if (!b) return;
-        const fill = fills[levelIndex(row.workingLevel)];
+        const fill = bins === 1 ? one : fills[levelIndex(row.workingLevel)];
         ctx.globalAlpha = row.online === false ? 0.4 : 1;
         ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
         ctx.fillStyle = fill; ctx.fill();
-        // A rim one step darker than the fill, so the palest levels still have an edge.
-        ctx.strokeStyle = `color-mix(in srgb, ${fill} 68%, ${text})`; ctx.lineWidth = 1; ctx.stroke();
+        // A rim in the text colour at low strength, so the palest levels still
+        // have an edge on either ground.
+        ctx.globalAlpha *= 0.32;
+        ctx.strokeStyle = text; ctx.lineWidth = 1; ctx.stroke();
+        // And a small specular dot: a marble, not a disc.
+        if (r >= 6) {
+          ctx.globalAlpha = row.online === false ? 0.2 : 0.45;
+          ctx.beginPath(); ctx.arc(b.x - r * 0.35, b.y - r * 0.38, r * 0.28, 0, Math.PI * 2);
+          ctx.fillStyle = '#FFFFFF'; ctx.fill();
+        }
         ctx.globalAlpha = 1;
 
         const isSel = row.rollNo === sel;
@@ -203,9 +233,7 @@ export default function Marbles({ rows, selected, onSelect, frozen = false, heig
 
     let cancelled = false;
     if (!reduced()) {
-      import('@dimforge/rapier2d-compat').then(async (mod) => {
-        const R = mod.default ?? mod;
-        await R.init();
+      loadEngine().then((R) => {
         if (cancelled) return;
         const world = new R.World({ x: 0, y: 34 });
         const fixed = world.createRigidBody(R.RigidBodyDesc.fixed());

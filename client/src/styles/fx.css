@@ -1,26 +1,36 @@
-/* Things that move: the tubes, the marbles, the drum, the drawn mark. */
+/* Things that move: the tubes, the marbles, the drum, the drawn mark. Each
+   one reads its colours from where it sits, so on a forest panel it is drawn
+   for that ground. */
 
 /* ------------------------------------------------------------------ tubes */
 
 .tubes { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
 .tube { min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 0; border: 0; background: transparent; text-align: left; color: inherit; }
-button.tube { cursor: pointer; }
+button.tube { cursor: pointer; border-radius: 10px; }
 .tube-glass {
-  position: relative; overflow: hidden; background: var(--raised); border: 1px solid var(--line-2);
-  border-radius: 8px 8px 22px 22px; transition: border-color var(--t-1) var(--ease);
+  position: relative; overflow: hidden; border: 1px solid var(--line-2);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--raised) 70%, var(--surface)), var(--raised) 40%, color-mix(in srgb, var(--raised) 96%, var(--text)));
+  border-radius: 8px 8px 22px 22px; box-shadow: inset 0 1px 0 var(--glass-line), inset 0 -10px 18px -14px color-mix(in srgb, var(--text) 30%, transparent);
+  transition: border-color var(--t-1) var(--ease), box-shadow var(--t-2) var(--ease);
+}
+/* A highlight down the left wall: what makes a box read as glass. */
+.tube-glass::before {
+  content: ''; position: absolute; z-index: 1; top: 10px; bottom: 22px; left: 5px; width: 3px; border-radius: 3px; pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.04));
+  opacity: 0.5;
 }
 button.tube:hover .tube-glass { border-color: var(--text-3); }
-.tube[data-current='true'] .tube-glass { border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
+.tube[data-current='true'] .tube-glass { border-color: var(--text); box-shadow: 0 0 0 1px var(--text), inset 0 1px 0 var(--glass-line); }
 .tube-glass canvas { width: 100%; height: 100%; }
 /* The graduation: a short tick every eighth of the height, up the right side. */
 .tube-scale {
-  position: absolute; top: 8px; bottom: 16px; right: 0; width: 8px; pointer-events: none; opacity: 0.5;
+  position: absolute; top: 8px; bottom: 16px; right: 0; width: 7px; pointer-events: none; opacity: 0.45;
   background: repeating-linear-gradient(to bottom, var(--text-3) 0 1px, transparent 1px 12.5%);
 }
 .tube-cap { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
-.tube-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 13px/20px var(--font); color: var(--text-2); }
-.tube[data-current='true'] .tube-name { color: var(--text); font-weight: 500; }
-.tube-ct { flex: none; font: 400 12px/16px var(--mono); color: var(--text-3); }
+.tube-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 12.5px/18px var(--font); color: var(--text-2); }
+.tube[data-current='true'] .tube-name { color: var(--text); font-weight: 700; }
+.tube-ct { flex: none; font: 500 11.5px/16px var(--mono); color: var(--text-3); }
 @media (max-width: 640px) {
   .tubes { gap: 8px; }
   .tube-cap { flex-direction: column; align-items: flex-start; gap: 0; }
@@ -54,26 +64,34 @@ button.tube:hover .tube-glass { border-color: var(--text-3); }
 
 /* ---------------------------------------------------------------- marbles */
 
+/* The rail under the tubes follows the board's own width, not the window's:
+   the live class puts it in a narrow column on a wide screen. */
+.marbles { container-type: inline-size; }
 .marbles-stage { position: relative; }
 .marbles-tip {
   position: absolute; z-index: 2; translate: -50% -100%; pointer-events: none; white-space: nowrap;
-  padding: 4px 8px; border-radius: var(--r-1); background: var(--text); color: var(--bg); font: 400 12px/16px var(--mono);
+  padding: 5px 9px; border-radius: 7px; background: var(--ink); color: var(--on-ink); font: 500 11.5px/16px var(--mono);
+  box-shadow: 0 8px 20px -10px rgba(15, 26, 21, 0.5);
 }
-.marbles-rail { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-top: 8px; }
+.marbles-rail { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-top: 10px; }
 .marbles-rail > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px; min-width: 0; }
 .marbles-rail .lv { min-width: 0; overflow: hidden; }
-.marbles-rail b { flex: none; font: 500 13px/20px var(--mono); color: var(--text-2); }
-.marbles-short { display: none; align-items: center; gap: 4px; font: 400 12px/16px var(--font); color: var(--text-2); }
-@media (max-width: 900px) {
-  .marbles-rail > div { flex-direction: column; align-items: center; gap: 2px; padding: 0; }
+.marbles-rail b { flex: none; font: 600 13px/18px var(--mono); color: var(--text); }
+.marbles-short { display: none; align-items: center; gap: 5px; font: 600 10.5px/14px var(--font); letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); }
+.marbles-short .swatch { width: 7px; height: 7px; border-radius: 2px; }
+@container (max-width: 640px) {
+  .marbles-rail > div { flex-direction: column-reverse; align-items: center; gap: 0; padding: 0; }
   .marbles-rail .lv { display: none; }
   .marbles-short { display: inline-flex; }
 }
 
 /* ------------------------------------------------------------------- drum */
 
-.drum { position: relative; flex: none; max-width: 100%; }
+/* Square at any width: the canvas is sized once, and the box only ever
+   shrinks it evenly, so a narrow dialog never squashes the sphere. */
+.drum { position: relative; flex: none; max-width: 100%; height: auto !important; aspect-ratio: 1; }
 .drum-stage, .drum-wait { position: absolute; inset: 0; }
 .drum-stage canvas { display: block; width: 100% !important; height: 100% !important; }
 .drum-wait { border-radius: var(--r-full); margin: 8px; }
+.on-panel .drum-wait { background: radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03) 60%); animation: none; }
 .drum[data-failed='true'] { display: none; }

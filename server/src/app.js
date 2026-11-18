@@ -21,6 +21,7 @@ import bankRoutes from './routes/bank.js';
 import sessionRoutes from './routes/session.js';
 import exportRoutes from './routes/export.js';
 import classroomRoutes from './routes/classroom.js';
+import reviewRoutes from './routes/review.js';
 
 /**
  * Any successful write to a question bank drops the live loop's cached copy of
@@ -111,6 +112,11 @@ export function createApp() {
   // Mixed: students read GET /:code, everything else is the teacher's. Gated
   // per-route inside the router rather than at the mount.
   app.use('/api/session', sessionRoutes);
+
+  // Teacher-only: the queue carries students' written answers and the question
+  // snapshots with their rubrics. Which rooms a teacher may read or decide on is
+  // checked inside, per answer, by ownership.js.
+  app.use('/api/review', requireTeacher, reviewRoutes);
 
   // The export router is mounted at /api per the contract, so the guard is
   // scoped to its one path instead of the whole prefix.

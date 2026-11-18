@@ -133,7 +133,8 @@ function sameSnapshot(label, a, b) {
 
 async function rowCounts(db) {
   const out = {};
-  for (const table of ['contents', 'questions', 'sessions', 'profiles', 'accounts', 'invites', 'answers', 'room_archives']) {
+  for (const table of ['contents', 'questions', 'sessions', 'profiles', 'accounts', 'invites', 'answers', 'room_archives',
+    'answer_reviews']) {
     const exists = await db.query(`select to_regclass('public.${table}') is not null as ok`);
     if (!exists.rows[0].ok) continue;
     out[table] = Number((await db.query(`select count(*)::int as n from public.${table}`)).rows[0].n);
@@ -162,6 +163,8 @@ const COLUMNS_THE_SERVER_USES = {
   invites: ['code', 'role', 'department', 'reports_to', 'created_by', 'email', 'roll_no', 'full_name',
     'expires_at', 'used_by', 'used_at', 'created_at', 'google_sub'],
   room_archives: ['id', 'session_id', 'code', 'title', 'owner_id', 'archived_by', 'archived_at', 'bytes', 'data'],
+  answer_reviews: ['id', 'answer_id', 'session_id', 'decision', 'correct', 'score', 'note', 'reviewed_by',
+    'reviewed_at'],
 };
 
 // The fields outAccount() in services/accounts.js reads off an accounts_below() row.
@@ -318,6 +321,28 @@ await rejects('a duplicate email', () =>
 await accepts('the same roll number in another department', () =>
   insertAccount({ id: STRANGER, role: 'student', code: 'BL-XX0006', department: 'ECE', reportsTo: PROF, rollNo: '07' }));
 await db.query('delete from public.accounts where id = $1', [STRANGER]);
+
+// 0011: a room trims, single-spaces and upper-cases every roll number, so two
+// accounts that differ only in that way are one student to it.
+{
+  const TWIN = randomUUID();
+  await db.query('insert into auth.users (id) values ($1)', [TWIN]);
+  await accepts('a roll number with letters and a space', () =>
+    insertAccount({ id: STRANGER, role: 'student', code: 'BL-XX0007', reportsTo: PROF, rollNo: '21CS 01' }));
+  let err = null;
+  try {
+    await insertAccount({ id: TWIN, role: 'student', code: 'BL-XX0008', reportsTo: PROF, rollNo: ' 21cs  01' });
+  } catch (e) {
+    err = e;
+  }
+  check('the same roll number in another case and spacing, in one department, is refused (0011), not taken for a code collision',
+    err?.code === '23505' && /accounts_department_roll_key/.test(err.message) && !/accounts_code_key/.test(err.message),
+    err ? `${err.code}: ${err.message}` : 'the database accepted it');
+  await accepts('and in another department it is a different student', () =>
+    insertAccount({ id: TWIN, role: 'student', code: 'BL-XX0008', department: 'ECE', reportsTo: PROF, rollNo: '21cs 01' }));
+  await db.query('delete from public.accounts where id = any($1)', [[STRANGER, TWIN]]);
+  await db.query('delete from auth.users where id = $1', [TWIN]);
+}
 
 await accepts('linking a Google identity', () =>
   db.query(`update public.accounts set google_sub = '1234567890', google_email = 'g@example.test',
@@ -507,6 +532,125 @@ section('room archives');
   await rejects('an archive with no size', () => archive('00000000-0000-4000-8000-0000000000a3', 0), { code: '23514' });
 }
 
+section('answer reviews (0010)');
+
+{
+  // The written answer stored as provisional above.
+  const [written] = (await db.query(`select id from public.answers where answer_key = 'k-3' and session_id = $1`,
+    [session?.id])).rows;
+
+  // The columns routes/review.js writes, plus a note only when the case gives one,
+  // so the default is exercised too.
+  const insertReview = (r) => {
+    const cols = ['answer_id', 'session_id', 'decision', 'correct', 'score', 'reviewed_by'];
+    const vals = [r.answerId ?? written?.id, r.sessionId ?? session?.id, r.decision ?? 'confirm',
+      given(r, 'correct', false), given(r, 'score', 0.5), given(r, 'reviewedBy', PROF)];
+    if ('note' in r) { cols.push('note'); vals.push(r.note); }
+    return db.query(`insert into public.answer_reviews (${cols.join(', ')})
+                     values (${vals.map((_, i) => `$${i + 1}`).join(', ')}) returning *`, vals);
+  };
+
+  const [confirmed] = (await accepts('a professor confirms the machine\'s mark on a written answer', () =>
+    insertReview({}))) ?? [];
+  check('the note defaults to empty and the time is filled',
+    confirmed?.note === '' && confirmed?.reviewed_at instanceof Date && Number(confirmed?.score) === 0.5);
+  await accepts('a later override from the shared-key path, with no reviewer', () =>
+    insertReview({ decision: 'override', correct: true, score: 0.9, reviewedBy: null, note: 'Both points, own words' }));
+  {
+    const { rows } = await db.query(
+      'select decision, correct from public.answer_reviews where answer_id = $1 order by reviewed_at, id', [written?.id]);
+    check('both decisions are kept: a later one never erases an earlier one',
+      rows.length === 2 && rows.some((r) => r.decision === 'confirm') && rows.some((r) => r.decision === 'override'));
+  }
+  await rejects('a decision other than confirm/override', () => insertReview({ decision: 'approve' }),
+    { code: '23514', match: /answer_reviews_decision_check/ });
+  await rejects('a score above 1', () => insertReview({ score: 1.5 }),
+    { code: '23514', match: /answer_reviews_score_check/ });
+  await rejects('a negative score', () => insertReview({ score: -0.1 }),
+    { code: '23514', match: /answer_reviews_score_check/ });
+  await rejects('a review with no mark', () => insertReview({ correct: null }), { code: '23502' });
+  await rejects('a note over 1000 characters', () => insertReview({ note: 'x'.repeat(1001) }),
+    { code: '23514', match: /answer_reviews_note_check/ });
+  await rejects('a review of an answer that does not exist', () => insertReview({ answerId: randomUUID() }),
+    { code: '23503' });
+
+  // A reviewer whose account is later deleted: the decision stays, unattributed.
+  const REVIEWER = randomUUID();
+  await db.query('insert into auth.users (id) values ($1)', [REVIEWER]);
+  await insertAccount({ id: REVIEWER, role: 'professor', fullName: 'Reviewer', email: 'rev@example.test',
+    code: 'BL-RV0001', reportsTo: HOD });
+  const [byReviewer] = (await insertReview({ reviewedBy: REVIEWER })).rows;
+  await db.query('delete from auth.users where id = $1', [REVIEWER]);
+  {
+    const { rows } = await db.query('select reviewed_by from public.answer_reviews where id = $1', [byReviewer?.id]);
+    check('deleting the reviewer\'s account keeps the decision, with reviewed_by cleared',
+      rows.length === 1 && rows[0].reviewed_by === null);
+  }
+
+  // A room's reviews go with its answers. The server archives the room, log
+  // included, before it ever sends this delete.
+  const room = (await db.query(`insert into public.sessions (code, content_id) values ('ROOM06', $1) returning id`,
+    [content?.id])).rows[0];
+  const [roomAnswer] = (await insertAnswer({ key: 'k-r1', sessionId: room.id, questionId: match?.id })).rows;
+  await insertReview({ answerId: roomAnswer.id, sessionId: room.id });
+  await db.query('delete from public.sessions where id = $1', [room.id]);
+  {
+    const { rows } = await db.query('select count(*)::int as n from public.answer_reviews where session_id = $1', [room.id]);
+    check('deleting a room deletes its reviews with its answers', rows[0].n === 0);
+  }
+
+  const idx = await db.query(`select indexdef from pg_indexes where schemaname = 'public' and indexname = 'answers_open_queue_idx'`);
+  check('the review queue index on final written answers exists',
+    /WHERE \(\(kind = 'open'::text\) AND final\)/.test(idx.rows[0]?.indexdef ?? ''), idx.rows[0]?.indexdef ?? 'missing');
+}
+
+section('evidence guards (0012)');
+
+{
+  // The server only ever writes review fields to an answer and only inserts
+  // reviews. These are the writes it never sends, from anywhere else.
+  const [written] = (await db.query(`select id from public.answers where answer_key = 'k-3' and session_id = $1`,
+    [session?.id])).rows;
+  const [first] = (await db.query(`select id from public.answer_reviews where answer_id = $1 order by reviewed_at, id`,
+    [written?.id])).rows;
+  const RESTRICT = { code: '23001' };
+  for (const [label, set] of [
+    ['the response', `response = '{"choice": 1}'`],
+    ['the question as it was asked', `question_snapshot = '{"text": "edited"}'`],
+    ['the machine\'s mark', 'auto_correct = false, auto_score = 0'],
+    ['the machine\'s reading in words', `auto_detail = 'edited'`],
+    ['whose answer it is', `roll_no = '08'`],
+    ['when it was answered', `answered_at = now() - interval '1 day'`],
+  ]) {
+    await rejects(`an answer's ${label} cannot be rewritten`, () =>
+      db.query(`update public.answers set ${set} where id = $1`, [written?.id]), RESTRICT);
+  }
+  await accepts('what a review writes beside it still can', () =>
+    db.query(`update public.answers set correct = true, score = 0.9, review_status = 'overridden', reviewed_by = $1,
+              reviewed_at = now(), review_note = 'Both points', final = true where id = $2`, [PROF, written?.id]));
+
+  await rejects('a logged decision cannot be edited', () =>
+    db.query(`update public.answer_reviews set note = 'edited' where id = $1`, [first?.id]), RESTRICT);
+  await rejects('nor its mark changed', () =>
+    db.query('update public.answer_reviews set correct = not correct where id = $1', [first?.id]), RESTRICT);
+  await rejects('nor deleted on its own', () =>
+    db.query('delete from public.answer_reviews where id = $1', [first?.id]), RESTRICT);
+  const other = (await db.query(`select id from public.sessions where code = 'ROOM05'`)).rows[0];
+  await rejects('a decision filed under another room than its answer\'s', () =>
+    db.query(`insert into public.answer_reviews (answer_id, session_id, decision, correct, score)
+              values ($1, $2, 'confirm', false, 0.5)`, [written?.id, other?.id]),
+  { code: '23503', match: /is not the room of answer/ });
+
+  // A review goes with its answer: the cascade is still allowed.
+  const [loose] = (await insertAnswer({ key: 'k-g1', questionId: match?.id })).rows;
+  await db.query(`insert into public.answer_reviews (answer_id, session_id, decision, correct, score)
+                  values ($1, $2, 'confirm', true, 1)`, [loose.id, session?.id]);
+  await accepts('deleting an answer takes its reviews with it', () =>
+    db.query('delete from public.answers where id = $1', [loose.id]));
+  const { rows } = await db.query('select count(*)::int as n from public.answer_reviews where answer_id = $1', [loose.id]);
+  check('and leaves none behind', rows[0].n === 0);
+}
+
 section('deleting');
 
 await rejects('deleting the sign-in of a professor who owns material and students', () =>
@@ -586,6 +730,35 @@ section('upgrading a v1 database that already holds data');
     check('accounts_below is replaced by the version returning whole account rows', r.rows[0]?.result === 'SETOF accounts');
   }
   await old.close();
+}
+
+// ------------------------------------- 0011 over accounts that already clash --
+
+section('0011 on a department that already holds two spellings of one roll number');
+
+{
+  const clash = await freshDatabase();
+  await applyAll(clash, files.filter((f) => f.name < '0011'), 'up to 0010');
+  const [H, P, S1, S2] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+  await clash.query('insert into auth.users (id) values ($1), ($2), ($3), ($4)', [H, P, S1, S2]);
+  const add = (id, role, code, reportsTo, rollNo) => clash.query(
+    `insert into public.accounts (id, role, code, department, reports_to, roll_no) values ($1, $2, $3, 'CSE', $4, $5)`,
+    [id, role, code, reportsTo, rollNo]);
+  await add(H, 'hod', 'BL-HD0002', null, null);
+  await add(P, 'professor', 'BL-PR0002', H, null);
+  await add(S1, 'student', 'BL-ST0003', P, '21CS01');
+  await add(S2, 'student', 'BL-ST0004', P, '21cs01');
+  const indexed = async () =>
+    (await clash.query(`select to_regclass('public.accounts_department_roll_key') is not null as ok`)).rows[0].ok;
+  const counts = await rowCounts(clash);
+  const ok = await applyAll(clash, files.filter((f) => f.name >= '0011'), 'over the clash');
+  check('the rest of the set still applies, and no row is changed or removed',
+    ok && JSON.stringify(counts) === JSON.stringify(await rowCounts(clash)));
+  check('the index is left uncreated rather than forced over the clash', (await indexed()) === false);
+  await clash.query(`update public.accounts set roll_no = '21CS02' where id = $1`, [S2]);
+  await applyAll(clash, files.filter((f) => f.name.startsWith('0011')), 'once corrected');
+  check('once a person corrects the accounts, running 0011 again creates it', (await indexed()) === true);
+  await clash.close();
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

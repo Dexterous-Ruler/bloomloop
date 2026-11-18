@@ -281,6 +281,10 @@ const ROSTER = CLASS.map((fullName, i) => ({
   fullName,
   rollNo: i in NO_ROLL ? NO_ROLL[i] : `23CS${String(i + 1).padStart(3, '0')}`,
   active: i !== 17,
+  // What the dashboard now sends per roster row: the latest working level and
+  // the last answer. A few have never sat a room, so both are null for them.
+  currentLevel: i % 7 === 6 ? null : ['remember', 'understand', 'understand', 'apply', 'apply', 'analyse', 'evaluate'][i % 7],
+  lastSeenAt: i % 7 === 6 ? null : new Date(Date.UTC(2026, 10, 18 - (i % 9), 9 + (i % 6), 10)).toISOString(),
 }));
 
 const PROFESSOR = {
@@ -368,7 +372,18 @@ const GOOGLE_ROSTER = [
   ['Tejas Kamble', '23cs051@example.edu', false], ['Vaidehi Joglekar', '23cs052@example.edu', false],
 ].map(([name, email, linked], i) => ({ userId: `1178403265419${String(i + 10)}`, name, email, linked }));
 
-/** The five calls the invite dialog makes, answered from this file. */
+// GET /auth/students/:id/accommodations carries the server's own catalogue.
+const SUPPORTS = [
+  { key: 'readAloud', label: 'Read aloud', detail: 'Adds a control that speaks the question and its choices, using the voice already on the phone. It never starts on its own - a room of phones talking at once would be worse than no support at all - and it can be stopped at any point.' },
+  { key: 'dyslexiaFont', label: 'Dyslexia-friendly text', detail: 'Switches to a plainer letterform and opens up the spacing between letters, words and lines. The spacing is the part with evidence behind it, and it works whether or not the phone has a specialist font installed.' },
+  { key: 'largerText', label: 'Larger text', detail: 'Raises the type size across the whole question screen. Every control grows with it rather than staying put and clipping, so a longer option is still readable and still tappable.' },
+  { key: 'highContrast', label: 'High contrast', detail: 'Deepens the background to black and lifts every piece of text and every border towards white. The six level colours keep their meaning - they are the taxonomy, not decoration.' },
+  { key: 'extraTime', label: 'Extra time to read the result', detail: 'BloomLoop does not put a countdown on a question, so there is no clock here to slow down. What it does slow down is the one thing that is timed: after an answer is marked, the phone moves on by itself in a couple of seconds. This gives that several times longer.' },
+  { key: 'noTimer', label: 'No timer at all', detail: 'Turns that automatic advance off completely. The next question comes when the student taps for it and not before, so nothing on screen is ever taken away mid-sentence.' },
+  { key: 'fewerChoices', label: 'Fewer answer choices', detail: 'Removes distractors from "choose one" and "choose all that apply" before the question leaves the server, so the options taken away are never sent to the phone at all. The correct answers always survive, and enough distractors are always kept that ticking everything still cannot pass.' },
+];
+
+/** The calls the invite dialog and the supports panel make, answered from this file. */
 function fakeServices({ classroom = 'connected' } = {}) {
   const codes = seeded(77);
   return {
@@ -397,17 +412,11 @@ function fakeServices({ classroom = 'connected' } = {}) {
       return { courses: [{ id: '681204417532', name: 'TY-CSF Computer Networks, Div A' }, { id: '681204417533', name: 'TY-CSF Operating Systems, Div A' }] };
     },
     classroomCourseStudents: async (courseId) => { await wait(600); return { courseId, students: GOOGLE_ROSTER }; },
-    // The supports list is the server's own (server/src/accommodations.js);
-    // two of the seven here are enough to see the panel.
+    // The supports list as the server sends it (server/src/accommodations.js):
+    // all seven, in its words, so the panel is judged at its real length.
     studentAccommodations: async () => {
       await wait(350);
-      return {
-        accommodations: { largerText: true },
-        supports: [
-          { key: 'readAloud', label: 'Read aloud', detail: 'Adds a control that speaks the question and its choices.' },
-          { key: 'largerText', label: 'Larger text', detail: 'Raises the type size across the whole question screen.' },
-        ],
-      };
+      return { accommodations: { largerText: true, noTimer: true }, supports: SUPPORTS };
     },
     setStudentAccommodations: async (_id, accommodations) => { await wait(300); return { accommodations }; },
   };
@@ -475,13 +484,36 @@ const roomsFor = (canControl) => {
   });
 };
 
+// GET /api/session/archives: newest first, without their data.
+const LIMIT_BYTES = 1024 * 1024;
+const ARCHIVES = [
+  ['Deadlocks', 3, 41_284],
+  ['Normalisation and keys: tutorial', 12, 318_906],
+  ['Unit II: Data link layer', 19, 742_515],
+  ['Trees and heaps', 33, 2_140],
+].map(([title, days, bytes], i) => {
+  const r = seeded(5100 + i);
+  return {
+    _id: uuid(r).replace(/-/g, '').slice(0, 24),
+    code: draw(r, ROOM_ALPHABET, 6),
+    title,
+    ownerId: ME,
+    archivedBy: ME,
+    archivedAt: daysAgo(days, 5 - i),
+    bytes,
+  };
+});
+
 /** The room list with the server's side of each action played out locally. */
-function RoomsDemo({ rooms: initial }) {
+function RoomsDemo({ rooms: initial, archives: initialArchives = ARCHIVES, archiveState = 'ok' }) {
   const [rooms, setRooms] = useState(initial);
   const [busy, setBusy] = useState(null);
   const [reading, setReading] = useState(false);
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
+  const [archives, setArchives] = useState(() => (archiveState === 'failed'
+    ? { loading: false, list: [], limitBytes: null, error: 'Failed to fetch' }
+    : { loading: archiveState === 'loading', list: archiveState === 'loading' ? [] : initialArchives, limitBytes: LIMIT_BYTES, error: '' }));
 
   async function act(room, action, change) {
     setBusy({ code: room.code, action });
@@ -516,15 +548,37 @@ function RoomsDemo({ rooms: initial }) {
       onResume={(room) => act(room, 'resume', () => patch(room.code, { status: 'open', pausedAt: null }))}
       onClose={(room) => act(room, 'close', () => patch(room.code, { status: 'closed', closedAt: new Date().toISOString(), online: 0 }))}
       onDelete={(room, typed) => act(room, 'delete', () => {
-        // The server's own check, and its own sentence when it fails.
+        // The server's own checks, and its own sentences when they fail.
         if (typed !== room.code) {
-          throw new Error(`Deleting ${room.code} also deletes every result recorded in it. Send ?confirm=${room.code} to go ahead.`);
+          throw new Error(`Deleting ${room.code} removes it from your rooms; what was recorded in it is kept as a JSON archive. Send ?confirm=${room.code} to go ahead.`);
+        }
+        // A room this size would not fit in one archive: 413, nothing deleted.
+        const bytes = Math.round(room.answered * 1700 + room.joined * 1000 + 2000);
+        if (bytes > LIMIT_BYTES) {
+          throw new Error(`${room.code} was not deleted: its archive would be ${(bytes / LIMIT_BYTES).toFixed(2)} MB, over the 1 MB limit. Nothing was changed. Export the results as CSV and close the room instead.`);
         }
         setRooms((list) => list.filter((r) => r.code !== room.code));
-        setNotice(`${room.code} is gone, and so are the ${room.joined} student result${room.joined === 1 ? '' : 's'} recorded in it.`);
+        setArchives((a) => ({
+          ...a,
+          list: [{ _id: `new${room.code}`, code: room.code, title: room.title, ownerId: ME, archivedBy: ME, archivedAt: new Date().toISOString(), bytes }, ...a.list],
+        }));
+        const kb = Math.max(1, Math.round(bytes / 1024));
+        setNotice(`${room.code} is deleted. Its ${room.joined} student result${room.joined === 1 ? ' was' : 's were'} saved first as a ${kb} KB JSON archive, listed under Deleted rooms.`);
       })}
+      archives={archives}
+      onReloadArchives={async () => {
+        setArchives((a) => ({ ...a, loading: true, error: '' }));
+        await wait(600);
+        setArchives({ loading: false, list: initialArchives, limitBytes: LIMIT_BYTES, error: '' });
+      }}
+      // The file is the server's to send; here the press only waits like one.
+      onDownload={() => wait(700)}
     />
   );
+}
+
+function OverviewLoading() {
+  return <OverviewView loading data={null} details={{}} services={fakeServices()} />;
 }
 
 /* ------------------------------------------------------------------ entries */
@@ -534,8 +588,13 @@ export default [
   { id: 'dash-department-empty', title: 'Department, no professors yet', role: 'hod', render: () => <DepartmentDemo data={HOD_EMPTY} /> },
   { id: 'dash-overview', title: 'Overview', role: 'professor', render: () => <OverviewDemo data={PROFESSOR} /> },
   { id: 'dash-overview-empty', title: 'Overview, nothing yet', role: 'professor', render: () => <OverviewDemo data={PROFESSOR_EMPTY} classroom="off" /> },
+  { id: 'dash-overview-loading', title: 'Overview, first read', role: 'professor', render: () => <OverviewLoading /> },
+  { id: 'dash-department-loading', title: 'Department, first read', role: 'hod', render: () => <DepartmentView loading data={null} /> },
   { id: 'dash-rooms', title: 'Rooms', role: 'professor', render: () => <RoomsDemo rooms={roomsFor(true)} /> },
-  { id: 'dash-rooms-empty', title: 'Rooms, none yet', role: 'professor', render: () => <RoomsDemo rooms={[]} /> },
+  { id: 'dash-rooms-empty', title: 'Rooms, none yet', role: 'professor', render: () => <RoomsDemo rooms={[]} archives={[]} /> },
   { id: 'dash-rooms-hod', title: 'Rooms, read only for a head of department', role: 'hod', render: () => <RoomsDemo rooms={roomsFor(false)} /> },
-  { id: 'dash-rooms-key', title: 'Rooms, shared teacher key', render: () => <RoomsDemo rooms={roomsFor(true).slice(0, 5)} /> },
+  { id: 'dash-rooms-key', title: 'Rooms, shared teacher key', render: () => <RoomsDemo rooms={roomsFor(true).slice(0, 5)} archives={[]} /> },
+  { id: 'dash-rooms-archives-loading', title: 'Rooms, deleted rooms still loading', role: 'professor', render: () => <RoomsDemo rooms={roomsFor(true).slice(0, 4)} archiveState="loading" /> },
+  { id: 'dash-rooms-archives-failed', title: 'Rooms, deleted rooms did not load', role: 'professor', render: () => <RoomsDemo rooms={roomsFor(true).slice(0, 4)} archiveState="failed" /> },
+  { id: 'dash-rooms-loading', title: 'Rooms, first read', role: 'professor', render: () => <RoomsView loading /> },
 ];

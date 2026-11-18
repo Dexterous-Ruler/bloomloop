@@ -118,6 +118,34 @@ const withKey = await new Promise((resolve) => {
 });
 check('watch WITH the teacher key still works', withKey.outcome === 'grid', `${withKey.outcome}, ${withKey.rows} rows`);
 
+// A phone may only answer this room's questions. Any question id used to be
+// accepted, so a student in one room could answer another professor's question
+// and be sent its key as the solution, and its snapshot - rubric and all - was
+// then stored in this room's evidence for this room's owner to read.
+console.log('\nstudent:answer — a question from another room\'s content');
+if (owned) {
+  const phone = ioClient(base, { transports: ['websocket'] });
+  await new Promise((r) => phone.once('connect', r));
+  const served = new Promise((r) => phone.once('server:question', r));
+  phone.emit('student:join', { code, rollNo: 'SEC-PROBE', name: 'Probe' });
+  await served;
+  const [foreign] = await repo.listQuestions(owned.contentId);
+  const reply = await new Promise((resolve) => {
+    const t = setTimeout(() => resolve({ outcome: 'silence' }), 3000);
+    phone.once('server:result', (p) => { clearTimeout(t); resolve({ outcome: 'RESULT', solution: p.solution }); });
+    phone.once('server:question', () => { clearTimeout(t); resolve({ outcome: 'moved on' }); });
+    phone.emit('student:answer', { questionId: String(foreign._id), response: 0, answerId: 'sec-probe-0001' });
+  });
+  const unowned = sessions.find((s) => s.code === code);
+  const stored = await repo.listAnswers({ sessionId: unowned._id, rollNo: 'SEC-PROBE' });
+  check('it is not marked and its key is not sent', reply.outcome === 'moved on',
+    `${reply.outcome}${reply.solution !== undefined ? `, solution ${JSON.stringify(reply.solution)}` : ''}`);
+  check('and nothing of it is stored in this room', stored.length === 0, `${stored.length} row(s)`);
+  phone.close();
+} else {
+  console.log('  SKIP  no account-owned session exists to take a foreign question from');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 sock.close(); io.close(); server.close(); await closeStore();
 process.exit(fail ? 1 : 0);

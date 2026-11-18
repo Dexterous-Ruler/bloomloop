@@ -25,13 +25,14 @@ import {
 } from '../services/mastery.js';
 import { summarise, HONESTY } from '../services/integrity.js';
 import { ARCHIVE_LIMIT_BYTES, buildRoomArchive } from '../services/archive.js';
+import { answerItem, pageFrom, rollKey, roomTopics } from '../services/evidence.js';
 import { isRecordId } from '../ids.js';
 // The v2 guard, not the v1 key-only one: a professor who signed in properly
 // carries a bearer token and no shared key, and the v1 guard 401s her out of
 // the console she was just routed to.
 import { requireTeacher } from '../auth.js';
 import { assertCanRead, assertCanWrite, canWrite, readable } from '../ownership.js';
-import { isOnline, releaseSession } from '../sockets/index.js';
+import { isOnline, releaseSession, holdRoomForDelete } from '../sockets/index.js';
 
 const router = express.Router();
 
@@ -296,6 +297,77 @@ router.get('/:code/grid', requireTeacher, async (req, res, next) => {
 });
 
 /**
+ * A room this viewer may read, by code. "No such code" and "not a room you may
+ * read" are one 404 with one message, so a code cannot be probed by comparing
+ * replies (requireSession names the code, which is why it is not used here).
+ */
+async function readableRoom(rawCode, viewer) {
+  const code = String(rawCode ?? '').trim().toUpperCase();
+  const session = code ? await getRepo().getSessionByCode(code) : null;
+  return assertCanRead(viewer, session, 'That room');
+}
+
+/*
+ * The room's evidence, for teachers. Both routes are two segments deep, so
+ * GET /:code (one segment, and open to students) can never answer them; and a
+ * room code is six characters, so it can never be "archives" and fall into
+ * /archives/:id, which is declared earlier.
+ */
+
+/**
+ * Every stored attempt in the room, newest first, one page, each with the full
+ * snapshot (answer key included) and the machine's reading beside the mark in
+ * force. Final answers, retried attempts and polls alike: this is the record,
+ * not a report. ?rollNo= narrows to one student, matched as the room stored it.
+ */
+router.get('/:code/answers', requireTeacher, async (req, res, next) => {
+  try {
+    const session = await readableRoom(req.params.code, req.viewer);
+    const { limit, offset } = pageFrom(req.query);
+    const rollNo = rollKey(req.query.rollNo);
+
+    const repo = getRepo();
+    const rows = await repo.listAnswers({
+      sessionId: session._id,
+      ...(rollNo ? { rollNo } : {}),
+      order: 'desc',
+      limit: limit + 1,
+      offset,
+    });
+    const names = new Map((await repo.listProfiles(session._id)).map((p) => [String(p.rollNo), p.name ?? '']));
+
+    res.json({
+      room: { code: session.code, title: session.title ?? '', startedAt: session.startedAt ?? null, status: session.status },
+      rollNo: rollNo || null,
+      items: rows.slice(0, limit).map((a) => answerItem(a, session, { name: names.get(String(a.rollNo)) ?? '' })),
+      limit,
+      offset,
+      hasMore: rows.length > limit,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Per topic, per level: seen, correct and accuracy, and how many students each
+ * topic covers. Final, graded answers only. A room run before the evidence store
+ * existed is read from its profiles' history instead, and `source` says which
+ * was used (services/evidence.js topicReport).
+ */
+router.get('/:code/topics', requireTeacher, async (req, res, next) => {
+  try {
+    const session = await readableRoom(req.params.code, req.viewer);
+    res.json({
+      room: { code: session.code, title: session.title ?? '', startedAt: session.startedAt ?? null, status: session.status },
+      ...(await roomTopics(getRepo(), session)),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * Every room this viewer may see, newest first, for the management screen.
  *
  * Mounted at GET /api/session, which used to be nothing: rooms could be opened
@@ -427,19 +499,31 @@ router.delete('/:code', requireTeacher, async (req, res, next) => {
     }
 
     const repo = getRepo();
-    const profiles = await repo.listProfiles(session._id);
-    // Archive first. A failure here throws before anything is deleted.
-    const { doc, bytes } = await buildRoomArchive(repo, session, { archivedBy: req.viewer?.id ?? null });
-    if (bytes > ARCHIVE_LIMIT_BYTES) {
-      throw fail(
-        `${session.code} was not deleted: its archive would be ${(bytes / (1024 * 1024)).toFixed(2)} MB, over the 1 MB limit. `
-          + 'Nothing was changed. Export the results as CSV and close the room instead.',
-        413,
-      );
+    // Nothing may be written into the room between the archive reading it and
+    // the delete removing it: a review or an answer landing there was answered
+    // as saved and then lost for good. Held from here until the room is gone.
+    let profiles = [];
+    const lift = await holdRoomForDelete(session._id, async () => {
+      profiles = await repo.listProfiles(session._id);
+      return profiles.map((p) => p.rollNo);
+    });
+    let archive;
+    try {
+      // Archive first. A failure here throws before anything is deleted.
+      const { doc, bytes } = await buildRoomArchive(repo, session, { archivedBy: req.viewer?.id ?? null });
+      if (bytes > ARCHIVE_LIMIT_BYTES) {
+        throw fail(
+          `${session.code} was not deleted: its archive would be ${(bytes / (1024 * 1024)).toFixed(2)} MB, over the 1 MB limit. `
+            + 'Nothing was changed. Export the results as CSV and close the room instead.',
+          413,
+        );
+      }
+      archive = await repo.saveRoomArchive(doc);
+      await repo.deleteSession(session._id);
+      releaseSession({ sessionId: session._id, code: session.code });
+    } finally {
+      lift();
     }
-    const archive = await repo.saveRoomArchive(doc);
-    await repo.deleteSession(session._id);
-    releaseSession({ sessionId: session._id, code: session.code });
 
     const io = req.app.get('io');
     if (io) io.to(`session:${session.code}`).emit('session:closed', {});

@@ -19,6 +19,9 @@ import { getRepo } from '../repo/index.js';
 import { scopeFor } from '../auth.js';
 import { listBelow, getAccount } from './accounts.js';
 import { hydrate, overallAccuracy, isSlowLearner, totals, MIN_EVIDENCE } from './mastery.js';
+import {
+  allAnswers, topicReport, listStudentAnswers, pageFrom, levelFrom, rollKey,
+} from './evidence.js';
 
 const deny = (message, status) => Object.assign(new Error(message), { status });
 
@@ -80,9 +83,11 @@ async function sessionsFor(ownerIds, { includeUnowned = false } = {}) {
 /** Per-topic accuracy, mined from the answer history rather than stored. */
 function topicBreakdown(rows) {
   const byTopic = new Map();
-  for (const { topic, correct } of rows) {
+  for (const { topic, correct, ungraded } of rows) {
     const key = String(topic ?? '').trim();
-    if (!key) continue;
+    // A poll's entry is in the history so it is not served twice. It carries no
+    // mark, and counted here it would read as a wrong answer on that topic.
+    if (!key || ungraded) continue;
     const cell = byTopic.get(key) ?? { topic: key, seen: 0, correct: 0 };
     cell.seen += 1;
     if (correct) cell.correct += 1;
@@ -202,17 +207,39 @@ async function professorAnalytics(subject, viewer) {
 
 /* ------------------------------------------------------------ one student -- */
 
+/**
+ * The rooms a student's results may be read from, and who the student is in them.
+ *
+ * Only rooms run by whoever this student reports to. A student must never be
+ * able to reach another class's sessions by sitting on these endpoints, and an
+ * HOD reading a professor's student gets the same scoped view. Shared by the
+ * analytics and the answer list, so the two can never cover different rooms.
+ */
+async function studentScope(subject, viewer) {
+  const account = subject.id ? await getAccount(subject.id) : null;
+  const ownerId = account?.reportsTo ?? viewer?.id ?? null;
+  return {
+    rooms: ownerId ? await sessionsFor([ownerId]) : [],
+    student: { accountId: subject.id ?? null, rollNo: rollKey(subject.rollNo) || null },
+  };
+}
+
 async function studentAnalytics(subject, viewer) {
   const repo = getRepo();
-  const rollNo = String(subject.rollNo ?? '').trim();
+  const shownRoll = String(subject.rollNo ?? '').trim();
+  // Compared the way the room stored it. An account's roll number is typed by a
+  // person; the room's was normalised on join, so '21cs 01' must find '21CS 01'.
+  const rollNo = rollKey(subject.rollNo);
 
   const base = {
     kind: 'student',
-    subject: { id: subject.id, name: subject.name, code: subject.code, rollNo: rollNo || null },
+    subject: { id: subject.id, name: subject.name, code: subject.code, rollNo: shownRoll || null },
     counts: { sessions: 0, answered: 0, correct: 0, accuracy: null },
     bloom: levelReport(emptyLevels()),
     best: null, weakest: null, confident: false,
     topics: [],
+    // Per topic x per level, from the answers store, saying which source it used.
+    topicLevels: topicReport(),
     timeline: [],
   };
 
@@ -223,22 +250,17 @@ async function studentAnalytics(subject, viewer) {
     return base;
   }
 
-  // Only rooms run by whoever this student reports to. A student must never be
-  // able to reach another class's sessions by sitting on this endpoint, and an
-  // HOD reading a professor's student gets the same scoped view.
-  const account = subject.id ? await getAccount(subject.id) : null;
-  const ownerId = account?.reportsTo ?? viewer?.id ?? null;
-  const sessions = ownerId ? await sessionsFor([ownerId]) : [];
+  const { rooms: sessions, student } = await studentScope(subject, viewer);
 
   const tally = emptyLevels();
-  const history = [];
+  const profiles = [];
 
   for (const session of sessions) {
     const raw = await repo.getProfile(session._id, rollNo);
     if (!raw) continue;
     const profile = hydrate(raw);
     fold(tally, profile);
-    history.push(...(profile.history ?? []));
+    profiles.push(profile);
 
     const t = totals(profile);
     base.timeline.push({
@@ -265,7 +287,19 @@ async function studentAnalytics(subject, viewer) {
   const report = levelReport(tally);
   base.bloom = report;
   Object.assign(base, extremes(report));
-  base.topics = topicBreakdown(history).slice(0, 12);
+
+  // Topics are mined from the evidence store: final, graded answers in these
+  // rooms, matched by account or roll number, with the profile history standing
+  // in for attempts older than the store (services/evidence.js).
+  const answers = sessions.length
+    ? await allAnswers(repo, { sessionIds: sessions.map((s) => String(s._id)), student, final: true })
+    : [];
+  base.topicLevels = topicReport({ answers, profiles });
+  // The original list keeps its shape, and is read off the same rows so the two
+  // can never disagree.
+  base.topics = base.topicLevels.topics
+    .slice(0, 12)
+    .map(({ topic, seen, correct, accuracy }) => ({ topic, seen, correct, accuracy }));
   base.currentLevel = base.timeline.length ? base.timeline[base.timeline.length - 1].workingLevel : null;
   return base;
 }
@@ -312,4 +346,49 @@ export async function analyticsFor(viewer, subjectId) {
   return subject.kind === 'professor'
     ? professorAnalytics(subject, viewer)
     : studentAnalytics(subject, viewer);
+}
+
+/**
+ * One student's actual answers across the rooms analytics reads them in, newest
+ * first, one page: the question as they saw it, what they wrote or picked, the
+ * mark in force and any review.
+ *
+ * The subject list is the authorization, exactly as in analyticsFor: a professor
+ * reaches their own students, a student reaches themself, and anyone else is the
+ * same 404 as an id that does not exist. An HOD's list holds professors, not
+ * students, so an HOD reaches no student here.
+ *
+ * A student gets every answer redacted (evidence.js redactForStudent): their
+ * response, the mark and the review, never the key, the rubric or the machine's
+ * own reading. And only the answers linked to their account: an unlinked row
+ * under their roll number may have been typed by anyone (listStudentAnswers). A
+ * professor gets the full snapshot, matched by account or unlinked roll number.
+ */
+export async function answersFor(viewer, subjectId, query = {}) {
+  const subjects = await subjectsFor(viewer);
+  const subject = subjects.find((s) => String(s.id) === String(subjectId));
+  if (!subject) throw deny('No such person, or not one you can see.', 404);
+  // Visible, so a 400 tells the caller nothing they could not already see.
+  if (subject.kind !== 'student') throw deny('Answers are listed per student. Open one of this professor\'s students.', 400);
+
+  const { limit, offset } = pageFrom(query);
+  const level = levelFrom(query.level);
+  const topic = String(query.topic ?? '').trim();
+  const code = String(query.code ?? '').trim().toUpperCase();
+  const view = viewer?.role === 'student' ? 'student' : 'teacher';
+
+  const { rooms, student } = await studentScope(subject, viewer);
+  const { items, hasMore } = await listStudentAnswers(getRepo(), {
+    rooms, student, topic, level, code, limit, offset, view,
+  });
+
+  return {
+    subject: { id: subject.id, name: subject.name, code: subject.code, rollNo: subject.rollNo ?? null },
+    view,
+    filters: { topic: topic || null, level: level || null, code: code || null },
+    items,
+    limit,
+    offset,
+    hasMore,
+  };
 }

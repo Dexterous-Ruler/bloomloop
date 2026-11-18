@@ -1,7 +1,7 @@
 // MongoDB Atlas / Mongoose implementation. This is the documented primary
 // store (report section 5.6). memoryRepo is the fallback with the same surface.
 
-import { Content, Question, Session, Profile, Answer, RoomArchive } from '../models/index.js';
+import { Content, Question, Session, Profile, Answer, RoomArchive, AnswerReview } from '../models/index.js';
 
 const lean = (d) => (d ? JSON.parse(JSON.stringify(d)) : null);
 
@@ -59,6 +59,7 @@ export function createMongoRepo() {
     async deleteSession(id) {
       // Mongo has no cascade, so the profiles go first - the other way round
       // would leave them unreachable if the second call failed.
+      await AnswerReview.deleteMany({ sessionId: String(id) });
       await Answer.deleteMany({ sessionId: id });
       await Profile.deleteMany({ sessionId: id });
       await Session.findByIdAndDelete(id);
@@ -109,14 +110,41 @@ export function createMongoRepo() {
     async getAnswer(id) {
       return lean(await Answer.findById(id).lean());
     },
-    async listAnswers({ sessionId, sessionIds, rollNo, accountId, reviewStatus, limit = 2000, offset = 0 } = {}) {
+    // `student` and `before`: see memoryRepo. `accountId: null` also matches a missing field.
+    async listAnswers({
+      sessionId, sessionIds, rollNo, accountId, student, topic, bloom, reviewStatus, kind, final, before,
+      order = 'asc', limit = 2000, offset = 0,
+    } = {}) {
       const q = {};
       if (sessionId) q.sessionId = sessionId;
       if (Array.isArray(sessionIds)) q.sessionId = { $in: sessionIds };
       if (rollNo) q.rollNo = String(rollNo);
       if (accountId) q.accountId = accountId;
+      const anyOf = [];
+      if (student) {
+        const either = [];
+        if (student.accountId) either.push({ accountId: String(student.accountId) });
+        if (student.rollNo) either.push({ rollNo: String(student.rollNo), accountId: null });
+        if (!either.length) return [];
+        anyOf.push(either);
+      }
+      if (before) {
+        anyOf.push([
+          { answeredAt: { $lt: String(before.answeredAt) } },
+          { answeredAt: String(before.answeredAt), _id: { $lt: String(before.id) } },
+        ]);
+      }
+      // One $or as it stands; two have to be ANDed, since a second $or key would
+      // replace the first.
+      if (anyOf.length === 1) q.$or = anyOf[0];
+      else if (anyOf.length > 1) q.$and = anyOf.map((either) => ({ $or: either }));
+      if (topic) q.topic = topic;
+      if (bloom) q.bloom = bloom;
       if (reviewStatus) q.reviewStatus = reviewStatus;
-      return lean(await Answer.find(q).sort({ answeredAt: 1, _id: 1 }).skip(offset).limit(limit).lean());
+      if (kind) q.kind = kind;
+      if (final !== undefined) q.final = final === true;
+      const dir = order === 'desc' ? -1 : 1;
+      return lean(await Answer.find(q).sort({ answeredAt: dir, _id: dir }).skip(offset).limit(limit).lean());
     },
     // -- room archives (see memoryRepo for the contract) --
     async saveRoomArchive(doc) {
@@ -137,6 +165,18 @@ export function createMongoRepo() {
       const allowed = ['correct', 'score', 'reviewStatus', 'reviewedBy', 'reviewedAt', 'reviewNote', 'final'];
       const set = Object.fromEntries(Object.entries(patch).filter(([k, v]) => allowed.includes(k) && v !== undefined));
       return lean(await Answer.findByIdAndUpdate(id, { $set: set }, { new: true }).lean());
+    },
+    // -- answer reviews (append-only; see memoryRepo for the contract) --
+    async addAnswerReview(doc) {
+      return lean(await AnswerReview.create({
+        ...doc, answerId: String(doc.answerId), sessionId: String(doc.sessionId),
+      }));
+    },
+    async listAnswerReviews({ answerId, sessionId } = {}) {
+      const q = {};
+      if (answerId) q.answerId = String(answerId);
+      if (sessionId) q.sessionId = String(sessionId);
+      return lean(await AnswerReview.find(q).sort({ reviewedAt: 1, _id: 1 }).lean()) ?? [];
     },
   };
 }

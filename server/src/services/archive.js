@@ -18,6 +18,9 @@
  *              (`s`) instead of repeating the roll number.
  *   history    a history entry points at the answer it records (`a`), so the
  *              fields the two share are not stored twice.
+ *   reviews    each professor decision from answer_reviews points at the answer
+ *              it was made on (`a`). Added after v1 shipped; an archive without
+ *              this table simply had no reviews, so the version is unchanged.
  *   times      milliseconds after `timeBase`, not ISO strings.
  *
  * A field is only ever left out of a table as a whole column, and only when
@@ -35,7 +38,8 @@ const PAGE = 1000;
 
 const ANSWER_TIMES = ['servedAt', 'answeredAt', 'reviewedAt'];
 const HISTORY_TIMES = ['at'];
-const TIME_FIELDS = new Set([...ANSWER_TIMES, ...HISTORY_TIMES]);
+const REVIEW_TIMES = ['reviewedAt'];
+const TIME_FIELDS = new Set([...ANSWER_TIMES, ...HISTORY_TIMES, ...REVIEW_TIMES]);
 
 // What an answer row can rebuild from the question it points at.
 const FROM_QUESTION = {
@@ -140,7 +144,11 @@ async function allAnswers(repo, sessionId) {
  */
 export async function buildRoomArchive(repo, session, { archivedBy = null, now = new Date() } = {}) {
   const sessionId = session._id;
-  const [profiles, answers] = await Promise.all([repo.listProfiles(sessionId), allAnswers(repo, sessionId)]);
+  const [profiles, answers, reviews] = await Promise.all([
+    repo.listProfiles(sessionId),
+    allAnswers(repo, sessionId),
+    repo.listAnswerReviews({ sessionId }),
+  ]);
 
   const started = Date.parse(session.startedAt);
   const timeBase = Number.isFinite(started) ? started : now.getTime();
@@ -206,6 +214,16 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
     ...dropDerivable(historyRows, { rollNo: (st) => st.rollNo }, (r) => profiles[r.s]),
   ];
 
+  // -------------------------------------------------------------- reviews --
+  // Every professor decision, oldest first. The answer row already carries the
+  // decision in force; these keep the ones before it. Not kept: the row id and
+  // session id (the archive's own), and the answer id, replaced by its position.
+  const answerIndex = new Map(answers.map((a, i) => [String(a._id), i]));
+  const reviewRows = reviews.map(({ _id, sessionId: _s, answerId, ...rest }) => ({
+    ...rest,
+    a: answerIndex.get(String(answerId)) ?? null,
+  }));
+
   const data = {
     format: ARCHIVE_FORMAT,
     version: ARCHIVE_VERSION,
@@ -228,12 +246,13 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
         redemption: session.redemption,
       },
     },
-    counts: { students: profiles.length, answers: answers.length, history: historyRows.length },
+    counts: { students: profiles.length, answers: answers.length, history: historyRows.length, reviews: reviews.length },
     derived: { answers: answerDerived, history: historyDerived },
     questions,
     students: toTable(studentRows),
     history: toTable(historyRows.map((h) => withTimes(h, HISTORY_TIMES, (v) => toOffset(v, timeBase)))),
     answers: toTable(answerRows.map((a) => withTimes(a, ANSWER_TIMES, (v) => toOffset(v, timeBase)))),
+    reviews: toTable(reviewRows.map((r) => withTimes(r, REVIEW_TIMES, (v) => toOffset(v, timeBase)))),
   };
 
   const json = JSON.stringify(data);
@@ -289,5 +308,12 @@ export function decodeRoomArchive(data) {
     ...st,
     history: history.filter((h) => h.rollNo === st.rollNo).map(({ rollNo, ...h }) => h),
   }));
-  return { room: data.room, students, answers };
+
+  // An archive written before reviews existed has no table: no reviews.
+  // answerKey is the answer's handle here, since archived answers keep no id.
+  const reviews = fromTable(data.reviews).map((row) => {
+    const { a, ...rest } = withTimes(row, REVIEW_TIMES, (v) => fromOffset(v, base));
+    return { ...rest, answerKey: answers[a]?.answerKey ?? null };
+  });
+  return { room: data.room, students, answers, reviews };
 }

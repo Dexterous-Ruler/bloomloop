@@ -3,25 +3,25 @@ export default function Waiting() {
   return (
     <div className="app" aria-busy="true">
       <aside className="rail" aria-hidden="true">
-        <div className="cluster cluster-3" style={{ padding: '0 8px' }}>
-          <span className="mark-tile" />
-          <div className="skel" style={{ height: 16, width: 110, background: 'var(--side-cur)' }} />
-        </div>
-        <div className="stack stack-2" style={{ padding: '0 4px' }}>
-          {[0, 1, 2, 3, 4].map((i) => <div key={i} className="skel" style={{ height: 38, borderRadius: 12, background: 'var(--side-hover)' }} />)}
+        <div className="rail-top"><span className="mark-tile" /></div>
+        <div className="rail-scroll stack stack-2">
+          {[0, 1, 2, 3, 4].map((i) => <div key={i} style={{ height: 30, borderRadius: 7, background: 'rgba(255,255,255,0.05)' }} />)}
         </div>
       </aside>
       <div className="main">
-        <div className="bar" aria-hidden="true"><span className="mark-tile" /></div>
-        <div className="page">
-          <div className="stack stack-2">
-            <div className="skel" style={{ height: 14, width: 140 }} />
-            <div className="skel" style={{ height: 32, width: 320, maxWidth: '100%' }} />
-          </div>
-          <div className="skel" style={{ height: 200, borderRadius: 'var(--r-5)' }} />
-          <div className="grid-2">
-            <div className="skel" style={{ height: 260, borderRadius: 'var(--r-4)' }} />
-            <div className="skel" style={{ height: 260, borderRadius: 'var(--r-4)' }} />
+        <div className="top" aria-hidden="true"><div className="skel" style={{ height: 36, width: 360, maxWidth: '60%', borderRadius: 10 }} /></div>
+        <div className="scroll">
+          <div className="page">
+            <div className="stack stack-2">
+              <div className="skel" style={{ height: 12, width: 160 }} />
+              <div className="skel" style={{ height: 30, width: 300, maxWidth: '100%' }} />
+              <div className="skel" style={{ height: 14, width: 420, maxWidth: '100%' }} />
+            </div>
+            <div className="skel" style={{ height: 240, borderRadius: 16 }} />
+            <div className="grid-2">
+              <div className="skel" style={{ height: 280, borderRadius: 14 }} />
+              <div className="skel" style={{ height: 280, borderRadius: 14 }} />
+            </div>
           </div>
         </div>
       </div>

@@ -123,7 +123,7 @@ function Issued({ batch, foot, again, onAgain, onDone }) {
         <h4>
           {plural(issued.length, 'invite')} issued{refused.length > 0 && `, ${refused.length} refused`}
         </h4>
-        <Button size="sm" className="dash-tap" icon={copied === 'Copied' ? 'check' : 'copy'} disabled={issued.length === 0} onClick={copyAll}>
+        <Button size="sm" className="ac-tap" icon={copied === 'Copied' ? 'check' : 'copy'} disabled={issued.length === 0} onClick={copyAll}>
           <span aria-live="polite">{copied || 'Copy the list'}</span>
         </Button>
       </div>
@@ -131,14 +131,14 @@ function Issued({ batch, foot, again, onAgain, onDone }) {
       {issued.length > 0 && (
         <>
           <Note>These codes are shown once. Nothing lists them again, so copy them before you close this.</Note>
-          <ul className="rows dash-box">
+          <ul className="rows ac-box">
             {issued.map((b) => (
               <li key={b.key} className="rw">
                 <span className="rw-main">
-                  <span className="strong clip dash-block">{b.name || 'Unnamed student'}</span>
+                  <span className="strong clip ac-block">{b.name || 'Unnamed student'}</span>
                   <span className="t-meta mono">{b.rollNo ? `Roll ${b.rollNo}` : 'No roll number'}</span>
                 </span>
-                <span className="mono strong dash-all">{b.code}</span>
+                <span className="mono strong ac-all">{b.code}</span>
               </li>
             ))}
           </ul>
@@ -302,7 +302,7 @@ function Several({ services, foot, onBusy, onDone }) {
       >
         <textarea
           id="dash-many-text"
-          className="textarea dash-paste"
+          className="textarea ac-paste"
           rows={6}
           spellCheck={false}
           placeholder={'21CS047, Anita Rao, anita@college.edu\n21CS048, Dev Malhotra\n21CS049'}
@@ -316,7 +316,7 @@ function Several({ services, foot, onBusy, onDone }) {
           is seen here and not on forty invites. */}
       {rows.length > 0 && (
         <>
-          <div className="dash-box dash-scroll">
+          <div className="ac-box ac-scroll">
             <table className="tbl">
               <thead><tr><th>Roll number</th><th>Name</th><th>Email</th></tr></thead>
               <tbody>
@@ -615,10 +615,10 @@ function Classroom({ services, foot, onBusy, onDone }) {
                 {` · ${chosen.length} ticked`}
               </span>
               <span className="cluster">
-                <Button size="sm" className="dash-tap" disabled={importable.length === 0 || Boolean(progress)} onClick={toggleAll}>
+                <Button size="sm" className="ac-tap" disabled={importable.length === 0 || Boolean(progress)} onClick={toggleAll}>
                   {allOn ? 'Untick everyone' : 'Tick everyone'}
                 </Button>
-                <Button size="sm" className="dash-tap" icon="key" disabled={importable.length === 0 || Boolean(progress)} onClick={fillRolls}>
+                <Button size="sm" className="ac-tap" icon="key" disabled={importable.length === 0 || Boolean(progress)} onClick={fillRolls}>
                   Fill roll numbers from email
                 </Button>
               </span>
@@ -631,11 +631,11 @@ function Classroom({ services, foot, onBusy, onDone }) {
               </Note>
             )}
 
-            <ul className="dash-box dash-scroll dash-picks">
+            <ul className="ac-box ac-scroll ac-picks">
               {students.map((s) => {
                 const pick = picks[s.userId] ?? { on: false, rollNo: '' };
                 return (
-                  <li key={s.userId} className="dash-pick" data-off={s.linked ? 'true' : undefined}>
+                  <li key={s.userId} className="ac-pick" data-off={s.linked ? 'true' : undefined}>
                     <label>
                       <input
                         type="checkbox"
@@ -645,7 +645,7 @@ function Classroom({ services, foot, onBusy, onDone }) {
                         onChange={(e) => setPick(s.userId, { on: e.target.checked })}
                       />
                       <Tick on={pick.on} />
-                      <span className="dash-who-txt">
+                      <span className="ac-who">
                         <span className="strong clip">{s.name || 'Unnamed student'}</span>
                         <span className="t-meta clip">{s.email || 'Google gave no address for them'}</span>
                       </span>
@@ -707,10 +707,10 @@ export default function InviteStudents({ open, onOpenChange, services }) {
       locked={busy}
       title="Invite students"
       description="Each invite is a single-use code. The student enters it when they sign up, and the account it creates reports to you."
-      footer={<div ref={setFoot} className="dash-acts" />}
+      footer={<div ref={setFoot} className="ac-acts" />}
     >
       <div className="stack">
-        <div className="dash-segbox">
+        <div className="ac-segbox">
           <Segmented
             label="How to invite"
             value={way}

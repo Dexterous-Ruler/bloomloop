@@ -21,6 +21,12 @@ const fail = (op) => (error) => {
 };
 
 /** Throw on a Postgres error, otherwise hand back the rows. */
+// Every Supabase id is a uuid. isRecordId() above the repository also accepts a
+// 24-character ObjectId (the in-process and Mongo stores' shape), and Postgres
+// answers such an id with a cast error - a 500 for what is simply "not found".
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (id) => UUID_RE.test(String(id ?? '').trim());
+
 function unwrap(op, { data, error }) {
   if (error) fail(op)(error);
   return data;
@@ -195,6 +201,21 @@ const outArchive = (r) =>
   };
 const ARCHIVE_META = 'id, session_id, code, title, owner_id, archived_by, archived_at, bytes';
 
+/** One professor decision on an answer. Append-only: written once, never updated. */
+const outReview = (r) =>
+  r && {
+    _id: r.id,
+    answerId: r.answer_id,
+    sessionId: r.session_id,
+    decision: r.decision,
+    correct: r.correct,
+    // numeric comes back from PostgREST as a string; see outSession.
+    score: Number(r.score),
+    note: r.note ?? '',
+    reviewedBy: r.reviewed_by ?? null,
+    reviewedAt: r.reviewed_at,
+  };
+
 const inAnswer = (d) => ({
   session_id: d.sessionId,
   answer_key: d.answerKey,
@@ -233,6 +254,13 @@ function pick(patch, map) {
   return out;
 }
 
+/**
+ * One value inside a PostgREST `or=(...)` filter. Double quotes make the
+ * reserved characters (, . : ( )) literal; a quote or backslash inside the value
+ * is escaped with a backslash, which is the grammar's own escape.
+ */
+const postgrestQuote = (value) => `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+
 // ------------------------------------------------------------------- repo --
 
 export function createSupabaseRepo() {
@@ -254,6 +282,7 @@ export function createSupabaseRepo() {
     },
 
     async getContent(id) {
+      if (!isUuid(id)) return null;
       const { data, error } = await db.from('contents').select('*').eq('id', id).maybeSingle();
       if (error) fail('getContent')(error);
       return outContent(data);
@@ -302,6 +331,7 @@ export function createSupabaseRepo() {
     },
 
     async getQuestion(id) {
+      if (!isUuid(id)) return null;
       const { data, error } = await db.from('questions').select('*').eq('id', id).maybeSingle();
       if (error) fail('getQuestion')(error);
       return outQuestion(data);
@@ -376,6 +406,7 @@ export function createSupabaseRepo() {
     },
 
     async getSession(id) {
+      if (!isUuid(id)) return null;
       const { data, error } = await db.from('sessions').select('*').eq('id', id).maybeSingle();
       if (error) fail('getSession')(error);
       return outSession(data);
@@ -503,25 +534,54 @@ export function createSupabaseRepo() {
     },
 
     async getAnswer(id) {
+      if (!isUuid(id)) return null;
       const { data, error } = await db.from('answers').select('*').eq('id', id).maybeSingle();
       if (error) fail('getAnswer')(error);
       return outAnswer(data);
     },
 
-    /** Oldest first. Filters are ANDed; at least one is expected. */
-    async listAnswers({ sessionId, sessionIds, rollNo, accountId, reviewStatus, limit = 2000, offset = 0 } = {}) {
+    /**
+     * Oldest first, or newest first with `order: 'desc'`. Filters are ANDed; at least one is expected.
+     * `student`: see memoryRepo - account_id = theirs, or their roll number with no account.
+     * `before`: see memoryRepo - a page cursor in (answered_at, id) order.
+     */
+    async listAnswers({
+      sessionId, sessionIds, rollNo, accountId, student, topic, bloom, reviewStatus, kind, final, before,
+      order = 'asc', limit = 2000, offset = 0,
+    } = {}) {
       let q = db.from('answers').select('*');
       if (sessionId) q = q.eq('session_id', sessionId);
       if (Array.isArray(sessionIds)) q = q.in('session_id', sessionIds.length ? sessionIds : ['00000000-0000-0000-0000-000000000000']);
       if (rollNo) q = q.eq('roll_no', String(rollNo));
       if (accountId) q = q.eq('account_id', accountId);
+      if (student) {
+        // A PostgREST `or` filter is one string, so both values are quoted: a roll
+        // number may hold '.', which the filter grammar reserves.
+        const either = [];
+        if (student.accountId) either.push(`account_id.eq.${postgrestQuote(student.accountId)}`);
+        if (student.rollNo) either.push(`and(roll_no.eq.${postgrestQuote(student.rollNo)},account_id.is.null)`);
+        if (!either.length) return [];
+        q = q.or(either.join(','));
+      }
+      if (before) {
+        // Sent as a second `or` parameter when `student` is also given; PostgREST
+        // ANDs separate filters. No caller combines the two today (the queue
+        // pages with `before`, the student lister with offset).
+        const at = postgrestQuote(before.answeredAt);
+        q = q.or(`answered_at.lt.${at},and(answered_at.eq.${at},id.lt.${postgrestQuote(before.id)})`);
+      }
+      if (topic) q = q.eq('topic', topic);
+      if (bloom) q = q.eq('bloom', bloom);
       if (reviewStatus) q = q.eq('review_status', reviewStatus);
+      if (kind) q = q.eq('kind', kind);
+      if (final !== undefined) q = q.eq('final', final === true);
       // Ordered on id as well, so pages never overlap or skip a row when two
       // answers share a timestamp. PostgREST caps a request at its max-rows
       // setting (1000 by default) whatever `limit` says: page with `offset`.
+      const ascending = order !== 'desc';
       const rows = unwrap('listAnswers', await q
-        .order('answered_at', { ascending: true })
-        .order('id', { ascending: true })
+        .order('answered_at', { ascending })
+        .order('id', { ascending })
         .range(offset, offset + limit - 1));
       return (rows ?? []).map(outAnswer);
     },
@@ -555,6 +615,7 @@ export function createSupabaseRepo() {
     },
 
     async getRoomArchive(id) {
+      if (!isUuid(id)) return null;
       const { data, error } = await db.from('room_archives').select('*').eq('id', id).maybeSingle();
       if (error) fail('getRoomArchive')(error);
       return outArchive(data);
@@ -576,6 +637,47 @@ export function createSupabaseRepo() {
       if (error) fail('updateAnswer')(error);
       return outAnswer(data);
     },
+
+    // -- answer reviews (append-only; see memoryRepo for the contract) --
+    async addAnswerReview(doc) {
+      const row = unwrap('addAnswerReview', await db
+        .from('answer_reviews')
+        .insert({
+          answer_id: doc.answerId,
+          session_id: doc.sessionId,
+          decision: doc.decision,
+          correct: doc.correct,
+          score: doc.score,
+          note: doc.note ?? '',
+          reviewed_by: doc.reviewedBy ?? null,
+          reviewed_at: doc.reviewedAt ?? new Date().toISOString(),
+        })
+        .select()
+        .single());
+      return outReview(row);
+    },
+
+    /**
+     * Oldest first, every row. Filters are ANDed; at least one is expected.
+     * Paged, because PostgREST caps one response at its max-rows setting (1000
+     * by default) whatever the request asks for, and the room archive reads a
+     * whole room's log through here: a cap would drop decisions from it silently.
+     */
+    async listAnswerReviews({ answerId, sessionId } = {}) {
+      const PAGE = 1000;
+      const out = [];
+      for (let offset = 0; ; offset += PAGE) {
+        let q = db.from('answer_reviews').select('*');
+        if (answerId) q = q.eq('answer_id', answerId);
+        if (sessionId) q = q.eq('session_id', sessionId);
+        const rows = unwrap('listAnswerReviews', await q
+          .order('reviewed_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(offset, offset + PAGE - 1)) ?? [];
+        out.push(...rows.map(outReview));
+        if (rows.length < PAGE) return out;
+      }
+    },
   };
 }
 
@@ -590,6 +692,7 @@ export async function probeSupabase() {
   const tables = [
     ['contents', '0000'], ['questions', '0000'], ['sessions', '0000'], ['profiles', '0000'],
     ['accounts', '0001'], ['invites', '0002'], ['answers', '0008'], ['room_archives', '0009'],
+    ['answer_reviews', '0010'],
   ];
   const missing = [];
   for (const [table, file] of tables) {

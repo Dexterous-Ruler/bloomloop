@@ -17,6 +17,7 @@ export function createMemoryRepo() {
   const answers = new Map(); // key: _id
   const answerKeys = new Map(); // `${sessionId}:${answerKey}` -> _id
   const archives = new Map(); // key: _id; one per sessionId
+  const reviews = new Map(); // key: _id; append-only, insertion order is review order
 
   return {
     kind: 'memory',
@@ -130,6 +131,9 @@ export function createMemoryRepo() {
           answerKeys.delete(`${key}:${answer.answerKey}`);
         }
       }
+      for (const [rid, review] of reviews) {
+        if (review.sessionId === key) reviews.delete(rid);
+      }
       return sessions.delete(key);
     },
 
@@ -202,18 +206,41 @@ export function createMemoryRepo() {
       return clone(answers.get(String(id)) ?? null);
     },
 
-    async listAnswers({ sessionId, sessionIds, rollNo, accountId, reviewStatus, limit = 2000, offset = 0 } = {}) {
+    // `order: 'desc'` is newest first, for the review queue. Ties are ordered by
+    // id, as Postgres and Mongo order them, so pages never overlap.
+    //
+    // `student: { accountId, rollNo }` is one person across rooms: rows linked to
+    // their account, plus rows under their roll number that are linked to no
+    // account. A row linked to a DIFFERENT account is that account's answer,
+    // whatever roll number it carries, so it is never handed to this one.
+    //
+    // `before: { answeredAt, id }` is a page cursor: only rows earlier than it in
+    // that same (answeredAt, id) order. The review queue pages by it, newest
+    // first, because offsets drift as answers are reviewed out of the queue.
+    async listAnswers({
+      sessionId, sessionIds, rollNo, accountId, student, topic, bloom, reviewStatus, kind, final, before,
+      order = 'asc', limit = 2000, offset = 0,
+    } = {}) {
       const ids = Array.isArray(sessionIds) ? new Set(sessionIds.map(String)) : null;
-      return clone(
-        [...answers.values()]
-          .filter((a) => (!sessionId || a.sessionId === String(sessionId))
-            && (!ids || ids.has(a.sessionId))
-            && (!rollNo || a.rollNo === String(rollNo))
-            && (!accountId || a.accountId === accountId)
-            && (!reviewStatus || a.reviewStatus === reviewStatus))
-          .sort((a, b) => (a.answeredAt < b.answeredAt ? -1 : a.answeredAt > b.answeredAt ? 1 : 0))
-          .slice(offset, offset + limit),
-      );
+      const isStudents = (a) => (student.accountId && a.accountId && String(a.accountId) === String(student.accountId))
+        || (student.rollNo && !a.accountId && a.rollNo === String(student.rollNo));
+      const inOrder = (a, b) => (a.answeredAt < b.answeredAt ? -1 : a.answeredAt > b.answeredAt ? 1
+        : a._id < b._id ? -1 : a._id > b._id ? 1 : 0);
+      const rows = [...answers.values()]
+        .filter((a) => (!sessionId || a.sessionId === String(sessionId))
+          && (!ids || ids.has(a.sessionId))
+          && (!rollNo || a.rollNo === String(rollNo))
+          && (!accountId || a.accountId === accountId)
+          && (!student || Boolean(isStudents(a)))
+          && (!topic || a.topic === topic)
+          && (!bloom || a.bloom === bloom)
+          && (!reviewStatus || a.reviewStatus === reviewStatus)
+          && (!kind || a.kind === kind)
+          && (final === undefined || a.final === final)
+          && (!before || inOrder(a, { answeredAt: before.answeredAt, _id: before.id }) < 0))
+        .sort(inOrder);
+      if (order === 'desc') rows.reverse();
+      return clone(rows.slice(offset, offset + limit));
     },
 
     // -- room archives: one JSON document per deleted room --
@@ -248,6 +275,32 @@ export function createMemoryRepo() {
         if (patch[k] !== undefined) rec[k] = patch[k];
       }
       return clone(rec);
+    },
+
+    // -- answer reviews: append-only log of professor decisions --
+    // Insert only. There is no update or delete: a later decision is a new row,
+    // so it never erases an earlier one. Rows go only with their room.
+    async addAnswerReview(doc) {
+      const _id = oid();
+      const rec = {
+        _id,
+        note: '',
+        reviewedBy: null,
+        reviewedAt: new Date().toISOString(),
+        ...clone(doc),
+        answerId: String(doc.answerId),
+        sessionId: String(doc.sessionId),
+      };
+      reviews.set(_id, rec);
+      return clone(rec);
+    },
+
+    /** Oldest first. Filters are ANDed; at least one is expected. */
+    async listAnswerReviews({ answerId, sessionId } = {}) {
+      return clone([...reviews.values()]
+        .filter((r) => (!answerId || r.answerId === String(answerId))
+          && (!sessionId || r.sessionId === String(sessionId)))
+        .sort((a, b) => (a.reviewedAt < b.reviewedAt ? -1 : a.reviewedAt > b.reviewedAt ? 1 : 0)));
     },
   };
 }

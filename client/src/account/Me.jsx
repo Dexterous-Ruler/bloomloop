@@ -1,9 +1,11 @@
 /**
  * /me - a student's own standing.
  *
- * It leads with where they are: the loop lit to the level their last session
- * ended at. Then how often they were right at each level, then the sessions
- * themselves, each of which opens to the run of answers behind it.
+ * It leads with where they are, said in one sentence on the forest panel, with
+ * the ladder lit to the level their last session ended at and the few figures
+ * that matter beside it. Under it, their path: every session as a stop on one
+ * line, each of which opens to the run of answers behind it. Then how often
+ * they were right at each level, and their Google link.
  *
  * The payload is studentDashboard() in server/src/services/dashboard.js. It is
  * shaped by the token: there is no id to pass and no other student to ask for.
@@ -17,7 +19,7 @@
  * Me fetches. MeView draws, and is what the dev gallery renders with sample data.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { api } from '../lib/api.js';
@@ -25,9 +27,9 @@ import { LABEL } from '../lib/bloom.js';
 import { HOME_FOR, ROLE_LABEL } from '../lib/routes.js';
 import AccountShell from '../shell/AccountShell.jsx';
 import { useViewer } from '../shell/viewer.js';
-import { Button, Chip, Empty, Fig, Icon, Level, Loop, Note } from '../ui/index.jsx';
-import { asPct, day, dayTime, plural } from './insightData.js';
-import { Levels } from './insightParts.jsx';
+import { Button, Chip, Empty, Icon, Level, Note, Panel, Section, Spark } from '../ui/index.jsx';
+import { asPct, before, day, dayTime, highest, levelN, plural } from './insightData.js';
+import { BigLadder, LevelRows } from './insightParts.jsx';
 
 /* ------------------------------------------------------------------ pieces */
 
@@ -35,46 +37,15 @@ const JoinLink = () => (
   <Link className="btn btn-primary" to="/join"><Icon name="room" />Join a room</Link>
 );
 
-/** Who this page is about, on one line: roll number, professor, department. */
-function Head({ dash, busy, onRefresh, again = 'Refresh' }) {
-  const parts = dash ? [
-    dash.rollNo ? <>Roll <span className="mono">{dash.rollNo}</span></> : null,
-    // With no roll number the server answers before it looks the professor
-    // up, so in that state a missing one means "not looked up", not "none".
-    dash.professor ? dash.professor.fullName : dash.reason ? null : 'No professor linked',
-    dash.department || null,
-  ].filter(Boolean) : [];
-
-  return (
-    <div className="page-head in-head">
-      <div className="grow">
-        {parts.length > 0 && (
-          <div className="eyebrow">
-            {parts.map((part, i) => <span key={i}>{i > 0 && ' · '}{part}</span>)}
-          </div>
-        )}
-        <h1>My results</h1>
-      </div>
-      <div className="acts">
-        {onRefresh && <Button icon="refresh" busy={busy} onClick={onRefresh}>{again}</Button>}
-        <JoinLink />
-      </div>
-    </div>
-  );
-}
-
 /** The page in the shape it is about to take. */
 function Waiting() {
   return (
     <div className="stack stack-5" aria-busy="true">
-      <div className="stack stack-2">
-        <div className="skel" style={{ height: 16, width: 260, maxWidth: '100%' }} />
-        <div className="skel" style={{ height: 32, width: 180 }} />
-      </div>
-      <div className="skel" style={{ height: 288, borderRadius: 'var(--r-3)' }} />
-      <div className="split">
-        <div className="skel" style={{ height: 320, borderRadius: 'var(--r-3)' }} />
-        <div className="skel" style={{ height: 120, borderRadius: 'var(--r-3)' }} />
+      <div className="skel in-skel-panel" />
+      <div className="skel" style={{ height: 248, borderRadius: 'var(--r-4)' }} />
+      <div className="in-two">
+        <div className="skel" style={{ height: 300, borderRadius: 'var(--r-4)' }} />
+        <div className="skel" style={{ height: 300, borderRadius: 'var(--r-4)' }} />
       </div>
     </div>
   );
@@ -91,77 +62,123 @@ function Waiting() {
  * Disconnecting an unconfirmed link is on the profile screen.
  */
 function GoogleLink({ link, busy, error, onConnect, onDisconnect }) {
-  if (link == null) return <div className="skel" style={{ height: 56 }} />;
+  if (link == null) {
+    return (
+      <section className="card card-pad in-google" aria-busy="true" aria-label="Google account">
+        <div className="skel" style={{ height: 18, width: 160 }} />
+        <div className="skel" style={{ height: 40 }} />
+        <div className="skel" style={{ height: 64 }} />
+      </section>
+    );
+  }
 
   const unconfirmed = link.linked && link.source === 'roster';
+  // The chip says the state; the line says only what the chip cannot.
   const state = link.linked
     ? unconfirmed
       ? 'Imported from a Classroom roster by your professor. Not confirmed by you.'
-      : `Connected${link.email ? ` as ${link.email}` : ''}.`
-    : link.reason || 'Not connected.';
+      : link.email ? `As ${link.email}.` : 'Confirmed by you.'
+    : link.reason || '';
 
   return (
-    <section className="stack stack-3" aria-label="Google account">
-      <div className="me-google">
-        <Icon name="google" className="muted" />
+    <section className="card card-pad in-google" aria-label="Google account">
+      <Section title="Google account" sub="Optional. Your sessions and marks work without it." />
+      <div className="in-google-row">
+        <span className="in-google-ic"><Icon name="google" size={18} /></span>
         <div className="grow">
-          <h4>Google account</h4>
-          <p className="t-small muted wrap-any">{state}</p>
+          <div className="cluster">
+            <h3>Google</h3>
+            {link.linked
+              ? <Chip tone={unconfirmed ? 'warn' : 'ok'} icon={unconfirmed ? undefined : 'check'}>{unconfirmed ? 'Not confirmed' : 'Connected'}</Chip>
+              : <Chip>Not connected</Chip>}
+          </div>
+          {state && <p className="t-small muted wrap-any">{state}</p>}
         </div>
         {link.configured && (!link.linked || unconfirmed) ? (
-          <Button size="sm" icon="link" busy={busy} onClick={onConnect}>{link.linked ? 'Confirm' : 'Connect'}</Button>
+          <Button size="sm" variant="primary" icon="link" busy={busy} onClick={onConnect}>{link.linked ? 'Confirm' : 'Connect'}</Button>
         ) : link.linked ? (
           <Button size="sm" busy={busy} onClick={onDisconnect}>Disconnect</Button>
         ) : null}
       </div>
       {error && <Note tone="bad" role="alert">{error}</Note>}
       {(link.purpose || link.optional) && (
-        <p className="hint">{link.purpose}{link.purpose && link.optional ? ' ' : ''}{link.optional}</p>
+        <p className="said">{link.purpose}{link.purpose && link.optional ? ' ' : ''}{link.optional}</p>
       )}
     </section>
   );
 }
 
 /**
- * The answers behind one session, oldest first. Two encodings on purpose: the
- * colour is the level the question was aimed at, and filled or hollow (with
- * the rule underneath) is right or wrong. Colour alone would make the trail
- * unreadable for the students most likely to be looking at it.
+ * The answers behind one session, oldest first, as a strip of blocks. Two
+ * encodings on purpose: the colour is the level the question was aimed at, and
+ * filled or hollow (with the rule underneath, green or red) is right or wrong.
+ * Colour alone would make the trail unreadable for the students most likely
+ * to be looking at it. Pointing at a block, or arrowing along the strip once
+ * it has focus, reads that answer out underneath.
  */
 function Trail({ session, id }) {
   const history = Array.isArray(session.history) ? session.history : [];
   const right = history.filter((h) => h.correct).length;
+  const [at, setAt] = useState(null);
   const facts = [
     dayTime(session.startedAt) || 'No date recorded',
     session.status ? (session.status === 'closed' ? 'room closed' : 'room still open') : null,
     session.accuracy == null ? null : `${asPct(session.accuracy)} right`,
   ].filter(Boolean).join(' · ');
 
+  const read = (i) => {
+    const h = history[i];
+    return `Question ${i + 1} · ${LABEL[h.bloom] ?? h.bloom} · ${h.correct ? 'right' : 'wrong'}${
+      h.score == null ? '' : ` · ${Math.round(h.score * 100)}% credit`
+    }`;
+  };
+
+  const onKey = (e) => {
+    const i = at ?? -1;
+    const go = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: history.length - 1 }[e.key];
+    if (go === undefined) return;
+    e.preventDefault();
+    setAt(Math.max(0, Math.min(history.length - 1, go)));
+  };
+
   return (
-    <div className="me-trail" id={id}>
-      <p className="t-meta">Room <span className="mono">{session.code}</span> · {facts}</p>
+    <div className="in-trail" id={id}>
+      <div className="in-trail-head">
+        <h3 className="clip">{session.title || 'Untitled session'}</h3>
+        <span className="t-meta">Room <span className="mono">{session.code}</span> · {facts}</span>
+      </div>
       {history.length === 0 ? (
         <p className="hint">No answers stored. You joined this room, but it closed before anything was scored.</p>
       ) : (
         <>
           <div
-            className="me-marks"
+            className="in-strip"
+            tabIndex={0}
             role="img"
-            aria-label={`${plural(history.length, 'answer')} in order: ${right} right, ${history.length - right} wrong`}
+            aria-label={`${plural(history.length, 'answer')} in order: ${right} right, ${history.length - right} wrong. Arrow keys read each one.`}
+            onKeyDown={onKey}
+            onMouseLeave={() => setAt(null)}
+            onBlur={() => setAt(null)}
           >
             {history.map((h, i) => (
               <i
                 key={`${h.questionId}-${i}`}
                 data-level={h.bloom}
                 data-right={h.correct ? 'true' : 'false'}
-                title={`Question ${i + 1} · ${LABEL[h.bloom] ?? h.bloom} · ${h.correct ? 'right' : 'wrong'}${
-                  h.score == null ? '' : ` · ${Math.round(h.score * 100)}% credit`
-                }`}
+                data-at={at === i ? 'true' : undefined}
+                title={read(i)}
+                style={{ '--d': `${Math.min(i, 30) * 18}ms` }}
+                onMouseEnter={() => setAt(i)}
               />
             ))}
           </div>
+          <p className="in-strip-read" aria-live="polite">
+            {at == null
+              ? <>{plural(history.length, 'answer')} · <b>{right} right</b> · {history.length - right} wrong</>
+              : <b>{read(at)}</b>}
+          </p>
           <p className="hint">
-            One mark per question, in the order you answered.
+            One block per question, in the order you answered.
             {(session.answered ?? 0) > history.length ? ` The last ${history.length} are kept.` : ''}
             {' '}Colour is the level it was aimed at. Filled is right, hollow is wrong.
           </p>
@@ -171,148 +188,194 @@ function Trail({ session, id }) {
   );
 }
 
+/**
+ * Every session as a stop on one line, oldest on the left, each marked with
+ * the level it ended at. Pressing a stop opens its answers under the line.
+ */
+function Path({ sessions, open, onOpen }) {
+  const track = useRef(null);
+  // Newest is on the right, so start scrolled there: it is the one open.
+  useLayoutEffect(() => {
+    const el = track.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [sessions.length]);
+
+  return (
+    <ol className="in-track" ref={track} aria-label="Your sessions, oldest first">
+      {sessions.map((s, i) => {
+        const on = open === s.code;
+        return (
+          <li key={s.code} data-level={s.workingLevel} style={{ '--d': `${i * 50}ms` }}>
+            <button
+              type="button"
+              className="in-stop"
+              aria-expanded={on}
+              aria-controls={on ? `trail-${s.code}` : undefined}
+              onClick={() => onOpen(on ? null : s.code)}
+            >
+              <span className="in-stop-date">{day(s.startedAt) || 'No date'}</span>
+              <span className="in-stop-dot" aria-hidden="true">{levelN(s.workingLevel) || ''}</span>
+              <span className="in-stop-title clip" title={s.title || undefined}>{s.title || 'Untitled session'}</span>
+              <span className="in-stop-meta">
+                {s.workingLevel ? <Level level={s.workingLevel} /> : <span className="t-meta">No level</span>}
+                {s.banded && <span className="sr-only">, support band</span>}
+              </span>
+              <span className="in-stop-fig">{s.correct ?? 0}/{s.answered ?? 0} right</span>
+            </button>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 /* ---------------------------------------------------------------- the view */
 
-function Results({ dash, busy, error, onRefresh, google }) {
+function Results({ dash, google }) {
   const sessions = dash.sessions ?? [];
   const counts = dash.counts ?? { sessions: 0, answered: 0, correct: 0, accuracy: null };
   const level = dash.workingLevel;
   const last = sessions[0];
   const started = sessions.length > 0;
+  // The server sends newest first; the path reads left to right in time.
+  const oldest = [...sessions].reverse();
+  const bloom = dash.bloom ?? [];
 
   // Newest first off the server, so the one open by default is the session
   // they just walked out of. undefined is "not chosen yet"; null is "closed".
   const [picked, setPicked] = useState(undefined);
   const open = picked === undefined ? last?.code : picked;
+  const opened = sessions.find((s) => s.code === open);
 
-  const lastWhere = last ? [last.title, day(last.startedAt)].filter(Boolean).join(', ') : '';
+  // Only with two sessions to compare, and only when the latest session's
+  // trail is all of it: otherwise the tick would sit on an estimate.
+  const earlier = sessions.length >= 2 ? before(bloom, last) : null;
+  const top = highest(bloom);
+  const accSeries = oldest.map((s) => s.accuracy).filter((v) => v != null);
+
+  const sentence = !started
+    ? 'You have not sat a session yet. Your first room sets where you start.'
+    : dash.banded
+      ? `You are working at ${LABEL[level] ?? level}, in the support band.`
+      : `You are working at ${LABEL[level] ?? level}.`;
+  const ended = last
+    ? `Your last session${last.title ? `, ${last.title},` : ''} ended there with ${last.correct ?? 0} of ${plural(last.answered ?? 0, 'answer')} right.`
+    : '';
 
   return (
     <>
-      <Head dash={dash} busy={busy} onRefresh={onRefresh} />
-
-      {error && (
-        <Note tone="bad" className="in-gap" role="alert">
-          That refresh did not come back ({error}). This is the last answer the server gave.
-        </Note>
-      )}
-
-      <section className="card me-stand">
-        <div className="me-now">
-          <Loop
-            className="loop-draw"
-            level={level ?? 0}
-            size={120}
-            stroke={14}
-            title={level ? `Working at ${LABEL[level] ?? level}` : 'No level yet'}
-          />
-          <div className="stack stack-2 grow">
-            <div>
-              <div className="eyebrow">Working at</div>
-              <div className="t-display">{level ? (LABEL[level] ?? level) : 'No level yet'}</div>
+      <Panel className="in-brief" aria-label="Where you are">
+        <div className="in-brief-main">
+          <div className="cluster">
+            <span className="tag-mint">Where you are</span>
+            {last && <span className="in-brief-meta">Last session {day(last.startedAt) || 'undated'}</span>}
+          </div>
+          <p className="in-brief-line">{sentence}</p>
+          {started ? (
+            <div className="brief">
+              <b>Last</b><span>{ended}</span>
+              {dash.banded && (
+                <>
+                  <b>Band</b>
+                  <span>
+                    Under 40% in that session, so questions stay at Remember and Understand until it
+                    lifts. A shorter ladder for now, not a lower mark, and only your professor sees it.
+                  </span>
+                </>
+              )}
             </div>
-            {dash.banded && <div><Chip icon="info">Support band</Chip></div>}
-            {started ? (
-              <p className="said">
-                Where your last session ended{lastWhere ? `: ${lastWhere}` : ''}.
-                {dash.banded && (
-                  <> You are in the support band: under 40% in that session, so questions stay at
-                  Remember and Understand until it lifts. A shorter ladder for now, not a lower
-                  mark, and only your professor sees it.</>
-                )}
-              </p>
-            ) : (
-              <p className="said">
-                Your first session sets it. Every question is tagged to one of six levels. A few
-                right and the next ones step up, a few wrong and they step back down. It runs per
-                student: you are never compared with the class.
-              </p>
-            )}
-          </div>
+          ) : (
+            <p className="in-brief-sub">
+              Every question is tagged to one of six levels. A few right and the next ones step up, a
+              few wrong and they step back down. It runs per student: you are never compared with the class.
+            </p>
+          )}
+          <BigLadder level={level} />
         </div>
 
-        <div className="me-levels">
-          <div className="cluster between baseline">
-            <h3>Accuracy by level</h3>
-            <span className="t-meta">right answers, of those asked</span>
+        {started ? (
+          <div className="in-tiles">
+            <div className="ptile" style={{ '--d': '0s' }}>
+              <span>Sessions</span>
+              <b>{counts.sessions}</b>
+              <small><span>{oldest[0] && day(oldest[0].startedAt) ? `since ${day(oldest[0].startedAt)}` : ''}</span></small>
+            </div>
+            <div className="ptile" style={{ '--d': '0.6s' }}>
+              <span>Questions answered</span>
+              <b>{counts.answered}</b>
+              <Spark values={oldest.map((s) => s.answered ?? 0)} label="Answers in each session" />
+              <small><span>{counts.correct} right</span></small>
+            </div>
+            <div className="ptile" style={{ '--d': '1.2s' }}>
+              <span>Accuracy</span>
+              <b>{asPct(counts.accuracy)}</b>
+              <Spark values={accSeries} label="Accuracy in each session" />
+              <small><span>latest {asPct(last?.accuracy)}</span><i>session mean</i></small>
+            </div>
+            <div className="ptile in-tile-level" style={{ '--d': '1.8s' }}>
+              <span>Highest level reached</span>
+              <b>{top ? LABEL[top] : '—'}</b>
+              <small><span>{top ? `level ${levelN(top)} of 6` : ''}</span><i>asked at least once</i></small>
+            </div>
           </div>
-          <Levels bloom={dash.bloom} current={level} />
-          <p className="hint">
-            {started
-              ? 'How full a bar is shows how often you were right at that level, across every session. The count under it is how much that rests on. No bar means you have not been asked at that level yet.'
-              : 'One bar per level. Each fills in as you answer questions at that level.'}
-          </p>
-        </div>
-
-        {started && (
-          <div className="me-figs figs ruled">
-            <Fig value={counts.sessions} label={counts.sessions === 1 ? 'session' : 'sessions'} />
-            <Fig value={counts.answered} label="answered" />
-            <Fig value={counts.correct} label="correct" />
-            <Fig value={asPct(counts.accuracy)} label="accuracy, averaged per session" />
+        ) : (
+          <div className="in-first">
+            <div className="brief">
+              <b>Join</b><span>Type the code on the board, with your roll number <span className="mono">{dash.rollNo}</span>.</span>
+              <b>Answer</b><span>Each question is picked for the level you have reached.</span>
+              <b>Here</b><span>Your path and your six levels fill in from what you answer.</span>
+            </div>
+            <Link className="btn btn-accent" to="/join"><Icon name="room" />Join a room</Link>
           </div>
         )}
+      </Panel>
+
+      <section className="card in-path" aria-label="Your path">
+        <div className="in-path-head">
+          <Section
+            title="Your path"
+            sub={started ? 'Every session you have sat, oldest first. Pick one to see its answers.' : 'Every session you sit becomes a stop on this line.'}
+          />
+          {started && <span className="t-meta">{plural(sessions.length, 'session')}</span>}
+        </div>
+
+        {started ? (
+          <>
+            <Path sessions={oldest} open={open} onOpen={setPicked} />
+            {opened && <Trail session={opened} id={`trail-${opened.code}`} />}
+          </>
+        ) : (
+          <div className="in-path-empty">
+            <ol className="in-track in-track-ghost" aria-hidden="true">
+              {[0, 1, 2, 3].map((i) => <li key={i}><span className="in-stop"><span className="in-stop-date">&nbsp;</span><span className="in-stop-dot" /></span></li>)}
+            </ol>
+            <div className="in-path-empty-text">
+              <h3>No sessions yet</h3>
+              <p>
+                Your professor puts a six-character code on the board at the start of class. Enter it
+                with your roll number <span className="mono">{dash.rollNo}</span>, and what you answer
+                shows up here.
+              </p>
+            </div>
+          </div>
+        )}
+        <p className="in-path-foot hint">
+          Nothing here can be edited, by you or anyone else. Sitting another session is the only thing
+          that moves a level.
+        </p>
       </section>
 
-      <div className="split me-rest">
-        <section className="card">
-          <div className="card-head">
-            <h3>Sessions</h3>
-            {started && <span className="t-meta">{sessions.length}, newest first</span>}
-          </div>
-
-          {!started ? (
-            <Empty icon="room" title="No sessions yet" action={<JoinLink />}>
-              Your professor puts a six-character code on the board at the start of class. Enter it
-              with your roll number {dash.rollNo} and what you answer shows up here when you leave
-              the room.
-            </Empty>
-          ) : (
-            <>
-              <div className="in-rec-box me-sat">
-                <div className="in-rec-head" aria-hidden="true">
-                  <span>Date</span><span>Chapter</span><span className="r">Answered</span>
-                  <span className="r">Correct</span><span>Ended at</span><span />
-                </div>
-                <ul className="in-rec">
-                  {sessions.map((s) => {
-                    const on = open === s.code;
-                    return (
-                      <li key={s.code}>
-                        <button
-                          type="button"
-                          className="in-rec-row"
-                          aria-expanded={on}
-                          aria-controls={on ? `trail-${s.code}` : undefined}
-                          onClick={() => setPicked(on ? null : s.code)}
-                        >
-                          <span className="in-rec-main">
-                            <span className="strong clip" title={s.title || undefined}>{s.title || 'Untitled session'}</span>
-                            {s.banded && <Chip>Support band</Chip>}
-                          </span>
-                          <span className="in-rec-cells">
-                            <span className="in-rec-date">{day(s.startedAt) || 'No date'}</span>
-                            <span className="in-rec-n">{s.answered ?? 0}<span className="in-rec-unit"> answered</span></span>
-                            <span className="in-rec-n">{s.correct ?? 0}<span className="in-rec-unit"> correct</span></span>
-                          </span>
-                          <span className="in-rec-end"><Level level={s.workingLevel} /></span>
-                          <Icon name="chevron" className="in-rec-more" />
-                        </button>
-                        {on && <Trail session={s} id={`trail-${s.code}`} />}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-              <p className="card-foot hint">
-                Nothing here can be edited, by you or anyone else. Sitting another session is the
-                only thing that moves a level.
-              </p>
-            </>
-          )}
+      <div className="in-two">
+        <section className="card card-pad in-levels" aria-label="Your Bloom levels">
+          <Section title="Your Bloom levels" sub="How often you were right at each level, across every session." />
+          <LevelRows bloom={bloom} earlier={earlier} current={level} />
+          <p className="hint">
+            {started
+              ? <>The figure beside each bar is right answers of those asked. Faded means fewer than three: too few to judge.{earlier ? <> The <span className="in-tick-key" aria-hidden="true" /> mark is where it stood before your latest session.</> : ''}</>
+              : 'One bar per level. Each fills in as you answer questions at that level.'}
+          </p>
         </section>
-
-        <aside className="stack">{google}</aside>
+        {google}
       </div>
     </>
   );
@@ -327,90 +390,118 @@ function Results({ dash, busy, error, onRefresh, google }) {
  * @param linkError  why the last one failed, or ''
  */
 export function MeView({ dash, busy, error, onRefresh, link, linkBusy, linkError, onConnect, onDisconnect }) {
+  const { account } = useViewer();
   const google = (
     <GoogleLink link={link} busy={linkBusy} error={linkError} onConnect={onConnect} onDisconnect={onDisconnect} />
   );
+
+  // The page head: who this is about, and what can be done from here.
+  const name = account?.fullName || '';
+  const roll = dash?.rollNo;
+  const crumb = (name || roll) ? (
+    <span>{name}{name && roll ? ' · ' : ''}{roll && <>Roll <span className="mono">{roll}</span></>}</span>
+  ) : 'Your results';
+  // With no roll number the server answers before it looks the professor up,
+  // so in that state a missing one means "not looked up", not "none".
+  const sub = !dash || dash.reason
+    ? 'Where you are, how you got there, and every answer behind it.'
+    : dash.professor
+      ? `From the rooms ${dash.professor.fullName} has run${dash.department ? `, ${dash.department}` : ''}. Nothing here can be edited.`
+      : 'No professor is linked to your account yet, so no room can be matched to you.';
+  const actions = (again = 'Refresh') => (
+    <>
+      {onRefresh && <Button icon="refresh" busy={busy} onClick={onRefresh}>{again}</Button>}
+      <JoinLink />
+    </>
+  );
+
+  let head = { crumb, title: 'Your progress', sub, actions: actions() };
   let body;
 
   if (!dash && busy) {
+    head = { crumb, title: 'Your progress', sub };
     body = <Waiting />;
   } else if (!dash) {
     // The server could not be asked.
     body = (
-      <>
-        <Head />
-        <div className="card">
-          <Empty
-            icon="alert"
-            title="Your results did not come back"
-            action={<Button variant="primary" icon="refresh" busy={busy} onClick={onRefresh}>Try again</Button>}
-          >
-            The server said “{error || 'nothing at all'}”. Nothing is lost: your answers are stored
-            against your roll number, not in this page.
-          </Empty>
-        </div>
-      </>
+      <div className="card">
+        <Empty
+          icon="alert"
+          title="Your results did not come back"
+          action={<Button variant="primary" icon="refresh" busy={busy} onClick={onRefresh}>Try again</Button>}
+        >
+          The server said “{error || 'nothing at all'}”. Nothing is lost: your answers are stored
+          against your roll number, not in this page.
+        </Empty>
+      </div>
     );
+    head = { crumb, title: 'Your progress', sub };
   } else if (dash.role && dash.role !== 'student') {
     // /api/dashboard answers in the shape of whoever holds the token, so a
     // professor who types /me gets their own payload. Say so; do not draw an
     // empty student out of it.
+    head = { crumb: 'Your results', title: 'Your progress' };
     body = (
-      <>
-        <div className="page-head in-head"><div className="grow"><h1>My results</h1></div></div>
-        <div className="card">
-          <Empty
-            icon="shield"
-            title={`You are signed in as a ${(ROLE_LABEL[dash.role] ?? dash.role).toLowerCase()}`}
-            action={<Link className="btn btn-primary" to={HOME_FOR[dash.role] ?? '/'}>Go to your dashboard<Icon name="forward" /></Link>}
-          >
-            This screen shows one student’s own history. The server answers by account, not by
-            address, so it sent your own view, and that one has what this page is missing.
-          </Empty>
-        </div>
-      </>
+      <div className="card">
+        <Empty
+          icon="shield"
+          title={`You are signed in as a ${(ROLE_LABEL[dash.role] ?? dash.role).toLowerCase()}`}
+          action={<Link className="btn btn-primary" to={HOME_FOR[dash.role] ?? '/'}>Go to your dashboard<Icon name="forward" /></Link>}
+        >
+          This screen shows one student’s own history. The server answers by account, not by
+          address, so it sent your own view, and that one has what this page is missing.
+        </Empty>
+      </div>
     );
   } else if (dash.reason) {
     // No roll number on the account. A live room has no accounts in it: the
     // number typed on the phone is the only thing tying a signed-in student to
     // their marks. "No sessions" would be a lie about their attendance, so the
     // server's own sentence is printed, verbatim.
+    head = { crumb, title: 'Your progress', sub, actions: actions('Check again') };
     body = (
       <>
-        <Head dash={dash} busy={busy} onRefresh={onRefresh} again="Check again" />
         {error && (
-          <Note tone="bad" className="in-gap" role="alert">
+          <Note tone="bad" role="alert">
             That check did not come back ({error}). This is the last answer the server gave.
           </Note>
         )}
-        <section className="card me-stand">
-          <div className="me-now">
-            <Loop level={0} size={120} stroke={14} title="No level yet" />
-            <div className="stack stack-3 grow">
-              <h2>No roll number on your account</h2>
-              <p className="said">{dash.reason}</p>
-              <p className="t-small dim">
-                A live room knows you by roll number, not by your account.
-                {dash.professor ? ` ${dash.professor.fullName} can add it.` : ''}
-              </p>
+        <Panel className="in-brief" aria-label="Where you are">
+          <div className="in-brief-main">
+            <div className="cluster"><span className="tag-mint">Where you are</span></div>
+            <p className="in-brief-line">No roll number on your account yet.</p>
+            <p className="in-brief-sub">{dash.reason}</p>
+            <BigLadder level={null} />
+          </div>
+          <div className="in-first">
+            <div className="brief">
+              <b>Today</b><span>Today’s session still works. The room asks for your roll number on the phone, so you can sit it.</span>
+              <b>Here</b><span>Only this history needs the number on your account, to find you again afterwards.</span>
+              {dash.professor && <><b>Who</b><span>{dash.professor.fullName} can add it.</span></>}
             </div>
           </div>
-        </section>
-        <div className="split me-rest">
-          <Note>
-            <b>Today’s session still works.</b> The room asks for your roll number on the phone, so
-            you can sit it. Only this history needs the number on your account, to find you again
-            afterwards.
-          </Note>
-          <aside className="stack">{google}</aside>
-        </div>
+        </Panel>
+        <div className="in-two in-two-solo">{google}</div>
       </>
     );
   } else {
-    body = <Results dash={dash} busy={busy} error={error} onRefresh={onRefresh} google={google} />;
+    body = (
+      <>
+        {error && (
+          <Note tone="bad" role="alert">
+            That refresh did not come back ({error}). This is the last answer the server gave.
+          </Note>
+        )}
+        <Results dash={dash} google={google} />
+      </>
+    );
   }
 
-  return <AccountShell current="home" crumb="My results">{body}</AccountShell>;
+  return (
+    <AccountShell current="home" crumb={head.crumb} title={head.title} sub={head.sub} actions={head.actions}>
+      {body}
+    </AccountShell>
+  );
 }
 
 /* ----------------------------------------------------------- the container */

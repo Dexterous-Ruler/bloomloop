@@ -1,11 +1,12 @@
 /**
  * Who you are here, and what you are connected to.
  *
- * The person is the heading: name, role, and the BloomLoop ID that identifies
- * them across the product. Under it sit the Google connections, one row each,
- * every row saying the state it is really in. A browser that opened the
- * console with the shared teacher key has no person to show, so it gets one
- * note saying what a key is, and the Classroom row a key can still use.
+ * The person is the heading: name, role, and under it one forest panel, the
+ * ID card, with the BloomLoop ID that identifies them across the product and
+ * the facts the account carries. Under that sit the Google connections, one
+ * row each, every row saying the state it is really in. A browser that opened
+ * the console with the shared teacher key has no person to show, so it gets
+ * one note saying what a key is, and the Classroom row a key can still use.
  *
  * The access list is the server's own `canSee` answer with labels on it. It is
  * not restated here: if a hand-written list and the server ever disagreed, the
@@ -23,7 +24,7 @@ import { supabase } from '../lib/auth.js';
 import { ROLE_LABEL } from '../lib/routes.js';
 import AccountShell from '../shell/AccountShell.jsx';
 import { useViewer } from '../shell/viewer.js';
-import { Avatar, Button, Chip, Empty, Icon, Note } from '../ui/index.jsx';
+import { Avatar, Button, Chip, Empty, Icon, Note, Panel, Section } from '../ui/index.jsx';
 
 const ROLE_BLURB = {
   hod: 'You read everything in your department and invite professors. You cannot edit another teacher’s material.',
@@ -64,10 +65,13 @@ const pretty = (v) => {
   return VALUE_LABEL[v] ?? String(v);
 };
 
+/** Quiet when the answer is a no, so the yeses are what the eye lands on. */
+const isNo = (v) => v === false || v == null || v === 'none';
+
 const NO_CREDENTIALS = 'This server has no Google credentials.';
 
 /** Copies, and says so: a silent copy looks the same as a dead button. */
-function CopyButton({ text }) {
+function CopyButton({ text, variant }) {
   const [done, setDone] = useState(false);
   useEffect(() => {
     if (!done) return undefined;
@@ -77,7 +81,9 @@ function CopyButton({ text }) {
   return (
     <Button
       size="sm"
+      variant={variant}
       icon={done ? 'check' : 'copy'}
+      aria-label={done ? 'Copied' : 'Copy your BloomLoop ID'}
       onClick={async () => {
         try {
           await navigator.clipboard.writeText(text);
@@ -93,11 +99,12 @@ function CopyButton({ text }) {
   );
 }
 
+/** One line of the ID card. An empty value says so instead of leaving a gap. */
 function Fact({ label, mono, children }) {
   return (
-    <div className="au-fact">
+    <div>
       <dt>{label}</dt>
-      <dd className={mono && children ? 'mono' : undefined}>{children || <span className="muted">Not set</span>}</dd>
+      <dd className={mono && children ? 'mono' : undefined}>{children || <span className="au-unset">Not set</span>}</dd>
     </div>
   );
 }
@@ -105,23 +112,21 @@ function Fact({ label, mono, children }) {
 /** One connection: what it is, the state it is in, and what can be done about it. */
 function Connection({ title, state, tone, line, checking, actions, children }) {
   return (
-    <div className="card au-conn" aria-busy={checking || undefined}>
-      <div className="au-conn-main">
-        <span className="au-conn-ic"><Icon name="google" /></span>
-        <div className="au-conn-text">
-          <div className="cluster">
-            <h4>{title}</h4>
-            {checking
-              ? <span className="skel au-skel-chip" />
-              : <Chip tone={tone} icon={tone === 'ok' ? 'check' : undefined}>{state}</Chip>}
-          </div>
+    <div className="au-conn" aria-busy={checking || undefined}>
+      <span className="au-conn-ic"><Icon name="google" size={18} /></span>
+      <div className="au-conn-text">
+        <div className="au-conn-top">
+          <h3>{title}</h3>
           {checking
-            ? <><span className="skel au-skel-line" /><span className="sr-only">Checking</span></>
-            : <p className="t-small muted wrap-any">{line}</p>}
+            ? <span className="skel au-skel-chip" />
+            : <Chip tone={tone} icon={tone === 'ok' ? 'check' : undefined}>{state}</Chip>}
         </div>
-        {actions && <div className="au-conn-acts">{actions}</div>}
+        {checking
+          ? <><span className="skel au-skel-line" /><span className="sr-only">Checking</span></>
+          : <p>{line}</p>}
       </div>
-      {children}
+      {actions ? <div className="au-conn-acts">{actions}</div> : <span />}
+      {children && <div className="au-conn-foot">{children}</div>}
     </div>
   );
 }
@@ -135,6 +140,7 @@ function ClassroomRow({ classroom, busy, onConnect, onRetry }) {
       <Connection
         title={title}
         state="Could not check"
+        tone="bad"
         line={classroom.reason}
         actions={<Button size="sm" icon="refresh" onClick={onRetry}>Try again</Button>}
       />
@@ -151,11 +157,11 @@ function ClassroomRow({ classroom, busy, onConnect, onRetry }) {
       title={title}
       state="Not connected"
       line="Connect to post session results to a course as grades."
-      actions={<Button variant="primary" icon="link" busy={busy} onClick={onConnect}>Connect</Button>}
+      actions={<Button variant="primary" size="sm" icon="link" busy={busy} onClick={onConnect}>Connect</Button>}
     >
       {/* Google compares the redirect address against a registered list, so a
           tunnel or preview host fails after consent, on Google's own page. */}
-      <p className="au-conn-foot hint">
+      <p className="hint">
         Connect from the address this deployment is registered under. Google refuses a redirect it
         has not seen before, such as a temporary tunnel.
       </p>
@@ -175,6 +181,7 @@ function GoogleRow({ link, busy, onConnect, onDisconnect, onRetry }) {
       <Connection
         title={title}
         state="Could not check"
+        tone="bad"
         line={link.reason}
         actions={<Button size="sm" icon="refresh" onClick={onRetry}>Try again</Button>}
       />
@@ -187,6 +194,7 @@ function GoogleRow({ link, busy, onConnect, onDisconnect, onRetry }) {
   let line = `${NO_CREDENTIALS} Linking is switched off.`;
   if (roster) {
     state = 'Not confirmed by you';
+    tone = 'warn';
     line = 'Your professor imported this from a Classroom roster. Confirm that it is you.';
   } else if (link.linked) {
     state = 'Connected';
@@ -208,14 +216,14 @@ function GoogleRow({ link, busy, onConnect, onDisconnect, onRetry }) {
           {/* An unconfirmed roster row gets Confirm, not Connect: the id is
               already there, what is missing is the student saying it is theirs. */}
           {link.configured && (!link.linked || roster) && (
-            <Button variant="primary" icon="link" busy={busy === 'connect'} disabled={Boolean(busy)} onClick={onConnect}>
+            <Button variant="primary" size="sm" icon="link" busy={busy === 'connect'} disabled={Boolean(busy)} onClick={onConnect}>
               {link.linked ? 'Confirm' : 'Connect'}
             </Button>
           )}
           {/* Always there while linked, even with no Google credentials on the
               server: taking a link back must not need Google's permission. */}
           {link.linked && (
-            <Button variant="danger" busy={busy === 'disconnect'} disabled={Boolean(busy)} onClick={onDisconnect}>
+            <Button variant="danger" size="sm" busy={busy === 'disconnect'} disabled={Boolean(busy)} onClick={onDisconnect}>
               Disconnect
             </Button>
           )}
@@ -227,39 +235,30 @@ function GoogleRow({ link, busy, onConnect, onDisconnect, onRetry }) {
           up" only comes up once you have it. Never reworded here, so this
           screen and the page Google returns to cannot claim different things. */}
       {(link.purpose || link.optional) && (
-        <div className="au-conn-foot">
-          <p className="said">
-            {link.purpose}
-            {link.purpose && link.optional ? ' ' : ''}
-            {link.optional}
-          </p>
-        </div>
+        <p className="said">
+          {link.purpose}
+          {link.purpose && link.optional ? ' ' : ''}
+          {link.optional}
+        </p>
       )}
     </Connection>
   );
 }
 
+/** The page in the shape it is about to take: a face, a card, a list. */
 function Skeleton() {
   return (
-    <div aria-busy="true">
+    <div className="stack stack-6" aria-busy="true">
       <div className="au-who">
-        <span className="skel au-skel-avatar" />
-        <div className="au-who-name stack stack-2">
-          <div className="skel" style={{ height: 28, width: 240, maxWidth: '100%' }} />
-          <div className="skel" style={{ height: 16, width: 180 }} />
+        <span className="skel" style={{ width: 76, height: 76, borderRadius: '50%' }} />
+        <div className="au-who-name">
+          <div className="skel" style={{ height: 12, width: 64 }} />
+          <div className="skel" style={{ height: 30, width: 260, maxWidth: '100%' }} />
+          <div className="skel" style={{ height: 14, width: 180 }} />
         </div>
       </div>
-      <div className="au-sec">
-        <div className="skel" style={{ height: 20, width: 96 }} />
-        <div className="stack stack-3">
-          <div className="skel" style={{ height: 16 }} />
-          <div className="skel" style={{ height: 16 }} />
-        </div>
-      </div>
-      <div className="au-sec">
-        <div className="skel" style={{ height: 20, width: 120 }} />
-        <div className="skel" style={{ height: 72, borderRadius: 'var(--r-3)' }} />
-      </div>
+      <div className="skel" style={{ height: 196, borderRadius: 'var(--r-5)' }} />
+      <div className="skel" style={{ height: 120, borderRadius: 'var(--r-4)' }} />
     </div>
   );
 }
@@ -280,12 +279,14 @@ export function ProfileView({
   const since = account?.createdAt
     ? new Date(account.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })
     : null;
+  const hasConnections = classroom !== undefined || link !== undefined;
 
-  return (
-    <AccountShell current="profile" crumb="Profile" width="narrow">
-      {loading && <Skeleton />}
-
-      {!loading && !account && !usingKey && (
+  let body;
+  if (loading) {
+    body = <Skeleton />;
+  } else if (!account && !usingKey) {
+    body = (
+      <div className="card">
         <Empty
           icon="user"
           title="Nobody is signed in"
@@ -297,101 +298,108 @@ export function ProfileView({
             ? 'Sign in to see your account, your BloomLoop ID and your connections.'
             : 'Accounts are not set up on this build. The console opens with a teacher key.'}
         </Empty>
-      )}
-
-      {!loading && account && (
-        <header className="au-who">
-          <Avatar name={name} size="lg" />
-          <div className="au-who-name">
-            <div className="cluster cluster-3">
-              <h1 className="wrap-any">{name}</h1>
-              {account.active === false && <Chip tone="bad">Deactivated</Chip>}
+      </div>
+    );
+  } else {
+    body = (
+      <>
+        {account ? (
+          <header className="au-who">
+            <span className="au-who-av"><Avatar name={name} size="xl" /></span>
+            <div className="au-who-name">
+              <span className="eyebrow">Profile</span>
+              <div className="cluster cluster-3">
+                <h1>{name}</h1>
+                {account.active === false && <Chip tone="bad">Deactivated</Chip>}
+              </div>
+              <p className="au-who-role">
+                {ROLE_LABEL[role] ?? role}{account.department ? ` · ${account.department}` : ''}
+              </p>
+              {ROLE_BLURB[role] && <p className="au-who-blurb">{ROLE_BLURB[role]}</p>}
             </div>
-            <p className="t-lead">
-              {ROLE_LABEL[role] ?? role}{account.department ? ` · ${account.department}` : ''}
-            </p>
-          </div>
-          <div className="au-id">
-            <span className="au-id-label">BloomLoop ID</span>
-            <span className="au-id-code">{account.code}</span>
-            <CopyButton text={account.code} />
-          </div>
-        </header>
-      )}
+          </header>
+        ) : (
+          <header className="au-who">
+            <span className="au-who-key"><Icon name="key" size={26} /></span>
+            <div className="au-who-name">
+              <span className="eyebrow">Profile</span>
+              <h1>Shared teacher key</h1>
+              <p className="au-who-role">A key, not an account.</p>
+            </div>
+          </header>
+        )}
 
-      {!loading && usingKey && (
-        <header className="au-who">
-          <span className="au-who-key"><Icon name="key" /></span>
-          <div className="au-who-name">
-            <h1>Shared teacher key</h1>
-            <p className="t-lead">A key, not an account.</p>
-          </div>
-        </header>
-      )}
-
-      {!loading && usingKey && (
-        <Note className="au-key-note">
-          This browser opens the console with the shared teacher key. A key is not a person: it has
-          no name, no department and no students, and everyone who holds it shares one view.
-          {canSignIn && <> <Link className="link" to="/signin">Sign in with an account</Link> to get your own.</>}
-        </Note>
-      )}
-
-      {!loading && account && (
-        <section className="au-sec">
-          <div className="au-sec-head">
-            <h3>Account</h3>
-            {ROLE_BLURB[role] && <p>{ROLE_BLURB[role]}</p>}
-          </div>
-          <div className="stack">
-            <dl className="au-facts">
+        {account && (
+          <Panel className="au-idcard" aria-label="BloomLoop ID">
+            <div className="au-id-main">
+              <span className="tag-mint">BloomLoop ID</span>
+              <span className="au-id-code">{account.code || '—'}</span>
+              <p>The one code that names this account across BloomLoop.</p>
+              {account.code && <CopyButton text={account.code} variant="accent" />}
+            </div>
+            <dl className="au-id-facts">
               <Fact label="Email">{account.email}</Fact>
               {role === 'student' && <Fact label="Roll number" mono>{account.rollNo}</Fact>}
+              <Fact label="Department">{account.department}</Fact>
               <Fact label="Member since">{since}</Fact>
             </dl>
-            {/* The roll number joins an account to the marks earned under it,
-                so an empty one is flagged here, not left to a blank results screen. */}
-            {role === 'student' && !account.rollNo && (
-              <Note icon="alert">
-                This account has no roll number. A room knows you by the number you type on your
-                phone, so your results cannot find the sessions you sat until your professor adds it.
-              </Note>
-            )}
-          </div>
-        </section>
-      )}
+          </Panel>
+        )}
 
-      {!loading && (classroom !== undefined || link !== undefined) && (
-        <section className="au-sec">
-          <div className="au-sec-head">
-            <h3>Connections</h3>
-            <p>Optional. Everything in BloomLoop works without them.</p>
-          </div>
-          <div className="stack stack-3">
-            {classroom !== undefined && (
-              <ClassroomRow classroom={classroom} busy={connecting} onConnect={onConnectClassroom} onRetry={onRetryClassroom} />
-            )}
-            {link !== undefined && (
-              <GoogleRow link={link} busy={linkBusy} onConnect={onConnectGoogle} onDisconnect={onDisconnectGoogle} onRetry={onRetryLink} />
-            )}
+        {/* The roll number joins an account to the marks earned under it, so
+            an empty one is flagged here, not left to a blank results screen. */}
+        {account && role === 'student' && !account.rollNo && (
+          <Note tone="warn" icon="alert">
+            This account has no roll number. A room knows you by the number you type on your phone,
+            so your results cannot find the sessions you sat until your professor adds it.
+          </Note>
+        )}
+
+        {usingKey && (
+          <Note>
+            This browser opens the console with the shared teacher key. A key is not a person: it has
+            no name, no department and no students, and everyone who holds it shares one view.
+            {canSignIn && <> <Link className="link" to="/signin">Sign in with an account</Link> to get your own.</>}
+          </Note>
+        )}
+
+        {hasConnections && (
+          <section className="au-sec" aria-label="Connections">
+            <Section title="Connections" sub="Optional. Everything in BloomLoop works without them." />
+            <div className="card au-conns">
+              {classroom !== undefined && (
+                <ClassroomRow classroom={classroom} busy={connecting} onConnect={onConnectClassroom} onRetry={onRetryClassroom} />
+              )}
+              {link !== undefined && (
+                <GoogleRow link={link} busy={linkBusy} onConnect={onConnectGoogle} onDisconnect={onDisconnectGoogle} onRetry={onRetryLink} />
+              )}
+            </div>
             {error && <Note tone="bad" role="alert">{error}</Note>}
-          </div>
-        </section>
-      )}
+          </section>
+        )}
 
-      {!loading && account && canSee && (
-        <section className="au-sec">
-          <div className="au-sec-head">
-            <h3>What this account can do</h3>
-            <p>Answered by the server, not assumed by this page.</p>
-          </div>
-          <dl className="au-facts">
-            {Object.entries(canSee)
-              .filter(([k]) => CAN_SEE_LABEL[k])
-              .map(([k, v]) => <Fact key={k} label={CAN_SEE_LABEL[k]}>{pretty(v)}</Fact>)}
-          </dl>
-        </section>
-      )}
+        {account && canSee && (
+          <section className="au-sec" aria-label="What this account can do">
+            <Section title="What this account can do" sub="Answered by the server, not assumed by this page." />
+            <dl className="card au-facts">
+              {Object.entries(canSee)
+                .filter(([k]) => CAN_SEE_LABEL[k])
+                .map(([k, v]) => (
+                  <div key={k}>
+                    <dt>{CAN_SEE_LABEL[k]}</dt>
+                    <dd data-v={isNo(v) ? 'no' : undefined}>{pretty(v)}</dd>
+                  </div>
+                ))}
+            </dl>
+          </section>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <AccountShell current="profile" width="narrow">
+      {body}
     </AccountShell>
   );
 }

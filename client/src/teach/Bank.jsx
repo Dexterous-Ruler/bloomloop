@@ -3,8 +3,9 @@
  *
  * Three states of one screen. With no bank yet it is the planner. While a run
  * is in the air it is six tubes filling. With a bank it is a list to curate:
- * filter by level, read the answer key, tick several and act on them, open one
- * in the editor beside the list.
+ * the bank's coverage across the levels beside what goes to the room, then
+ * the questions themselves - filter by level or topic, read the answer key,
+ * tick several and act on them, open one in the editor beside the list.
  */
 
 import { useEffect, useState } from 'react';
@@ -13,7 +14,7 @@ import Tubes from '../fx/Tubes.jsx';
 import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
 import { KIND_LABEL } from '../lib/kinds.js';
-import { Button, Chip, Empty, Icon, Level, Loop, Note, Num, Tip } from '../ui/index.jsx';
+import { Button, Chip, Empty, Icon, Level, Note, Num, Panel, Section, Tip } from '../ui/index.jsx';
 import { LevelSpread } from '../ui/viz.jsx';
 import AnswerKey from './AnswerKey.jsx';
 import Editor from './Editor.jsx';
@@ -33,8 +34,9 @@ const haystack = (q) => [
 ].filter(Boolean).join(' ').toLowerCase();
 
 const many = (n) => `${n} question${n === 1 ? '' : 's'}`;
+const andList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 
-export default function Bank({ content, selected, bank, onBank, onBack, onNext }) {
+export default function Bank({ content, selected, bank, onBank, onPhase, onBack, onNext }) {
   const [busy, setBusy] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [runId, setRunId] = useState('');
@@ -43,6 +45,7 @@ export default function Bank({ content, selected, bank, onBank, onBack, onNext }
   const [error, setError] = useState('');
   const [warnings, setWarnings] = useState([]);
   const [filter, setFilter] = useState('all');
+  const [topicFilter, setTopicFilter] = useState('');
   const [query, setQuery] = useState('');
   const [working, setWorking] = useState('');
   const [planning, setPlanning] = useState(false);
@@ -80,11 +83,18 @@ export default function Bank({ content, selected, bank, onBank, onBack, onNext }
     return () => { alive = false; clearInterval(t); };
   }, [busy, runId]);
 
+  // Tell the console which state this step is in, so its head can say so.
+  const keptCount = (bank?.questions ?? []).filter((q) => q.status !== 'discarded').length;
+  const phase = busy ? 'writing' : keptCount === 0 ? 'first' : planning ? 'again' : 'curating';
+  useEffect(() => { onPhase?.(phase); }, [phase, onPhase]);
+
   if (!content) {
     return (
-      <Empty icon="material" title="No chapter is open" action={<Button variant="primary" onClick={onBack}>Go to Material</Button>}>
-        Questions are written from a chapter, so there is nothing to write from until one is open.
-      </Empty>
+      <div className="card">
+        <Empty icon="material" title="No chapter is open" action={<Button variant="primary" onClick={onBack}>Go to Material</Button>}>
+          Questions are written from a chapter, so there is nothing to write from until one is open.
+        </Empty>
+      </div>
     );
   }
 
@@ -151,36 +161,37 @@ export default function Bank({ content, selected, bank, onBank, onBack, onNext }
   /* ------------------------------------------------------------- writing */
   if (busy) {
     const done = progress?.perLevelDone ?? {};
+    const share = progress?.planned > 0 ? Math.min(1, progress.written / progress.planned) : 0;
     return (
-      <>
-        <div className="page-head">
+      <Panel className="tc-run" aria-label="Writing the questions">
+        <div className="tc-run-head">
           <div>
-            <div className="eyebrow">{content.title}</div>
-            <h1>Writing the questions</h1>
+            <span className="tag-mint"><span className="live-dot" />Writing · {content.title}</span>
+            <p className="tc-run-big" aria-live="polite">
+              {progress
+                ? <><Num value={progress.written} /> <span>of {progress.planned} written</span></>
+                : <>{plan?.total ?? '—'} <span>planned</span></>}
+            </p>
           </div>
-        </div>
-        <section className="card">
-          <div className="card-body stack stack-5">
-            <div className="figs ruled">
-              <div className="fig fig-lg"><b className="mono">{mmss(elapsed)}</b><span>elapsed{plan ? `, about ${mmss(plan.estimateSeconds)} expected` : ''}</span></div>
-              <div className="fig fig-lg">
-                <b>{progress ? <><Num value={progress.written} /><span className="muted"> of {progress.planned}</span></> : (plan?.total ?? '—')}</b>
-                <span>{progress ? 'written' : 'planned'}</span>
+          <dl className="tc-run-figs">
+            <div><dt>Elapsed</dt><dd className="mono">{mmss(elapsed)}</dd></div>
+            {plan && <div><dt>Expected, about</dt><dd className="mono">{mmss(plan.estimateSeconds)}</dd></div>}
+            {progress?.topicsTotal > 0 && (
+              <div>
+                <dt>Topic {Math.min(progress.topicsDone + 1, progress.topicsTotal)} of {progress.topicsTotal}</dt>
+                <dd>{progress.topic || 'Starting'}</dd>
               </div>
-              {progress?.topicsTotal > 0 && (
-                <div className="fig grow">
-                  <b>{Math.min(progress.topicsDone + 1, progress.topicsTotal)}<span className="muted"> of {progress.topicsTotal}</span></b>
-                  <span className="clip">{progress.topic ? `topic: ${progress.topic}` : 'topics'}</span>
-                </div>
-              )}
-            </div>
-            {/* Each tube fills toward its share of the plan, and its surface
-                moves only when a question actually lands at that level. */}
-            <Tubes values={done} targets={plan?.perLevel ?? {}} height={184} />
-            <p className="said">Every question is tagged to exactly one level as it is written. Nothing is tagged afterwards, so nothing lands untagged.</p>
-          </div>
-        </section>
-      </>
+            )}
+          </dl>
+        </div>
+        <div className="tc-run-line" role="progressbar" aria-label="Questions written" aria-valuemin={0} aria-valuemax={progress?.planned ?? 0} aria-valuenow={progress?.written ?? 0}>
+          <i style={{ width: `${share * 100}%` }} />
+        </div>
+        {/* Each tube fills toward its share of the plan, and its surface
+            moves only when a question actually lands at that level. */}
+        <Tubes values={done} targets={plan?.perLevel ?? {}} height={184} />
+        <p className="said">Every question is tagged to exactly one level as it is written. Nothing is tagged afterwards, so nothing lands untagged.</p>
+      </Panel>
     );
   }
 
@@ -188,17 +199,11 @@ export default function Bank({ content, selected, bank, onBank, onBack, onNext }
   if (planning || active.length === 0) {
     return (
       <>
-        <div className="page-head">
-          <div>
-            <div className="eyebrow">{content.title} · {topics.length} topic{topics.length === 1 ? '' : 's'}</div>
-            <h1>{active.length === 0 ? 'Plan the questions' : 'Plan another run'}</h1>
-          </div>
-          {active.length > 0 && (
-            <div className="acts"><Button icon="back" onClick={() => setPlanning(false)}>Back to the questions</Button></div>
-          )}
-        </div>
-        {(error || selected.length === 0) && (
-          <div className="stack stack-2" style={{ marginBottom: 16 }}>
+        {(active.length > 0 || error || selected.length === 0) && (
+          <div className="stack stack-2">
+            {active.length > 0 && (
+              <div><Button variant="ghost" icon="back" onClick={() => setPlanning(false)}>Back to the questions</Button></div>
+            )}
             {error && <Note tone="bad">{error}</Note>}
             {selected.length === 0 && (
               <Note>No topics are ticked, so the whole chapter counts as one topic. Tick topics on Material for a wider spread.</Note>
@@ -223,36 +228,78 @@ export default function Bank({ content, selected, bank, onBank, onBack, onNext }
 
   /* ------------------------------------------------------------- curating */
   const bankTopics = [...new Set(active.map((q) => q.topic).filter(Boolean))];
+  const chipTopics = [...new Set(questions.map((q) => q.topic).filter(Boolean))];
+  const onTopic = chipTopics.includes(topicFilter) ? topicFilter : '';
   const pool = filter === 'discarded' ? discarded : filter === 'all' ? active : active.filter((q) => q.bloom === filter);
+  const scoped = onTopic ? pool.filter((q) => q.topic === onTopic) : pool;
   const needle = query.trim().toLowerCase();
-  const shown = needle ? pool.filter((q) => haystack(q).includes(needle)) : pool;
+  const shown = needle ? scoped.filter((q) => haystack(q).includes(needle)) : scoped;
   const open = editing ? questions.find((q) => q._id === editing) : null;
+  const refOf = new Map(questions.map((q, i) => [q._id, `Q${String(i + 1).padStart(2, '0')}`]));
+  const covered = LEVELS.filter((l) => dist[l] > 0).length;
+
+  // A level is thin when it holds under half of an even share of the bank.
+  const floor = Math.max(1, active.length / 12);
+  const thin = LEVELS.filter((l) => dist[l] < floor);
+  const thinSaid = thin.length === 0
+    ? `Every level holds at least ${Math.min(...LEVELS.map((l) => dist[l]))} questions, so a student can climb all six without running dry.`
+    : `Thin at ${andList(thin.map((l) => `${LABEL[l]} (${dist[l]})`))}. Students who reach ${thin.length === 1 ? 'that level' : 'those levels'} have the least to answer there; plan another run weighted towards ${thin.length === 1 ? 'it' : 'them'}.`;
 
   const bulkSaid = !bulk ? '' : bulk.changed === 0 ? 'Nothing changed'
     : bulk.what === 'merge' ? 'Two questions merged into one. Both originals are in the discarded pile'
       : bulk.what === 'bloom' ? `${many(bulk.changed)} moved${bulk.level ? ` to ${bulk.level}` : ''}`
         : `${many(bulk.changed)} ${bulk.what === 'discard' ? 'discarded' : 'restored'}`;
 
+  const clearFilters = () => { setFilter('all'); setTopicFilter(''); setQuery(''); };
+
   return (
     <>
-      <div className="page-head">
-        <div>
-          <div className="eyebrow">{content.title}</div>
-          <h1><Num value={active.length} /> questions</h1>
-          <p className="t-small muted" style={{ marginTop: 4 }}>
-            across {bankTopics.length} topic{bankTopics.length === 1 ? '' : 's'}
-            {tookSecs != null ? `, written in ${mmss(tookSecs)}` : ''}
-            {discarded.length > 0 ? `, ${discarded.length} discarded` : ''}
+      <div className="tc-bank-top">
+        <section className="card card-pad tc-cover" aria-label="Coverage by Bloom level">
+          <Section
+            title="Coverage by Bloom level"
+            sub={`${active.length} questions kept, across ${bankTopics.length} topic${bankTopics.length === 1 ? '' : 's'}. Press a level to show only those.`}
+          />
+          <LevelSpread counts={dist} showKey={false} />
+          <div className="tc-lvf" role="group" aria-label="Show questions at">
+            <button type="button" className="tc-lvbtn" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>
+              All<span className="ct">{active.length}</span>
+            </button>
+            {LEVELS.map((l) => (
+              <button key={l} type="button" className="tc-lvbtn" data-level={l} aria-pressed={filter === l} onClick={() => setFilter(l)}>
+                <i className="swatch" />{LABEL[l]}<span className="ct">{dist[l]}</span>
+              </button>
+            ))}
+            {discarded.length > 0 && (
+              <button type="button" className="tc-lvbtn" aria-pressed={filter === 'discarded'} onClick={() => setFilter('discarded')}>
+                <Icon name="trash" size={13} />Discarded<span className="ct">{discarded.length}</span>
+              </button>
+            )}
+          </div>
+          <p className="said">{thinSaid}</p>
+        </section>
+
+        <Panel className="tc-forroom" aria-label="For the room">
+          <span className="tag-mint">For the room</span>
+          <div className="tc-big">
+            <b><Num value={active.length} /></b>
+            <span>questions go to the room when it opens</span>
+          </div>
+          <p className="tc-forroom-meta">
+            <span><b>{covered}</b> of 6 levels</span>
+            <span><b>{bankTopics.length}</b> topic{bankTopics.length === 1 ? '' : 's'}</span>
+            {tookSecs != null && <span>written in <b className="mono">{mmss(tookSecs)}</b></span>}
+            {discarded.length > 0 && <span><b>{discarded.length}</b> discarded</span>}
           </p>
-        </div>
-        <div className="acts">
-          <Button icon="plan" onClick={() => setPlanning(true)}>Plan another run</Button>
-          <Button variant="primary" onClick={onNext}>Open a room<Icon name="forward" /></Button>
-        </div>
+          <div className="cluster">
+            <Button variant="accent" onClick={onNext}>Set up the room<Icon name="forward" /></Button>
+            <Button icon="plan" onClick={() => setPlanning(true)}>Plan another run</Button>
+          </div>
+        </Panel>
       </div>
 
       {(error || warnings.length > 0 || fallbacks > 0 || bulk) && (
-        <div className="stack stack-2" style={{ marginBottom: 16 }}>
+        <div className="stack stack-2">
           {error && <Note tone="bad">{error}</Note>}
           {warnings.length > 0 && (
             <Note icon="alert">{warnings.length} item{warnings.length === 1 ? ' was' : 's were'} rejected by the schema and retried: {warnings.slice(0, 3).join(' · ')}</Note>
@@ -273,32 +320,26 @@ export default function Bank({ content, selected, bank, onBank, onBack, onNext }
         </div>
       )}
 
-      <section className="card">
-        {/* The shape of the bank is also the way to narrow it. */}
-        <div className="card-body stack stack-3" style={{ paddingBottom: 12 }}>
-          <LevelSpread counts={dist} showKey={false} />
-          <div className="cluster">
-            <button type="button" className="lvfilter" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>
-              <Loop size={16} />All<span className="ct">{active.length}</span>
-            </button>
-            {LEVELS.map((l) => (
-              <button key={l} type="button" className="lvfilter" data-level={l} aria-pressed={filter === l} onClick={() => setFilter(l)}>
-                <Loop level={l} size={16} />{LABEL[l]}<span className="ct">{dist[l]}</span>
-              </button>
+      <div className="tc-qbar">
+        <label className="search tc-qsearch">
+          <Icon name="search" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search questions and answers" aria-label="Search the bank" />
+        </label>
+        {chipTopics.length > 1 && (
+          <div className="tc-tchips" role="group" aria-label="Show topic">
+            <button type="button" className="tc-tchip" aria-pressed={!onTopic} onClick={() => setTopicFilter('')}>All topics</button>
+            {chipTopics.map((t) => (
+              <button key={t} type="button" className="tc-tchip" aria-pressed={onTopic === t} title={t} onClick={() => setTopicFilter(onTopic === t ? '' : t)}>{t}</button>
             ))}
-            {discarded.length > 0 && (
-              <button type="button" className="lvfilter" aria-pressed={filter === 'discarded'} onClick={() => setFilter('discarded')}>
-                <Icon name="trash" />Discarded<span className="ct">{discarded.length}</span>
-              </button>
-            )}
-            <label className="search push" style={{ width: 260, maxWidth: '100%' }}>
-              <Icon name="search" />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search questions and answers" aria-label="Search the bank" />
-            </label>
           </div>
-        </div>
+        )}
+        <Tip label="Plan a run that adds to this bank">
+          <Button icon="plus" className="push" onClick={() => { setDraft((d) => ({ ...d, mode: 'append' })); setPlanning(true); }}>Add questions</Button>
+        </Tip>
+      </div>
 
-        <div className="qtools">
+      <section className="card tc-qcard" aria-label="Questions">
+        <div className="tc-qhead" data-bulk={picked.size > 0 ? 'true' : undefined}>
           {picked.size > 0 ? (
             <>
               <span className="strong">{picked.size} ticked</span>
@@ -318,8 +359,11 @@ export default function Bank({ content, selected, bank, onBank, onBack, onNext }
             </>
           ) : (
             <>
-              <span className="t-meta">{shown.length} shown</span>
-              <label className="check push t-small">
+              <span className="tc-qhead-meta">
+                {shown.length} shown{filter !== 'all' || onTopic || needle ? ` of ${filter === 'discarded' ? discarded.length : active.length}` : ''}
+              </span>
+              {(filter !== 'all' || onTopic || needle) && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear the filter</Button>}
+              <label className="check push">
                 <input type="checkbox" checked={showKeys} onChange={(e) => setShowKeys(e.target.checked)} />
                 Show every answer key
               </label>
@@ -328,37 +372,45 @@ export default function Bank({ content, selected, bank, onBank, onBack, onNext }
         </div>
 
         {shown.length === 0 ? (
-          <Empty icon="search" title="Nothing here" action={<Button onClick={() => { setFilter('all'); setQuery(''); }}>Clear the filter</Button>}>
-            {needle ? `Nothing in the bank mentions "${query.trim()}".` : 'No questions at that level yet. Plan another run weighted towards it, or pick a different filter.'}
+          <Empty icon="search" title="Nothing here" action={<Button onClick={clearFilters}>Clear the filter</Button>}>
+            {needle ? `Nothing in the bank mentions "${query.trim()}".` : 'No questions match that filter yet. Plan another run weighted towards it, or pick a different filter.'}
           </Empty>
         ) : (
-          <ul className="qlist">
+          <ul className="tc-qlist">
             {shown.map((q) => {
               const kind = q.kind ?? 'mcq';
               const rowBusy = working.startsWith(`${q._id}:`);
               const isOpen = showKeys || opened.has(q._id);
               const off = q.status === 'discarded';
               return (
-                <li key={q._id} className="q" data-off={off ? 'true' : undefined} data-picked={picked.has(q._id) ? 'true' : undefined}>
-                  <div className="q-row">
-                    <label className="q-pick">
-                      <input type="checkbox" checked={picked.has(q._id)} onChange={() => toggle(q._id)} aria-label={`Tick: ${q.text}`} />
-                    </label>
-                    <button
-                      type="button"
-                      className="q-main"
-                      aria-expanded={isOpen}
-                      onClick={() => setOpened((prev) => { const next = new Set(prev); if (next.has(q._id)) next.delete(q._id); else next.add(q._id); return next; })}
-                    >
-                      <span className="q-meta">
-                        <Level level={q.bloom} />
-                        <Chip>{KIND_LABEL[kind] ?? kind}</Chip>
-                        {q.topic && <span className="t-meta clip">{q.topic}</span>}
-                        {q.source === 'fallback' && <Chip className="chip-line">offline template</Chip>}
-                      </span>
-                      <span className="q-text">{q.text}</span>
-                    </button>
-                    <span className="q-acts">
+                <li
+                  key={q._id}
+                  className="tc-q"
+                  data-off={off ? 'true' : undefined}
+                  data-picked={picked.has(q._id) ? 'true' : undefined}
+                  data-open={isOpen ? 'true' : undefined}
+                >
+                  <label className="tc-q-pick">
+                    <input type="checkbox" checked={picked.has(q._id)} onChange={() => toggle(q._id)} aria-label={`Tick: ${q.text}`} />
+                  </label>
+                  <button
+                    type="button"
+                    className="tc-q-main"
+                    aria-expanded={isOpen}
+                    onClick={() => setOpened((prev) => { const next = new Set(prev); if (next.has(q._id)) next.delete(q._id); else next.add(q._id); return next; })}
+                  >
+                    <span className="tc-q-meta">
+                      <Level level={q.bloom} />
+                      {q.topic && <span className="tc-q-topic">{q.topic}</span>}
+                      <span className="tc-ref">{refOf.get(q._id)}</span>
+                      <i className="dot" aria-hidden="true" />
+                      <span>{KIND_LABEL[kind] ?? kind}</span>
+                      {q.source === 'fallback' && <Chip className="chip-line">offline template</Chip>}
+                    </span>
+                    <span className="tc-q-text">{q.text}</span>
+                  </button>
+                  <span className="tc-q-acts">
+                    <span className="tc-q-tools">
                       {off ? (
                         <Button size="sm" icon="undo" busy={working === `${q._id}:restore`} disabled={rowBusy} onClick={() => act(q._id, 'restore', () => api.restoreQuestion(q._id))}>Restore</Button>
                       ) : (
@@ -368,10 +420,10 @@ export default function Bank({ content, selected, bank, onBank, onBack, onNext }
                           <Tip label="Discard"><Button variant="ghost" size="sm" icon="trash" aria-label="Discard this question" busy={working === `${q._id}:discard`} disabled={rowBusy} onClick={() => act(q._id, 'discard', () => api.discardQuestion(q._id))} /></Tip>
                         </>
                       )}
-                      <Icon name="chevron" className="q-chev muted" />
                     </span>
-                  </div>
-                  {isOpen && <div className="q-key"><AnswerKey q={q} /></div>}
+                    <Icon name="chevron" className="tc-q-chev" />
+                  </span>
+                  {isOpen && <div className="tc-q-key"><AnswerKey q={q} /></div>}
                 </li>
               );
             })}

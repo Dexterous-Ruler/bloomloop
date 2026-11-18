@@ -90,9 +90,12 @@ const Drum = forwardRef(function Drum({ balls, size = 320 }, ref) {
       scene.add(glass, rim);
 
       const materials = LEVELS.map(() => new THREE.MeshLambertMaterial());
+      // Read from the drum's own element, so on a forest stage (.on-panel)
+      // the glass is drawn in that stage's light ink rather than the page's.
       const paint = () => {
-        materials.forEach((m, i) => m.color.set(token(`--l${i + 1}`) || '#888888'));
-        const ink = token('--text') || '#111111';
+        const el = host.current ?? undefined;
+        materials.forEach((m, i) => m.color.set(token(`--l${i + 1}`, el) || '#888888'));
+        const ink = token('--text', el) || '#111111';
         glass.material.color.set(ink);
         rim.material.color.set(ink);
       };

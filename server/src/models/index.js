@@ -120,6 +120,10 @@ const profileSchema = new Schema(
           // history rather than kept as a counter that can drift from it.
           redeemedBy: String,
           redeems: String,
+          // Phase 1. 'confirmed' or 'overridden' once a professor has reviewed
+          // the written answer behind this entry; `correct` and `score` then
+          // carry the reviewed mark. Declared so Mongoose does not drop it.
+          review: String,
           at: String,
         },
       ],
@@ -217,5 +221,24 @@ const roomArchiveSchema = new Schema(
 );
 roomArchiveSchema.index({ ownerId: 1, archivedAt: -1 });
 export const RoomArchive = model('RoomArchive', roomArchiveSchema);
+
+// One professor decision on an answer (supabase/migrations/0010). Append-only:
+// the repository inserts and never updates, so a later decision never erases an
+// earlier one. Ids are strings so a query by either id needs no cast.
+const answerReviewSchema = new Schema(
+  {
+    answerId: { type: String, required: true },
+    sessionId: { type: String, required: true, index: true },
+    decision: { type: String, enum: ['confirm', 'override'], required: true },
+    correct: { type: Boolean, required: true },
+    score: { type: Number, required: true, min: 0, max: 1 },
+    note: { type: String, default: '', maxlength: 1000 },
+    reviewedBy: { type: String, default: null },
+    reviewedAt: { type: String, default: () => new Date().toISOString() },
+  },
+  { versionKey: false },
+);
+answerReviewSchema.index({ answerId: 1, reviewedAt: 1 });
+export const AnswerReview = model('AnswerReview', answerReviewSchema);
 
 export { levelCounter };

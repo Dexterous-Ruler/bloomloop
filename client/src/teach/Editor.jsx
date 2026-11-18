@@ -97,9 +97,9 @@ function Lines({ items, onChange, pick, markOf, min = 0, max = 99, placeholder, 
   return (
     <div className="stack stack-2">
       {items.map((it, i) => (
-        <div key={i} className="ed-row" data-on={pick?.on(i) ? 'true' : undefined}>
+        <div key={i} className="tc-ed-row" data-on={pick?.on(i) ? 'true' : undefined}>
           {pick ? (
-            <label className="ed-mark">
+            <label className="tc-ed-mark">
               <input
                 type={pick.mode === 'one' ? 'radio' : 'checkbox'}
                 name={pick.name}
@@ -110,7 +110,7 @@ function Lines({ items, onChange, pick, markOf, min = 0, max = 99, placeholder, 
               {markOf ? markOf(i) : KEYS[i] ?? i + 1}
             </label>
           ) : (
-            <span className="ed-mark">{markOf ? markOf(i) : i + 1}</span>
+            <span className="tc-ed-mark">{markOf ? markOf(i) : i + 1}</span>
           )}
           <input className="input grow" value={it ?? ''} placeholder={placeholder} aria-label={`${placeholder ?? 'Row'} ${i + 1}`} onChange={(e) => set(i, e.target.value)} />
           <Button
@@ -136,7 +136,7 @@ function Pairs({ pairs, onChange }) {
   return (
     <div className="stack stack-2">
       {pairs.map((p, i) => (
-        <div key={i} className="ed-pair">
+        <div key={i} className="tc-ed-pair">
           <input className="input" value={p.left ?? ''} placeholder="Term" aria-label={`Term ${i + 1}`} onChange={(e) => set(i, { left: e.target.value })} />
           <Icon name="forward" className="muted" />
           <input className="input" value={p.right ?? ''} placeholder="What it matches" aria-label={`Match for term ${i + 1}`} onChange={(e) => set(i, { right: e.target.value })} />
@@ -204,7 +204,7 @@ function Body({ draft, set }) {
     const setBucket = (i, patch) => set({ buckets: draft.buckets.map((b, j) => (j === i ? { ...b, ...patch } : b)) });
     return (
       <div className="stack stack-3">
-        <div className="ed-cols">
+        <div className="tc-ed-cols">
           {draft.buckets.map((b, i) => (
             <div className="well stack stack-3" key={i}>
               <div className="cluster nowrap-flex">
@@ -258,7 +258,7 @@ function Body({ draft, set }) {
       <div className="stack">
         {blanks.map((b, i) => (
           <div key={i} className="stack stack-2">
-            <div><span className="t-label">Blank {i + 1}</span> <span className="t-meta mono">{around(i)}</span></div>
+            <div className="tc-ed-blank"><span className="t-label">Blank {i + 1}</span> <span className="t-meta mono">{around(i)}</span></div>
             <Lines
               items={b.accept}
               min={1}
@@ -370,12 +370,12 @@ export default function Editor({ question, kinds, onClose, onDone }) {
         </>
       )}
     >
-      <div className="stack stack-5">
-        {refused && <Note tone="bad">{refused}</Note>}
+      <div className="tc-ed">
+        {refused && <Note tone="bad" role="alert">{refused}</Note>}
 
-        <section className="stack stack-3">
-          <h4>Level</h4>
-          <div className="cluster">
+        <section className="tc-ed-sec" aria-labelledby="ed-level">
+          <h4 className="tc-ed-h" id="ed-level">Level</h4>
+          <div className="tc-ed-levels">
             {LEVELS.map((l) => (
               <Level key={l} as="button" type="button" level={l} solid={draft.bloom === l} aria-pressed={draft.bloom === l} onClick={() => pickLevel(l)} />
             ))}
@@ -398,9 +398,9 @@ export default function Editor({ question, kinds, onClose, onDone }) {
           )}
         </section>
 
-        <section className="stack stack-3">
+        <section className="tc-ed-sec" aria-labelledby="ed-text">
           <div className="cluster between">
-            <h4>Question</h4>
+            <h4 className="tc-ed-h" id="ed-text">Question</h4>
             {fillIn && <span className="t-meta">{blanks} {BLANK_MARK} marker{blanks === 1 ? '' : 's'} in the text</span>}
           </div>
           <textarea className="textarea" style={{ minHeight: 96 }} value={draft.text} aria-label="Question text" onChange={(e) => set({ text: e.target.value })} />
@@ -413,17 +413,17 @@ export default function Editor({ question, kinds, onClose, onDone }) {
           </p>
         </section>
 
-        <section className="stack stack-3">
+        <section className="tc-ed-sec" aria-labelledby="ed-kind">
           <div className="stack stack-1">
-            <h4>{label(draft.kind)}</h4>
+            <h4 className="tc-ed-h" id="ed-kind">{label(draft.kind)}</h4>
             {KIND_SHAPE[draft.kind] && <p className="hint">{KIND_SHAPE[draft.kind]}</p>}
           </div>
           <Body draft={draft} set={set} />
         </section>
 
-        <section className="stack stack-3">
+        <section className="tc-ed-sec" aria-labelledby="ed-more">
           <div className="stack stack-1">
-            <h4>Split, rewrite or discard</h4>
+            <h4 className="tc-ed-h" id="ed-more">Split, rewrite or discard</h4>
             <p className="hint">These act on the question as it is stored. Save first if the edits above are worth keeping. Splitting keeps the original in the discarded pile, so none of this is one-way.</p>
           </div>
           <div className="cluster">

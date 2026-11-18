@@ -17,7 +17,8 @@ account screens ──HTTP──┘                  └─ in-process store   (
 |---|---|---|
 | Boot | `index.js`, `app.js`, `config.js` | `app.js` mounts the routes; `index.js` picks the store (`repo/index.js`) and prints the console link |
 | Auth | `auth.js`, `teacherAuth.js`, `ownership.js` | Two ways in: a Supabase bearer token (an HOD, professor or student account), or the v1 shared `TEACHER_KEY`. `ownership.js` holds the single read/write rule; every route and the socket use it. Anything the caller may not read answers 404, the same as something that does not exist |
-| Live loop | `sockets/index.js` | Join, serve, answer, retry, poll, pause, teacher watch. Scoring happens here, from the stored item. Every attempt is written to `answers` before the profile changes |
+| Live loop | `sockets/index.js` | Join, serve, answer, retry, poll, pause, teacher watch. Scoring happens here, from the stored item. Every attempt is written to `answers` before the profile changes. Every profile write, from the socket or from a review, first takes an in-process lock per student (`lockProfile`), because each one reads the whole row and writes it back |
+| Review | `routes/review.js` | The queue of written answers. A professor confirms or overrides the machine's mark; each decision is a row in `answer_reviews`, and the student's numbers follow (`applyReview` in `services/mastery.js`) |
 | Adaptive engine | `services/mastery.js`, `services/selector.js` | The level ladder (promote at 70%, demote at 40%, a window of 5), the room's mastery goal, retries and redemption, and question choice |
 | Signals | `services/integrity.js` | Behavioural signals such as tab-away, too-fast and `level-jump`. Each is phrased as a prompt to look, never a finding |
 | Supports | `accommodations.js` | The seven accommodations. Only the rendering switches reach the phone |
@@ -35,8 +36,23 @@ account screens ──HTTP──┘                  └─ in-process store   (
   the machine's mark (`auto_*`).
 - **History.** The profile's `history` is the engine's working record. Each entry
   points at its answer row by `answerId` and shares that row's timestamp.
+- **Reviews.** A written answer's machine mark is stored as `provisional` and
+  counts at once. A professor's confirm or override is written beside it on the
+  answer row and appended to `answer_reviews` (`0010`). The phone is told
+  `provisional: true` on its result.
+- **Guards in the database.** Since `0012`, triggers refuse any change to an
+  answer's evidence (the response, snapshot and `auto_*`) and any edit or delete of
+  a review row, whoever sends it.
 - **Deleted rooms.** A room's rows are deleted only after the whole room has been
-  written to `room_archives` (`0009`), as JSON under 1 MiB.
+  written to `room_archives` (`0009`), as JSON under 1 MiB, its review log included.
+  While that runs, the room takes no answer and no review.
+- **Reading it back.** `services/evidence.js` builds every answer a screen gets:
+  in full for a teacher, through `redactForStudent` for the student who gave it,
+  and the per topic × level report. Routes: `GET /api/session/:code/answers` and
+  `/topics` (room, read rule), `GET /api/analytics/:id/answers` (one student
+  across rooms, analytics scope).
+- **Reference.** Every Phase 1 endpoint and socket field, with request and response
+  shapes: `docs/API.md`.
 
 ## Client (`client/src`)
 

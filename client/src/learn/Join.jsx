@@ -8,7 +8,7 @@ import { useState } from 'react';
 
 import { LABEL, LEVELS } from '../lib/bloom.js';
 import ThemeToggle from '../shell/ThemeToggle.jsx';
-import { Button, Field, Mark, Note } from '../ui/index.jsx';
+import { Button, Field, Flow, Mark, Note } from '../ui/index.jsx';
 import { Conn } from './parts.jsx';
 
 export default function Join({
@@ -37,19 +37,22 @@ export default function Join({
     <div className="gate ln-gate">
       {/* What this is, in one line, and the climb it is about. */}
       <section className="gate-art on-panel" aria-label="BloomLoop">
+        <Flow />
         <span className="brand">
-          <Mark size={38} />
-          <span className="brand-name"><b>BloomLoop</b><small>For the class you are in right now</small></span>
+          <Mark size={28} />
+          <span className="brand-name">BloomLoop</span>
         </span>
         <h1>Answer at <em>your</em> level.</h1>
         <p className="gate-art-extra">
           Every question is picked for the level you have reached, and moves with you as you answer. No account, no
           ranking against anyone.
         </p>
-        <div className="ln-art-ladder" aria-hidden="true">
-          {LEVELS.map((l) => (
-            <div key={l} data-level={l}><i /><span>{LABEL[l]}</span></div>
-          ))}
+        <div aria-hidden="true">
+          <div className="ln-art-ladder">
+            {LEVELS.map((l) => (
+              <div key={l} data-level={l}><i /><span>{LABEL[l]}</span></div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -71,8 +74,8 @@ export default function Join({
               }
             }}
           >
-            <div className="stack stack-1">
-              <span className="eyebrow">Join a room</span>
+            <div className="stack stack-2">
+              <span className="eyebrow"><span className="live-dot" />Join a room</span>
               <h2>Type the code on the board</h2>
             </div>
 

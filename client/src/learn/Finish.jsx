@@ -6,7 +6,7 @@
 
 import Tubes from '../fx/Tubes.jsx';
 import { LEVELS } from '../lib/bloom.js';
-import { Button, Level, Num, Section } from '../ui/index.jsx';
+import { Button, Level, Num, Panel, Section } from '../ui/index.jsx';
 import { Dock } from './parts.jsx';
 
 // Six tubes across a phone leave about 44px each, which is not room for
@@ -27,11 +27,11 @@ export default function Finish({ profile, ending, onLeave }) {
 
   return (
     <>
-      {/* The student's own hero: what they did, said large. */}
-      <section className="panel warm ln-done on-panel">
+      {/* The student's own brief: what they did, said plainly. */}
+      <Panel className="ln-done">
         <div className="ln-done-top">
           <div className="stack stack-2">
-            <span className="eyebrow">{closed ? 'Room closed' : 'Set complete'}</span>
+            <span className="tag-mint">{closed ? 'Room closed' : 'Set complete'}</span>
             <h1>{closed ? 'Your teacher closed the room.' : 'That is your set.'}</h1>
             {/* Not "every question in the bank": a student in the lower band is
                 only ever served part of it, so they finish with items left over. */}
@@ -53,14 +53,17 @@ export default function Finish({ profile, ending, onLeave }) {
         </div>
 
         <div className="ln-done-figs">
-          <div><b>{overall == null ? '—' : `${overall}%`}</b><span>correct overall</span></div>
-          <div><b><Num value={total.seen} /></b><span>{total.seen === 1 ? 'question answered' : 'questions answered'}</span></div>
-          <div>
+          <div className="ptile"><span>Correct overall</span><b>{overall == null ? '—' : `${overall}%`}</b></div>
+          <div className="ptile" style={{ '--d': '0.6s' }}>
+            <span>{total.seen === 1 ? 'Question answered' : 'Questions answered'}</span>
+            <b><Num value={total.seen} /></b>
+          </div>
+          <div className="ptile" style={{ '--d': '1.2s' }}>
+            <span>Level reached</span>
             {reached ? <Level level={reached} solid /> : <b>—</b>}
-            <span>level reached</span>
           </div>
         </div>
-      </section>
+      </Panel>
 
       <section className="ln-card ln-tubes">
         <Section title="Correct at each level" sub="Each tube fills with how many of that level's questions you got right." as="h3" />

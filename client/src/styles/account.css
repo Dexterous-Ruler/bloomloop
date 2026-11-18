@@ -1,217 +1,482 @@
-/* The three account homes: department, overview, rooms. Layout only, and only
-   what the shared component set does not already say. */
+/* The three account homes: department, overview, rooms, and the invite dialogs
+   they open. Everything here is prefixed ac-.
 
-/* ------------------------------------------------------------- page bands */
+   Each home reads the same way: a page head that says the day and what the
+   page is for; one forest brief where the thing that matters is said in a
+   sentence beside the figures it came from; then glass cards whose rows are
+   separated by hairlines, never boxed. A list and the thing selected in it
+   sit side by side, the inspector held in view while the list scrolls.
 
-/* The few figures that describe the whole, and what they count. */
-.dash-strip { display: flex; flex-direction: column; gap: 12px; margin-bottom: 32px; }
-.dash-strip .t-meta { max-width: 80ch; }
-@media (min-width: 1081px) {
-  .dash-figs > .fig + .fig { padding-left: 40px; border-left: 1px solid var(--line); }
+   Rows inside a card are laid out by the card's own width (container
+   queries), so a list reads the same beside an inspector, alone on a laptop,
+   and on a phone. */
+
+/* --------------------------------------------------------------- page head */
+
+.ac-headacts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* ------------------------------------------------------------- the brief */
+
+.ac-brief { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 28px 36px; align-items: stretch; }
+.ac-brief-say { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.ac-brief-meta { display: inline-flex; align-items: center; gap: 7px; font: 500 11.5px/1 var(--font); color: var(--on-panel-3); }
+.ac-lead { font: 700 22px/1.3 var(--font); letter-spacing: -0.015em; color: var(--on-panel); text-wrap: pretty; }
+.ac-lead em { font-style: normal; color: var(--mint); }
+.ac-brief .brief { max-width: 60ch; }
+.ac-brief-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 4px; }
+
+.ac-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-content: start; }
+.ac-tiles .ptile > b { white-space: nowrap; }
+.ac-tiles .ptile .spark { margin-top: auto; }
+.ac-tiles .ptile > small { flex-wrap: wrap; justify-content: flex-start; gap: 2px 6px; }
+.ac-tile-lv { grid-column: span 2; }
+
+/* Answers by level inside a tile: six columns, each numbered beneath. */
+.ac-dist { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; height: 40px; }
+.ac-dist > span { display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch; gap: 3px; min-width: 0; }
+.ac-dist i { display: block; border-radius: 3px 3px 1px 1px; background: var(--lv); transform-origin: bottom; animation: grow-y 0.9s var(--ease) both; }
+.ac-dist b { font: 500 9.5px/1 var(--mono); color: var(--on-panel-3); text-align: center; }
+
+@media (max-width: 1180px) {
+  .ac-brief { grid-template-columns: minmax(0, 1fr); }
 }
-/* The same figures inside an inspector: two across, so they line up. */
-.figs.dash-figs-tight { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; }
 
-/* What is in the console beside what has been run in it. The columns are the
-   same as .split, so the page keeps one grid from top to bottom. */
-.dash-top { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 24px; align-items: start; margin-bottom: 24px; }
-.dash-running { margin-bottom: 24px; }
+/* A first run, or a department nobody has joined: the steps on the panel. */
+.ac-first { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 24px 40px; align-items: start; }
+.ac-first.is-solo { grid-template-columns: minmax(0, 1fr); }
+.ac-first-say { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ac-first-sub { font: 400 14px/1.55 var(--font); color: var(--on-panel-2); max-width: 52ch; }
+.ac-first-steps { display: flex; flex-direction: column; }
+.ac-first-steps li { display: flex; align-items: flex-start; gap: 14px; padding: 14px 0; border-top: 1px solid var(--panel-line); }
+.ac-first-steps li:first-child { border-top: 0; padding-top: 2px; }
+.ac-first-n { width: 26px; height: 26px; display: grid; place-items: center; flex: none; border-radius: var(--r-full); border: 1px solid rgba(156, 211, 174, 0.4); font: 500 12px/1 var(--mono); color: var(--mint); }
+.ac-first-steps .grow { display: flex; flex-direction: column; gap: 3px; }
+.ac-first-steps .grow > b { font: 600 14px/1.35 var(--font); color: var(--on-panel); }
+.ac-first-steps .grow > span { font: 400 13px/1.5 var(--font); color: var(--on-panel-2); }
+@media (max-width: 1180px) { .ac-first { grid-template-columns: minmax(0, 1fr); } }
 
-.dash-notes:empty { display: none; }
-.dash-notes { margin-bottom: 24px; }
+/* ------------------------------------------------------------------ cards */
 
+.ac-card { display: flex; flex-direction: column; min-width: 0; overflow: hidden; container-type: inline-size; }
+.ac-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 16px; padding: 20px 22px 14px; }
+.ac-head > .sec { flex: 1 1 240px; }
+.ac-head > .sec > p { max-width: 72ch; }
+.ac-more { display: inline-flex; align-items: center; gap: 6px; padding-top: 3px; font-size: 13px; white-space: nowrap; }
+.ac-foot { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding: 10px 14px; border-top: 1px solid var(--line); }
+.ac-pad { padding: 20px 22px; }
+.ac-pad-x { padding: 0 22px 12px; }
+.ac-quiet { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 0 22px 22px; }
+.ac-quiet p { max-width: 56ch; }
+.ac-block { display: block; }
+.ac-linkbtn { padding: 0; border: 0; background: transparent; cursor: pointer; font: inherit; }
+
+/* Search and filter, under a card's title. */
+.ac-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 0 22px 12px; }
+.ac-tools .search { flex: 1 1 220px; min-width: 0; height: 34px; }
+/* A segmented control that may be wider than a phone scrolls in its own box
+   and never pushes the page sideways. */
+.ac-segbox { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.ac-segbox::-webkit-scrollbar { display: none; }
+.ac-segbox .seg { max-width: none; }
+
+/* The list and what is selected in it. The inspector is held in view beside
+   a long list, and never taller than the window: it scrolls instead. */
+.ac-split { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start; }
+.ac-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
 @media (max-width: 1080px) {
-  .dash-top { grid-template-columns: minmax(0, 1fr); }
+  .ac-split, .ac-pair { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* Six levels in a narrow column: three and three, so the lower-order levels
-   sit over the higher-order ones and a count like 3460/4380 has room. */
-.dash-levels .lbars { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 8px; }
+/* -------------------------------------------------------------- inspector */
 
-/* ------------------------------------------------------------ small parts */
-
-.dash-pad { padding: 8px; }
-.dash-block { display: block; }
-.dash-flush > .rw { padding-left: 0; padding-right: 0; border-radius: 0; }
-.card-head.dash-wrap { flex-wrap: wrap; row-gap: 12px; }
-/* The title keeps its own width; what sits beside it is what wraps. */
-.card-head.dash-wrap h3 { flex: 1 0 auto; }
-.dash-linkbtn { padding: 0; border: 0; background: transparent; cursor: pointer; font: inherit; color: inherit; }
-.dash-sub { display: block; font: 400 12px/16px var(--font); color: var(--text-3); }
-.dash-all { user-select: all; }
-.dash-skelrows { display: flex; flex-direction: column; gap: 20px; padding: 20px; }
-
-/* Live is the one filled chip on a screen of rooms. */
-.chip.dash-live { background: var(--text); color: var(--bg); }
-
-/* A segmented control that may be wider than a phone: it scrolls in its own
-   box and never pushes the page sideways. */
-.dash-segbox { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-.dash-segbox::-webkit-scrollbar { display: none; }
-.dash-segbox .seg { max-width: none; }
-
-/* Filter on the left, search on the right; stacked on a phone. */
-.dash-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
-.dash-tools .search { margin-left: auto; width: 300px; max-width: 100%; }
-.dash-tools.is-inset { margin: 0; padding: 12px 20px; border-bottom: 1px solid var(--line); }
-
-/* A name over its code, beside an avatar. */
-.dash-who { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.dash-who-txt { display: flex; flex-direction: column; min-width: 0; }
-.dash-rowbtn {
-  display: flex; align-items: center; gap: 12px; min-width: 0; max-width: 100%;
-  padding: 0; border: 0; border-radius: var(--r-1); background: transparent; text-align: left; cursor: pointer;
-}
-
-/* The numbered steps of a first run. */
-.dash-step {
-  width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: var(--r-full);
-  border: 1px solid var(--line-2); font: 500 13px/1 var(--mono); color: var(--text-2);
-}
-.dash-stepline { align-items: flex-start; gap: 16px; padding: 16px 12px; }
-.dash-stepline .rw-main { max-width: 64ch; }
-.dash-stepline .btn { margin-left: auto; }
-
-/* A room that is running, and the way back into it. */
-.dash-liverow { gap: 16px; padding: 12px; }
-
-/* A room in a narrow column: what it was and its state, then its figures. */
-.rw.dash-roomline { flex-direction: column; align-items: stretch; gap: 4px; }
-.dash-roomline-top { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.dash-roomline-top > .clip { flex: 1; }
-.dash-roomline-top > .mono { font-size: 12px; }
-
-/* ------------------------------------------------------------------ tables */
-
-.dash-tbl td.r, .dash-rooms td.r { font-variant-numeric: tabular-nums; }
-.dash-tbl td.c-main { width: 44%; max-width: 0; }
-.dash-tbl th:first-child, .dash-tbl td:first-child, .dash-rooms th:first-child, .dash-rooms td:first-child { padding-left: 20px; }
-.dash-tbl th:last-child, .dash-tbl td:last-child, .dash-rooms th:last-child, .dash-rooms td:last-child { padding-right: 20px; }
-.dash-students td.c-main { width: 70%; }
-
-.dash-rooms td.c-title { width: 34%; max-width: 0; }
-.dash-rooms td.c-when { white-space: nowrap; color: var(--text-2); }
-.dash-rooms td.r .dash-sub, .dash-rooms td.c-state .dash-sub { white-space: nowrap; }
-.dash-rooms td.c-go, .dash-rooms td.c-more { width: 1%; white-space: nowrap; }
-.dash-rooms td.c-go { padding-right: 0; text-align: right; }
-.dash-rooms td.c-more { padding-left: 4px; }
-.dash-rooms tr[aria-busy='true'] td:not(.c-go):not(.c-more) { opacity: 0.6; }
-
-/* On a phone a row of columns becomes a short stack: who or what it is on the
-   first line, then each figure with its own label. */
-@media (max-width: 760px) {
-  .dash-tbl, .dash-tbl tbody { display: block; }
-  .dash-tbl thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-  .dash-tbl tr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-  .dash-tbl tr:last-child { border-bottom: 0; }
-  .dash-tbl td, .dash-tbl td.c-main, .dash-tbl td:first-child, .dash-tbl td:last-child {
-    display: block; width: auto; max-width: none; padding: 0; border: 0; text-align: left;
-  }
-  .dash-tbl td.c-main { flex: 1 0 100%; min-width: 0; margin-bottom: 4px; }
-  .dash-tbl td[data-label]::before { content: attr(data-label); margin-right: 8px; color: var(--text-3); }
-
-  /* Two columns fit on one line: the roll number rides beside the name. */
-  .dash-students td.c-main { flex: 1 1 0; margin-bottom: 0; }
-}
-
-@media (max-width: 960px) {
-  .dash-rooms, .dash-rooms tbody { display: block; }
-  .dash-rooms thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-  .dash-rooms tr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-  .dash-rooms tr:last-child { border-bottom: 0; }
-  /* A break after the figures, so "when" and the way in share the last line. */
-  .dash-rooms tr::before { content: ''; order: 6; flex: 1 0 100%; height: 0; margin-top: -4px; }
-  .dash-rooms td, .dash-rooms td:first-child, .dash-rooms td:last-child, .dash-rooms td.c-title, .dash-rooms td.c-go, .dash-rooms td.c-more {
-    display: block; width: auto; max-width: none; padding: 0; border: 0; text-align: left;
-  }
-  .dash-rooms td:empty { display: none; }
-  .dash-rooms td.c-code { order: 1; }
-  .dash-rooms td.c-state { order: 2; display: flex; align-items: center; gap: 8px; }
-  .dash-rooms td.c-more { order: 3; margin-left: auto; }
-  .dash-rooms td.c-title { order: 4; flex: 1 0 100%; min-width: 0; }
-  .dash-rooms td.c-fact { order: 5; }
-  .dash-rooms td.c-fact::before { content: attr(data-label); margin-right: 8px; color: var(--text-3); }
-  .dash-rooms td.c-fact .dash-sub { display: inline; margin-left: 8px; }
-  .dash-rooms td.c-when { order: 7; flex: 1 1 0; white-space: normal; }
-  .dash-rooms td.c-go { order: 8; }
-}
-
-/* --------------------------------------------------------------- inspector */
-
-.dash-insp { display: flex; flex-direction: column; min-width: 0; }
-/* Held beside a long list, it must never be taller than the window: what did
-   not fit would be out of reach until the list ended. It scrolls instead, and
-   stops short of the dock. */
+.ac-insp { display: flex; flex-direction: column; min-width: 0; }
 @media (min-width: 1081px) {
-  .dash-insp.sticky {
-    max-height: calc(100dvh - var(--strip-h) - var(--dock-h) - 64px); overflow-y: auto;
+  .ac-insp:not(.is-flat) {
+    position: sticky; top: 20px; max-height: calc(100dvh - var(--strip-h) - 40px); overflow-y: auto;
     scrollbar-width: thin; scrollbar-color: var(--line-2) transparent;
   }
 }
-.dash-insp-head { display: flex; align-items: center; gap: 12px; padding: 20px; min-width: 0; }
-.dash-sec { display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-top: 1px solid var(--line); min-width: 0; }
+.ac-insp-head { display: flex; align-items: center; gap: 12px; padding: 20px 20px 16px; min-width: 0; }
+.ac-insp-head h3 { font: 700 16px/1.3 var(--font); letter-spacing: -0.01em; }
+.ac-insp-ic { background: var(--primary-soft); color: var(--primary); }
+.ac-sec { display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-top: 1px solid var(--line); min-width: 0; }
+.ac-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.ac-label { font: 600 11px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
 /* Inside a sheet the dialog already supplies the gutter. */
-.dash-insp.is-flat .dash-sec { padding-left: 0; padding-right: 0; }
-.dash-insp.is-flat .dash-sec:first-child { padding-top: 0; border-top: 0; }
+.ac-insp.is-flat .ac-sec { padding-left: 0; padding-right: 0; }
+.ac-insp.is-flat .ac-sec:first-child { padding-top: 0; border-top: 0; }
+.ac-reached { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.ac-codeline { display: flex; align-items: center; gap: 12px; }
 
-.dash-kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; font: 400 13px/20px var(--font); }
-.dash-kv dt { color: var(--text-3); }
-.dash-kv dd { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
+.ac-figs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; }
+.ac-figs > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ac-figs b { font: 600 22px/1.05 var(--font); letter-spacing: -0.03em; color: var(--text); }
+.ac-figs span { font: 500 12px/1.3 var(--font); color: var(--text-3); }
 
-/* ------------------------------------------------------------------ invites */
+/* Label and value, one pair per line. */
+.ac-kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; font: 400 13px/1.45 var(--font); }
+.ac-kv dt { color: var(--text-3); }
+.ac-kv dd { text-align: right; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
 
-/* A code to hand over. Large, mono, selectable in one click. */
-.dash-codeblock { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
-.dash-code { font: 500 28px/34px var(--mono); letter-spacing: 0.08em; color: var(--text); user-select: all; overflow-wrap: anywhere; }
-/* A code is never broken across two lines to make room for its own button. */
-@media (max-width: 560px) {
-  .dash-codeblock > .grow { flex: 1 0 100%; }
-  .dash-codeblock > .btn { flex: 1 1 100%; }
+/* Six levels as thin bars: number and name, how well, on how much. */
+.ac-lvrows { display: flex; flex-direction: column; gap: 9px; }
+.ac-lvrow { display: grid; grid-template-columns: 108px minmax(0, 1fr) 34px 54px; align-items: center; gap: 10px; font: 400 12px/1.3 var(--font); }
+.ac-lvrow-name { display: flex; align-items: center; gap: 7px; min-width: 0; padding-left: 2px; white-space: nowrap; color: var(--text-2); }
+.ac-lvrow-n { width: 16px; height: 16px; flex: none; display: grid; place-items: center; border-radius: 4px; background: var(--lv); color: var(--lv-ink); font: 600 10px/1 var(--mono); font-style: normal; }
+.ac-lvrow-bar { height: 6px; border-radius: var(--r-full); background: var(--sunk); overflow: hidden; }
+.ac-lvrow-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--lv); box-shadow: inset 0 0 0 1px rgba(20, 22, 26, 0.08); transform-origin: left; animation: grow-x 0.9s var(--ease) both; }
+.ac-lvrow-pct { font: 500 12px/1 var(--mono); color: var(--text); text-align: right; }
+.ac-lvrow-ct { font: 400 11px/1 var(--mono); color: var(--text-3); text-align: right; }
+.ac-lvrow[data-here='true'] .ac-lvrow-name { color: var(--text); font-weight: 700; }
+.ac-lvrow[data-here='true'] .ac-lvrow-n { box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--text); }
+.ac-lvrow[data-empty='true'] .ac-lvrow-pct { color: var(--text-4); }
+
+/* Where a student is on the climb: six rungs rising, lit to their level. */
+.ac-climb { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.ac-climb-rungs { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; flex: none; }
+.ac-climb-rungs i { width: 5px; border-radius: 1.5px; background: var(--line-2); }
+.ac-climb-rungs i:nth-child(1) { height: 6px; }
+.ac-climb-rungs i:nth-child(2) { height: 8px; }
+.ac-climb-rungs i:nth-child(3) { height: 10px; }
+.ac-climb-rungs i:nth-child(4) { height: 12px; }
+.ac-climb-rungs i:nth-child(5) { height: 14px; }
+.ac-climb-rungs i:nth-child(6) { height: 16px; }
+.ac-climb-rungs i[data-on='true'] { background: var(--lv); box-shadow: inset 0 0 0 1px rgba(20, 22, 26, 0.1); }
+.ac-climb-name { display: inline-flex; align-items: baseline; gap: 5px; font: 600 12px/1 var(--font); color: var(--text); white-space: nowrap; }
+.ac-climb-name b { font: 500 11px/1 var(--mono); color: var(--text-3); }
+
+/* The supports: one line each on what it does, the rest on hover or focus. */
+.ac-sups { display: flex; flex-direction: column; margin: 0 -8px; }
+.ac-sups > li + li { border-top: 1px solid var(--line); }
+.ac-sup { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: start; gap: 11px; padding: 10px 8px; border-radius: 9px; cursor: pointer; transition: background var(--t-1) var(--ease); }
+.ac-sup:hover { background: var(--hover); }
+.ac-sup .tick { margin-top: 1px; }
+.ac-sup input:focus-visible + .tick { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ac-sup input:disabled + .tick { opacity: 0.6; }
+.ac-sup-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ac-sup-name { font: 600 13px/1.35 var(--font); color: var(--text-2); }
+.ac-sup[data-on='true'] .ac-sup-name { color: var(--text); }
+.ac-sup-what { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; font: 400 12px/1.45 var(--font); color: var(--text-3); }
+.ac-sup:hover .ac-sup-what, .ac-sup:focus-within .ac-sup-what { -webkit-line-clamp: unset; display: block; }
+.ac-sup .spinner { margin-top: 2px; color: var(--primary); }
+
+/* A short list of rooms in an inspector. */
+.ac-mini { display: flex; flex-direction: column; }
+.ac-mini > li { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 9px 0; }
+.ac-mini > li + li { border-top: 1px solid var(--line); }
+.ac-mini .grow { display: flex; flex-direction: column; gap: 2px; }
+.ac-mini-t { font: 600 13px/1.35 var(--font); color: var(--text); }
+
+/* An accuracy as a short meter: one green for every room, never a level. */
+.ac-rate { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+.ac-rate-bar { width: 56px; height: 5px; border-radius: var(--r-full); background: var(--sunk); overflow: hidden; }
+.ac-rate-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--primary); transform-origin: left; animation: grow-x 0.9s var(--ease) both; }
+.ac-rate-n { min-width: 32px; text-align: right; font: 500 12px/1 var(--mono); color: var(--text); }
+
+/* ------------------------------------------------------------- the people */
+
+.ac-people { display: flex; flex-direction: column; padding: 0 10px 8px; }
+.ac-people > li + li { border-top: 1px solid var(--line); }
+.ac-person {
+  width: 100%; min-height: 56px; display: grid; grid-template-columns: 30px minmax(0, 1fr) 92px 124px 72px 14px; align-items: center; gap: 12px;
+  padding: 10px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--text); text-align: left; cursor: pointer;
+  transition: background var(--t-1) var(--ease);
+}
+.ac-person:hover { background: var(--hover); }
+.ac-person[aria-current='true'] { background: var(--primary-soft); box-shadow: inset 2px 0 0 var(--primary); }
+.ac-person-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ac-person-name { display: flex; align-items: center; gap: 8px; min-width: 0; font: 600 13.5px/1.3 var(--font); color: var(--text); }
+.ac-person-code { font: 400 11.5px/1.3 var(--mono); color: var(--text-3); }
+.ac-person[data-off='true'] .ac-person-name > .clip { color: var(--text-3); }
+.ac-person-roll { display: flex; min-width: 0; font: 500 12.5px/1 var(--mono); color: var(--text-2); }
+.ac-person-lv { display: flex; min-width: 0; }
+.ac-person-seen { font: 400 12px/1.3 var(--font); color: var(--text-3); text-align: right; white-space: nowrap; }
+.ac-person-go { color: var(--text-4); }
+
+@container (max-width: 560px) {
+  .ac-person { grid-template-columns: 30px minmax(0, 1fr) auto; grid-template-areas: 'av who roll' 'av lv seen'; row-gap: 4px; }
+  .ac-person > .avatar { grid-area: av; align-self: start; }
+  .ac-person-who { grid-area: who; }
+  .ac-person-roll { grid-area: roll; justify-self: end; }
+  .ac-person-lv { grid-area: lv; }
+  .ac-person-seen { grid-area: seen; }
+  .ac-person-go { display: none; }
 }
 
-/* A dialog's actions. They wrap when a phone cannot hold them on one line,
-   which the shared footer on its own does not. */
-.dash-acts { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+/* Professors: who, the code to copy, where they are, how their classes did. */
+.ac-profs { display: flex; flex-direction: column; padding: 0 10px 8px; }
+.ac-profs > li + li { border-top: 1px solid var(--line); }
+.ac-prof {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto 112px 98px; align-items: center; gap: 14px;
+  padding: 10px 12px; border-radius: 10px; cursor: pointer; transition: background var(--t-1) var(--ease);
+}
+.ac-prof:hover { background: var(--hover); }
+.ac-prof[data-selected='true'] { background: var(--primary-soft); box-shadow: inset 2px 0 0 var(--primary); }
+.ac-prof-who { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 0; border: 0; border-radius: var(--r-1); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.ac-prof-code { display: inline-flex; align-items: center; gap: 2px; font: 500 12px/1 var(--mono); letter-spacing: 0.04em; color: var(--text-2); }
+.ac-prof-code .btn { color: var(--text-3); }
+.ac-prof-state { display: flex; min-width: 0; }
+.ac-prof-rate { justify-self: end; }
 
-.dash-box { border: 1px solid var(--line); border-radius: var(--r-2); }
-.dash-box.rows { padding: 4px; }
-.dash-scroll { max-height: 280px; overflow-y: auto; }
-.dash-paste { min-height: 132px; font-family: var(--mono); font-size: 13px; }
+@container (max-width: 600px) {
+  .ac-prof { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'who rate' 'code state'; row-gap: 6px; }
+  .ac-prof-who { grid-area: who; }
+  .ac-prof-rate { grid-area: rate; }
+  .ac-prof-code { grid-area: code; margin-left: 40px; }
+  .ac-prof-state { grid-area: state; justify-self: end; }
+  .ac-prof-who .t-meta { white-space: normal; }
+  .ac-prof-rate .ac-rate-bar { width: 36px; }
+}
+
+/* Codes made in this visit, under the professors. */
+.ac-invites { display: flex; flex-direction: column; gap: 8px; margin: 6px 22px 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.ac-pad > .ac-invites { margin: 0; padding-top: 0; border-top: 0; }
+.ac-invites > .t-meta { max-width: 72ch; }
+.ac-invite-list > li { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 10px 0; }
+.ac-invite-list > li + li { border-top: 1px solid var(--line); }
+.ac-invite-list .grow { display: flex; flex-direction: column; gap: 2px; font: 500 13px/1.35 var(--font); }
+.ac-invite-code { flex: none; padding: 7px 9px; border-radius: 7px; border: 1px dashed var(--line-2); background: var(--raised); font: 600 13.5px/1 var(--mono); letter-spacing: 0.08em; color: var(--text); user-select: all; }
+
+/* ---------------------------------------------------- what is happening */
+
+.ac-feed { display: flex; flex-direction: column; padding: 0 22px 10px; }
+.ac-feed > .ac-feed-row { border-top: 1px solid var(--line); }
+.ac-feed.is-flush { padding: 0; }
+.ac-feed.is-flush > .ac-feed-row:first-child { border-top: 0; padding-top: 2px; }
+.ac-feed-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: start; gap: 14px; padding: 13px 0; min-width: 0; }
+.ac-feed-row.is-tight { grid-template-columns: 8px minmax(0, 1fr); gap: 12px; padding: 10px 0; }
+.ac-feed-row > .btn { align-self: center; }
+.ac-feed-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ac-feed-t { display: flex; align-items: center; gap: 8px; min-width: 0; font: 600 13.5px/1.35 var(--font); color: var(--text); }
+.ac-feed-t .chip { height: 20px; padding: 0 6px; font-size: 11px; }
+.ac-dot { width: 8px; height: 8px; margin-top: 6px; border-radius: var(--r-full); background: var(--line-2); }
+.ac-dot[data-status='open'] { background: var(--ok-fill); animation: pulse-ring 2s infinite; }
+.ac-dot[data-status='paused'] { background: var(--warn-fill); }
+@container (max-width: 420px) {
+  .ac-feed-row { grid-template-columns: 8px minmax(0, 1fr); }
+  .ac-feed-row > .btn { grid-column: 2; justify-self: start; }
+}
+
+/* Chapters in the console. */
+.ac-chapters { display: flex; flex-direction: column; padding: 0 10px 8px; }
+.ac-chapters > li + li { border-top: 1px solid var(--line); }
+.ac-chapter { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 11px 12px; border-radius: 10px; transition: background var(--t-1) var(--ease); }
+.ac-chapter:hover { background: var(--hover); }
+.ac-chapter-ic { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 8px; background: var(--raised); border: 1px solid var(--line); color: var(--text-3); }
+.ac-chapter .grow { display: flex; flex-direction: column; gap: 2px; }
+.ac-chapter-t { font: 600 13.5px/1.35 var(--font); color: var(--text); }
+.ac-chapter-go { color: var(--text-4); }
+
+/* ------------------------------------------------- levels across people */
+
+.ac-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding-top: 4px; font: 500 10.5px/1 var(--mono); color: var(--text-3); }
+.ac-legend i { width: 16px; height: 10px; border-radius: 3px; }
+.ac-legend i[data-empty] { margin-left: 10px; }
+
+/* One green, five steps; the empty cell is hatched, never a shade of it. */
+.ac-cell, .ac-legend i { --mix: 12%; background: color-mix(in srgb, var(--primary) var(--mix), var(--surface)); }
+[data-step='2'].ac-cell, .ac-legend i[data-step='2'] { --mix: 30%; }
+[data-step='3'].ac-cell, .ac-legend i[data-step='3'] { --mix: 46%; }
+[data-step='4'].ac-cell, .ac-legend i[data-step='4'] { --mix: 70%; }
+[data-step='5'].ac-cell, .ac-legend i[data-step='5'] { --mix: 92%; }
+.ac-cell[data-empty='true'], .ac-legend i[data-empty] {
+  background: repeating-linear-gradient(135deg, var(--line-2) 0 1.5px, transparent 1.5px 6px); box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.ac-heat-wrap { overflow-x: auto; padding: 0 18px 6px; }
+.ac-heat { width: 100%; min-width: 600px; table-layout: fixed; border-collapse: separate; border-spacing: 4px; }
+.ac-heat thead th:first-child { width: 200px; }
+.ac-heat thead th { padding: 0 2px 6px; vertical-align: bottom; text-align: left; font: 500 11.5px/1.2 var(--font); color: var(--text-3); }
+.ac-heat-lv { display: flex; align-items: center; gap: 5px; font: 600 11px/1 var(--mono); color: var(--text-2); }
+.ac-heat-name { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac-heat thead th[data-peak='true'] .ac-heat-name { color: var(--text); font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
+.ac-heat tbody th { padding: 0 8px 0 2px; vertical-align: middle; text-align: left; font-weight: 400; }
+.ac-heat-who { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 13px/1.3 var(--font); color: var(--text); }
+button.ac-heat-who { padding: 0; border: 0; background: transparent; cursor: pointer; text-align: left; }
+button.ac-heat-who:hover { color: var(--primary); text-decoration: underline; text-underline-offset: 3px; }
+.ac-heat tbody th small { display: block; font: 400 11.5px/1.3 var(--font); color: var(--text-3); }
+.ac-heat td { padding: 0; }
+.ac-cell { display: grid; place-items: center; height: 36px; border-radius: 7px; font: 500 12px/1 var(--mono); color: var(--text); }
+.ac-cell[data-empty='true'] { color: var(--text-4); }
+.ac-cell.skel { background: linear-gradient(90deg, var(--sunk) 25%, var(--raised) 37%, var(--sunk) 63%); background-size: 400% 100%; }
+.ac-heat tr.is-dept .ac-cell { height: 46px; font-size: 13px; font-weight: 600; }
+.ac-heat tr.is-idle td { padding: 4px 6px; }
+/* The figure on the darkest step is light in the light theme; in the dark
+   theme the two lightest steps carry dark text. Each pair clears 4.5:1. */
+.ac-cell[data-step='5'] { color: var(--on-primary); }
+:root[data-theme='dark'] .ac-cell[data-step='4'] { color: var(--on-primary); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) .ac-cell[data-step='4'] { color: var(--on-primary); } }
+.ac-heat-toggle td { padding: 6px 0 2px; }
+.ac-heat-toggle button {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; margin-left: -6px; border: 0; border-radius: 7px;
+  background: transparent; cursor: pointer; font: 600 12.5px/1 var(--font); color: var(--primary);
+}
+.ac-heat-toggle button:hover { background: var(--hover); }
+.ac-heat-toggle button svg { transform: rotate(-90deg); transition: transform var(--t-2) var(--ease); }
+.ac-heat-toggle button[aria-expanded='true'] svg { transform: none; }
+.ac-heat-err { font: 400 12.5px/1.4 var(--font); color: var(--bad); }
+.ac-heat-note { padding: 6px 22px 18px; }
+
+/* ------------------------------------------------------------------ rooms */
+
+.ac-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
+.ac-toolbar .search { margin-left: auto; width: 300px; max-width: 100%; }
+
+.ac-roomlist-top { padding: 16px 22px 0; }
+.ac-day { padding: 0 22px; }
+.ac-day:last-child { padding-bottom: 8px; }
+.ac-day-h { display: flex; align-items: baseline; gap: 10px; padding: 16px 0 8px; font: 600 11px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
+.ac-day-n { font: 500 10.5px/1 var(--mono); letter-spacing: 0; text-transform: none; color: var(--text-4); }
+.ac-rooms > li { border-top: 1px solid var(--line); }
+
+.ac-room {
+  display: grid; grid-template-columns: 82px 66px minmax(0, 1fr) 82px 148px 130px 30px;
+  grid-template-areas: 'state code main people acc go more'; align-items: center; gap: 14px; min-width: 0; padding: 12px 0;
+}
+.ac-room-state { grid-area: state; }
+.ac-room-code { grid-area: code; font: 600 13px/1 var(--mono); letter-spacing: 0.06em; color: var(--text); }
+.ac-room-main { grid-area: main; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.ac-room-t { font: 600 13.5px/1.35 var(--font); color: var(--text); }
+.ac-room-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font: 400 12px/1.4 var(--font); color: var(--text-3); }
+.ac-room-sub > span:first-child { margin-right: 4px; }
+.ac-set { display: inline-flex; align-items: center; height: 19px; padding: 0 6px; border-radius: 5px; border: 1px solid var(--line); font: 500 11px/1 var(--font); color: var(--text-3); white-space: nowrap; }
+.ac-set.is-ro { border-style: dashed; color: var(--text-2); }
+.ac-room-band { font-weight: 600; color: var(--warn); }
+.ac-room-people { grid-area: people; display: flex; flex-direction: column; gap: 4px; font: 400 12px/1.2 var(--font); color: var(--text-3); white-space: nowrap; }
+.ac-room-people b { font: 600 15px/1 var(--font); letter-spacing: -0.01em; color: var(--text); }
+.ac-room-people small { font: 600 11.5px/1 var(--font); color: var(--ok); }
+.ac-room-acc { grid-area: acc; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ac-room-acc small { font: 400 11.5px/1.25 var(--font); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ac-room-go { grid-area: go; display: flex; justify-content: flex-end; }
+.ac-room-more { grid-area: more; display: flex; justify-content: flex-end; }
+.ac-room[aria-busy='true'] > :not(.ac-room-go):not(.ac-room-more) { opacity: 0.55; }
+.ac-state { height: 22px; }
+
+@container (max-width: 880px) {
+  .ac-room {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: 'state code more' 'main main main' 'people acc acc' 'go go go';
+    gap: 8px 14px; padding: 14px 0;
+  }
+  .ac-room-go { justify-content: flex-start; }
+  .ac-room-go:empty { display: none; }
+  .ac-room-acc { align-self: start; }
+}
+
+/* Deleted rooms, as the archives they were kept in. */
+.ac-archs { display: flex; flex-direction: column; padding: 0 22px 10px; }
+.ac-arch { display: grid; grid-template-columns: 34px minmax(0, 1fr) 160px auto; align-items: center; gap: 14px; min-width: 0; padding: 12px 0; border-top: 1px solid var(--line); }
+.ac-arch-ic { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 9px; border: 1px solid var(--line); background: var(--raised); color: var(--text-3); }
+.ac-arch-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ac-arch-t { display: flex; align-items: baseline; gap: 10px; min-width: 0; font: 600 13.5px/1.35 var(--font); color: var(--text); }
+.ac-arch-code { flex: none; font: 500 11.5px/1 var(--mono); letter-spacing: 0.06em; color: var(--text-3); }
+.ac-arch-err { font: 500 12px/1.4 var(--font); color: var(--bad); }
+.ac-size { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ac-size-bar { height: 4px; border-radius: var(--r-full); background: var(--sunk); overflow: hidden; }
+.ac-size-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--text-3); transform-origin: left; animation: grow-x 0.9s var(--ease) both; }
+.ac-size-n { font: 500 12px/1 var(--mono); color: var(--text); white-space: nowrap; }
+.ac-size-n i { font-style: normal; color: var(--text-3); }
+.ac-arch-empty { display: flex; align-items: flex-start; gap: 14px; margin: 0 22px 22px; padding: 16px; border-radius: 12px; border: 1px dashed var(--line-2); }
+.ac-arch-empty b { font: 600 13.5px/1.35 var(--font); color: var(--text); }
+.ac-arch-empty p { max-width: 60ch; }
+.ac-archs > .ac-skel-row { border-top: 1px solid var(--line); }
+@container (max-width: 600px) {
+  .ac-arch { grid-template-columns: 34px minmax(0, 1fr) auto; grid-template-areas: 'ic main main' '. size btn'; row-gap: 10px; }
+  .ac-arch > .ac-arch-ic { grid-area: ic; align-self: start; }
+  .ac-arch-main { grid-area: main; }
+  .ac-size { grid-area: size; max-width: 200px; }
+  .ac-arch > .btn { grid-area: btn; }
+}
+
+/* What a delete does, in the order it does it. */
+.ac-steps-del { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--raised); }
+.ac-steps-del li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 10px; font: 400 13px/1.5 var(--font); color: var(--text-2); }
+.ac-steps-del svg { margin-top: 3px; color: var(--primary); }
+.ac-steps-del li:last-child svg { color: var(--bad); }
+.ac-steps-del b { font-weight: 700; color: var(--text); }
+
+/* -------------------------------------------------------------- invites */
+
+/* A dialog's actions. They wrap when a phone cannot hold them on one line. */
+.ac-acts { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
+/* A code to hand over: large, mono, selectable in one click. */
+.ac-codeblock { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 18px; border-radius: 12px; border: 1px dashed var(--line-2); background: var(--raised); }
+.ac-code { margin-top: 4px; font: 600 28px/1.2 var(--mono); letter-spacing: 0.1em; color: var(--text); user-select: all; overflow-wrap: anywhere; }
+.ac-plate { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 7px; border: 1px dashed var(--line-2); background: var(--raised); font: 600 13px/1 var(--mono); letter-spacing: 0.14em; color: var(--text); }
+
+.ac-box { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.ac-box.rows { padding: 4px; }
+.ac-box .tbl th:first-child, .ac-box .tbl td:first-child { padding-left: 14px; }
+.ac-scroll { max-height: 280px; overflow-y: auto; }
+.ac-paste { min-height: 132px; font-family: var(--mono); font-size: 13px; }
+.ac-all { user-select: all; letter-spacing: 0.06em; }
+.ac-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 
 /* A roster to tick: the box, the student, the roll number that goes with them. */
-.dash-picks { display: flex; flex-direction: column; }
-.dash-pick { flex: none; display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 12px; }
-.dash-pick + .dash-pick { box-shadow: 0 -1px 0 var(--line); }
-.dash-pick label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; cursor: pointer; }
-.dash-pick input:focus-visible + .tick { outline: 2px solid var(--text); outline-offset: 2px; }
-.dash-pick .input { width: 132px; flex: none; }
-.dash-pick[data-off='true'] label { cursor: default; color: var(--text-3); }
-.dash-pick[data-off='true'] .strong { color: var(--text-3); }
+.ac-picks { display: flex; flex-direction: column; }
+.ac-pick { flex: none; display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 12px; }
+.ac-pick + .ac-pick { box-shadow: 0 -1px 0 var(--line); }
+.ac-pick label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; cursor: pointer; }
+.ac-pick input:focus-visible + .tick { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ac-pick .input { width: 132px; flex: none; }
+.ac-pick[data-off='true'] label { cursor: default; color: var(--text-3); }
+.ac-pick[data-off='true'] .strong { color: var(--text-3); }
 
-/* ------------------------------------------------------------------- phone */
+/* ------------------------------------------------------------- skeletons */
+
+.ac-skel-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 32px; padding: 28px 32px; border-radius: var(--r-5); background: var(--panel); box-shadow: var(--sh-panel); }
+.ac-skel-panel .skel { background: linear-gradient(90deg, rgba(255, 255, 255, 0.05) 25%, rgba(255, 255, 255, 0.11) 37%, rgba(255, 255, 255, 0.05) 63%); background-size: 400% 100%; }
+.ac-skel-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.ac-skel-list { display: flex; flex-direction: column; gap: 14px; padding: 22px; }
+.ac-skel-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.ac-skel-heat { display: grid; grid-template-columns: 180px repeat(6, minmax(0, 1fr)); gap: 6px; }
+@media (max-width: 1180px) { .ac-skel-panel { grid-template-columns: minmax(0, 1fr); } }
+
+/* ------------------------------------------------------------------ phone */
 
 @media (max-width: 760px) {
   /* The page's own actions take the full line, the main one widest. */
-  .page-head .acts.dash-headacts { width: 100%; margin-left: 0; }
-  .dash-headacts .btn:not(.btn-icon) { flex: 1 1 auto; }
+  .page-head .acts:has(.ac-headacts) { width: 100%; }
+  .ac-headacts { width: 100%; }
+  .ac-headacts > .btn:not(.btn-icon) { flex: 1 1 auto; }
 
   /* Thumb-sized: nothing pressable on these screens is under 40px. */
-  .btn.dash-tap { height: 40px; min-width: 40px; }
-  .dash-segbox .seg > button { height: 40px; }
-  .dash-tools .search { width: 100%; margin-left: 0; height: 40px; }
-  .dash-tools.is-inset { padding: 12px 16px; }
-  .dash-rowbtn { min-height: 40px; }
+  .btn.ac-tap { height: 40px; min-width: 40px; }
+  .ac-segbox .seg > button { height: 34px; }
+  .ac-tools .search, .ac-toolbar .search { height: 40px; }
+  .ac-toolbar .search { width: 100%; margin-left: 0; }
+  .ac-person, .ac-prof { min-height: 56px; }
+  .ac-sup { padding: 12px 8px; }
+  .ac-heat-toggle button { height: 40px; }
 
-  .dash-liverow, .dash-stepline { flex-wrap: wrap; }
-  .dash-liverow .rw-main { flex: 1 0 100%; order: 3; }
-  .dash-liverow .btn { order: 4; width: 100%; }
-  .dash-stepline .rw-main { flex: 1 1 0; }
-  .dash-stepline .btn { flex: 1 1 100%; margin-left: 44px; }
+  .ac-brief.panel, .ac-first.panel { padding: 22px 18px; }
+  .ac-skel-panel { padding: 22px 18px; }
+  .ac-lead { font-size: 19px; }
+  .ac-tiles, .ac-skel-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ac-brief-acts .btn { flex: 1 1 auto; }
 
-  .dash-acts .btn { flex: 1 1 auto; height: 40px; }
+  .ac-head { padding: 18px 16px 12px; }
+  .ac-tools, .ac-pad-x { padding-left: 16px; padding-right: 16px; }
+  .ac-people, .ac-profs, .ac-chapters { padding-left: 4px; padding-right: 4px; }
+  .ac-feed, .ac-archs, .ac-day { padding-left: 16px; padding-right: 16px; }
+  .ac-roomlist-top { padding: 14px 16px 0; }
+  .ac-heat-wrap { padding: 0 12px 6px; }
+  .ac-heat-note, .ac-quiet { padding-left: 16px; padding-right: 16px; }
+  .ac-invites { margin-left: 16px; margin-right: 16px; }
+  .ac-arch-empty { margin-left: 16px; margin-right: 16px; }
+  .ac-sec, .ac-insp-head { padding-left: 16px; padding-right: 16px; }
 
-  .dash-pick { flex-wrap: wrap; }
-  .dash-pick label { flex: 1 0 100%; min-height: 40px; }
-  .dash-pick .chip { margin-left: 30px; }
-  .dash-pick .input { flex: 1 1 100%; width: auto; min-width: 0; height: 40px; margin-left: 30px; }
+  .ac-first-steps li { flex-wrap: wrap; }
+  .ac-first-steps li .grow { flex: 1 1 0; }
+  .ac-first-steps li .btn { flex: 1 1 100%; margin-left: 40px; }
+
+  .ac-acts .btn { flex: 1 1 auto; height: 40px; }
+  .ac-codeblock > .grow { flex: 1 0 100%; }
+  .ac-codeblock > .btn { flex: 1 1 100%; }
+
+  .ac-pick { flex-wrap: wrap; }
+  .ac-pick label { flex: 1 0 100%; min-height: 40px; }
+  .ac-pick .chip { margin-left: 30px; }
+  .ac-pick .input { flex: 1 1 100%; width: auto; min-width: 0; height: 40px; margin-left: 30px; }
 }

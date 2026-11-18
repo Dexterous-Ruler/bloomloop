@@ -121,6 +121,48 @@ test('a room from before the evidence store keeps its questions from the bank', 
   assert.equal(back.students[0].history[0].at, '2026-01-01T10:00:00.000Z');
 });
 
+test('a room\'s review log is archived with it, each decision against its answer', async () => {
+  const repo = createMemoryRepo();
+  const content = await repo.createContent({ title: 'Written', kind: 'syllabus', rawText: '', topics: ['T'] });
+  const [q] = await repo.insertQuestions([{
+    contentId: content._id, topic: 'T', bloom: 'create', kind: 'open', text: 'Explain osmosis.', rubric: ['water moves', 'across membrane'],
+  }]);
+  const session = await repo.createSession({ code: 'REV001', contentId: content._id, title: 'Written', status: 'closed' });
+  const answer = async (answerKey, rollNo) => (await repo.recordAnswer({
+    sessionId: session._id, answerKey, rollNo, questionId: q._id, topic: 'T', bloom: 'create', kind: 'open',
+    questionSnapshot: { id: String(q._id), text: q.text, rubric: q.rubric }, response: 'Water moves.',
+    correct: false, score: 0.5, autoCorrect: false, autoScore: 0.5, autoDetail: '1/2 rubric points', reviewStatus: 'provisional',
+  })).answer;
+  const a1 = await answer('key-0001', '01');
+  const a2 = await answer('key-0002', '02');
+  const review = (a, decision, correct, score, note, reviewedAt) => repo.addAnswerReview({
+    answerId: a._id, sessionId: session._id, decision, correct, score, note, reviewedBy: null, reviewedAt,
+  });
+  await review(a1, 'confirm', false, 0.5, '', '2026-11-18T10:00:00.000Z');
+  await review(a1, 'override', true, 0.9, 'Both points', '2026-11-18T10:05:00.000Z');
+  await review(a2, 'override', true, 1, '', '2026-11-18T10:06:00.000Z');
+
+  const { doc, json } = await buildRoomArchive(repo, session);
+  assert.equal(doc.data.counts.reviews, 3);
+  const back = decodeRoomArchive(JSON.parse(json));
+  assert.deepEqual(
+    back.reviews.map((r) => [r.answerKey, r.decision, r.correct, r.score, r.note ?? '', r.reviewedAt]),
+    [
+      ['key-0001', 'confirm', false, 0.5, '', '2026-11-18T10:00:00.000Z'],
+      ['key-0001', 'override', true, 0.9, 'Both points', '2026-11-18T10:05:00.000Z'],
+      ['key-0002', 'override', true, 1, '', '2026-11-18T10:06:00.000Z'],
+    ],
+  );
+
+  // An archive written before reviews existed decodes with none.
+  const { reviews, ...older } = doc.data;
+  assert.deepEqual(decodeRoomArchive(older).reviews, []);
+
+  // The live log goes with the room, which is why it is archived first.
+  await repo.deleteSession(session._id);
+  assert.equal((await repo.listAnswerReviews({ sessionId: session._id })).length, 0);
+});
+
 test('saving twice for one room keeps one archive', async () => {
   const repo = createMemoryRepo();
   const meta = { sessionId: 'abc', code: 'ROOM01', title: 'R', ownerId: null, archivedBy: null, archivedAt: '2026-11-18T10:00:00.000Z' };

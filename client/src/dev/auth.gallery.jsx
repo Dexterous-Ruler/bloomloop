@@ -86,6 +86,7 @@ export default [
   {
     id: 'auth-profile-professor-connected',
     title: 'Profile · professor, Classroom connected',
+    note: 'The person, the ID card, a connected Classroom and the access list.',
     role: 'professor',
     render: () => profile({
       account: PROFESSOR,
@@ -96,6 +97,7 @@ export default [
   {
     id: 'auth-profile-professor-not-connected',
     title: 'Profile · professor, Classroom not connected',
+    note: 'Classroom configured but not connected: the Connect row.',
     role: 'professor',
     render: () => profile({
       account: PROFESSOR,
@@ -106,12 +108,14 @@ export default [
   {
     id: 'auth-profile-professor-checking',
     title: 'Profile · professor, Classroom still checking',
+    note: 'The Classroom row while its check is in flight.',
     role: 'professor',
     render: () => profile({ account: PROFESSOR, canSee: CAN_SEE.professor, classroom: null }),
   },
   {
     id: 'auth-profile-professor-failed',
     title: 'Profile · professor, check failed and consent refused',
+    note: 'The check failed and consent could not start.',
     role: 'professor',
     render: () => profile({
       account: PROFESSOR,
@@ -123,6 +127,7 @@ export default [
   {
     id: 'auth-profile-student-linked',
     title: 'Profile · student, Google linked',
+    note: 'A student whose own Google account is linked.',
     role: 'student',
     render: () => profile({
       account: STUDENT,
@@ -133,6 +138,7 @@ export default [
   {
     id: 'auth-profile-student-not-linked',
     title: 'Profile · student, Google not linked',
+    note: 'A student with linking available and not used.',
     role: 'student',
     render: () => profile({
       account: STUDENT,
@@ -143,6 +149,7 @@ export default [
   {
     id: 'auth-profile-student-roster',
     title: 'Profile · student, roster link unconfirmed, no roll number',
+    note: 'A roster-imported link to confirm, and no roll number.',
     role: 'student',
     render: () => profile({
       account: { ...STUDENT, rollNo: null },
@@ -153,6 +160,7 @@ export default [
   {
     id: 'auth-profile-key',
     title: 'Profile · shared teacher key',
+    note: 'The key path: no person, only the Classroom row.',
     render: () => profile({
       account: null,
       usingKey: true,
@@ -162,21 +170,25 @@ export default [
   {
     id: 'auth-profile-nobody',
     title: 'Profile · nobody signed in',
+    note: 'Nobody signed in and no key.',
     render: () => profile({ account: null, usingKey: false }),
   },
   {
     id: 'auth-profile-loading',
     title: 'Profile · account still loading',
+    note: 'The shaped skeleton while the account loads.',
     render: () => profile({ account: null, loading: true }),
   },
   {
     id: 'auth-signup-details',
     title: 'Sign up · after a valid code',
+    note: 'Step two: the code as a receipt, then name, email, password.',
     render: () => signUp({ fullName: 'Isha Deshmukh', email: 'student@example.edu' }),
   },
   {
     id: 'auth-signup-refused',
     title: 'Sign up · the server refused the code',
+    note: 'The server’s refusal, verbatim, under the form.',
     render: () => signUp({
       fullName: 'Isha Deshmukh',
       email: 'student@example.edu',
@@ -187,16 +199,31 @@ export default [
   {
     id: 'auth-signup-creating',
     title: 'Sign up · creating the account',
+    note: 'The request in flight.',
     render: () => signUp({ fullName: 'Isha Deshmukh', email: 'student@example.edu', password: 'sample-only', busy: true }),
+  },
+  {
+    id: 'auth-signin',
+    title: 'Sign in',
+    note: 'The gate: forest art half and the form, before anything is typed.',
+    render: () => signIn(),
+  },
+  {
+    id: 'auth-signup-code',
+    title: 'Sign up · the invite code',
+    note: 'Step one: the eight-character code that decides the role.',
+    render: () => signUp({ step: 'code', code: 'SAMPLE' }),
   },
   {
     id: 'auth-signin-error',
     title: 'Sign in · wrong password',
+    note: 'The server’s error, inline under the password.',
     render: () => signIn({ email: 'prof@example.edu', password: 'sample-only', error: 'Invalid login credentials' }),
   },
   {
     id: 'auth-signin-unconfigured',
     title: 'Sign in · accounts not set up on this build',
+    note: 'No account service: the form is off and says why.',
     render: () => signIn({ configured: false }),
   },
 ];

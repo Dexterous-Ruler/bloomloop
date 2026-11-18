@@ -411,25 +411,25 @@ function AnalyticsDemo({ role, overview = null, records = {}, open = '', error =
 }
 
 const SCREENS = [
-  { id: 'me', title: 'Me: eight sessions', role: 'student', el: <MeDemo dash={DASH} /> },
-  { id: 'me-new', title: 'Me: brand-new student', role: 'student', el: <MeDemo dash={DASH_NEW} /> },
-  { id: 'me-band', title: 'Me: support band, Google linked', role: 'student', el: <MeDemo dash={DASH_BAND} link={LINKED} /> },
-  { id: 'me-no-roll', title: 'Me: no roll number', role: 'student', el: <MeDemo dash={DASH_NO_ROLL} /> },
-  { id: 'analytics-hod', title: 'Analytics: head of department', role: 'hod', el: <AnalyticsDemo overview={HOD_OVERVIEW} records={PROFESSOR_RECORDS} open={ARJUN.id} /> },
-  { id: 'analytics-professor', title: 'Analytics: professor', role: 'professor', el: <AnalyticsDemo overview={PROFESSOR_OVERVIEW} records={STUDENT_RECORDS} open={ISHA.id} /> },
-  { id: 'analytics-student', title: 'Analytics: student', role: 'student', el: <AnalyticsDemo overview={STUDENT_OVERVIEW} /> },
+  { id: 'me', title: 'Me: eight sessions', role: 'student', note: 'A student with eight sessions: the brief, the path and the six levels.', el: <MeDemo dash={DASH} /> },
+  { id: 'me-new', title: 'Me: brand-new student', role: 'student', note: 'No sessions yet: the designed first-time page.', el: <MeDemo dash={DASH_NEW} /> },
+  { id: 'me-band', title: 'Me: support band, Google linked', role: 'student', note: 'Under 40% last session, so the support band is explained.', el: <MeDemo dash={DASH_BAND} link={LINKED} /> },
+  { id: 'me-no-roll', title: 'Me: no roll number', role: 'student', note: 'The server cannot match this account to any session.', el: <MeDemo dash={DASH_NO_ROLL} /> },
+  { id: 'analytics-hod', title: 'Analytics: head of department', role: 'hod', note: 'The department brief, the professors and one professor in full.', el: <AnalyticsDemo overview={HOD_OVERVIEW} records={PROFESSOR_RECORDS} open={ARJUN.id} /> },
+  { id: 'analytics-professor', title: 'Analytics: professor', role: 'professor', note: 'The class brief, thirty students and one student in full.', el: <AnalyticsDemo overview={PROFESSOR_OVERVIEW} records={STUDENT_RECORDS} open={ISHA.id} /> },
+  { id: 'analytics-student', title: 'Analytics: student', role: 'student', note: 'A student’s own strengths and gaps.', el: <AnalyticsDemo overview={STUDENT_OVERVIEW} /> },
 
   // The states nobody sees until something is missing or broken.
-  { id: 'me-loading', title: 'Me: first read', role: 'student', el: <MeDemo dash={null} loading link={null} /> },
-  { id: 'me-failed', title: 'Me: did not load', role: 'student', el: <MeDemo dash={null} error="Failed to fetch" link={null} /> },
-  { id: 'me-stale', title: 'Me: refresh failed', role: 'student', el: <MeDemo dash={DASH} error="Failed to fetch" link={{ ...LINKED, source: 'roster' }} /> },
-  { id: 'me-wrong-role', title: 'Me: opened by a professor', role: 'professor', el: <MeDemo dash={{ role: 'professor' }} link={null} /> },
-  { id: 'analytics-loading', title: 'Analytics: first read', role: 'professor', el: <AnalyticsDemo role="professor" /> },
-  { id: 'analytics-failed', title: 'Analytics: did not load', role: 'professor', el: <AnalyticsDemo role="professor" error="Failed to fetch" /> },
-  { id: 'analytics-nobody', title: 'Analytics: nobody yet', role: 'hod', el: <AnalyticsDemo overview={{ role: 'hod', subjects: [] }} /> },
-  { id: 'analytics-record-loading', title: 'Analytics: record on its way', role: 'professor', el: <AnalyticsDemo overview={PROFESSOR_OVERVIEW} pending /> },
-  { id: 'analytics-record-failed', title: 'Analytics: record did not load', role: 'professor', el: <AnalyticsDemo overview={PROFESSOR_OVERVIEW} /> },
-  { id: 'analytics-no-roll', title: 'Analytics: student with no roll number', role: 'student', el: <AnalyticsDemo overview={NO_ROLL_OVERVIEW} /> },
+  { id: 'me-loading', title: 'Me: first read', role: 'student', note: 'The shaped skeleton before the first answer.', el: <MeDemo dash={null} loading link={null} /> },
+  { id: 'me-failed', title: 'Me: did not load', role: 'student', note: 'The server could not be asked.', el: <MeDemo dash={null} error="Failed to fetch" link={null} /> },
+  { id: 'me-stale', title: 'Me: refresh failed', role: 'student', note: 'A refresh failed; the last answer stays, and an unconfirmed Google link.', el: <MeDemo dash={DASH} error="Failed to fetch" link={{ ...LINKED, source: 'roster' }} /> },
+  { id: 'me-wrong-role', title: 'Me: opened by a professor', role: 'professor', note: 'A professor who typed /me is sent to their own dashboard.', el: <MeDemo dash={{ role: 'professor' }} link={null} /> },
+  { id: 'analytics-loading', title: 'Analytics: first read', role: 'professor', note: 'The shaped skeleton before the list arrives.', el: <AnalyticsDemo role="professor" /> },
+  { id: 'analytics-failed', title: 'Analytics: did not load', role: 'professor', note: 'The list did not come back.', el: <AnalyticsDemo role="professor" error="Failed to fetch" /> },
+  { id: 'analytics-nobody', title: 'Analytics: nobody yet', role: 'hod', note: 'A head of department with no professors.', el: <AnalyticsDemo overview={{ role: 'hod', subjects: [] }} /> },
+  { id: 'analytics-record-loading', title: 'Analytics: record on its way', role: 'professor', note: 'The list is in; the open record is still loading.', el: <AnalyticsDemo overview={PROFESSOR_OVERVIEW} pending /> },
+  { id: 'analytics-record-failed', title: 'Analytics: record did not load', role: 'professor', note: 'The open record was refused or failed.', el: <AnalyticsDemo overview={PROFESSOR_OVERVIEW} /> },
+  { id: 'analytics-no-roll', title: 'Analytics: student with no roll number', role: 'student', note: 'A student whose account has no roll number.', el: <AnalyticsDemo overview={NO_ROLL_OVERVIEW} /> },
 ];
 
 // Keyed, so stepping from one entry to the next starts the screen afresh and

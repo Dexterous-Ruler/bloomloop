@@ -9,7 +9,7 @@ Every table has row level security **on with no policies**. Only the server's
 service role key, which bypasses RLS, can read or write; the anon key sees nothing.
 The server is the only place authorization is decided.
 
-Last revised 18 November 2026.
+Last revised 19 November 2026.
 
 ## Migration order
 
@@ -25,8 +25,17 @@ Last revised 18 November 2026.
 | `0007_mastery_settings.sql` | room settings, `served_tries`, `served_last` | was the second `006` (`006_mastery_settings.sql`) |
 | `0008_answers.sql` | `answers`, the per-answer evidence store | new |
 | `0009_room_archives.sql` | `room_archives`, a deleted room kept as one JSON document (at most 1 MiB) | new |
+| `0010_answer_reviews.sql` | `answer_reviews`, the append-only log of professor review decisions; index `answers_open_queue_idx` for the review queue | new |
+| `0011_roll_no_normalised_unique.sql` | `accounts_department_roll_key`: one roll number per department as a room reads it (trimmed, single-spaced, upper case). Not created, with a WARNING, while existing accounts clash; re-run once they are corrected | new |
+| `0012_evidence_guards.sql` | Triggers: an answer's evidence is written once, `answer_reviews` is append-only, a review names its answer's room | new |
 
 The SQL of every moved file is unchanged; only header comments were updated.
+
+`0010` to `0012` have run only on PGlite (`npm run migrations`, 204 of 204 on
+19 November 2026). The live project has been unreachable since 18 November, so
+whether it has them could not be checked. Apply them in order before deploying the
+Phase 1 server: the boot probe falls back to the in-process store when
+`answer_reviews` is missing (last section).
 
 ## Tables
 
@@ -118,7 +127,12 @@ One student in one room, keyed by roll number.
 
 Written by: repo `saveProfile` (upsert on `session_id, roll_no`) from
 `sockets/index.js`: join (including the account link from `findStudentForRoll`),
-the pin, integrity signals, every answer.
+the pin, integrity signals, every answer; and from `POST /api/review/:answerId`,
+which sets the reviewed mark on the matching `history` entry (marked `review`:
+`confirmed` or `overridden`) and moves `levels` by the difference
+(`applyReview` in `services/mastery.js`). Every one of these writes takes an
+in-process per-student lock first (`lockProfile` in `sockets/index.js`), because
+each reads the whole row and writes it back.
 
 ### answers (0008)
 
@@ -156,23 +170,101 @@ One row per submitted attempt; append-only evidence.
 | `confidence` | text | null; `sure`, `think`, `guess` (later phase) |
 
 Indexes: unique `(session_id, answer_key)`; `session_id`; `(session_id, roll_no)`;
-`account_id`; `question_id`; partial on `review_status` where `provisional`.
+`account_id`; `question_id`; partial on `review_status` where `provisional`;
+`answers_open_queue_idx` on `(session_id, answered_at desc)` where `kind = 'open'`
+and `final` (`0010`, for the review queue).
 
 Written by: repo `recordAnswer` from `sockets/index.js` (`handleAnswer`: final
 answers, wrong attempts before a retry, polls); a 23505 on the unique key returns
-the stored row instead of a second one. `updateAnswer` changes review fields only
+the stored row instead of a second one. `answer_key` is the phone's key; a phone
+that sends none gets `legacy-<roll number>-<question id>-<answer hash>`, and a key
+already held by another student's row is filed as `<key>@<roll number>`, so no
+two students ever share one row. `updateAnswer` changes review fields only
 (`correct`, `score`, `review_status`, `reviewed_by`, `reviewed_at`, `review_note`,
-`final`).
+`final`); its one caller is `POST /api/review/:answerId` (`routes/review.js`).
+Since `0012` the database refuses any other change too (`answers_evidence_written_once`,
+SQLSTATE 23001): the response, the snapshot, `auto_*`, the room, the student, the
+key and the time are written once. `question_id` and `account_id` may still change
+(the foreign keys clear them).
+
+Read by repo `listAnswers`, whose filters are ANDed: `sessionId` / `sessionIds`,
+`rollNo`, `accountId`, `reviewStatus`, `kind`, `final`, `topic`, `bloom`,
+`student: { accountId, rollNo }`, which matches `account_id` = that account OR
+(`roll_no` = that roll number AND `account_id` is null), and `before: { answeredAt,
+id }`, a page cursor: rows earlier than it in `(answered_at, id)` order. A row
+linked to a different account is never matched by its roll number. Readers
+(`services/evidence.js` builds every item; request and response shapes in
+`docs/API.md`):
+- `GET /api/review?code=&status=&limit=&before=`: the queue, final written answers,
+  newest first. Paged by cursor: each page's `next` goes back as `before`.
+  `offset` is refused (400), because reviewing an answer takes it out of the
+  default view and an offset then skips answers.
+- `GET /api/analytics/:id/answers`: one student's answers across the rooms their
+  professor owns, newest first, paged. A student calling it for themself gets only
+  the rows linked to their account (an unlinked row under their roll number may
+  have been typed by anyone), each through `redactForStudent`: the question as
+  shown (rebuilt from the snapshot by `forStudent()`, the phone's own function),
+  their response, the mark in force, the review status and the professor's note;
+  never the snapshot, `auto_*`, `detail` or any answer key. A professor gets the
+  full row, matched by account or by unlinked roll number.
+- `GET /api/analytics/:id` (the student detail's `topicLevels` and `topics`) and
+  `GET /api/session/:code/topics`: per topic × per level from final, graded rows
+  (`final` and not `ungraded`). History entries with no `answerId` predate this
+  table and are counted from `profiles.history` instead; the reply's `source` says
+  `answers`, `history`, `mixed` or `none`.
+- `GET /api/session/:code/answers`: every row in one room, full snapshot, paged.
+
+No index was added for these: the student query uses `answers_account_idx` and
+`answers_session_roll_idx`, and the room query `answers_session_idx`.
 
 Deleting a room deletes its answers (cascade), but only after the server has
 written the whole room to `room_archives` (below): `DELETE /api/session/:code`
-archives first and deletes nothing if that write fails. Deleting a question keeps
-answers, with `question_id` cleared and the snapshot intact.
+archives first and deletes nothing if that write fails. While it runs the room is
+held (`holdRoomForDelete` in `sockets/index.js`): a live answer, a signal or a
+review sent then is refused (a review with 409), and one already under way is
+waited for, so nothing lands between the archive and the delete. Deleting a
+question keeps answers, with `question_id` cleared and the snapshot intact.
+
+### answer_reviews (0010)
+
+One row per professor review decision on an answer. Append-only: the server only
+inserts (repo `addAnswerReview`), so a later decision never erases an earlier one,
+and since `0012` the database enforces it whoever asks: any UPDATE is refused
+except `reviewed_by` cleared when the reviewer's account is deleted, a DELETE is
+refused except the cascade from its answer or its room, and a row whose
+`session_id` is not its answer's room is refused (23503).
+The decision in force is also on the answer row (`correct`, `score`,
+`review_status`, `reviewed_*`, `review_note`); this table keeps every one before it.
+
+The `note` is not private: the student reads it, word for word, beside the mark in
+their own answer history (`redactForStudent`). A screen that takes a note must say
+so.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key, `gen_random_uuid()` |
+| `answer_id` | uuid | not null, references `answers(id)` on delete cascade |
+| `session_id` | uuid | not null, references `sessions(id)` on delete cascade |
+| `decision` | text | not null; `confirm` or `override` (`answer_reviews_decision_check`) |
+| `correct` | boolean | not null; the mark the decision put in force (for `confirm`, the machine's, copied) |
+| `score` | numeric(4,3) | not null; 0 to 1 (`answer_reviews_score_check`) |
+| `note` | text | not null, default `''`; at most 1000 characters (`answer_reviews_note_check`) |
+| `reviewed_by` | uuid | null; references `accounts(id)` on delete set null. Null on the shared-key path |
+| `reviewed_at` | timestamptz | not null, default now() |
+
+Indexes: `(answer_id, reviewed_at)`; `session_id`; `reviewed_by`. RLS on, no
+policies.
+
+Written by: repo `addAnswerReview` from `POST /api/review/:answerId`. Read by
+`listAnswerReviews` (`GET /api/review/:answerId`, the POST's reply, and the room
+archive). Deleting a room deletes its reviews (cascade), after the server has
+written them into the room's archive.
 
 ### room_archives (0009)
 
-One row per deleted room: the room, every student's profile and history, and every
-stored answer with the question as shown, as one compact JSON document. The owner's
+One row per deleted room: the room, every student's profile and history, every
+stored answer with the question as shown, and every review decision, as one
+compact JSON document. The owner's
 rule (18 Nov 2026): keep the room "in the form of json format so it is less than
 even 1mb".
 
@@ -190,7 +282,9 @@ even 1mb".
 Index `(owner_id, archived_at desc)`. RLS on, no policies.
 
 The format stores each list as `{ cols, rows }`, the question once (answers point at
-it), the student once (answers and history point at them), and times as offsets from
+it), the student once (answers and history point at them), review decisions
+pointing at their answer (`reviews`, added after v1 shipped; an archive without the
+table had no reviews, so the version stays 1), and times as offsets from
 `timeBase`. A column is left out only when every row rebuilds it exactly; `derived`
 names those columns. Measured: a class of 60 students with 30 answers each is about
 267 KB; 80 students with 60 answers each, a third of them written, about 693 KB.
@@ -214,7 +308,7 @@ One per Supabase Auth user.
 | `code` | text | not null, unique (`accounts_code_key`); `BL-` + 6 Crockford base32 (`accounts_code_format`) |
 | `department` | text | not null, default `''` |
 | `reports_to` | uuid | null; references `accounts(id)`, no delete action; who may point where is the trigger |
-| `roll_no` | text | null; students only; unique with `department` (`accounts_department_roll_no_key`) |
+| `roll_no` | text | null; students only; unique with `department` as typed (`accounts_department_roll_no_key`) and as a room reads it, trimmed, single-spaced, upper case (`accounts_department_roll_key`, `0011`) |
 | `active` | boolean | not null, default true |
 | `created_at`, `updated_at` | timestamptz | not null, default now(); no trigger maintains `updated_at` |
 | `google_sub` | text | null; unique where not null (`accounts_google_sub_key`) |
@@ -332,4 +426,6 @@ Fixed on 18 Nov 2026: `README.md`, `.env.example`, `server/src/repo/supabaseRepo
 `server/src/repo/index.js`, `server/src/services/accounts.js` and
 `server/src/accommodations.js` now point at `supabase/migrations/`. The boot probe
 (`probeSupabase`) now checks every table the server writes, not only `contents`, and
-names the migration that creates any that is missing.
+names the migration that creates any that is missing. Since `0010` that includes
+`answer_reviews`: a server deployed before `0010` has been applied falls back to the
+in-process store at boot, so apply the migration first.

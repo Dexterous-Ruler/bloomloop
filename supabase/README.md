@@ -5,7 +5,17 @@ other SQL files to run.
 
 ## Applying
 
-Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0008`).
+Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0012`).
+
+`0011` creates its index only if no two accounts in one department hold the same
+roll number once trimmed, single-spaced and upper-cased. If some do, it raises a
+WARNING, creates nothing and changes nothing; the file has the query that lists
+them. Correct those accounts, then run `0011` again.
+
+From `0012` on, the database itself refuses to rewrite an answer's evidence (the
+response, the question as asked, the machine's assessment) and to edit or delete a
+review decision, from any connection, the service role included. See
+`docs/DATABASE_SCHEMA.md`.
 
 **Supabase SQL editor:** SQL Editor, New query, paste one file, Run. Then the next
 file, in order.

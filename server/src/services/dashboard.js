@@ -20,7 +20,7 @@
 import { LEVELS } from '../bloom.js';
 import { getRepo } from '../repo/index.js';
 import { scopeFor } from '../auth.js';
-import { listBelow, getAccount } from './accounts.js';
+import { listBelow, getAccount, rollKey } from './accounts.js';
 import { hydrate, overallAccuracy, isSlowLearner, totals } from './mastery.js';
 
 /** Empty per-level tallies, in taxonomy order. */
@@ -67,6 +67,15 @@ async function harvest(ownerIds, { includeUnowned = false, limit = 200 } = {}) {
 
   const bloom = emptyBloom();
   const rows = [];
+  // Each student's most recent seat across these rooms, keyed by account id
+  // (when the room profile is linked to one) and by roll number: where they are
+  // on the ladder now, and when they last did anything.
+  const latest = new Map();
+  const remember = (key, seat) => {
+    if (!key) return;
+    const held = latest.get(key);
+    if (!held || String(seat.lastSeenAt ?? '') > String(held.lastSeenAt ?? '')) latest.set(key, seat);
+  };
   let students = 0;
   let banded = 0;
   let answered = 0;
@@ -95,6 +104,16 @@ async function harvest(ownerIds, { includeUnowned = false, limit = 200 } = {}) {
         banded += 1;
         sessionBanded += 1;
       }
+      // Last seen is their last answer; a student who joined and answered
+      // nothing was last seen when the room opened.
+      const history = profile.history ?? [];
+      const seat = {
+        workingLevel: profile.workingLevel ?? null,
+        lastSeenAt: history.length ? history[history.length - 1].at ?? null : session.startedAt ?? null,
+      };
+      const owner = String(session.ownerId ?? session.owner_id ?? '');
+      if (profile.accountId) remember(`acct:${profile.accountId}`, seat);
+      remember(`roll:${owner}:${rollKey(profile.rollNo)}`, seat);
     }
     students += profiles.length;
 
@@ -114,6 +133,7 @@ async function harvest(ownerIds, { includeUnowned = false, limit = 200 } = {}) {
   return {
     sessions: rows,
     bloom,
+    latest,
     totals: {
       sessions: rows.length,
       students,
@@ -257,9 +277,18 @@ export async function professorDashboard(viewer) {
     contents: contents
       .map((c) => ({ ...c, sessions: sessionsByContent.get(c.title) ?? 0 }))
       .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))),
-    roster: roster.map((s) => ({
-      id: s.id, code: s.code, fullName: s.fullName, rollNo: s.rollNo, active: s.active,
-    })),
+    // currentLevel and lastSeenAt come from the student's most recent seat in
+    // this professor's rooms: by linked account first, else by roll number.
+    // Null for a student who has not sat one yet.
+    roster: roster.map((s) => {
+      const seat = harvested.latest.get(`acct:${s.id}`)
+        ?? (s.rollNo ? harvested.latest.get(`roll:${viewer.id}:${rollKey(s.rollNo)}`) : undefined);
+      return {
+        id: s.id, code: s.code, fullName: s.fullName, rollNo: s.rollNo, active: s.active,
+        currentLevel: seat?.workingLevel ?? null,
+        lastSeenAt: seat?.lastSeenAt ?? null,
+      };
+    }),
     bloom: bloomReport(harvested.bloom),
     recentSessions: harvested.sessions.slice(0, 12),
   };

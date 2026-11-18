@@ -19,7 +19,7 @@ import { useViewer } from './viewer.js';
 const HOME_ITEM = {
   hod: { id: 'home', label: 'Department', icon: 'building', group: 'overview' },
   professor: { id: 'home', label: 'Overview', icon: 'dashboard', group: 'overview' },
-  student: { id: 'home', label: 'My results', icon: 'dashboard', group: 'learn' },
+  student: { id: 'home', label: 'Your progress', icon: 'dashboard', group: 'learn' },
 };
 
 const PROFILE = { id: 'profile', label: 'Profile', icon: 'user', group: 'account' };
@@ -28,7 +28,7 @@ export function navFor(role, hasKey) {
   if (role === 'student') {
     return [
       HOME_ITEM.student,
-      { id: 'analytics', label: 'Progress', icon: 'analytics', group: 'learn' },
+      { id: 'analytics', label: 'Strengths and gaps', icon: 'analytics', group: 'learn' },
       { id: 'join', label: 'Join a room', icon: 'room', group: 'learn' },
       PROFILE,
     ];
@@ -52,7 +52,7 @@ export function navFor(role, hasKey) {
     : [];
 }
 
-export default function AccountShell({ current, crumb, title, actions, status, width, children }) {
+export default function AccountShell({ current, crumb, title, sub, actions, status, width, children }) {
   const navigate = useNavigate();
   const { account } = useViewer();
   const role = account?.role;
@@ -69,6 +69,7 @@ export default function AccountShell({ current, crumb, title, actions, status, w
     <AppShell
       crumb={crumb}
       title={title}
+      sub={sub}
       actions={actions}
       status={status}
       who={account ? { name: account.fullName || account.email || 'Account', sub: ROLE_LABEL[role] ?? role } : null}

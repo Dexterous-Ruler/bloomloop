@@ -7,7 +7,8 @@
  * what you watch rise is exactly what will be written - the preview and the run
  * cannot disagree.
  *
- * The run itself is summarised beside the desk and started from there.
+ * The run itself is summarised on the forest panel beside the desk and started
+ * from there.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -16,7 +17,7 @@ import Tubes from '../fx/Tubes.jsx';
 import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
 import { KIND_LABEL } from '../lib/kinds.js';
-import { Button, Fig, Icon, Level, Note, Segmented } from '../ui/index.jsx';
+import { Button, Icon, Level, Note, Num, Panel, Section, Segmented } from '../ui/index.jsx';
 import { LevelSpread } from '../ui/viz.jsx';
 
 const HARD_CAP = 200;
@@ -124,18 +125,14 @@ export default function Planner({ contentId, topics, existing, draft, held, onDr
   const presetHint = preset === 'custom' ? 'Set each level below.' : presets?.find((p) => p.id === preset)?.hint;
 
   return (
-    <div className="split wide">
-      <div className="stack">
-        <section className="card">
-          <div className="card-head">
-            <h3>How many questions</h3>
-            <span className="t-meta">For the whole bank, shared across every ticked topic</span>
-          </div>
-          <div className="card-body cluster cluster-4 nowrap-flex">
+    <div className="tc-plan">
+      <div className="tc-plan-main">
+        <section className="card tc-plan-card" aria-label="How many questions">
+          <Section title="How many questions" sub="For the whole bank, shared across every ticked topic." />
+          <div className="tc-size">
             <input
               type="number"
-              className="input input-lg num"
-              style={{ width: 104, textAlign: 'center', flex: 'none' }}
+              className="input input-lg num tc-size-n"
               min={MIN_TOTAL}
               max={HARD_CAP}
               value={total}
@@ -145,7 +142,7 @@ export default function Planner({ contentId, topics, existing, draft, held, onDr
                 onDraft({ total: Number.isFinite(n) ? Math.min(HARD_CAP, Math.max(MIN_TOTAL, n)) : MIN_TOTAL });
               }}
             />
-            <div className="grow size-slide">
+            <div className="tc-size-slide">
               <input
                 type="range"
                 min={MIN_TOTAL}
@@ -155,7 +152,7 @@ export default function Planner({ contentId, topics, existing, draft, held, onDr
                 aria-label="Total questions"
                 onChange={(e) => onDraft({ total: Number(e.target.value) })}
               />
-              <span className="size-mark" style={{ left: `calc(8px + (100% - 16px) * ${markAt})` }} aria-hidden="true">
+              <span className="tc-size-mark" style={{ left: `calc(8px + (100% - 16px) * ${markAt})` }} aria-hidden="true">
                 <i />
                 <span>asks first above {confirmAbove}</span>
               </span>
@@ -163,130 +160,130 @@ export default function Planner({ contentId, topics, existing, draft, held, onDr
           </div>
         </section>
 
-        <section className="card">
-          <div className="card-head">
-            <h3>Level mix</h3>
+        <section className="card tc-plan-card" aria-label="Level mix">
+          <div className="tc-plan-head">
+            <Section title="Level mix" sub={presetHint || 'How the questions spread over the six levels.'} />
             {pending && <span className="spinner muted" aria-label="Resolving the plan" />}
           </div>
-          <div className="card-body stack">
-            {presetsError && (
-              <Note>Could not load the preset mixes ({presetsError}). The run still works: the server falls back to its balanced mix.</Note>
-            )}
-            {!presets && !presetsError && <div className="skel" style={{ height: 34, width: 420, maxWidth: '100%' }} />}
-            {presets && (
-              <div className="stack stack-2">
-                <Segmented
-                  label="Preset mix"
-                  value={preset}
-                  onChange={(id) => onDraft({ preset: id })}
-                  options={[...presets.map((p) => ({ id: p.id, label: p.label })), { id: 'custom', label: 'Custom' }]}
-                />
-                {presetHint && <p className="hint">{presetHint}</p>}
-              </div>
-            )}
+          {presetsError && (
+            <Note>Could not load the preset mixes ({presetsError}). The run still works: the server falls back to its balanced mix.</Note>
+          )}
+          {!presets && !presetsError && <div className="skel" style={{ height: 32, width: 420, maxWidth: '100%' }} />}
+          {presets && (
+            <Segmented
+              label="Preset mix"
+              value={preset}
+              onChange={(id) => onDraft({ preset: id })}
+              options={[...presets.map((p) => ({ id: p.id, label: p.label })), { id: 'custom', label: 'Custom' }]}
+            />
+          )}
 
-            {/* The tubes are the server's answer, not the sliders' guess. */}
-            <Tubes values={plan?.perLevel ?? {}} height={132} />
+          {/* The tubes are the server's answer, not the sliders' guess. */}
+          <Tubes values={plan?.perLevel ?? {}} height={132} />
 
-            <div className="desk">
-              {LEVELS.map((l) => {
-                const w = Number(activeMix?.[l]) || 0;
-                const set = kindSets?.[l] ?? [];
-                const chosen = kinds[l] ?? set[0];
-                return (
-                  <div className="desk-col" key={l}>
-                    <Level level={l} className="desk-name" />
-                    <div className="stepper" role="group" aria-label={`${LABEL[l]} weight`}>
-                      <button type="button" aria-label={`Less ${LABEL[l]}`} disabled={!activeMix || w <= 0} onClick={() => setWeight(l, w - 1)}>
-                        <Icon name="minus" size={14} />
-                      </button>
-                      <output className="mono">{w}</output>
-                      <button type="button" aria-label={`More ${LABEL[l]}`} disabled={!activeMix || w >= MAX_WEIGHT} onClick={() => setWeight(l, w + 1)}>
-                        <Icon name="plus" size={14} />
-                      </button>
-                    </div>
-                    {set.length > 1 ? (
-                      <select
-                        className="select input-sm"
-                        value={chosen}
-                        aria-label={`How ${LABEL[l]} is asked`}
-                        onChange={(e) => setKind(l, e.target.value)}
-                      >
-                        {set.map((k) => <option key={k} value={k}>{KIND_LABEL[k] ?? k}</option>)}
-                      </select>
-                    ) : (
-                      <span className="t-meta desk-only">{KIND_LABEL[chosen] ?? chosen ?? ''}</span>
-                    )}
+          <div className="tc-desk">
+            {LEVELS.map((l) => {
+              const w = Number(activeMix?.[l]) || 0;
+              const set = kindSets?.[l] ?? [];
+              const chosen = kinds[l] ?? set[0];
+              return (
+                <div className="tc-chan" key={l}>
+                  <Level level={l} className="tc-chan-name" />
+                  <div className="tc-chan-step" role="group" aria-label={`${LABEL[l]} weight`}>
+                    <button type="button" aria-label={`Less ${LABEL[l]}`} disabled={!activeMix || w <= 0} onClick={() => setWeight(l, w - 1)}>
+                      <Icon name="minus" size={14} />
+                    </button>
+                    <output>{w}</output>
+                    <button type="button" aria-label={`More ${LABEL[l]}`} disabled={!activeMix || w >= MAX_WEIGHT} onClick={() => setWeight(l, w + 1)}>
+                      <Icon name="plus" size={14} />
+                    </button>
                   </div>
-                );
-              })}
-            </div>
-
-            <p className="hint">
-              Weights are relative, not counts. Each level offers only its own interactions, because the level decides how a
-              question is asked: swapping within a level changes the surface, not the thinking it demands.
-            </p>
+                  {set.length > 1 ? (
+                    <select
+                      className="select input-sm"
+                      value={chosen}
+                      aria-label={`How ${LABEL[l]} is asked`}
+                      onChange={(e) => setKind(l, e.target.value)}
+                    >
+                      {set.map((k) => <option key={k} value={k}>{KIND_LABEL[k] ?? k}</option>)}
+                    </select>
+                  ) : (
+                    <span className="tc-chan-only">{KIND_LABEL[chosen] ?? chosen ?? ''}</span>
+                  )}
+                </div>
+              );
+            })}
           </div>
+
+          <p className="hint">
+            Weights are relative, not counts. Each level offers only its own interactions, because the level decides how a
+            question is asked: swapping within a level changes the surface, not the thinking it demands.
+          </p>
         </section>
       </div>
 
-      <aside className="card sticky">
-        <div className="card-body stack">
-          {plan ? (
-            <>
-              <Fig size="lg" value={plan.total} label={plan.total === 1 ? 'question in this run' : 'questions in this run'} />
-              <div className="figs">
-                <Fig value={`${covered} of ${topics.length}`} label={topics.length === 1 ? 'topic covered' : 'topics covered'} />
-                <Fig value={mmss(plan.estimateSeconds)} label="to write, about" />
-              </div>
-              <LevelSpread counts={plan.perLevel} showKey={false} />
-              <ul className="kv">
+      <Panel as="aside" className="tc-plan-run" aria-label="This run">
+        <span className="tag-mint">This run</span>
+        {plan ? (
+          <>
+            <div className="tc-big">
+              <b><Num value={plan.total} /></b>
+              <span>{plan.total === 1 ? 'question in this run' : 'questions in this run'}</span>
+            </div>
+            <dl className="tc-pfigs">
+              <div><dt>{topics.length === 1 ? 'Topic covered' : 'Topics covered'}</dt><dd>{covered} of {topics.length}</dd></div>
+              <div><dt>To write, about</dt><dd className="mono">{mmss(plan.estimateSeconds)}</dd></div>
+            </dl>
+            <LevelSpread counts={plan.perLevel} />
+            {kindRows.length > 0 && (
+              <ul className="tc-kv" aria-label="How the questions are asked">
                 {kindRows.map(([k, n]) => (
-                  <li key={k}><span>{KIND_LABEL[k] ?? k}</span><b className="mono">{n}</b></li>
+                  <li key={k}><span>{KIND_LABEL[k] ?? k}</span><b>{n}</b></li>
                 ))}
               </ul>
-            </>
-          ) : (
-            <div className="stack">
-              <div className="skel" style={{ height: 64, width: 160 }} />
-              <div className="skel" style={{ height: 120 }} />
+            )}
+          </>
+        ) : (
+          <div className="stack stack-3" aria-busy="true">
+            <div className="skel" style={{ height: 44, width: 160 }} />
+            <div className="skel" style={{ height: 12 }} />
+            <div className="skel" style={{ height: 96 }} />
+          </div>
+        )}
+
+        {existing > 0 && (
+          <div className="stack stack-2">
+            <Segmented
+              label="What this run does to the existing bank"
+              value={mode}
+              onChange={(id) => onDraft({ mode: id })}
+              options={[{ id: 'replace', label: 'Replace the bank' }, { id: 'append', label: 'Add to it' }]}
+            />
+            <p className="hint">{banked} in the bank now, {after} after this run.</p>
+          </div>
+        )}
+
+        {previewError && <Note tone="bad">Could not resolve that plan: {previewError}</Note>}
+        {plan?.warnings?.map((w) => <Note key={w}>{w}</Note>)}
+
+        {held && plan ? (
+          <Note icon="alert">
+            <b>{plan.total} questions is a big run.</b> It takes about {mmss(plan.estimateSeconds)} and spends real model
+            quota. {held.mode === 'replace'
+              ? 'Everything already in this bank, discarded questions included, is deleted first.'
+              : `They are added on top of the ${existing} already in this bank.`}
+            <div className="cluster" style={{ marginTop: 12 }}>
+              <Button variant="accent" size="sm" onClick={onConfirm}>Yes, write {plan.total}</Button>
+              <Button variant="ghost" size="sm" onClick={onDismissHeld}>Not now</Button>
             </div>
-          )}
-
-          {existing > 0 && (
-            <div className="stack stack-2">
-              <Segmented
-                label="What this run does to the existing bank"
-                value={mode}
-                onChange={(id) => onDraft({ mode: id })}
-                options={[{ id: 'replace', label: 'Replace the bank' }, { id: 'append', label: 'Add to it' }]}
-              />
-              <p className="hint">{banked} in the bank now, {after} after this run.</p>
-            </div>
-          )}
-
-          {previewError && <Note tone="bad">Could not resolve that plan: {previewError}</Note>}
-          {plan?.warnings?.map((w) => <Note key={w}>{w}</Note>)}
-
-          {held && plan ? (
-            <Note icon="alert">
-              <b>{plan.total} questions is a big run.</b> It takes about {mmss(plan.estimateSeconds)} and spends real model
-              quota. {held.mode === 'replace'
-                ? 'Everything already in this bank, discarded questions included, is deleted first.'
-                : `They are added on top of the ${existing} already in this bank.`}
-              <div className="cluster" style={{ marginTop: 12 }}>
-                <Button variant="primary" size="sm" onClick={onConfirm}>Yes, write {plan.total}</Button>
-                <Button variant="ghost" size="sm" onClick={onDismissHeld}>Not now</Button>
-              </div>
-            </Note>
-          ) : (
-            <Button variant="primary" size="lg" block icon="write" disabled={!plan || plan.total === 0} onClick={() => onRun(spec, { mode })}>
-              Write {plan?.total ?? ''} questions
-            </Button>
-          )}
-          <p className="hint">Written once, before class. A live room never calls a model.</p>
-        </div>
-      </aside>
+          </Note>
+        ) : (
+          <Button variant="accent" size="lg" block icon="write" disabled={!plan || plan.total === 0} onClick={() => onRun(spec, { mode })}>
+            Write {plan?.total ?? ''} questions
+          </Button>
+        )}
+        <p className="tc-run-hint">Written once, before class. A live room never calls a model.</p>
+      </Panel>
     </div>
   );
 }

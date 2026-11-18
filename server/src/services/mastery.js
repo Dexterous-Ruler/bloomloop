@@ -584,6 +584,116 @@ export function recordUngraded(profile, { questionId, bloom, at = null, topic = 
   return { profile: next };
 }
 
+/* ---------------------------------------------------------------- reviews --
+
+   A professor's review of a written answer, applied after the fact. The answer
+   row keeps the machine's mark and gets the professor's beside it (see
+   routes/review.js); this is the other half, which makes the student's profile
+   agree with the professor. */
+
+/** What a reviewed history entry is marked with. */
+export const REVIEW_MARKS = ['confirmed', 'overridden'];
+
+/**
+ * Redo redemption's pairings at one level, from the history as it now stands.
+ *
+ * applyAnswer() pays each first-try right answer against the earliest unpaid
+ * wrong one before it at the same level. Walking the history in order with that
+ * same rule gives back every pairing applyAnswer made, exactly, so long as no
+ * mark has changed (tested). After a review flips a mark it gives the pairing
+ * the room's rule would have made had the reviewed mark been the mark all along,
+ * and that is the only pairing that keeps countedLevels() honest: every answer
+ * set aside is still a wrong one, and no wrong answer is paying for anything.
+ */
+function repairRedemption(history, level) {
+  const out = history.map((h) => {
+    if (h?.bloom !== level || !('redeemedBy' in h || 'redeems' in h)) return h;
+    const { redeemedBy, redeems, ...rest } = h;
+    return rest;
+  });
+  for (let k = 0; k < out.length; k += 1) {
+    const h = out[k];
+    // The same three conditions applyAnswer() checks: right, first time, graded.
+    if (h?.bloom !== level || h.ungraded || !h.correct || (Number(h.tries) || 1) > 1) continue;
+    const j = out.findIndex((w, i) => i < k && w?.bloom === level && !w.ungraded && !w.correct && !w.redeemedBy);
+    if (j < 0) continue;
+    out[j] = { ...out[j], redeemedBy: h.questionId };
+    out[k] = { ...h, redeems: out[j].questionId };
+  }
+  return out;
+}
+
+/**
+ * Apply a professor's review of one answer to the profile. Pure - returns a new
+ * profile, never mutates the one passed in.
+ *
+ * The history entry for that answer is found by `answerId` (the answer's
+ * idempotency key, which every final answer's entry carries). It takes the
+ * reviewed `correct` and `score` and is marked `review`, and the level's
+ * `correct` tally moves by the difference - `seen` never moves, the answer was
+ * given either way. Everything else a screen shows is derived from those two
+ * (totals, the below-40% band, the mastery goal, the CSV, analytics, topic
+ * accuracy), so all of it reads the human decision without a code path of its
+ * own.
+ *
+ * Deliberately NOT changed: the working level and its reason. The ladder's
+ * decisions were made, shown to the student and acted on; rewinding them would
+ * pull a student back off a level mid-class with nothing on their screen to say
+ * why. The corrected entry sits in the rolling window from now on, so the next
+ * decision the ladder makes reads the human mark.
+ *
+ * In a room running redemption a flipped mark can leave a pairing wrong - an
+ * answer set aside that is now right, or a right answer paying off a debt when
+ * it is now wrong itself. That level's pairings are redone by the room's own
+ * rule (repairRedemption above).
+ *
+ * Idempotent: the change is measured against the entry as it stands, not against
+ * the answer row, so the same review applied twice moves nothing the second
+ * time, and a review whose profile write failed can simply be applied again.
+ *
+ * @returns {{ profile: object, found: boolean, changed: boolean }}
+ *   found is false when no entry carries this answerId - the profile is then
+ *   returned unchanged.
+ */
+export function applyReview(profile, { answerId, correct, score = null, review, redemption = false }) {
+  if (!REVIEW_MARKS.includes(review)) {
+    throw new Error(`applyReview: unknown review mark "${review}"`);
+  }
+  const next = hydrate(profile);
+  const key = String(answerId ?? '');
+  const i = key ? next.history.findIndex((h) => String(h?.answerId ?? '') === key) : -1;
+  if (i < 0) return { profile: next, found: false, changed: false };
+
+  const entry = next.history[i];
+  // A poll has no mark to review. Nothing to change, and nothing to count.
+  if (entry.ungraded || !LEVELS.includes(entry.bloom)) return { profile: next, found: true, changed: false };
+
+  const was = Boolean(entry.correct);
+  const now = Boolean(correct);
+  const updated = {
+    ...entry,
+    correct: now,
+    // Rounded the way applyAnswer() rounds it, so a reviewed entry and an
+    // unreviewed one hold the same precision.
+    ...(score === null || score === undefined ? {} : { score: Math.round(Number(score) * 100) / 100 }),
+    review,
+  };
+  if (was === now && updated.score === entry.score && updated.review === entry.review) {
+    return { profile: next, found: true, changed: false };
+  }
+
+  next.history = next.history.map((h, k) => (k === i ? updated : h));
+  if (was !== now) {
+    const { seen, correct: right } = next.levels[entry.bloom];
+    // Clamped like countedLevels(): a seeded fixture or a half-written row can
+    // disagree with its history, and a tally below zero or above `seen` would
+    // put an accuracy outside 0..100% on a screen.
+    next.levels[entry.bloom] = { seen, correct: Math.max(0, Math.min(seen, right + (now ? 1 : -1))) };
+    if (redemption) next.history = repairRedemption(next.history, entry.bloom);
+  }
+  return { profile: next, found: true, changed: true };
+}
+
 /* ------------------------------------------------------- the mastery goal --
 
    Separate from the ladder on purpose. recomputeWorkingLevel() answers "what

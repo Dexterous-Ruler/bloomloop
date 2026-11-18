@@ -1,18 +1,20 @@
 /**
  * Step one: what are the questions written from.
  *
- * Before a chapter is loaded the screen is one input - a deck or a pasted
- * syllabus - beside the chapters already read. Once one is loaded, the chapter
- * IS the page: its title is the heading, its topics are the list, and the only
- * decision left is which of them to ask about.
+ * Before a chapter is loaded the screen is a brief and two ways in - a deck
+ * dropped on the page or a syllabus pasted into it - beside the chapters
+ * already read. Once one is loaded, the chapter IS the page: where it came
+ * from, the topics found in it, and the only decision left, which of them to
+ * ask about. Beside the list, what the ticked topics would make.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '../lib/api.js';
-import { Button, Dialog, Empty, Field, Fig, Icon, Note, Segmented, Tick, Tip } from '../ui/index.jsx';
-
-const PER_TOPIC = 6;
+import { LABEL, LEVELS } from '../lib/bloom.js';
+import { Button, Dialog, Empty, Field, Icon, Note, Num, Panel, Section, Segmented, Tick, Tip } from '../ui/index.jsx';
+import { LevelSpread } from '../ui/viz.jsx';
+import { startTotal } from './Planner.jsx';
 
 const fmtSize = (bytes) => {
   if (!Number.isFinite(bytes)) return '';
@@ -21,17 +23,73 @@ const fmtSize = (bytes) => {
   return `${bytes} B`;
 };
 
-/** The one input: a lesson deck, or syllabus text. Used inline and in a dialog. */
-function Source({ busy, onFile, onText }) {
-  const [mode, setMode] = useState('deck');
+const fmtDay = (iso) => {
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+};
+
+const KIND_TAG = { pptx: 'PPTX', syllabus: 'TEXT' };
+
+/** A lesson deck, dropped or chosen. */
+function DropZone({ busy, onFile }) {
   const [over, setOver] = useState(false);
   const [picked, setPicked] = useState(null);
-  const [title, setTitle] = useState('');
-  const [text, setText] = useState('');
   const fileRef = useRef(null);
+  const reading = busy === 'file';
 
   const take = (file) => { if (file) { setPicked({ name: file.name, size: file.size }); onFile(file); } };
 
+  return (
+    <div
+      className="tc-drop"
+      data-over={over ? 'true' : undefined}
+      onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => { e.preventDefault(); setOver(false); take(e.dataTransfer.files?.[0]); }}
+    >
+      <span className="tc-drop-ic">{reading ? <span className="spinner" /> : <Icon name="deck" size={20} />}</span>
+      <div className="tc-drop-txt">
+        <h3>{reading ? 'Reading the deck' : over ? 'Let go to read it' : 'Drop a .pptx here'}</h3>
+        <p>
+          {picked
+            ? <span className="mono">{picked.name} · {fmtSize(picked.size)}</span>
+            : 'Slide titles and body text become topics. Image-only slides are read with OCR.'}
+        </p>
+      </div>
+      <Button variant="primary" busy={reading} icon="upload" onClick={() => fileRef.current?.click()}>
+        Choose a file
+      </Button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        hidden
+        onChange={(e) => { take(e.target.files?.[0]); e.target.value = ''; }}
+      />
+    </div>
+  );
+}
+
+/** Syllabus text, pasted. */
+function PasteForm({ busy, onText }) {
+  const [title, setTitle] = useState('');
+  const [text, setText] = useState('');
+  return (
+    <form className="tc-paste" onSubmit={(e) => { e.preventDefault(); onText(title, text); }}>
+      <Field label="Title" htmlFor="src-title">
+        <input id="src-title" className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Unit III, Transport layer" />
+      </Field>
+      <Field label="Syllabus text" htmlFor="src-text" hint="A unit outline, a chapter summary, or the syllabus itself. One topic per line reads best.">
+        <textarea id="src-text" className="textarea" rows={6} value={text} onChange={(e) => setText(e.target.value)} />
+      </Field>
+      <div><Button type="submit" variant="ink" busy={busy === 'text'} disabled={!text.trim()}>Read this text</Button></div>
+    </form>
+  );
+}
+
+/** The one input, in a dialog: a lesson deck, or syllabus text. */
+function Source({ busy, onFile, onText }) {
+  const [mode, setMode] = useState('deck');
   return (
     <div className="stack">
       <Segmented
@@ -40,73 +98,70 @@ function Source({ busy, onFile, onText }) {
         onChange={setMode}
         options={[{ id: 'deck', label: 'Lesson deck' }, { id: 'text', label: 'Syllabus text' }]}
       />
-
-      {mode === 'deck' ? (
-        <div
-          className="drop"
-          data-over={over ? 'true' : undefined}
-          onDragOver={(e) => { e.preventDefault(); setOver(true); }}
-          onDragLeave={() => setOver(false)}
-          onDrop={(e) => { e.preventDefault(); setOver(false); take(e.dataTransfer.files?.[0]); }}
-        >
-          <span className="drop-ic"><Icon name="deck" size={20} /></span>
-          <div className="stack stack-1" style={{ alignItems: 'center' }}>
-            <h3>{busy === 'file' ? 'Reading the deck' : 'Drop a .pptx here'}</h3>
-            <p className="muted">
-              {picked ? `${picked.name} · ${fmtSize(picked.size)}` : 'Slide titles and body text become topics. Image-only slides are read with OCR.'}
-            </p>
-          </div>
-          <Button variant="primary" busy={busy === 'file'} icon="upload" onClick={() => fileRef.current?.click()}>
-            Choose a file
-          </Button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            hidden
-            onChange={(e) => { take(e.target.files?.[0]); e.target.value = ''; }}
-          />
-        </div>
-      ) : (
-        <form className="stack" onSubmit={(e) => { e.preventDefault(); onText(title, text); }}>
-          <Field label="Title" htmlFor="src-title">
-            <input id="src-title" className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Unit III, Transport layer" />
-          </Field>
-          <Field label="Syllabus text" htmlFor="src-text" hint="A unit outline, a chapter summary, or the syllabus itself. One topic per line reads best.">
-            <textarea id="src-text" className="textarea" rows={7} value={text} onChange={(e) => setText(e.target.value)} />
-          </Field>
-          <div><Button type="submit" variant="primary" busy={busy === 'text'} disabled={!text.trim()}>Read this text</Button></div>
-        </form>
-      )}
+      {mode === 'deck' ? <DropZone busy={busy} onFile={onFile} /> : <PasteForm busy={busy} onText={onText} />}
     </div>
   );
 }
 
-function Library({ saved, currentId, busy, onOpen }) {
-  if (saved.length === 0) {
-    return <p className="hint">Every chapter you read is kept here, so a second class on the same material costs nothing to set up.</p>;
-  }
+function Library({ saved, loaded, currentId, busy, onOpen }) {
   return (
-    <ul className="rows">
-      {saved.map((c) => (
-        <li key={c._id}>
-          <button type="button" className="rw" aria-current={c._id === currentId ? 'true' : undefined} disabled={busy === 'reuse'} onClick={() => onOpen(c._id)}>
-            <Icon name={c.kind === 'syllabus' ? 'material' : 'deck'} className="muted" />
-            <span className="rw-main">
-              <span className="strong clip" style={{ display: 'block' }}>{c.title}</span>
-              <span className="t-meta">
-                {c.topics?.length ?? 0} topics · {c.questionCount ? `${c.questionCount} questions` : 'no questions yet'}
-              </span>
-            </span>
-            {c._id === currentId ? <Icon name="check" className="muted" /> : <Icon name="chevronRight" className="muted" />}
-          </button>
-        </li>
-      ))}
-    </ul>
+    <section className="card tc-lib" aria-label="Reuse a chapter">
+      <div className="tc-lib-head">
+        <Section title="Reuse a chapter" sub="Every chapter you read is kept with its questions, so a second class costs nothing to set up." />
+      </div>
+      {!loaded ? (
+        <div className="tc-lib-list" aria-busy="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="tc-lib-skel"><div className="skel" /><div className="skel" /></div>
+          ))}
+        </div>
+      ) : saved.length === 0 ? (
+        <div className="tc-lib-empty">
+          <span className="tc-pages" aria-hidden="true"><i /><i /><i /></span>
+          <p>Nothing read yet. The first chapter you read lands here.</p>
+        </div>
+      ) : (
+        <ul className="tc-lib-list">
+          {saved.map((c) => {
+            const here = c._id === currentId;
+            return (
+              <li key={c._id} className="tc-lib-row" aria-current={here ? 'true' : undefined}>
+                <span className="tc-kind">{KIND_TAG[c.kind] ?? 'DOC'}</span>
+                <span className="tc-lib-main">
+                  <b>{c.title}</b>
+                  <small>
+                    {[fmtDay(c.createdAt), `${c.topics?.length ?? 0} topics`, c.questionCount ? `${c.questionCount} questions` : 'no questions yet']
+                      .filter(Boolean).join(' · ')}
+                  </small>
+                </span>
+                {here ? (
+                  <span className="tc-lib-here"><Icon name="check" size={13} />Open</span>
+                ) : (
+                  <Button size="sm" disabled={busy === 'reuse'} onClick={() => onOpen(c._id)} aria-label={`Reuse ${c.title}`}>Reuse</Button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 
-export default function Material({ content, selected, hasBank, onContent, onSelected, onNext }) {
+/** Six tiny bars: how many questions a topic gets at each level. */
+function LevelTicks({ mix, peak }) {
+  const said = mix ? LEVELS.map((l) => `${LABEL[l]} ${mix[l] ?? 0}`).join(', ') : 'Not asked';
+  return (
+    <span className="tc-ticks" role="img" aria-label={said} title={said}>
+      {LEVELS.map((l) => {
+        const n = mix?.[l] ?? 0;
+        return <i key={l} data-level={l} data-n={n > 0 ? 'true' : undefined} style={{ '--h': n > 0 ? n / peak : 0 }} />;
+      })}
+    </span>
+  );
+}
+
+export default function Material({ content, selected, bank, hasBank, onContent, onSelected, onNext }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -114,15 +169,54 @@ export default function Material({ content, selected, hasBank, onContent, onSele
   const [draft, setDraft] = useState('');
   const [added, setAdded] = useState('');
   const [saved, setSaved] = useState([]);
+  const [loaded, setLoaded] = useState(false);
   const [swap, setSwap] = useState(false);
+  // What the ticked topics resolve to at the size the planner opens with.
+  const [plan, setPlan] = useState(null);
 
   const topics = content?.topics ?? [];
 
   useEffect(() => {
     let alive = true;
-    api.listContents().then((res) => { if (alive) setSaved(res.contents ?? []); }, () => {});
+    api.listContents().then(
+      (res) => { if (alive) { setSaved(res.contents ?? []); setLoaded(true); } },
+      () => { if (alive) setLoaded(true); },
+    );
     return () => { alive = false; };
   }, [content?.contentId]);
+
+  // Before a bank exists, ask the server what the first plan would write: the
+  // same topics and the same opening size the planner starts from, so the
+  // numbers here are the ones the next step shows. Writes nothing.
+  const selectedKey = selected.join('\u0000');
+  useEffect(() => {
+    if (!content?.contentId || hasBank || selected.length === 0) { setPlan(null); return undefined; }
+    let alive = true;
+    const timer = setTimeout(() => {
+      api.generatePreview(content.contentId, selected, { total: startTotal(selected.length), preset: 'balanced' }).then(
+        (res) => { if (alive) setPlan(res.plan ?? null); },
+        () => { if (alive) setPlan(null); },
+      );
+    }, 300);
+    return () => { alive = false; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content?.contentId, hasBank, selectedKey]);
+
+  // Once a bank exists, the counts are the bank's own.
+  const inBank = useMemo(() => (bank?.questions ?? []).filter((q) => q.status !== 'discarded'), [bank]);
+  const byTopic = useMemo(() => {
+    const out = {};
+    if (hasBank) {
+      inBank.forEach((q) => {
+        const row = (out[q.topic] ??= { count: 0, mix: {} });
+        row.count += 1;
+        row.mix[q.bloom] = (row.mix[q.bloom] ?? 0) + 1;
+      });
+    } else {
+      (plan?.topics ?? []).forEach((t) => { out[t.topic] = { count: t.count, mix: t.mix }; });
+    }
+    return out;
+  }, [hasBank, inBank, plan]);
 
   async function takeFile(file) {
     if (!/\.pptx$/i.test(file.name)) { setError(`"${file.name}" is not a .pptx file.`); return; }
@@ -185,23 +279,40 @@ export default function Material({ content, selected, hasBank, onContent, onSele
   if (!content) {
     return (
       <>
-        <div className="page-head">
-          <div>
-            <h1>What are you teaching?</h1>
-            <p className="t-lead lead">
-              Give BloomLoop a lesson deck or a syllabus. Questions are written only from what is in it.
-            </p>
+        {error && <Note tone="bad">{error}</Note>}
+        <div className="tc-start">
+          <Panel className="tc-hero">
+            <div className="tc-hero-txt">
+              <span className="tag-mint">Material · Step 1</span>
+              <h2>Start from what you already teach.</h2>
+              <p>
+                Give BloomLoop the deck you teach from, or paste the syllabus. It reads the topics out of it, you
+                choose which ones this class is asked about, and every question is written from that text and
+                nothing else.
+              </p>
+            </div>
+            {/* What each topic becomes: questions at six levels, climbing. */}
+            <figure className="tc-hero-ladder" aria-label="Every topic is asked at six levels, from Remember to Create">
+              <div className="tc-hero-bars" aria-hidden="true">
+                {LEVELS.map((l, i) => (
+                  <div key={l} data-level={l}><i /><span>{i + 1}</span></div>
+                ))}
+              </div>
+              <figcaption>Six levels per topic</figcaption>
+            </figure>
+          </Panel>
+
+          <div className="tc-ways">
+            <DropZone busy={busy} onFile={takeFile} />
+            <section className="card tc-paste-card" aria-labelledby="tc-paste-h">
+              <div className="tc-paste-head">
+                <h3 id="tc-paste-h">Paste a syllabus</h3>
+                <span className="tc-kind">TEXT</span>
+              </div>
+              <PasteForm busy={busy} onText={takeText} />
+            </section>
+            <Library saved={saved} loaded={loaded} busy={busy} onOpen={reuse} />
           </div>
-        </div>
-        {error && <Note tone="bad" style={{ marginBottom: 16 }}>{error}</Note>}
-        <div className="split">
-          <div className="card card-pad">
-            <Source busy={busy} onFile={takeFile} onText={takeText} />
-          </div>
-          <aside className="stack stack-3">
-            <h4>Chapters already read</h4>
-            <Library saved={saved} busy={busy} onOpen={reuse} />
-          </aside>
         </div>
       </>
     );
@@ -212,32 +323,39 @@ export default function Material({ content, selected, hasBank, onContent, onSele
     content.kind === 'syllabus' ? 'Pasted syllabus' : content.kind === 'pptx' ? 'Lesson deck' : null,
     typeof content.slideCount === 'number' ? `${content.slideCount} slides` : null,
     typeof content.chars === 'number' ? `${content.chars.toLocaleString()} characters` : null,
+    content.readBy === 'ocr' ? 'read from the slide images' : null,
   ].filter(Boolean).join(' · ');
   const allOn = topics.length > 0 && selected.length === topics.length;
+  const peak = Math.max(1, ...Object.values(byTopic).flatMap((r) => LEVELS.map((l) => r.mix?.[l] ?? 0)));
+
+  const yieldCounts = hasBank
+    ? LEVELS.reduce((a, l) => ({ ...a, [l]: inBank.filter((q) => q.bloom === l).length }), {})
+    : plan?.perLevel ?? null;
+  const yieldTotal = hasBank ? inBank.length : plan?.total ?? null;
+  const bankTopics = new Set(inBank.map((q) => q.topic).filter(Boolean)).size;
 
   return (
     <>
-      <div className="page-head">
-        <div className="grow">
-          <div className="eyebrow">{sourceLine || 'Chapter'}</div>
-          <h1 className="wrap-any">{content.title}</h1>
-        </div>
-        <div className="acts">
-          <Button icon="refresh" onClick={() => setSwap(true)}>Read something else</Button>
-        </div>
-      </div>
+      {error && <Note tone="bad">{error}</Note>}
 
-      {error && <Note tone="bad" style={{ marginBottom: 16 }}>{error}</Note>}
+      <div className="tc-chap">
+        <section className="card tc-chap-main" aria-label="Topics found">
+          <div className="tc-src">
+            <span className="tc-kind">{KIND_TAG[content.kind] ?? 'DOC'}</span>
+            <div className="tc-src-main">
+              <b>{content.title}</b>
+              <small>{sourceLine || 'Chapter'}</small>
+            </div>
+            <Button size="sm" icon="refresh" onClick={() => setSwap(true)}>Replace</Button>
+          </div>
 
-      <div className="split">
-        <section className="card">
-          <div className="card-head">
-            <h3>Topics</h3>
-            <span className="t-meta">{selected.length} of {topics.length} ticked</span>
+          <div className="tc-topics-head">
+            <Section title="Topics found" sub={`${selected.length} of ${topics.length} ticked. Rename anything the reader got wrong.`} />
             {topics.length > 1 && (
-              <Button variant="ghost" size="sm" onClick={() => onSelected(allOn ? [] : topics)}>
-                {allOn ? 'Untick all' : 'Tick all'}
-              </Button>
+              <div className="cluster cluster-1">
+                <Button variant="ghost" size="sm" disabled={allOn} onClick={() => onSelected(topics)}>Tick all</Button>
+                <Button variant="ghost" size="sm" disabled={selected.length === 0} onClick={() => onSelected([])}>Clear</Button>
+              </div>
             )}
           </div>
 
@@ -246,81 +364,105 @@ export default function Material({ content, selected, hasBank, onContent, onSele
               Nothing usable came out of that source. Add the topics below and questions will be written about those.
             </Empty>
           ) : (
-            <ul className="rows" style={{ padding: 8 }}>
-              {topics.map((topic, idx) => {
-                const on = selected.includes(topic);
-                if (editing === idx) {
+            <>
+              <div className="tc-trow tc-thead" aria-hidden="true">
+                <span />
+                <span>#</span>
+                <span>Topic</span>
+                <span className="tc-lvnums">
+                  {LEVELS.map((l, i) => <span key={l} title={LABEL[l]}>{i + 1}</span>)}
+                </span>
+                <span className="r">{hasBank ? 'In bank' : 'About'}</span>
+              </div>
+              <ul className="tc-tlist">
+                {topics.map((topic, idx) => {
+                  const on = selected.includes(topic);
+                  const row = byTopic[topic];
+                  if (editing === idx) {
+                    return (
+                      <li key={`edit-${topic}`} className="tc-topic-edit">
+                        <input
+                          className="input input-sm grow"
+                          value={draft}
+                          autoFocus
+                          aria-label="Topic name"
+                          onChange={(e) => setDraft(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') commitEdit(idx); if (e.key === 'Escape') setEditing(-1); }}
+                        />
+                        <Button variant="primary" size="sm" onClick={() => commitEdit(idx)}>Save</Button>
+                        <Button variant="ghost" size="sm" onClick={() => setEditing(-1)}>Cancel</Button>
+                      </li>
+                    );
+                  }
                   return (
-                    <li key={`edit-${topic}`} className="rw">
-                      <input
-                        className="input input-sm grow"
-                        value={draft}
-                        autoFocus
-                        aria-label="Topic name"
-                        onChange={(e) => setDraft(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') commitEdit(idx); if (e.key === 'Escape') setEditing(-1); }}
-                      />
-                      <Button variant="primary" size="sm" onClick={() => commitEdit(idx)}>Save</Button>
-                      <Button variant="ghost" size="sm" onClick={() => setEditing(-1)}>Cancel</Button>
+                    <li key={topic} className="tc-topic" data-on={on ? 'true' : 'false'}>
+                      <button
+                        type="button"
+                        className="tc-trow tc-topic-hit"
+                        aria-pressed={on}
+                        onClick={() => onSelected(on ? selected.filter((t) => t !== topic) : [...selected, topic])}
+                      >
+                        <Tick on={on} />
+                        <span className="tc-ref">{String(idx + 1).padStart(2, '0')}</span>
+                        <span className="tc-topic-name">{topic}</span>
+                        <LevelTicks mix={on || hasBank ? row?.mix : null} peak={peak} />
+                        <span className="tc-est">
+                          {row && (on || hasBank) ? `${hasBank ? '' : '~'}${row.count}` : '—'}
+                        </span>
+                      </button>
+                      <span className="tc-topic-acts">
+                        <Tip label="Rename">
+                          <Button variant="ghost" size="sm" icon="edit" aria-label={`Rename ${topic}`} disabled={saving} onClick={() => { setEditing(idx); setDraft(topic); }} />
+                        </Tip>
+                        <Tip label="Remove">
+                          <Button variant="ghost" size="sm" icon="trash" aria-label={`Remove ${topic}`} disabled={saving} onClick={() => saveTopics(topics.filter((t) => t !== topic), selected.filter((t) => t !== topic))} />
+                        </Tip>
+                      </span>
                     </li>
                   );
-                }
-                return (
-                  <li key={topic} className="rw is-click topic" data-on={on ? 'true' : 'false'}>
-                    <button
-                      type="button"
-                      className="topic-main"
-                      aria-pressed={on}
-                      onClick={() => onSelected(on ? selected.filter((t) => t !== topic) : [...selected, topic])}
-                    >
-                      <Tick on={on} />
-                      <span className="grow wrap-any">{topic}</span>
-                    </button>
-                    <span className="rw-acts">
-                      <Tip label="Rename">
-                        <Button variant="ghost" size="sm" icon="edit" aria-label={`Rename ${topic}`} disabled={saving} onClick={() => { setEditing(idx); setDraft(topic); }} />
-                      </Tip>
-                      <Tip label="Remove">
-                        <Button variant="ghost" size="sm" icon="trash" aria-label={`Remove ${topic}`} disabled={saving} onClick={() => saveTopics(topics.filter((t) => t !== topic), selected.filter((t) => t !== topic))} />
-                      </Tip>
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
+                })}
+              </ul>
+            </>
           )}
 
-          <form className="card-foot" onSubmit={(e) => { e.preventDefault(); addTopic(); }}>
+          <form className="tc-addtopic" onSubmit={(e) => { e.preventDefault(); addTopic(); }}>
+            <Icon name="plus" className="muted" />
             <input
-              className="input input-sm grow"
               value={added}
               onChange={(e) => setAdded(e.target.value)}
               placeholder="Add a topic the reader missed"
               aria-label="Add a topic"
             />
-            <Button type="submit" size="sm" icon="plus" disabled={!added.trim() || saving}>Add</Button>
+            <Button type="submit" size="sm" disabled={!added.trim() || saving}>Add</Button>
           </form>
         </section>
 
-        <aside className="stack sticky">
-          <div className="card card-pad stack">
-            <div className="figs">
-              <Fig value={selected.length} label={selected.length === 1 ? 'topic to ask about' : 'topics to ask about'} />
-              <Fig value={selected.length * PER_TOPIC} label="questions, about" />
+        <aside className="tc-chap-side">
+          <Panel className="tc-yield" aria-label={hasBank ? 'In the bank' : 'What the ticked topics make'}>
+            <span className="tag-mint">{hasBank ? 'In the bank' : 'First plan'}</span>
+            <div className="tc-big">
+              <b>{yieldTotal == null ? '—' : <>{hasBank ? '' : '~'}<Num value={yieldTotal} /></>}</b>
+              <span>
+                {hasBank
+                  ? `questions kept, over ${bankTopics} topic${bankTopics === 1 ? '' : 's'}`
+                  : selected.length === 0
+                    ? 'Tick a topic to see what it makes'
+                    : `questions from ${selected.length} ticked topic${selected.length === 1 ? '' : 's'}`}
+              </span>
             </div>
-            <p className="hint">
-              Questions are spread across all six levels for each ticked topic. You set the exact number and the mix on the next step.
-            </p>
-            <Button variant="primary" size="lg" block disabled={selected.length === 0} onClick={onNext}>
-              {hasBank ? 'Open the questions' : 'Plan the questions'}
+            {yieldCounts && yieldTotal > 0 && <LevelSpread counts={yieldCounts} />}
+            <Button variant="accent" size="lg" block disabled={selected.length === 0} onClick={onNext}>
+              {hasBank ? 'Open the question bank' : 'Generate question bank'}
               <Icon name="forward" />
             </Button>
-          </div>
+            <p className="tc-yield-note">
+              {hasBank
+                ? 'Plan another run from the question bank to add to it or replace it.'
+                : 'You set the exact number and the mix of levels on the next step. Nothing is written until then.'}
+            </p>
+          </Panel>
 
-          <div className="stack stack-3">
-            <h4>Chapters already read</h4>
-            <Library saved={saved} currentId={content.contentId} busy={busy} onOpen={reuse} />
-          </div>
+          <Library saved={saved} loaded={loaded} currentId={content.contentId} busy={busy} onOpen={reuse} />
         </aside>
       </div>
 

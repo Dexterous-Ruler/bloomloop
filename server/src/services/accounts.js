@@ -303,7 +303,7 @@ export async function getAccountByEmail(email) {
 }
 
 /** Roll numbers compare the way the live room stores them: trimmed, single-spaced, upper case. */
-const rollKey = (value) => String(value ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
+export const rollKey = (value) => String(value ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
 
 /**
  * The student account a room roll number belongs to, on the room owner's roster.

@@ -17,6 +17,8 @@ import {
   retriesFor,
   triesSpent,
   answerPrint,
+  applyReview,
+  REVIEW_MARKS,
 } from '../services/mastery.js';
 import { selectNext } from '../services/selector.js';
 import { buildGridRow } from '../routes/session.js';
@@ -36,6 +38,8 @@ import {
 const presence = new Map(); // `${code}:${rollNo}` -> socket.id
 const bankCache = new Map(); // sessionId -> Promise<question[]>
 const sessionCache = new Map(); // code -> open session document
+const profileLocks = new Map(); // `${sessionId}:${rollNo}` -> tail of that student's queue
+const deletingRooms = new Map(); // sessionId -> how many deletes of it are under way
 
 // Roll numbers in the wild look like 21BCE1234, CS-045, 2/A. Anything else is a
 // typo or a probe, and an empty one would collide with every other empty one.
@@ -78,6 +82,73 @@ export function releaseSession({ sessionId = null, code = null } = {}) {
 export function releaseBanks() {
   bankCache.clear();
 }
+
+/**
+ * One read-modify-write of a student's profile at a time. Resolves once every
+ * earlier holder for this student has finished, with the function to call when
+ * this one has.
+ *
+ * Every handler below reads the profile, changes it and writes the whole row
+ * back. For one phone that was sequential in practice. A professor's review
+ * (routes/review.js) is a second writer on another connection, and an override
+ * landing between a socket's read and its write was silently undone by that
+ * write: the answer row said "overridden" and the level tally did not. So the
+ * handlers that write a profile, and the review route, all take this first.
+ *
+ * In-process, which is enough: one server process owns every socket and every
+ * route. Nothing that runs while it is held may ask for it again.
+ */
+export async function lockProfile(sessionId, rollNo) {
+  const k = `${String(sessionId)}:${String(rollNo)}`;
+  const before = profileLocks.get(k) ?? Promise.resolve();
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const tail = before.then(() => held);
+  profileLocks.set(k, tail);
+  await before;
+  return () => {
+    release();
+    if (profileLocks.get(k) === tail) profileLocks.delete(k);
+  };
+}
+
+/**
+ * Hold a room still while it is archived and deleted.
+ *
+ * DELETE /api/session/:code reads the whole room into its archive, then deletes
+ * the live rows. A review or a live answer landing between the two was answered
+ * as saved and then deleted with the room: in neither the archive nor the
+ * tables. So the room is marked first - every writer checks the mark under the
+ * student's lock and refuses (roomDeleting) - and then each student's lock is
+ * taken and dropped once, which waits out any writer that got in before the
+ * mark. After that nothing can change what the archive reads.
+ *
+ * `students` lists the room's roll numbers. It is called after the mark is set,
+ * so a student who joins while this runs is either in the list, or joins a room
+ * already marked and has every answer refused.
+ * Returns the function that lifts the mark; the route calls it whether or not
+ * the delete went ahead. Counted, not a set, so a second DELETE of the same room
+ * finishing first cannot lift the first one's mark.
+ */
+export async function holdRoomForDelete(sessionId, students) {
+  const id = String(sessionId);
+  deletingRooms.set(id, (deletingRooms.get(id) ?? 0) + 1);
+  const lift = () => {
+    const n = (deletingRooms.get(id) ?? 1) - 1;
+    if (n > 0) deletingRooms.set(id, n);
+    else deletingRooms.delete(id);
+  };
+  try {
+    for (const rollNo of new Set((await students()).map(String))) (await lockProfile(id, rollNo))();
+  } catch (err) {
+    lift();
+    throw err;
+  }
+  return lift;
+}
+
+/** True while a delete of this room is under way. Read under the student's lock. */
+export const roomDeleting = (sessionId) => deletingRooms.has(String(sessionId));
 
 function logError(event, err) {
   console.error(`[socket] ${event} failed:`, err);
@@ -165,7 +236,8 @@ function retriesAllowed(question, settings, rollNo, supports) {
   return retriesFor(shown, settings.reattempts);
 }
 
-async function broadcastGrid(io, session) {
+/** Push the room's grid to every teacher screen watching it. Also used after a review. */
+export async function broadcastGrid(io, session) {
   io.to(`teacher:${session.code}`).emit('teacher:grid', {
     rows: await gridRows(session),
     code: session.code,
@@ -243,6 +315,7 @@ async function dispatchNext(socket, { profile, session, bank = null, resume = fa
 }
 
 async function handleJoin(io, socket, payload) {
+  let release = null;
   try {
     const session = await loadSession(payload?.code);
     if (!session) {
@@ -260,6 +333,7 @@ async function handleJoin(io, socket, payload) {
       return;
     }
 
+    release = await lockProfile(session._id, rollNo);
     const repo = getRepo();
     const name = String(payload?.name ?? '').trim().slice(0, 60);
     const stored = await repo.getProfile(session._id, rollNo);
@@ -333,6 +407,8 @@ async function handleJoin(io, socket, payload) {
   } catch (err) {
     logError('student:join', err);
     reject(socket, 'Could not join - try again.');
+  } finally {
+    release?.();
   }
 }
 
@@ -345,6 +421,14 @@ async function handleJoin(io, socket, payload) {
  * disagreeing and never counts twice.
  */
 async function replayStored(io, socket, { session, profile, prior, settings }) {
+  // Only ever this student's own row. handleAnswer re-keys an attempt whose key
+  // another student's row holds, so the one way left to get here with someone
+  // else's row is two phones racing on one key. Answering from it would credit
+  // this student with that student's mark; refusing sends the phone the "did not
+  // save" notice, and its resend then takes the re-keyed path.
+  if (String(prior.rollNo) !== String(profile.rollNo)) {
+    throw new Error(`answer key ${prior.answerKey} is held by another student's row`);
+  }
   const repo = getRepo();
   const question = await repo.getQuestion(prior.questionId).catch(() => null);
   const seed = `${prior.rollNo}:${prior.questionId}`;
@@ -385,6 +469,18 @@ async function replayStored(io, socket, { session, profile, prior, settings }) {
         tries: prior.attempt,
         redemption: settings.redemption,
       }).profile;
+    // A row a professor has reviewed: the rebuilt entry is tagged the way
+    // applyReview tags it. Without the tag the mark is the professor's but reads
+    // as the machine's provisional one, and a later double-tap was told so.
+    if (!prior.ungraded && REVIEW_MARKS.includes(prior.reviewStatus)) {
+      current = applyReview(current, {
+        answerId: prior.answerKey,
+        correct: prior.correct,
+        score: prior.score,
+        review: prior.reviewStatus,
+        redemption: settings.redemption,
+      }).profile;
+    }
     current.served = null;
     await repo.saveProfile(current);
     await broadcastGrid(io, session);
@@ -393,9 +489,14 @@ async function replayStored(io, socket, { session, profile, prior, settings }) {
   socket.emit('server:result', {
     correct: prior.ungraded ? false : Boolean(prior.correct),
     score: prior.score,
+    // Once reviewed, the stored mark is the professor's and no longer provisional.
+    ...(prior.reviewStatus === 'provisional' ? { provisional: true } : {}),
     ungraded: prior.ungraded,
     solution: question ? score(question, prior.response, seed, socket.data.student?.supports).solution : null,
-    detail: prior.detail ?? '',
+    // The machine's reading in words, only while its mark is the one in force.
+    // Once a professor has overridden it, '1/2 rubric points' beside the
+    // professor's mark contradicts the mark the phone is showing.
+    detail: prior.reviewStatus === 'overridden' ? '' : (prior.detail ?? ''),
     kind: prior.kind,
     workingLevel: current.workingLevel,
     reason: current.reason,
@@ -405,6 +506,7 @@ async function replayStored(io, socket, { session, profile, prior, settings }) {
 }
 
 async function handleAnswer(io, socket, payload) {
+  let release = null;
   try {
     const ctx = socket.data.student;
     if (!ctx) {
@@ -432,6 +534,15 @@ async function handleAnswer(io, socket, payload) {
       return;
     }
 
+    release = await lockProfile(ctx.sessionId, ctx.rollNo);
+    // The room is being archived and deleted. An answer written now would land
+    // after the archive was read and go with the room. Refused the way a failed
+    // save is, so the phone keeps it and resends: a room that is gone then says
+    // so, and one whose delete was refused simply takes the answer.
+    if (roomDeleting(ctx.sessionId)) {
+      reject(socket, 'That answer did not save. Tap Next question to carry on.');
+      return;
+    }
     const repo = getRepo();
     const stored = await repo.getProfile(ctx.sessionId, ctx.rollNo);
     if (!stored) {
@@ -443,14 +554,27 @@ async function handleAnswer(io, socket, payload) {
     const supports = ctx.supports ?? null;
 
     // The idempotency key. A current phone sends one per attempt; an older one
-    // does not, and then the key is derived from the question and the answer, so
-    // an identical resend is still recognised as the same attempt.
+    // does not, and then the key is derived from the student, the question and
+    // the answer, so an identical resend is still recognised as the same attempt.
+    // The roll number is in it because a key is unique per room, not per
+    // student: without it, two students giving the same answer to the same
+    // question shared one key, and the second was answered from the first one's
+    // row - never stored, never in the review queue, never moved by a review.
     const print = answerPrint(response);
     const sent = String(payload?.answerId ?? '');
-    const answerKey = ANSWER_ID.test(sent) ? sent : `legacy-${questionId}-${print}`;
+    let answerKey = ANSWER_ID.test(sent) ? sent : `legacy-${ctx.rollNo}-${questionId}-${print}`;
 
     // 1. An attempt the server already holds: answer it with the stored outcome.
-    const prior = await repo.getAnswerByKey(ctx.sessionId, answerKey);
+    let prior = await repo.getAnswerByKey(ctx.sessionId, answerKey);
+    // A phone picks its own key, so one can arrive that another student's row
+    // already holds. That row is theirs, and answering from it would credit this
+    // student with their mark. This attempt is filed under the key scoped to
+    // this student instead, which its own resends find again. ANSWER_ID has no
+    // '@', so no phone can send a scoped key itself.
+    if (prior && prior.rollNo !== ctx.rollNo) {
+      answerKey = `${answerKey}@${ctx.rollNo}`;
+      prior = await repo.getAnswerByKey(ctx.sessionId, answerKey);
+    }
     if (prior) {
       await replayStored(io, socket, { session, profile, prior, settings });
       return;
@@ -465,6 +589,7 @@ async function handleAnswer(io, socket, payload) {
       socket.emit('server:result', {
         correct: already.correct,
         score: already.score ?? (already.correct ? 1 : 0),
+        ...((already.kind ?? stale?.kind) === 'open' && !already.review ? { provisional: true } : {}),
         ungraded: already.ungraded === true,
         solution: stale ? score(stale, response, `${ctx.rollNo}:${stale._id}`, supports).solution : null,
         kind: already.kind ?? stale?.kind ?? 'mcq',
@@ -477,8 +602,14 @@ async function handleAnswer(io, socket, payload) {
     }
 
     const bank = await loadBank(session);
-    const question =
+    // The store is asked only for an item discarded after it was served, which
+    // has left the cached bank. Such an item must still belong to this room's
+    // content: the fallback used to take any question id in the database, so a
+    // phone could answer another professor's question, be sent its key as the
+    // solution, and put that question and its rubric into this room's evidence.
+    const found =
       bank.find((q) => String(q._id) === questionId) ?? (await repo.getQuestion(questionId));
+    const question = found && String(found.contentId) === String(session.contentId) ? found : null;
     if (!question) {
       logIgnored('student:answer', `question ${questionId} is not in this bank`);
       // Unfreeze the phone by moving it on rather than leaving it stuck.
@@ -643,6 +774,9 @@ async function handleAnswer(io, socket, payload) {
     socket.emit('server:result', {
       correct: graded.correct,
       score: graded.score,
+      // A written answer's mark is the rubric matcher's first reading and stands
+      // until a professor confirms or overrides it, so the phone can say so.
+      ...(kind === 'open' ? { provisional: true } : {}),
       solution: graded.solution,
       detail: graded.detail ?? '',
       kind,
@@ -664,10 +798,13 @@ async function handleAnswer(io, socket, payload) {
     socket.emit('session:rejected', {
       reason: 'That answer did not save. Tap Next question to carry on.',
     });
+  } finally {
+    release?.();
   }
 }
 
 async function handleNext(socket) {
+  let release = null;
   try {
     const ctx = socket.data.student;
     if (!ctx) {
@@ -685,6 +822,8 @@ async function handleNext(socket) {
       return;
     }
 
+    // dispatchNext() writes the pin back over the profile read here.
+    release = await lockProfile(ctx.sessionId, ctx.rollNo);
     const stored = await getRepo().getProfile(ctx.sessionId, ctx.rollNo);
     if (!stored) {
       reject(socket, 'Your row is gone - rejoin with your roll number.');
@@ -694,6 +833,8 @@ async function handleNext(socket) {
     await dispatchNext(socket, { profile: hydrate(stored), session });
   } catch (err) {
     logError('student:next', err);
+  } finally {
+    release?.();
   }
 }
 
@@ -768,9 +909,14 @@ async function handleDisconnect(io, socket) {
  * exactly what to suppress.
  */
 async function handleSignal(socket, payload) {
+  let release = null;
   try {
     const ctx = socket.data.student;
     if (!ctx) return;
+    release = await lockProfile(ctx.sessionId, ctx.rollNo);
+    // Written into the profile, which the archive of a room being deleted has
+    // already read: see holdRoomForDelete.
+    if (roomDeleting(ctx.sessionId)) return;
     const repo = getRepo();
     const stored = await repo.getProfile(ctx.sessionId, ctx.rollNo);
     if (!stored) return;
@@ -779,6 +925,8 @@ async function handleSignal(socket, payload) {
     await repo.saveProfile(profile);
   } catch (err) {
     logError('student:signal', err);
+  } finally {
+    release?.();
   }
 }
 

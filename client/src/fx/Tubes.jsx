@@ -58,9 +58,16 @@ function draw(ctx, st) {
   };
   ctx.beginPath(); surface(); ctx.lineTo(w, hgt); ctx.lineTo(0, hgt); ctx.closePath();
   ctx.fillStyle = st.color; ctx.fill();
+  // Light through the liquid: a little brighter just under the surface.
+  const sheen = ctx.createLinearGradient(0, rest - 4, 0, Math.min(hgt, rest + 48));
+  sheen.addColorStop(0, 'rgba(255, 255, 255, 0.28)');
+  sheen.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = sheen; ctx.fill();
   // The meniscus: without it the two palest levels have no top edge.
   ctx.beginPath(); surface();
+  ctx.globalAlpha = 0.38;
   ctx.strokeStyle = st.edge; ctx.lineWidth = 1.25; ctx.stroke();
+  ctx.globalAlpha = 1;
 }
 
 /** One tube. `fill` is 0 to 1; `n` is the level ordinal, 1 to 6. */
@@ -72,9 +79,11 @@ export function Tube({ fill = 0, n = 1, height = 160 }) {
     const cv = canvas.current;
     const ctx = cv.getContext('2d');
     const st = { h: new Float32Array(N), v: new Float32Array(N), level: 0, target: 0, w: 0, hgt: 0, on: false, color: '', edge: '' };
+    // Read from the tube's own element, so a rack on a forest panel picks up
+    // that panel's turned-over ink for the meniscus.
     const paint = () => {
-      st.color = token(`--l${n}`) || '#888';
-      st.edge = `color-mix(in srgb, ${st.color} 62%, ${token('--text') || '#000'})`;
+      st.color = token(`--l${n}`, cv) || '#888';
+      st.edge = token('--text', cv) || '#000';
       draw(ctx, st);
     };
     const tick = () => {

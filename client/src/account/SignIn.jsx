@@ -4,6 +4,11 @@
  *
  * The view is pure, so the gallery can draw its states with no account service
  * behind it. The container owns the form and the one request.
+ *
+ * There is no "Continue with Google" here, on purpose: lib/auth.js signs in
+ * with email and password only, and keeps OAuth redirects out so no token ever
+ * sits in the address bar. A Google button would be a control that does
+ * nothing. Google appears on the profile, where an account links to it.
  */
 
 import { useState } from 'react';
@@ -12,33 +17,42 @@ import { Link, useNavigate } from 'react-router-dom';
 import { signIn, supabase } from '../lib/auth.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
 import { HOME_FOR } from '../lib/routes.js';
-import { ThemeToggle } from '../shell/AppShell.jsx';
-import { Button, Field, Icon, Mark, Note, Tip } from '../ui/index.jsx';
+import ThemeToggle from '../shell/ThemeToggle.jsx';
+import { Button, Field, Flow, Icon, Mark, Note, Tip } from '../ui/index.jsx';
 
-/** Today, the way the art half prints it: "WED 18 NOV 2026". */
-function today() {
-  const d = new Date();
-  return d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })
-    .replace(/,/g, '').toUpperCase();
-}
+/** What the product does, in the mono strip along the foot of the art half. */
+const STRIP = ['Six Bloom levels', 'Picked per student', 'Nobody ranked'];
 
 /**
- * The two doors share a frame: the espresso half says what BloomLoop is, the
- * cream half holds the form. `art` is what sits between the mark and the strip.
+ * The two doors share a frame: the forest half says what BloomLoop is, the
+ * page half holds the form. `title` is the one strong line on the art.
  */
-export function AuthFrame({ art, strip, foot, label, children }) {
+export function AuthFrame({ title, line, foot, label, children }) {
   return (
     <div className="gate au-gate">
       <section className="gate-art on-panel au-art" aria-label="BloomLoop">
+        <Flow />
         <span className="brand">
-          <Mark size={38} />
-          <span className="brand-name"><b>BloomLoop</b><small>Questions at the level reached</small></span>
+          <Mark size={28} />
+          <span className="brand-name">BloomLoop</span>
         </span>
-        {art}
-        <p className="au-strip" aria-label={`Today is ${today()}`}>
-          <span>{today()}</span>
-          {strip.map((s) => <span key={s}>{s}</span>)}
-        </p>
+
+        <div className="au-art-body">
+          <h1>{title}</h1>
+          {line && <p className="gate-art-extra">{line}</p>}
+        </div>
+
+        {/* The climb: six rungs, each in its level colour with its name. */}
+        <div className="au-ladder gate-art-extra" aria-hidden="true">
+          {LEVELS.map((l) => (
+            <div key={l} data-level={l}><i /><span>{LABEL[l]}</span></div>
+          ))}
+        </div>
+
+        <div className="au-strip">
+          <b>How it works</b>
+          {STRIP.map((s) => <span key={s}>{s}</span>)}
+        </div>
       </section>
 
       <div className="gate-side">
@@ -46,24 +60,6 @@ export function AuthFrame({ art, strip, foot, label, children }) {
         <main className="gate-main" aria-label={label}>{children}</main>
         <div className="gate-foot au-foot">{foot}</div>
       </div>
-    </div>
-  );
-}
-
-/**
- * The climb: six landings, one per level, each tread in its level colour with
- * its number and name beside it. Drawn once on arrival; nothing loops.
- */
-function Staircase() {
-  return (
-    <div className="au-stairs" aria-hidden="true">
-      {LEVELS.map((l, i) => (
-        <div key={l} className="au-step" data-level={l} style={{ '--i': i }}>
-          <span className="au-step-n">{String(i + 1).padStart(2, '0')}</span>
-          <span className="au-step-name">{LABEL[l]}</span>
-          <i />
-        </div>
-      ))}
     </div>
   );
 }
@@ -94,6 +90,7 @@ export function PasswordField({ id, label, hint, autoComplete, minLength, disabl
         <Tip label={action}>
           <Button
             variant="ghost"
+            size="sm"
             icon={reveal ? 'eyeOff' : 'eye'}
             className="au-reveal"
             aria-label={action}
@@ -107,6 +104,17 @@ export function PasswordField({ id, label, hint, autoComplete, minLength, disabl
   );
 }
 
+/** A way in that is not this form. */
+function Door({ to, icon, title, line }) {
+  return (
+    <Link className="au-door" to={to}>
+      <span className="au-door-ic"><Icon name={icon} /></span>
+      <span className="au-door-text"><b>{title}</b><small>{line}</small></span>
+      <Icon name="chevronRight" className="au-door-go" />
+    </Link>
+  );
+}
+
 export function SignInView({ configured, email, password, busy, error, onEmail, onPassword, onSubmit }) {
   const ready = configured && !busy && Boolean(email.trim()) && Boolean(password);
   const errId = error ? 'signin-error' : undefined;
@@ -114,25 +122,16 @@ export function SignInView({ configured, email, password, busy, error, onEmail, 
   return (
     <AuthFrame
       label="Sign in"
-      strip={['6 LEVELS', 'ONE FORM FOR EVERY ROLE']}
-      art={
-        <div className="au-art-body">
-          <Staircase />
-          <h1>Every student climbs at their <em>own</em> level.</h1>
-          <p className="gate-art-extra">
-            A few right and the next question steps up. A few wrong and it steps back down. Nobody is
-            ranked against the class.
-          </p>
-        </div>
-      }
+      title={<>Every student climbs at their <em>own</em> level.</>}
+      line="A few right and the next question steps up. A few wrong and it steps back down. Your class is read one student at a time."
       foot={<>Have an invite code? <Link className="link" to="/signup">Create your account</Link></>}
     >
       <form className="gate-card au-card" onSubmit={(e) => { e.preventDefault(); if (ready) onSubmit(); }}>
-        <div className="au-title">
+        <header className="au-title">
           <span className="eyebrow">Sign in</span>
           <h2>Welcome back</h2>
-          <p className="au-lead">Heads of department, professors and students all use this form. Your invite set your role; the server reads it back.</p>
-        </div>
+          <p>One form for heads of department, professors and students. Your role comes from your account.</p>
+        </header>
 
         {!configured && (
           <Note icon="alert">
@@ -183,18 +182,10 @@ export function SignInView({ configured, email, password, busy, error, onEmail, 
 
         <div className="or">or</div>
 
-        <div className="au-doors">
-          <Link className="au-door" to="/join">
-            <span className="au-door-ic"><Icon name="room" /></span>
-            <span className="grow"><b>Sitting a test?</b><small>Join a room with its code. No account needed.</small></span>
-            <Icon name="chevronRight" />
-          </Link>
-          <Link className="au-door" to="/">
-            <span className="au-door-ic"><Icon name="key" /></span>
-            <span className="grow"><b>Have a teacher key?</b><small>Open the console without an account.</small></span>
-            <Icon name="chevronRight" />
-          </Link>
-        </div>
+        <nav className="au-doors" aria-label="Other ways in">
+          <Door to="/join" icon="room" title="Sitting a test?" line="Join a room with its code. No account needed." />
+          <Door to="/" icon="key" title="Have a teacher key?" line="Open the console without an account." />
+        </nav>
       </form>
     </AuthFrame>
   );

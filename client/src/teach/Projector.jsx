@@ -3,15 +3,20 @@
  * the back of a hall and its one job is getting forty phones in: where to go,
  * the code, a QR for the phones that would rather scan.
  *
- * Along the bottom the room fills up: each student who joins drops a marble
- * into the tray, so the class can see itself arrive.
+ * It is a forest stage in either theme: light text on a dark ground carries
+ * further across a room, and a projector washes out pale backgrounds. The way
+ * in is one frosted strip - the address, the code set huge and spaced so
+ * nobody misreads a character, and the QR. Under it the room fills up: each
+ * student who joins drops a marble into the tray, so the class can see itself
+ * arrive. Nothing here says how anyone is doing; the marbles are one colour.
+ *
+ * Escape, or the button top right, goes back to the class.
  */
 
 import { useEffect, useState } from 'react';
 
 import Marbles from '../fx/Marbles.jsx';
-import { ThemeToggle } from '../shell/AppShell.jsx';
-import { Button, Chip, Icon, Loop, Note, Num } from '../ui/index.jsx';
+import { Button, Flow, Icon, Mark, Note, Num } from '../ui/index.jsx';
 import useRoomFeed from './useRoomFeed.js';
 
 export default function Projector({ session, content, activeCount, onLive }) {
@@ -23,9 +28,12 @@ export default function Projector({ session, content, activeCount, onLive }) {
   // Built from the browser's own origin, so it shows the address the phones
   // actually need rather than "localhost".
   const joinUrl = `${window.location.origin}/join/${session.code}`;
+  const shownUrl = joinUrl.replace(/^https?:\/\//, '');
+  const base = shownUrl.slice(0, shownUrl.length - session.code.length);
   // After a mid-class reload the bank has not been fetched again, so the count
   // the server handed back with the room is the one that is still true.
   const bankCount = session.bankCount ?? activeCount;
+  const chapter = session.title || content?.title || 'Live room';
 
   // The QR encoder is imported only here, so no phone ever downloads it.
   useEffect(() => {
@@ -37,6 +45,13 @@ export default function Projector({ session, content, activeCount, onLive }) {
     return () => { alive = false; };
   }, [joinUrl]);
 
+  // Escape is the way back for a teacher standing at the front with a clicker.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && !e.defaultPrevented) onLive(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onLive]);
+
   function copy(value, what) {
     navigator.clipboard?.writeText(value).then(
       () => { setCopied(what); setTimeout(() => setCopied(''), 1600); },
@@ -45,54 +60,64 @@ export default function Projector({ session, content, activeCount, onLive }) {
   }
 
   return (
-    <div className="proj">
-      <header className="proj-bar">
-        <span className="brand"><Loop size={24} /><span>BloomLoop</span></span>
-        <span className="muted clip">{session.title || content?.title || 'Live room'}{bankCount ? ` · ${bankCount} questions` : ''}</span>
-        <span className="push cluster">
-          <Chip tone="ok" dot>Room open</Chip>
-          <ThemeToggle />
-          <Button variant="primary" onClick={onLive}>Go to the class<Icon name="forward" /></Button>
+    <div className="pj on-panel">
+      <Flow />
+
+      <header className="pj-bar">
+        <span className="pj-brand"><Mark size={30} /><span>BloomLoop</span></span>
+        <span className="pj-open"><i className="live-dot" />Room open</span>
+        <span className="push">
+          <Button variant="accent" onClick={onLive}>Go to the class<Icon name="forward" /></Button>
         </span>
       </header>
 
-      <main className="proj-main">
-        <div className="proj-how">
-          <div className="stack stack-2">
-            <span className="proj-label">On any phone, go to</span>
-            <span className="proj-url">{joinUrl.replace(/^https?:\/\//, '')}</span>
-          </div>
-          <div className="stack stack-3">
-            <span className="proj-label">Room code</span>
-            <div className="proj-code" aria-label={`Room code ${session.code.split('').join(' ')}`}>
-              {session.code.split('').map((ch, i) => <span key={`${ch}-${i}`}>{ch}</span>)}
-            </div>
-          </div>
-          <div className="cluster">
-            <Button icon={copied === 'code' ? 'check' : 'copy'} onClick={() => copy(session.code, 'code')}>{copied === 'code' ? 'Copied' : 'Copy the code'}</Button>
-            <Button icon={copied === 'url' ? 'check' : 'link'} onClick={() => copy(joinUrl, 'url')}>{copied === 'url' ? 'Copied' : 'Copy the link'}</Button>
-          </div>
-          {error && <Note tone="bad">{error}</Note>}
+      <main className="pj-main">
+        <div className="pj-title">
+          <span className="pj-label">Today{bankCount ? ` · ${bankCount} questions` : ''}</span>
+          <h1 className="clip">{chapter}</h1>
         </div>
 
-        {/* A white card, not a bare image: the encoder is given no quiet zone,
-            so the padding is what makes the code scannable at all. */}
-        <div className="proj-qr">
-          <div className="proj-qr-card">
-            {qr ? <img src={qr} alt={`QR code for ${joinUrl}`} width={280} height={280} /> : <div className="skel" style={{ width: 280, height: 280 }} />}
+        <section className="pj-strip" aria-label="How to join">
+          <div className="pj-how">
+            <div className="pj-step">
+              <span className="pj-label">On any phone, go to</span>
+              <span className="pj-url">{base}<em>{session.code}</em></span>
+            </div>
+            <div className="pj-step">
+              <span className="pj-label">Room code</span>
+              <b className="pj-code" aria-label={`Room code ${session.code.split('').join(' ')}`}>{session.code}</b>
+            </div>
+            <div className="cluster">
+              <Button icon={copied === 'code' ? 'check' : 'copy'} onClick={() => copy(session.code, 'code')}>{copied === 'code' ? 'Copied' : 'Copy the code'}</Button>
+              <Button icon={copied === 'url' ? 'check' : 'link'} onClick={() => copy(joinUrl, 'url')}>{copied === 'url' ? 'Copied' : 'Copy the link'}</Button>
+            </div>
+            {error && <Note tone="bad">{error}</Note>}
           </div>
-          <span className="proj-label">or scan this</span>
-        </div>
+
+          {/* A white card, not a bare image: the encoder is given no quiet zone,
+              so the padding is what makes the code scannable at all. */}
+          <div className="pj-qr">
+            <div className="pj-qr-card">
+              {qr ? <img src={qr} alt={`QR code for ${joinUrl}`} width={260} height={260} /> : <div className="pj-qr-wait" />}
+            </div>
+            <span className="pj-label">or scan this</span>
+          </div>
+        </section>
+
+        <section className="pj-room" aria-label="Who has arrived">
+          <div className="pj-count" aria-live="polite">
+            <b><Num value={rows.length} /></b>
+            <span>{rows.length === 1 ? 'student in the room' : 'students in the room'}</span>
+          </div>
+          <div className="pj-tray">
+            <Marbles rows={rows} tray height={132} caption={false} />
+          </div>
+        </section>
       </main>
 
-      <footer className="proj-foot">
-        <div className="proj-count">
-          <b><Num value={rows.length} /></b>
-          <span>{rows.length === 1 ? 'student in the room' : 'students in the room'}</span>
-        </div>
-        <div className="proj-tray">
-          <Marbles rows={rows} tray height={96} caption={false} />
-        </div>
+      <footer className="pj-foot">
+        <span><Icon name="eyeOff" size={15} />Scores are never shown on this screen. It only shows who has arrived.</span>
+        <span className="pj-esc"><span className="kbd">Esc</span>back to the class</span>
       </footer>
     </div>
   );
