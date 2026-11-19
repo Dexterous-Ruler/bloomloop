@@ -267,9 +267,14 @@ const code2 = room2.body.code;
   const taps = ['sure', 'think_so', 'guessing', 'sure'];
   const r1 = [];
   const r2 = [];
+  const asked = { '22CS01': [], '22CS02': [] };
   for (let i = 0; i < 4; i += 1) {
-    r1.push((await answerOwn(x1, { right: pattern[i], confidence: taps[i] })).result);
-    r2.push((await answerOwn(x2, { right: pattern[i], ...(i === 0 ? { confidence: 'maybe' } : {}) })).result);
+    const a1 = await answerOwn(x1, { right: pattern[i], confidence: taps[i] });
+    r1.push(a1.result);
+    asked['22CS01'].push(String(a1.q._id));
+    const a2 = await answerOwn(x2, { right: pattern[i], ...(i === 0 ? { confidence: 'maybe' } : {}) });
+    r2.push(a2.result);
+    asked['22CS02'].push(String(a2.q._id));
     if (i < 3) {
       const n1 = next(x1.s, 'server:question');
       const n2 = next(x2.s, 'server:question');
@@ -285,7 +290,10 @@ const code2 = room2.body.code;
   check('the same answers with and without taps leave both on identical levels, working level and history',
     same(ladder(p1), ladder(p2)) && p1.history.length === 4, JSON.stringify([ladder(p1), ladder(p2)]));
   const rows = await repo.listAnswers({ sessionId: room2.body.sessionId });
-  const of = (roll) => rows.filter((a) => a.rollNo === roll);
+  // Each phone's rows in the order it answered: the store lists rows by
+  // answeredAt and then by a random id, so two in one millisecond can swap.
+  const of = (roll) => rows.filter((a) => a.rollNo === roll)
+    .sort((a, b) => asked[roll].indexOf(String(a.questionId)) - asked[roll].indexOf(String(b.questionId)));
   check('each tap is stored with its answer, in the stored spellings; no tap and an unknown tap are stored as none',
     same(of('22CS01').map((a) => a.confidence), ['sure', 'think', 'guess', 'sure']) && of('22CS02').every((a) => a.confidence === null),
     JSON.stringify(rows.map((a) => [a.rollNo, a.confidence])));
@@ -594,7 +602,8 @@ console.log('\nthe evidence: every vote stored, none overwritten; no level moved
   const r2 = rows.filter((a) => a.round === 2);
   check('16 rows: 9 in round 1 (the changed vote and the late one included), 7 in round 2', rows.length === 16 && r1.length === 9 && r2.length === 7,
     `${rows.length}: ${r1.length} + ${r2.length}`);
-  const s1 = r1.filter((a) => a.rollNo === '21CS01');
+  // In the order the server took them (`attempt`): two votes can share a millisecond.
+  const s1 = r1.filter((a) => a.rollNo === '21CS01').sort((a, b) => a.attempt - b.attempt);
   check('21CS01\'s first vote is kept with final false, her second is in force', s1.length === 2
     && same(s1.map((a) => [a.response, a.final, a.attempt]), [[3, false, 1], [0, true, 2]]), JSON.stringify(s1.map((a) => [a.response, a.final, a.attempt])));
   const late = r1.filter((a) => a.rollNo === '21CS05');
@@ -674,7 +683,10 @@ console.log('\na room closed with a class question running');
     await ack;
   }
   {
-    const rows = await repo.listAnswers({ classQuestionId: cq.body.id });
+    // In the order the server took them, under the student's lock (`attempt`):
+    // the store lists rows by answeredAt and then by id, which is random on the
+    // in-process store, and three votes this quick can share a millisecond.
+    const rows = (await repo.listAnswers({ classQuestionId: cq.body.id })).sort((a, b) => a.attempt - b.attempt);
     check('a phone with no key that goes back to an earlier choice casts a new vote: three rows, the last in force',
       same(rows.map((a) => [a.response, a.final, a.attempt]), [[false, false, 1], [true, false, 2], [false, true, 3]]),
       JSON.stringify(rows.map((a) => [a.response, a.final, a.attempt])));

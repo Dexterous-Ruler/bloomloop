@@ -725,6 +725,14 @@ rows by `answeredAt` and then by `_id`, which is random there, so two votes stor
 the same millisecond can come back in either order. The check, not the server, is
 what is fragile; it was not changed here.
 
+**Fixed, 19 Nov 2026.** The script now reads each phone's rows in the order the server
+took them: by `attempt` for votes, and by the order the questions were asked for the
+confidence check. It no longer relies on the store's list order. The server always
+marked the right vote as the one in force; 41 of 48 tied groups in a stress run came
+back out of insert order, and none had the wrong vote in force.
+`classquestion.mjs` then passed 30 runs out of 30, and every suite passed in the full
+offline run.
+
 **Not run:** anything against Supabase or Mongo (the `misconceptions` column was read
 and written only on the in-process store and PGlite; the Supabase request shapes and
 the Mongo schema path were not exercised against a database); `0024` anywhere but
