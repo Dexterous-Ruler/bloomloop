@@ -11,7 +11,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { LEVELS, CEILING } from '../src/bloom.js';
-import { KINDS_FOR_LEVEL, KIND_FOR_LEVEL, DEFAULT_KIND_MIX, FIGURE_ASKED_KINDS, kindSuitsLevel } from '../src/questionTypes.js';
+import { KINDS_FOR_LEVEL, KIND_FOR_LEVEL, DEFAULT_KIND_MIX, FIGURE_ASKED_KINDS, REVIEWED_KINDS, kindSuitsLevel } from '../src/questionTypes.js';
 import { isSelectedResponse } from '../src/services/checks.js';
 import {
   planBank, PRESETS, spreadKinds, countKinds, resolveKindMix, kindAllowedAt,
@@ -39,8 +39,10 @@ describe('the default kind mix', () => {
   test('every level whose set has two or more kinds is spread over at least two', () => {
     for (const level of LEVELS) {
       // Kinds asked on a figure are left out of the default, as numeric is: a
-      // chapter with no graph in it would push the model into drawing one.
-      const want = Math.min(2, KINDS_FOR_LEVEL[level].filter((k) => !FIGURE_ASKED_KINDS.includes(k)).length);
+      // chapter with no graph in it would push the model into drawing one. So
+      // is a drawing (Batch 9): every one needs a professor's time to mark.
+      const want = Math.min(2, KINDS_FOR_LEVEL[level]
+        .filter((k) => !FIGURE_ASKED_KINDS.includes(k) && !REVIEWED_KINDS.includes(k)).length);
       assert.ok(Object.keys(DEFAULT_KIND_MIX[level]).length >= want, level);
     }
   });

@@ -1,11 +1,13 @@
 // Phase 6: the fixes from the hub's review.
 //
 // Pinned here, each against the rule it restores:
-//   - a question being asked in a room (a phone's served question, or the
-//     running class question), one on an open self-test, and the one an open
-//     Get Ready check is asking are CLOSED to practice, a review set, the tutor
-//     and Get Ready: not served, no answer kept (409), no hint; a self-test's
-//     result and the error log keep the answer of a room's question back;
+//   - a question in the set of a room not yet closed (Batch 9's E1: the whole
+//     set, not only a phone's served question or the class question), one on
+//     an open self-test, and the one an open Get Ready check is asking are
+//     CLOSED to practice, a review set, the tutor and Get Ready: not served, no
+//     answer kept (409), no hint; a self-test built then leaves a room's out;
+//     a self-test's result and the error log keep the answer of a room's
+//     question back;
 //   - the error log's "From class" entries show what was right only where
 //     practice could show it too, never for a question a room may ask again
 //     and practice cannot serve;
@@ -87,8 +89,13 @@ async function fixture() {
   const link = (p, topic) => repo.addTopicLink({ ownerId: PROF, prerequisiteId: id(t[p]), topicId: id(t[topic]), provenance: 'professor', state: 'confirmed' });
   await link('Sets', 'Pairs');
   await link('Pairs', 'Relations');
-  const room = () => repo.createSession({ contentId: content._id, code: `R${Math.floor(Math.random() * 1e6)}`, title: 'Room', ownerId: PROF });
-  return { repo, cls, ashaRow, content, t, sets, pairs: made.slice(3, 5), rel: made[5], room };
+  // A room on the chapter: on a question set (sessions.question_ids) when given
+  // one, else on the whole bank; open unless told otherwise.
+  const room = (set = null, status = 'open') => repo.createSession({
+    contentId: content._id, code: `R${Math.floor(Math.random() * 1e6)}`, title: 'Room', ownerId: PROF, status,
+    ...(set ? { questionIds: set.map((q) => id(q)) } : {}),
+  });
+  return { repo, cls, ashaRow, content, t, sets, pairs: made.slice(3, 5), rel: made[5], all: made, room };
 }
 
 /** A phone in `session` that has been served `q` and not finished it. */
@@ -104,7 +111,7 @@ describe('closed questions: a room\'s, an open self-test\'s, an open check\'s (r
     const { run } = await startExam(repo, asha, { clientRunId: 'fix-exam-0001', topicIds: [id(t.Sets)], count: 1 });
     const onTest = sets.find((q) => id(q) === run.spec.questions[0].questionId);
     const [served, voted] = sets.filter((q) => q !== onTest);
-    const open = await room();
+    const open = await room([served, voted]);
     await servedTo(repo, open, served);
     await repo.addClassQuestion({ sessionId: id(open), seq: 1, questionId: id(voted), state: 'open' });
 
@@ -131,7 +138,7 @@ describe('closed questions: a room\'s, an open self-test\'s, an open check\'s (r
     const { run } = await startExam(repo, asha, { clientRunId: 'fix-exam-0002', topicIds: [id(t.Sets)], count: 1 });
     const onTest = sets.find((q) => id(q) === run.spec.questions[0].questionId);
     const inRoom = sets.find((q) => q !== onTest);
-    const open = await room();
+    const open = await room([inRoom]);
     await servedTo(repo, open, inRoom);
     for (const mode of ['practice', 'review']) {
       await assert.rejects(recordAttempt(repo, asha, { attemptId: `fix-room-${mode}`, questionId: id(inRoom), topicId: id(t.Sets), response: 0, mode }),
@@ -155,7 +162,7 @@ describe('closed questions: a room\'s, an open self-test\'s, an open check\'s (r
 
   test('no hint opens on a closed question, and the next question\'s hints say why', async () => {
     const { repo, t, sets, room } = await fixture();
-    const open = await room();
+    const open = await room([sets[0]]);
     await servedTo(repo, open, sets[0]);
     const offered = await hintsOffered(repo, { account: asha, question: sets[0], topicId: id(t.Sets), mode: 'practice' });
     assert.deepEqual(offered, { available: 0, note: CLOSED_SENTENCE.room });
@@ -184,7 +191,7 @@ describe('closed questions: a room\'s, an open self-test\'s, an open check\'s (r
     const { repo, t, room } = await fixture();
     const { run } = await startCheck(repo, asha, { clientRunId: 'fix-check-0002', targetTopicId: id(t.Pairs) });
     const first = (await checkView(repo, asha, run)).question.question;
-    const open = await room();
+    const open = await room([{ _id: first._id }]);
     await servedTo(repo, open, { _id: first._id });
     const after = await checkView(repo, asha, run);
     assert.notEqual(after.question.question._id, first._id, 'another question on the same topic');
@@ -199,7 +206,7 @@ describe('closed questions: a room\'s, an open self-test\'s, an open check\'s (r
     const qid = run.spec.questions[0].questionId;
     await answerExam(repo, asha, run, { attemptId: 'fix-exam-ans-3', questionId: qid, response: 1 });
     await submitExam(repo, run);
-    const open = await room();
+    const open = await room([{ _id: qid }]);
     await servedTo(repo, open, { _id: qid });
     const held = (await examView(repo, asha, (await repo.getHubRun(run._id)))).questions[0];
     assert.deepEqual([held.answered, held.correct, held.solution, held.explanation, held.held, held.heldNote], [true, false, null, null, true, ROOM_HELD_NOTE]);
@@ -210,13 +217,65 @@ describe('closed questions: a room\'s, an open self-test\'s, an open check\'s (r
   });
 });
 
+/* ------------------------------------------- a running room's whole set (E1) -- */
+
+describe('a room not yet closed closes its whole question set in the hub (Batch 9, decision E1)', () => {
+  test('a question in an open room\'s set is closed before any phone is served it, with the sentence that says why', async () => {
+    const { repo, content, t, sets, pairs, room } = await fixture();
+    await room([sets[1], pairs[0]]);
+    // No profile, no class question: nothing has been served, and both are closed.
+    const closed = await closedQuestions(repo, asha, { contentIds: [id(content)] });
+    assert.deepEqual([...closed].sort(), [[lower(id(sets[1])), 'room'], [lower(id(pairs[0])), 'room']].sort());
+    await assert.rejects(recordAttempt(repo, asha, { attemptId: 'e1-before-01', questionId: id(sets[1]), topicId: id(t.Sets), response: 0 }),
+      (err) => err.status === 409 && err.message === CLOSED_SENTENCE.room);
+    assert.match(CLOSED_SENTENCE.room, /part of a class that is still running/);
+    assert.match(CLOSED_SENTENCE.room, /opens when your professor closes the class/);
+    // Never served in practice, and its hints stay shut.
+    for (let i = 0; i < 6; i += 1) {
+      const out = await nextQuestion(repo, asha, { topicIds: id(t.Sets) });
+      assert.notEqual(out.question._id, id(sets[1]));
+    }
+    assert.equal((await hintsOffered(repo, { account: asha, question: sets[1], topicId: id(t.Sets), mode: 'practice' })).available, 0);
+    // A self-test built now leaves it out.
+    const { run } = await startExam(repo, asha, { clientRunId: 'e1-exam-0001', topicIds: [id(t.Sets)], count: 3 });
+    assert.deepEqual(run.spec.questions.map((x) => x.questionId).sort(), [id(sets[0]), id(sets[2])].sort());
+  });
+
+  test('a room on the whole bank closes every question of its chapter it can serve; a draft is not among them', async () => {
+    const { repo, content, all, room } = await fixture();
+    const [draft] = await repo.insertQuestions([{ contentId: content._id, topic: 'Sets', text: 'A draft?', kind: 'mcq', options: OPTIONS,
+      answerIdx: 0, bloom: 'remember', source: 'llm', status: 'draft' }]);
+    await room();
+    const closed = await closedQuestions(repo, asha, { contentIds: [id(content)] });
+    assert.deepEqual([...closed.keys()].sort(), all.map((q) => lower(id(q))).sort());
+    assert.equal(closed.has(lower(id(draft))), false);
+  });
+
+  test('a paused room and a waiting one keep the set closed; it opens the moment the room is closed', async () => {
+    const { repo, content, t, sets, room } = await fixture();
+    const held = await room([sets[1]], 'waiting');
+    const isClosed = async () => (await closedQuestions(repo, asha, { contentIds: [id(content)] })).get(lower(id(sets[1])));
+    assert.equal(await isClosed(), 'room', 'waiting to start');
+    await repo.updateSession(id(held), { status: 'open' });
+    assert.equal(await isClosed(), 'room', 'open');
+    await repo.updateSession(id(held), { status: 'paused' });
+    assert.equal(await isClosed(), 'room', 'paused');
+    await assert.rejects(recordAttempt(repo, asha, { attemptId: 'e1-paused-01', questionId: id(sets[1]), topicId: id(t.Sets), response: 0 }),
+      (err) => err.status === 409);
+    await repo.updateSession(id(held), { status: 'closed', closedAt: new Date().toISOString() });
+    assert.equal(await isClosed(), undefined, 'closed: open again at once, nothing cached');
+    const { attempt } = await recordAttempt(repo, asha, { attemptId: 'e1-paused-02', questionId: id(sets[1]), topicId: id(t.Sets), response: 0 });
+    assert.equal(attempt.correct, true);
+  });
+});
+
 /* --------------------------------------------------------------- error log -- */
 
 describe('the error log keeps a room\'s keys back (review finding: "From class" solutions)', () => {
   test('an entry whose question a room is asking now shows no answer, and says why; it shows once the room moves on', async () => {
     const { repo, t, sets, room } = await fixture();
     await recordAttempt(repo, asha, { attemptId: 'fix-log-0001', questionId: id(sets[0]), topicId: id(t.Sets), response: 2 });
-    const open = await room();
+    const open = await room([sets[0]]);
     await servedTo(repo, open, sets[0]);
     const [held] = (await errorLogFor(repo, asha)).entries;
     assert.deepEqual([held.from, held.solution, held.explanation, held.keyHeld], ['practice', null, null, ROOM_HELD_NOTE]);
@@ -229,8 +288,7 @@ describe('the error log keeps a room\'s keys back (review finding: "From class" 
     const { repo, content, sets, room } = await fixture();
     const [image] = await repo.insertQuestions([{ contentId: content._id, topic: 'Sets', text: 'Which set does the diagram show?', kind: 'mcq', options: OPTIONS,
       answerIdx: 0, bloom: 'apply', source: 'teacher', status: 'active', stimulus: { kind: 'image', url: '/api/media/0123456789abcdef01234567', alt: 'a diagram' } }]);
-    const closedRoom = await room();
-    await repo.updateSession(id(closedRoom), { status: 'closed' });
+    const closedRoom = await room(null, 'closed');
     const wrong = (q, key) => repo.recordAnswer({
       sessionId: id(closedRoom), answerKey: key, rollNo: '21CS01', accountId: asha.id, accountVerified: true, questionId: id(q),
       contentId: id(content), topic: 'Sets', bloom: q.bloom, kind: 'mcq', questionSnapshot: snapshotOf(q), response: 1,

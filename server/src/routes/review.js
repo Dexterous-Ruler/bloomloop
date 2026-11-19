@@ -19,6 +19,12 @@
 //             write (ownership.js). A room they may not read answers 404,
 //             exactly like one that does not exist, so ids cannot be probed.
 //
+// Batch 9 (E3, E4): the queue also holds drawings (kind 'drawing'), which the
+// machine never marks: each arrives with no mark at all, so it can only be
+// marked here (an override), never confirmed. Its picture is read through the
+// image route by staff who may read the room (`drawing.url`); a phone never
+// gets it. A written answer's item says which length it was asked as.
+//
 // The note is not private. It is shown to the student, word for word, beside the
 // mark in their own answer history (redactForStudent in services/evidence.js;
 // PRODUCT_DECISIONS.md). It is a comment to the student, and the screen that
@@ -35,7 +41,8 @@ import { getRepo } from '../repo/index.js';
 import { assertCanRead, assertCanWrite, readable } from '../ownership.js';
 import { isRecordId } from '../ids.js';
 import { applyReview, sessionSettings } from '../services/mastery.js';
-import { PASS_MARK } from '../questionTypes.js';
+import { OPEN_LENGTHS, PASS_MARK, REVIEWED_KINDS, kindLabel, openLength } from '../questionTypes.js';
+import { mediaUrl } from '../services/media.js';
 import { lockProfile, broadcastGrid, roomDeleting } from '../sockets/index.js';
 import { importedRooms } from '../services/roomImport.js';
 import { figureForStaff } from '../figures/index.js';
@@ -46,6 +53,12 @@ const fail = (message, status) => Object.assign(new Error(message), { status });
 
 /** The queue's filters. 'auto' is not one: no written answer is ever 'auto'. */
 const STATUSES = ['provisional', 'confirmed', 'overridden', 'all'];
+
+/** The kinds a professor reviews: written answers, and the kinds the machine never marks (Batch 9). */
+export const QUEUE_KINDS = Object.freeze(['open', ...REVIEWED_KINDS]);
+
+/** Said when a drawing is confirmed: there is no machine mark to keep. */
+export const DRAWING_NO_CONFIRM = 'A drawing has no machine mark to confirm: give it a mark of your own.';
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 /**
@@ -103,6 +116,9 @@ function cursorFrom(raw) {
  */
 function toItem(answer, session, name, importedFrom = null) {
   const snap = answer.questionSnapshot ?? {};
+  const kind = answer.kind ?? snap.kind ?? 'open';
+  // A drawing's picture (Batch 9), read by staff through the image route.
+  const mediaId = kind === 'drawing' && typeof answer.response?.mediaId === 'string' ? answer.response.mediaId : null;
   return {
     answerId: String(answer._id),
     // The key the row was stored under, the phone's own answerId (Batch 8), so
@@ -117,6 +133,12 @@ function toItem(answer, session, name, importedFrom = null) {
     topic: answer.topic ?? '',
     bloom: answer.bloom,
     kind: answer.kind,
+    kindLabel: kindLabel({ ...snap, kind }),
+    ...(kind === 'open' ? { length: openLength(snap), maxWords: OPEN_LENGTHS[openLength(snap)].maxWords } : {}),
+    ...(kind === 'drawing' ? {
+      drawing: mediaId ? { mediaId, url: mediaUrl(mediaId) } : null,
+      text: typeof answer.response?.text === 'string' ? answer.response.text : '',
+    } : {}),
     question: {
       id: answer.questionId ?? snap.id ?? null,
       text: snap.text ?? '',
@@ -321,7 +343,7 @@ router.get('/', async (req, res, next) => {
     // than asked for says whether there is a next page without a count query.
     const rows = await repo.listAnswers({
       sessionIds: rooms.map((s) => String(s._id)),
-      kind: 'open',
+      kind: [...QUEUE_KINDS],
       final: true,
       ...(status === 'all' ? {} : { reviewStatus: status }),
       ...(before ? { before } : {}),
@@ -380,12 +402,13 @@ router.get('/:answerId', async (req, res, next) => {
 router.post('/:answerId', async (req, res, next) => {
   try {
     const { answer, session } = await loadAnswer(req.params.answerId, req.viewer, { write: true });
-    if (answer.kind !== 'open') {
-      throw fail('Only written answers are reviewed for now; this one was marked automatically.', 400);
+    if (!QUEUE_KINDS.includes(answer.kind)) {
+      throw fail('Only written answers and drawings are reviewed; this one was marked automatically.', 400);
     }
     if (answer.final === false) {
       throw fail('This attempt was followed by a retry, so it never counted. Review the final attempt.', 400);
     }
+    if (answer.kind === 'drawing' && req.body?.decision === 'confirm') throw fail(DRAWING_NO_CONFIRM, 409);
     const want = decisionFrom(req.body ?? {}, answer);
 
     const repo = getRepo();

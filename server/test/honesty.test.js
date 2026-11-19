@@ -88,7 +88,9 @@ describe('who wrote a question, and whether it was let into rooms', () => {
   test('every bank question sent to staff carries it, and its level check, without losing a field', () => {
     const q = { _id: 'q1', text: 'T', bloom: 'apply', kind: 'blank', accept: ['x'], ...ai };
     const out = staffQuestion(q);
-    assert.deepEqual({ ...out, provenance: undefined, levelCheck: undefined }, { ...q, provenance: undefined, levelCheck: undefined });
+    assert.deepEqual({ ...out, provenance: undefined, levelCheck: undefined, kindLabel: undefined },
+      { ...q, provenance: undefined, levelCheck: undefined, kindLabel: undefined });
+    assert.equal(out.kindLabel, 'Fill in the blank');
     assert.equal(out.provenance.label, 'AI draft');
     assert.equal(out.levelCheck.uncertain, true);
     assert.equal(staffQuestion(null), null);

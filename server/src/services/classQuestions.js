@@ -58,7 +58,7 @@
 // again, told a phone the key one option at a time.
 
 import { LABEL as LEVEL_LABEL } from '../bloom.js';
-import { LABEL as KIND_LABEL, forStudent, isUngraded, score } from '../questionTypes.js';
+import { LABEL as KIND_LABEL, forStudent, isUngraded, kindLabel, score } from '../questionTypes.js';
 import { CONFIDENCE, CONFIDENCE_CHOICES, CONFIDENCE_NOTE, confidenceCounts, confidenceOf } from './confidence.js';
 import { allAnswers } from './evidence.js';
 import { SOURCE_LABEL, phoneProvenance, sourceOf } from './honesty.js';
@@ -415,7 +415,7 @@ export function classQuestionView(cq, rows = [], { joined = 0, online = 0, answe
     question: {
       text: String(snapshot.text ?? ''),
       kind,
-      kindLabel: KIND_LABEL[kind] ?? kind,
+      kindLabel: kindLabel({ ...snapshot, kind }),
       level: snapshot.bloom ?? null,
       levelLabel: LEVEL_LABEL[snapshot.bloom] ?? null,
       topic: snapshot.topic ?? '',

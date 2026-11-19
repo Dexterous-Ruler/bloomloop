@@ -23,6 +23,15 @@
 //                  the shuffle is seeded by the student and the question
 //                  (hubSeed), so the server recomputes it when the answer comes.
 //
+//                  Batch 9: a drawing question (E4) is served like any other;
+//                  its attempt carries the picture itself, { image, text? }
+//                  (a data URL or base64 of a PNG or WebP picture, capped as a
+//                  room's), which is kept as the student's own drawing and
+//                  stored on the attempt as { mediaId, text }. The hub has nobody
+//                  to mark it, so it carries no mark and counts nowhere. A
+//                  written answer over its word limit (E3) is refused before
+//                  anything is stored.
+//
 //   recordAttempt  marks the answer on the server from the stored question
 //                  (score() in questionTypes.js; a client's own verdict is never
 //                  read) and stores it, append-only, in hub_attempts (0026). In
@@ -43,7 +52,10 @@
 
 import { isRecordId } from '../ids.js';
 import { levelIndex } from '../bloom.js';
-import { FIGURES_NOT_READY, forStudent, readyToMark, score } from '../questionTypes.js';
+import {
+  FIGURES_NOT_READY, NOT_A_DRAWING, awaitsReview, drawingTextProblem, forStudent, readyToMark, responseProblem, score,
+} from '../questionTypes.js';
+import { HUB_DRAWING_NOTE, keepHubDrawing } from './drawings.js';
 import { snapshotOf } from '../sockets/index.js';
 import { needsApproval } from './edits.js';
 import { phoneProvenance } from './honesty.js';
@@ -84,10 +96,14 @@ export const MAX_RESPONSE_CHARS = 20000;
 export const NO_QUESTION = 'That question was not found.';
 export const STUDENT_ONLY = 'Practice is for a student account. Staff see their students\' progress through the class.';
 export const NO_QUESTIONS_YET = 'Your professor has not approved any practice questions for this topic yet.';
-export const ALL_CLOSED = 'Every question you could practise here is closed for now: being asked in class, on a self-test you have '
+export const ALL_CLOSED = 'Every question you could practise here is closed for now: part of a class that is still running, on a self-test you have '
   + 'not handed in, or the one your Get Ready check is asking. Come back once that is done.';
 export const PROVISIONAL_NOTE = 'This written answer was marked by matching its words against your professor\'s points. '
   + 'It is a provisional machine mark, not your professor\'s.';
+/** A practice drawing's stored detail (Batch 9): the hub never marks one. */
+export const HUB_DRAWING_DETAIL = 'not marked: a drawing';
+/** A picture sent with an answer to a question that is not answered by drawing. */
+export const NOT_A_DRAWING_HERE = 'This question is not answered with a drawing. Send your answer without the picture.';
 
 const lower = (v) => String(v ?? '').trim().toLowerCase();
 
@@ -248,7 +264,8 @@ export function stateFrom(model, accountId, { now = new Date(), audience = 'stud
   const s = model.replay.students.get(who);
   const own = model.attempts.filter((a) => String(a.accountId) === who);
   const met = new Set(own.filter((a) => typeof a.correct === 'boolean').map((a) => lower(itemKeyOf(a))));
-  const reachable = (s?.answers ?? 0) + (model.entry?.questions ?? []).filter((q) => !met.has(lower(q._id))).length;
+  // A drawing (Batch 9) never gives an estimate an answer: the hub does not mark it.
+  const reachable = (s?.answers ?? 0) + (model.entry?.questions ?? []).filter((q) => !met.has(lower(q._id)) && !awaitsReview(q)).length;
   const review = reviewState(own, now);
   return {
     ...topicState({
@@ -405,9 +422,14 @@ export async function recordAttempt(repo, account, body = {}, {
   // Without that proof it is kept as unproven: counted nowhere, told no mark.
   const unproven = requireServed && !checkServeToken(body.serveToken, { accountId: who, questionId: body.questionId, mode }).ok;
 
+  // A drawing's picture (Batch 9) travels inside the answer, and is measured
+  // by the drawing's own cap (services/drawings.js), not the answer's length.
+  const sent = body.response;
+  const image = sent && typeof sent === 'object' && !Array.isArray(sent) && 'image' in sent ? sent.image : undefined;
+  const rest = image === undefined ? sent : Object.fromEntries(Object.entries(sent).filter(([k]) => k !== 'image'));
   let responseText;
   try {
-    responseText = JSON.stringify(body.response ?? null);
+    responseText = JSON.stringify(rest ?? null);
   } catch {
     throw fail('The answer could not be read.', 400);
   }
@@ -428,9 +450,30 @@ export async function recordAttempt(repo, account, body = {}, {
   // A tap or label answer on a diagram or molecule needs the drawing engines to
   // be marked; until they are up it is not taken, and the device sends it again.
   if (!(await readyToMark(q))) throw fail(FIGURES_NOT_READY, 503);
-  // Marked here, from the stored question, with the seed it was shown with.
-  const graded = score(q, body.response, hubSeed(who, q._id), null);
   const kind = q.kind ?? 'mcq';
+  // Batch 9: what the kind cannot take is refused before anything is stored. A
+  // drawing's words are checked before its picture is kept, then the picture
+  // is kept under this attempt's id and the attempt names it.
+  let response = rest ?? null;
+  if (awaitsReview(q)) {
+    if (image === undefined || image === null) throw fail(NOT_A_DRAWING, 400);
+    for (const k of Object.keys(rest ?? {})) if (k !== 'text') throw fail(NOT_A_DRAWING, 400);
+    const why = drawingTextProblem(q, rest?.text);
+    if (why) throw fail(why, 400);
+    const { media } = await keepHubDrawing(repo, {
+      accountId: who, contentId: String(entry.content._id), questionId: String(q._id), answerKey: attemptId, image,
+    });
+    const text = typeof rest?.text === 'string' && rest.text.trim() ? rest.text : null;
+    response = { mediaId: String(media._id), ...(text ? { text } : {}) };
+  } else {
+    if (image !== undefined) throw fail(NOT_A_DRAWING_HERE, 400);
+    const why = responseProblem(q, response);
+    if (why) throw fail(why, 400);
+  }
+  // Marked here, from the stored question, with the seed it was shown with. A
+  // drawing is not marked at all (score() says so, with no verdict).
+  const graded = score(q, response, hubSeed(who, q._id), null);
+  const unmarked = awaitsReview(q);
   // The language it was shown in: the screen's echo, believed only when it can have been true (H12).
   const shownIn = language ?? (await attemptLanguage(repo, {
     item: q, claim: body.shown ?? null, wanted: await languageChoice(repo, account),
@@ -447,10 +490,11 @@ export async function recordAttempt(repo, account, body = {}, {
     kind,
     questionSnapshot: snapshotOf(q),
     questionSource: q.source ?? 'llm',
-    response: body.response ?? null,
-    correct: graded.correct === true,
-    score: round3(graded.score),
-    detail: graded.detail ?? '',
+    response,
+    // A drawing (Batch 9) carries no mark: the hub has nobody to give one.
+    correct: unmarked ? null : graded.correct === true,
+    score: unmarked ? null : round3(graded.score),
+    detail: unmarked ? HUB_DRAWING_DETAIL : graded.detail ?? '',
     // A written answer is marked by matching rubric words: a first reading,
     // not a verdict, as in a room.
     reviewStatus: kind === 'open' ? 'provisional' : 'auto',
@@ -521,6 +565,8 @@ export async function feedbackFor(repo, account, attempt, { now = new Date(), en
     if (err.status !== 404) throw err;
   }
   const provisional = attempt.reviewStatus === 'provisional';
+  // A drawing (Batch 9): kept, not marked, and said so.
+  const drawing = attempt.kind === 'drawing' ? { notMarked: true, note: HUB_DRAWING_NOTE } : {};
   // HINT HOOK (H13): the professor's approved feedback on the wrong option(s) chosen, after the attempt only.
   const optionFeedback = roomsOnly ? [] : await feedbackAfter(repo, { account, attempt });
   return {
@@ -530,6 +576,7 @@ export async function feedbackFor(repo, account, attempt, { now = new Date(), en
     score: attempt.score,
     detail: attempt.detail ?? '',
     ...(provisional ? { provisional: true, provisionalNote: PROVISIONAL_NOTE } : {}),
+    ...drawing,
     solution,
     explanation,
     optionFeedback,

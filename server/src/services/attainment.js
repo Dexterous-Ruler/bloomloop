@@ -81,6 +81,7 @@ import {
 import { ANSWERED_AGAIN_DETAIL, OVER_CAP_DETAIL, keptNotCounted } from './offline.js';
 import { DEFAULT_PRESET, PRESETS, presetById } from './attainmentPresets.js';
 import { PRACTISED_NOTE } from './bankShare.js';
+import { awaitingMark } from './drawings.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -739,6 +740,8 @@ const later = (a, b) => String(a.answeredAt ?? '').localeCompare(String(b.answer
  * @returns {{ chosen: object[], chosenIds: Set<string>, setAside: number, knewKey: Set<string> }}
  */
 export function chooseAnswers(answers = [], config, { perRoom = false } = {}) {
+  // A drawing still waiting for its professor's mark (Batch 9) has no mark to
+  // count, under any formula: it is set aside, and counts once reviewed.
   const groups = new Map();
   const polls = new Map();
   const revotes = new Map();
@@ -754,6 +757,7 @@ export function chooseAnswers(answers = [], config, { perRoom = false } = {}) {
     const room = String(a.sessionId);
     if (a.classQuestionId && a.final === false) continue;
     if (keptNotCounted(a)) continue;
+    if (awaitingMark(a)) continue;
     if (evidenceTypeOf(a) === 'revote') {
       const k = `${room}\u0000${roll}\u0000${questionKeyOf(a)}`;
       if (!revotes.has(k) || later(a, revotes.get(k)) > 0) revotes.set(k, a);
@@ -1313,6 +1317,9 @@ function answerNote(a, { chosen, type, config, res, known, knewKey = new Set() }
     }
     if (a.classQuestionId && a.final === false) {
       return 'Not counted: a class question vote that was changed afterwards, or that came after its round closed.';
+    }
+    if (awaitingMark(a)) {
+      return 'Not counted yet: a drawing, which the machine never marks. It counts once a professor has marked it in the review queue.';
     }
     if (keptNotCounted(a)) {
       if (a.detail === ANSWERED_AGAIN_DETAIL) {

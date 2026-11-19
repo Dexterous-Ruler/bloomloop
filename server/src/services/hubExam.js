@@ -4,7 +4,9 @@
 // MAX_EXAM_QUESTIONS, 30) and, if they like, a time limit. The server picks the
 // questions and FIXES THE LIST when the self-test starts (it is kept on the run,
 // 0028): approved questions practice could serve (no poll, no draft, no
-// uploaded image), mixed across the topics chosen (one from each topic in turn,
+// uploaded image, no question a class still running holds (services/hubClosed.js,
+// Batch 9's E1), no drawing, which the hub has nobody to mark (E4)), mixed
+// across the topics chosen (one from each topic in turn,
 // questions the student has not met in the hub first, then in an order seeded
 // by the self-test), and shuffled so no topic always comes first.
 //
@@ -42,7 +44,7 @@
 // official (no room, attainment figure or marks register reads it).
 
 import { LEVELS, LABEL as LEVEL_LABEL } from '../bloom.js';
-import { forStudent, score } from '../questionTypes.js';
+import { awaitsReview, forStudent, score } from '../questionTypes.js';
 import { labelHtml, phoneRich } from './richText.js';
 import { explanationForStudent } from './hubExplanations.js';
 import { languageChoice } from './hubLanguages.js';
@@ -207,8 +209,14 @@ export async function startExam(repo, account, body = {}, { now = new Date() } =
   const scope = await studentScope(repo, account);
   const entries = topicEntries(scope, raw);
   const mine = await repo.listHubAttempts({ accountId: String(account.id), topicIds: entries.map((e) => String(e.topic._id)) });
+  // Batch 9: closed while a class still running holds it (E1), and a drawing has
+  // no mark the hub can give (E4); a self-test built now leaves both out.
+  const inClass = await roomLiveQuestions(repo, entries.map((e) => String(e.content._id)));
   const picked = pickExamQuestions(
-    entries.map((entry) => ({ entry, questions: entry.questions.filter((q) => levels.includes(q.bloom)) })),
+    entries.map((entry) => ({
+      entry,
+      questions: entry.questions.filter((q) => levels.includes(q.bloom) && !awaitsReview(q) && !inClass.has(lower(q._id))),
+    })),
     { count, seed: `${account.id}:${clientRunId}`, met: new Set(mine.map((a) => lower(itemKeyOf(a)))) },
   );
   if (!picked.length) throw fail(NONE_MATCH, 400);
@@ -373,7 +381,7 @@ async function resultView(repo, account, run, attempts, now, scope) {
   const questions = await listedQuestions(repo, run);
   const wanted = await languageChoice(repo, account);
   const names = new Map((run.spec?.topics ?? []).map((t) => [lower(t.id), t.name]));
-  // A question a room is asking now keeps its answer back here too (services/hubClosed.js).
+  // A question a class still running holds keeps its answer back here too (services/hubClosed.js).
   const live = await roomLiveQuestions(repo, [...new Set([...questions.values()].map((q) => String(q.contentId ?? ''))
     .concat(attempts.map((a) => String(a.contentId ?? ''))).filter(Boolean))]);
   const items = [];

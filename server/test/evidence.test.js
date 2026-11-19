@@ -83,6 +83,8 @@ const Q = {
     bloom: 'apply', text: 'Rice 45, wheat 30, maize 10: draw the bars.',
     bars: { categories: ['Rice', 'Wheat', 'Maize'], max: 50, step: 5 }, values: [45, 30, 10],
   },
+  // Batch 9: a whiteboard answer, its rubric the reviewer's alone.
+  drawing: { bloom: 'create', text: 'Draw a plant cell and label its parts.', rubric: ['KEYDRAWRUBRIC cell wall'], allowText: true },
 };
 
 // What a student sent: deliberately wrong where the kind hides a value, so a
@@ -92,6 +94,7 @@ const RESPONSE = {
   numeric: '12', multi: [0, 1], order: [2, 0, 1], rank: [1, 0, 2], open: 'I am not sure about this one.',
   hottext: [1], dropdown: [1, 0], table: { '0:1': 'nope' }, grid: { '0:0': true }, poll: 1,
   hotspot: ['z0'], label: { z0: 1, z1: 0 }, plot: [[5, 5]], numberline: { points: [9] }, chart: [5, 5, 5],
+  drawing: { mediaId: 'm-drawing-0001', text: 'The wall is on the outside.' },
 };
 
 // Strings that are answers (or a teacher-only note) and must never reach the student.
@@ -99,6 +102,7 @@ const SECRETS = {
   blank: ['KEYBLANK'], cloze: ['KEYCLOZEA', 'KEYCLOZEB'], numeric: ['4242.5'], open: ['KEYRUBRIC'], table: ['KEYTABLE'],
   mcq: ['KEYSTIM'],
   hotspot: ['KEYHOT'], label: ['KEYLBL'],
+  drawing: ['KEYDRAWRUBRIC'],
 };
 
 // Field names that carry a key, a rubric, the machine's reading or the stored
@@ -133,7 +137,7 @@ function answerRow(q, response, { rollNo = '21CS01', reviewStatus, reviewNote = 
     correct: ungraded ? null : graded.correct, score: ungraded ? null : graded.score,
     detail: graded.detail ?? '', ungraded,
     autoCorrect: graded.correct, autoScore: graded.score, autoDetail: graded.detail ?? '',
-    reviewStatus: reviewStatus ?? (q.kind === 'open' ? 'provisional' : 'auto'),
+    reviewStatus: reviewStatus ?? (q.kind === 'open' || q.kind === 'drawing' ? 'provisional' : 'auto'),
     reviewNote, reviewedBy: reviewNote ? 'prof-1' : null, reviewedAt: reviewNote ? '2026-11-18T10:00:00.000Z' : null,
     servedAt: '2026-11-18T09:05:00.000Z', answeredAt: '2026-11-18T09:06:00.000Z', questionSource: 'llm',
   };

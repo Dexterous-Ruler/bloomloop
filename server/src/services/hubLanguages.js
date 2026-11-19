@@ -55,7 +55,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 
 import { config, hasGemini } from '../config.js';
 import { isRecordId } from '../ids.js';
-import { BLANK_MARK } from '../questionTypes.js';
+import { BLANK_MARK, awaitsReview } from '../questionTypes.js';
 import { readPieces, richText } from './richText.js';
 import { holdsContact } from './roster.js';
 import { languageSplit } from './honesty.js';
@@ -673,7 +673,8 @@ const attemptTime = (a) => String(a?.answeredAt ?? a?.createdAt ?? '');
 export function languageItemStats(attempts = [], questions = []) {
   const firsts = new Map();
   for (const a of [...attempts].sort((x, y) => attemptTime(x).localeCompare(attemptTime(y)))) {
-    if (a?.ungraded || !a?.questionId || !a?.accountId) continue;
+    // A hub drawing (Batch 9) is never marked, so it says nothing of a language.
+    if (a?.ungraded || awaitsReview(a) || !a?.questionId || !a?.accountId) continue;
     const key = `${String(a.questionId).toLowerCase()}\u0000${String(a.accountId)}`;
     if (!firsts.has(key)) firsts.set(key, a);
   }

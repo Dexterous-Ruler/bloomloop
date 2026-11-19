@@ -115,6 +115,8 @@ export function createMongoRepo() {
       // Its suggestions and question draws (Batch 8, 0034), not archived.
       await TeachingMove.deleteMany({ sessionId: String(id) });
       await WheelQuestionDraw.deleteMany({ sessionId: String(id) });
+      // Its drawings (Batch 9, 0037): the archive keeps each answer's reference, never the bytes.
+      await Media.deleteMany({ drawing: true, sessionId: String(id) });
       await Answer.deleteMany({ sessionId: id });
       await Profile.deleteMany({ sessionId: id });
       await Session.findByIdAndDelete(id);
@@ -209,7 +211,8 @@ export function createMongoRepo() {
       if (topic) q.topic = topic;
       if (bloom) q.bloom = bloom;
       if (reviewStatus) q.reviewStatus = reviewStatus;
-      if (kind) q.kind = kind;
+      if (Array.isArray(kind)) q.kind = { $in: kind };
+      else if (kind) q.kind = kind;
       if (final !== undefined) q.final = final === true;
       if (classQuestionId) q.classQuestionId = String(classQuestionId);
       else if (classVotes === false) q.classQuestionId = null;
@@ -1099,6 +1102,47 @@ export function createMongoRepo() {
     // ---- Batch 8: material, the bank and the hub's concept panel (0035; see memoryRepo for the contract) ----
     async setQuestionRoomsOnly(id, roomsOnly) {
       return lean(await Question.findByIdAndUpdate(id, { $set: { roomsOnly: roomsOnly === true } }, { new: true }).lean().catch(() => null));
+    },
+
+    // ---- Batch 9: answer kinds (a student's drawing, 0037; see memoryRepo for the contract) ----
+    async createDrawing(doc) {
+      try {
+        const { data, ...meta } = (await Media.create({
+          ...doc,
+          ownerId: null,
+          contentId: String(doc.contentId),
+          drawing: true,
+          sessionId: doc.sessionId ? String(doc.sessionId) : null,
+          rollNo: doc.sessionId ? String(doc.rollNo) : null,
+          accountId: doc.sessionId ? null : String(doc.accountId),
+          questionId: String(doc.questionId),
+          answerKey: String(doc.answerKey),
+        })).toObject();
+        return { media: lean(meta), duplicate: false };
+      } catch (err) {
+        if (err?.code !== 11000) throw err;
+        const held = await this.getDrawingByKey(doc);
+        if (held) return { media: held, duplicate: true };
+        throw err;
+      }
+    },
+    async getDrawing(id) {
+      return lean(await Media.findOne({ _id: id, drawing: true }).select('-data').lean().catch(() => null));
+    },
+    async getDrawingByKey({ sessionId = null, rollNo = null, accountId = null, answerKey = '' } = {}) {
+      const q = sessionId
+        ? { drawing: true, sessionId: String(sessionId), rollNo: String(rollNo), answerKey: String(answerKey) }
+        : { drawing: true, accountId: String(accountId), answerKey: String(answerKey) };
+      return lean(await Media.findOne(q).select('-data').lean());
+    },
+    async listDrawings({ sessionId = null, rollNo = null, accountId = null, questionId = null } = {}) {
+      const q = { drawing: true };
+      if (sessionId) q.sessionId = String(sessionId);
+      if (rollNo) q.rollNo = String(rollNo);
+      if (accountId) q.accountId = String(accountId);
+      // Case-blind, as every other id here is compared; only id characters reach the pattern.
+      if (questionId) q.questionId = { $regex: `^${String(questionId).replace(/[^A-Za-z0-9-]/g, '')}$`, $options: 'i' };
+      return lean(await Media.find(q).select('-data').sort({ createdAt: 1, _id: 1 }).lean()) ?? [];
     },
   };
 }
