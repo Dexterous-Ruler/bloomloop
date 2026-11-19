@@ -24,6 +24,18 @@
  *   reviews    each professor decision from answer_reviews points at the answer
  *              it was made on (`a`). Added after v1 shipped; an archive without
  *              this table simply had no reviews, so the version is unchanged.
+ *   attendance a room opened for a class (Phase 3, 0016) keeps its class's id on
+ *              the room and every attendance mark, each with the roll number and
+ *              the name its roster row held when the room was deleted (the roster
+ *              lives on and may change). Only in a class room's archive; any
+ *              other has none, and an archive from before Phase 3 decodes with
+ *              `classId: null` and no marks, so the version is unchanged.
+ *   records    the room's teacher records (Phase 3, 0017): every observation
+ *              event (sets and clears, the log included), wheel round and pick,
+ *              raised-hands tally, activity and insight action, each table only
+ *              when the room has any. A roster student's name is copied in, as
+ *              for attendance. An archive without them had none, so the version
+ *              is unchanged. They count towards the 1 MiB like everything else.
  *   times      milliseconds after `timeBase`, not ISO strings.
  *
  * A field is only ever left out of a table as a whole column, and only when
@@ -31,6 +43,8 @@
  * columns. So decodeRoomArchive() never guesses row by row, and gives back
  * every profile, history entry and answer as it was.
  */
+
+import { sessionSettings } from './mastery.js';
 
 export const ARCHIVE_FORMAT = 'bloomloop.room-archive';
 export const ARCHIVE_VERSION = 1;
@@ -42,7 +56,19 @@ const PAGE = 1000;
 const ANSWER_TIMES = ['servedAt', 'answeredAt', 'reviewedAt'];
 const HISTORY_TIMES = ['at'];
 const REVIEW_TIMES = ['reviewedAt'];
-const TIME_FIELDS = new Set([...ANSWER_TIMES, ...HISTORY_TIMES, ...REVIEW_TIMES]);
+const ATTENDANCE_TIMES = ['markedAt'];
+const TIME_FIELDS = new Set([...ANSWER_TIMES, ...HISTORY_TIMES, ...REVIEW_TIMES, ...ATTENDANCE_TIMES]);
+
+// The teacher-record tables (0017): the repo read behind each, and its times.
+// Only times move to offsets; an observation's `day` is a date and stays one.
+const RECORDS = {
+  observations: { read: (repo, id) => repo.listObservations({ sessionId: id }), times: ['observedAt'] },
+  wheelRounds: { read: (repo, id) => repo.listWheelRounds(id), times: ['startedAt'] },
+  wheelPicks: { read: (repo, id) => repo.listWheelPicks(id), times: ['pickedAt', 'statusAt'] },
+  tallies: { read: (repo, id) => repo.listTallies(id), times: ['createdAt', 'updatedAt'] },
+  activities: { read: (repo, id) => repo.listActivities(id), times: ['createdAt', 'updatedAt'] },
+  insightActions: { read: (repo, id) => repo.listInsightActions(id), times: ['actedAt'] },
+};
 
 // What an answer row can rebuild from the question it points at.
 const FROM_QUESTION = {
@@ -130,6 +156,23 @@ const withTimes = (record, fields, fn) => {
   return out;
 };
 
+/**
+ * How the room ran (0018): mode, adapt, start level, questions per student and
+ * time per question, each only where the room changed it from how every room
+ * ran before. A room left on those defaults archives exactly as it did before
+ * the settings existed, and an archive without a field ran on its default
+ * (sessionSettings in services/mastery.js reads one back that way).
+ */
+function changedRoomOptions(session) {
+  const now = sessionSettings(session);
+  const before = sessionSettings({});
+  const out = {};
+  for (const key of ['mode', 'adapt', 'startLevel', 'questionsPerStudent', 'timePerQuestion']) {
+    if (now[key] !== before[key]) out[key] = now[key];
+  }
+  return out;
+}
+
 async function allAnswers(repo, sessionId) {
   const out = [];
   for (let offset = 0; ; offset += PAGE) {
@@ -147,10 +190,13 @@ async function allAnswers(repo, sessionId) {
  */
 export async function buildRoomArchive(repo, session, { archivedBy = null, now = new Date() } = {}) {
   const sessionId = session._id;
-  const [profiles, answers, reviews] = await Promise.all([
+  const [profiles, answers, reviews, marks, roster, ...recordLists] = await Promise.all([
     repo.listProfiles(sessionId),
     allAnswers(repo, sessionId),
     repo.listAnswerReviews({ sessionId }),
+    session.classId ? repo.listAttendance(sessionId) : [],
+    session.classId ? repo.listClassStudents(session.classId) : [],
+    ...Object.values(RECORDS).map((r) => r.read(repo, sessionId)),
   ]);
 
   const started = Date.parse(session.startedAt);
@@ -231,6 +277,32 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
     a: answerIndex.get(String(answerId)) ?? null,
   }));
 
+  // ----------------------------------------------------------- attendance --
+  // Not kept: the row id and session id (the archive's own). The roster row's
+  // roll number and name are copied in, since it outlives the room and may be
+  // corrected later; its id stays, so a mark can still be traced to it.
+  const onRoster = new Map(roster.map((s) => [String(s._id), s]));
+  const attendanceRows = marks.map(({ _id, sessionId: _s, ...rest }) => ({
+    ...rest,
+    rollNo: onRoster.get(String(rest.classStudentId))?.rollNo ?? null,
+    name: onRoster.get(String(rest.classStudentId))?.name ?? null,
+  }));
+
+  // ------------------------------------------------------ teacher records --
+  // Not kept: the session id (the archive's own). The row id is: a quick check
+  // names its tally by it. A roster student's name is copied in, since the
+  // roster outlives the room; the row's own roll number is the one at the time.
+  const recordTables = {};
+  Object.keys(RECORDS).forEach((name, i) => {
+    const rows = recordLists[i] ?? [];
+    if (!rows.length) return;
+    recordTables[name] = toTable(rows.map(({ _id, sessionId: _s, ...rest }) => withTimes({
+      id: String(_id),
+      ...rest,
+      ...(rest.classStudentId ? { name: onRoster.get(String(rest.classStudentId))?.name ?? null } : {}),
+    }, RECORDS[name].times, (v) => toOffset(v, timeBase))));
+  });
+
   const data = {
     format: ARCHIVE_FORMAT,
     version: ARCHIVE_VERSION,
@@ -251,17 +323,33 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
         masteryGoal: session.masteryGoal,
         reattempts: session.reattempts,
         redemption: session.redemption,
+        ...changedRoomOptions(session),
       },
       // The question set (0015), null for the whole bank: what the room could serve.
       questionIds: session.questionIds ?? null,
+      // The class the room was opened for (0016). Only when it has one, so a
+      // room opened for no class archives byte for byte as before 0016;
+      // decodeRoomArchive reads a missing classId as null.
+      ...(session.classId ? { classId: String(session.classId) } : {}),
     },
-    counts: { students: profiles.length, answers: answers.length, history: historyRows.length, reviews: reviews.length },
+    counts: {
+      students: profiles.length,
+      answers: answers.length,
+      history: historyRows.length,
+      reviews: reviews.length,
+      ...(session.classId ? { attendance: attendanceRows.length } : {}),
+      ...Object.fromEntries(Object.entries(recordTables).map(([name, t]) => [name, t.rows.length])),
+    },
     derived: { answers: answerDerived, history: historyDerived },
     questions,
     students: toTable(studentRows),
     history: toTable(historyRows.map((h) => withTimes(h, HISTORY_TIMES, (v) => toOffset(v, timeBase)))),
     answers: toTable(answerRows.map((a) => withTimes(a, ANSWER_TIMES, (v) => toOffset(v, timeBase)))),
     reviews: toTable(reviewRows.map((r) => withTimes(r, REVIEW_TIMES, (v) => toOffset(v, timeBase)))),
+    ...(session.classId
+      ? { attendance: toTable(attendanceRows.map((m) => withTimes(m, ATTENDANCE_TIMES, (v) => toOffset(v, timeBase)))) }
+      : {}),
+    ...recordTables,
   };
 
   const json = JSON.stringify(data);
@@ -326,5 +414,13 @@ export function decodeRoomArchive(data) {
     const { a, ...rest } = withTimes(row, REVIEW_TIMES, (v) => fromOffset(v, base));
     return { ...rest, answerKey: answers[a]?.answerKey ?? null };
   });
-  return { room: data.room, students, answers, reviews };
+
+  // A room opened for no class, or archived before Phase 3, has no marks.
+  const attendance = fromTable(data.attendance).map((row) => withTimes(row, ATTENDANCE_TIMES, (v) => fromOffset(v, base)));
+  // A room with no teacher records, or archived before them, has empty lists.
+  const records = Object.fromEntries(Object.entries(RECORDS).map(([name, { times }]) => [
+    name,
+    fromTable(data[name]).map((row) => withTimes(row, times, (v) => fromOffset(v, base))),
+  ]));
+  return { room: { ...data.room, classId: data.room?.classId ?? null }, students, answers, reviews, attendance, ...records };
 }

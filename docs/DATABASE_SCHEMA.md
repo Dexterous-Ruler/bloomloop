@@ -9,7 +9,7 @@ Every table has row level security **on with no policies**. Only the server's
 service role key, which bypasses RLS, can read or write; the anon key sees nothing.
 The server is the only place authorization is decided.
 
-Last revised 19 November 2026.
+Last revised 19 November 2026, after the Phase 3 review fixes (`0016` to `0018`).
 
 ## Migration order
 
@@ -31,15 +31,70 @@ Last revised 19 November 2026.
 | `0013_question_provenance_and_approval.sql` | `questions.status` may be `draft`; `questions.model`, `source_ref`, `checks`, `created_by`, `approved_by`, `approved_at`; `contents.topic_slides`; their checks and indexes. Changes no row | new (Phase 2) |
 | `0014_media.sql` | `media`, images uploaded for question stimuli (bytea, at most the server's limit); `sessions_content_idx`; trigger `media_bytes_written_once`. Changes no row | new (Phase 2) |
 | `0015_room_question_sets.sql` | `sessions.question_ids` (nullable `uuid[]`): the only questions a room may serve, null for the whole approved bank; check `sessions_question_ids_shape`. Changes no row: every existing room gets null | new (Phase 2) |
+| `0016_classes_roster_attendance.sql` | `classes`, `class_students` (the roster: a roll number and a name only), nullable `sessions.class_id`, `attendance` (one mark per room and roster student); trigger `attendance_student_in_room_class`. Changes no row: every existing room gets `class_id` null | new (Phase 3) |
+| `0017_teacher_records.sql` | The teacher-record store: `observations` (append-only), `wheel_rounds`, `wheel_picks`, `hand_tallies`, `room_activities`, `insight_actions` (append-only); functions `teacher_records_guard`, `observations_in_room_class`, `room_activities_same_room`; nine triggers (one reuses `0016`'s `attendance_student_in_room_class`). Changes no row | new (Phase 3) |
+| `0018_room_modes_and_projector.sql` | How a room runs: `sessions.mode`, `adapt`, `start_level`, `questions_per_student`, `time_per_question`, a Teacher-led room needs a class; `sessions.status` may be `waiting`; `projector_links` (a projector's token, kept as its SHA-256) with trigger `projector_links_keep` (`0017`'s guard). Changes no row: every existing room gets the values it ran under | new (Phase 3) |
 
 The SQL of every moved file is unchanged; only header comments were updated.
 
+`0018` has run only on PGlite (`npm run migrations`, 451 of 451 on 19 November 2026;
+37 checks are new with it). It builds on a fresh database, runs again unchanged, and
+a v1 database is upgraded with its room on Student devices, adapting, from
+Understand, with no cap and no time, and its status kept. Its checks refuse a mode
+outside the three, a Teacher-led room with no class, a start level spelt `analyze`, a
+cap of 0 or 501, 5 or 601 seconds, and a status outside the four (23514); a second
+link with one token (23505); a token hash that is not 64 lower-case hex characters, a
+revoker with no revocation time (23514); and changing a link's token or room, or
+deleting a link except with its room (23001), while letting a link be revoked. A room
+can be created `waiting` and started into `open`. Deleting a room deletes its links.
+Apply it before deploying the server that has the modes and the projector: the boot
+probe now checks the five columns and `projector_links`.
+
+**Re-running the whole set once a room is waiting (fixed).** `0005` drops and
+re-adds `sessions_status_check`, and now lists `'waiting'` with `'open'`, `'paused'`
+and `'closed'`, so a re-run never narrows the check below what `0018` allows. It was
+reproduced on PGlite by the Phase 3 review. The migration test now leaves a room
+waiting before it re-runs the set (failed before the change, passes after).
+
+`0017` has run only on PGlite (`npm run migrations`, 414 of 414 on 19 November 2026;
+88 checks are new with it). It builds on a fresh database, runs again unchanged, and
+a v1 database is upgraded with empty record tables. Its checks refuse an observation
+kind outside the four, a note over 280 characters, a cleared mark with a note, a class
+with no roster student, a roll number not in the room's form, a student of another
+class and a class that is not the room's (23503); a round below 1 and a round twice;
+a pick in a round never started, in a place already taken, from an empty wheel, with
+an ask outside the three, a question on a diagram ask, a status outside the six or a
+response with no time, a student of another class; a tally count below 0 (on insert
+and on update), three counts, a missing count, five labels, a correct option past D,
+no question text, a tally twice in one place; groups on anything but a group
+challenge, a tally on anything but a quick check or from another room, an activity
+outside the five, an outcome over 280 characters; an insight action outside the two,
+a blank flag or one with a control character. The guard refuses editing an
+observation or an insight action, changing who a pick drew or from how many, a
+round's number or a tally's place, and deleting any record except with its room
+(23001), while letting a round's settings, a pick's ask and response, a tally's counts
+and an activity's outcome change, and an account or question deleted clear its
+column. Deleting a room deletes its records and leaves the roster. Apply it before
+deploying the server that has the record routes: the boot probe now checks the six
+tables.
+
+`0016` has run only on PGlite (`npm run migrations`, 326 of 326 on 19 November 2026;
+56 checks are new with it). It builds on a fresh database and runs again unchanged;
+a v1 database is upgraded with its room opened for no class. Its checks refuse a
+roll number not in the room's form or not a shape a phone can send (lower case, two
+spaces, a trailing space, `#`, over 24 characters), a blank or over-long name, a
+blank course name, a missing or over-long section, a status or source outside the
+lists, a `joined` mark that is not present or names a marker, a mark for another
+class's student, a mark in a room opened for no class, a second mark for one student
+in one room, and deleting a roster row that has attendance. Apply it before deploying
+the Phase 3 server: the boot probe now checks the three tables and `sessions.class_id`.
+
 `0010` to `0015` have run only on PGlite (`npm run migrations`, 270 of 270 on
-19 November 2026, rerun after the Phase 2 review fixes). `0010` to `0012` are
-committed with Phase 1 (`05daf56`); `0013` to `0015` are not yet committed. The
-live project has been unreachable since 18 November, so whether it has any of them
-could not be checked. Apply them in order before deploying the Phase 1 and 2
-server: the boot probe falls back to the in-process store when `answer_reviews`,
+19 November 2026, rerun after the Phase 2 review fixes, and part of the 451 since).
+`0010` to `0012` are committed with Phase 1 (`05daf56`), `0013` to `0015` with Phase
+2 (`27559ca`); `0016` to `0018` are not yet committed. The live project has been
+unreachable since 18 November, so whether it has any of them could not be checked.
+Apply them in order before deploying the Phase 1, 2 and 3 server: the boot probe falls back to the in-process store when `answer_reviews`,
 any `0013` column, the `media` table or `sessions.question_ids` is missing (last
 section).
 
@@ -118,7 +173,7 @@ drafts too, and is refused while a room on the chapter is open or paused). Every
 output nobody approved (`approvePatch`, `activatePatch` in `services/edits.js`).
 `0013` changed no row: every question already there kept its status.
 
-### sessions (0000, 0001, 0005, 0007, 0015)
+### sessions (0000, 0001, 0005, 0007, 0015, 0016, 0018)
 
 A room.
 
@@ -128,7 +183,7 @@ A room.
 | `code` | text | not null, unique |
 | `content_id` | uuid | not null, references `contents(id)` on delete cascade |
 | `title` | text | not null, default `''` |
-| `status` | text | not null, default `open`; `open`, `paused`, `closed` |
+| `status` | text | not null, default `open`; `waiting` (`0018`: opened with a waiting room, nothing served until started), `open`, `paused`, `closed` |
 | `owner_id` | uuid | null; references `accounts(id)`, no delete action |
 | `started_at` | timestamptz | not null, default now() |
 | `closed_at` | timestamptz | null |
@@ -137,17 +192,26 @@ A room.
 | `reattempts` | smallint | not null, default 0; 0 to 2 |
 | `redemption` | boolean | not null, default false |
 | `question_ids` | uuid[] | null. The room's question set: the only questions it may serve. Null is the whole approved bank, which every room before `0015` keeps. When set: one dimension, at least one id, no null (`sessions_question_ids_shape`). No foreign key (Postgres has none for array elements): the server checks each id is an approved question of the room's chapter when the room opens, and a question discarded or deleted later simply stops being served (`0015`) |
+| `class_id` | uuid | null; references `classes(id)`, no delete action. The class the room was opened for; null for none, which every room before `0016` keeps and which behaves exactly as before. The server accepts only a class the caller may change (`0016`) |
+| `mode` | text | not null, default `devices`; `devices`, `teacher-led`, `mixed`. A `teacher-led` room must have a `class_id` (`sessions_teacher_led_class_check`) (`0018`) |
+| `adapt` | boolean | not null, default true. False: students stay at `start_level`; answers are recorded; the below-40% ceiling still applies (`0018`) |
+| `start_level` | text | not null, default `understand`; one of the six levels (`0018`) |
+| `questions_per_student` | smallint | null (no cap), or 1 to 500 (`0018`) |
+| `time_per_question` | smallint | null (none), or 10 to 600 seconds. Sent to phones; no answer is refused for being late (`0018`) |
 
-Written by: repo `createSession` from `routes/session.js` (the settings and the
-question set are written here only, never updated); `updateSession` (status, title,
-closed/paused times); `deleteSession`. `question_ids` is read on every bank load of
+Written by: repo `createSession` from `routes/session.js` (the settings, the
+question set, the class and how the room runs are written here only, never updated); `updateSession` (status, title,
+closed/paused times; `waiting` to `open` by `POST /api/session/:code/start`); `deleteSession`. `question_ids` is read on every bank load of
 the live loop (`servableFor` in `services/selector.js`) and by the image rule
 (`servedToPhones`), and returned by `POST /api/session`, `GET /api/session` and
 `GET /api/session/:code/items`, never by the phones' `GET /api/session/:code`.
 
 Index `sessions_content_idx` on `content_id` (`0014`): `listSessionsForContent`,
 which serving an image to a phone asks on every request (is a room running on this
-chapter?), and the cascade from deleting a chapter.
+chapter?), and the cascade from deleting a chapter. Partial index
+`sessions_class_idx` on `class_id` where not null (`0016`): since the Phase 3 class
+analytics also `listSessionsForClass` (a class's rooms, newest first,
+`GET /api/classes/:id/analytics`). No column was added for it.
 
 ### profiles (0000, 0005, 0007)
 
@@ -336,7 +400,24 @@ The format stores each list as `{ cols, rows }`, the question once (answers poin
 it), the student once (answers and history point at them), review decisions
 pointing at their answer (`reviews`, added after v1 shipped; an archive without the
 table had no reviews, so the version stays 1), and times as offsets from
-`timeBase`. A column is left out only when every row rebuilds it exactly; `derived`
+`timeBase`. Since Phase 3 a room opened for a class carries `classId` (a room with no
+class has no `classId` key, so it archives byte for byte as before; it decodes as null),
+and a room opened for a class carries an `attendance` table: every mark, with the
+roll number and name its roster row held when the room was deleted, since the roster
+outlives the room (`server/test/roster.test.js`, `server/scripts/roster.mjs`). An
+archive from before decodes with `classId` null and no marks, so the version stays 1.
+A room with teacher records (`0017`) also carries `observations` (every set and
+clear), `wheelRounds`, `wheelPicks`, `tallies`, `activities` and `insightActions`,
+each only when it has any, a roster student's name copied in; without them the
+archive is exactly what it was, and an older one decodes with empty lists
+(`server/test/records.test.js`, `server/scripts/records.mjs`). They count towards the
+1 MiB; a class of 60 with a mark each, 40 picks, 10 tallies, 5 group challenges and
+10 insight actions adds about 28 KB.
+`room.settings` gains `mode`, `adapt`, `startLevel`, `questionsPerStudent` and
+`timePerQuestion` (`0018`) only where the room changed them from how every room ran
+before, so a room on the defaults archives exactly as it did; a missing one ran on
+its default (`server/test/modes.test.js`). A room's projector links are not archived.
+A column is left out only when every row rebuilds it exactly; `derived`
 names those columns. Measured: a class of 60 students with 30 answers each is about
 267 KB; 80 students with 60 answers each, a third of them written, about 693 KB.
 `decodeRoomArchive()` gives back every answer and history entry field for field
@@ -385,6 +466,241 @@ Questions refer to an image by its url in `questions.payload.stimulus.url`
 (`/api/media/<id>`), not by a foreign key: the stimulus lives in the payload like
 every other kind-specific field, and an answer's `question_snapshot` keeps the url
 as it was shown.
+
+### classes (0016)
+
+A professor's class: a course and a section, with a roster (`class_students`).
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key, `gen_random_uuid()` |
+| `owner_id` | uuid | null; references `accounts(id)`, no delete action. The professor; null on the shared key, which is then the only path that reaches it (`ownership.js`, as for `contents`) |
+| `course_name` | text | not null; 1 to 120 characters once trimmed (`classes_course_name_check`) |
+| `section` | text | not null; 1 to 40 characters once trimmed (`classes_section_check`), such as `TY-CSF B` |
+| `term_label` | text | not null, default `''`; at most 40 characters (`classes_term_label_check`) |
+| `created_at`, `updated_at` | timestamptz | not null, default now(); no trigger maintains `updated_at`, the repo sets it |
+
+Index `classes_owner_idx`. RLS on, no policies. Written by repo `createClass` and
+`updateClass` from `routes/classes.js`; no route deletes a class. The server refuses
+a course name, section or term holding an email address or a mobile number
+(`withoutContact` in `services/roster.js`); the database does not check that.
+
+### class_students (0016)
+
+A class's roster. **A roll number and a name, and nothing else**: no phone number,
+email, date of birth or photo. `server/scripts/migrations.mjs` fails if a column is
+added here, so that adding one is a decision.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `class_id` | uuid | not null, references `classes(id)` on delete cascade |
+| `roll_no` | text | not null. In the room's form, trimmed, single-spaced, upper case, and a shape a phone can join with: `^[A-Z0-9][A-Z0-9 ._/-]{0,23}$` (`class_students_roll_check`, `ROLL_SHAPE` in `services/roster.js`, which the live loop imports). Unique per class (`class_students_class_roll_key`): one roll number is one student. `03` and `3` are two roll numbers, as they are to a room |
+| `name` | text | not null; 1 to 80 characters once trimmed (`class_students_name_check`). The server also refuses a name holding an `@`, six or more digits, or a short date such as `12-5-04` (a date of birth) |
+| `added_at` | timestamptz | not null, default now() |
+| `removed_at` | timestamptz | null. Set when a student is taken off the roster. **Never deleted**: their answers live under their roll number in each room, and their attendance points here |
+
+Written by repo `addClassStudents` (`insert ... on conflict (class_id, roll_no) do
+nothing`, so only the rows added come back) and `updateClassStudent` (name, roll
+number, `removed_at`) from `routes/classes.js`. Read whole by `listClassStudents`,
+which on Supabase asks for `.limit(5000)` in one request; PostgREST's `max-rows`
+caps a response whatever is asked (1000 by default), so a roster over that many rows,
+removed ones included, would be read short (open, `docs/API.md`; `listAttendance`
+reads a room's marks the same way).
+
+### attendance (0016)
+
+One mark per room and roster student. A student with no row is **unmarked**, which
+is not absent.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `session_id` | uuid | not null, references `sessions(id)` on delete cascade. The server writes the room's attendance into its archive (`room_archives`) first |
+| `class_student_id` | uuid | not null, references `class_students(id)`, no delete action: a roster row with marks is removed, never deleted |
+| `status` | text | not null; `present`, `absent` or `late` (`attendance_status_check`) |
+| `source` | text | not null; `joined` (a phone joined with that roll number; the server marked it) or `teacher` (`attendance_source_check`). A `joined` row is always `present` with no `marked_by` (`attendance_joined_check`). A typed roll number is not proof of identity (decision 7's known gap) |
+| `marked_at` | timestamptz | not null, default now() |
+| `marked_by` | uuid | null; references `accounts(id)` on delete set null. The professor; null for a join and on the shared key |
+
+Unique `(session_id, class_student_id)` (`attendance_session_student_key`), also
+the index for reading a room's marks. Indexes `attendance_student_idx` and
+`attendance_marker_idx` (where not null) for the foreign keys.
+
+Trigger `attendance_student_in_room_class` (function of the same name), `before
+insert or update of session_id, class_student_id`: refuses (23503) a mark for a
+student who is not on the roster of the class the room was opened for, including in
+a room opened for no class.
+
+Written by repo `addAttendanceIfAbsent` (`on conflict do nothing`: a join, which
+never replaces a mark already there) from the live loop's join, and
+`saveAttendance` (`on conflict ... do update`: the professor's mark replaces
+whatever was there) from `POST /api/session/:code/attendance`, and from a wheel pick
+set to Absent (`PATCH /api/session/:code/wheel/picks/:pickId`, unless
+`markAttendance: false`). Read by `GET /api/session/:code/attendance`, the teacher's
+grid (present count), the wheel and the tally (who is present), and the room archive.
+
+### The teacher-record store (0017)
+
+Six tables, each a room's record (`session_id` not null, `on delete cascade`: they go
+with the room, after the server has written them into its archive). Staff-only:
+nothing in them reaches a phone or the projector, and the Bloom-level ladder reads
+none of them. RLS on, no policies, on all six.
+
+**One guard for all six**, function `teacher_records_guard()`, `before update or
+delete`, with the columns that may change as the trigger's arguments: a DELETE only
+inside a foreign key's action (`pg_trigger_depth() > 1`, the cascade from the room);
+an UPDATE only of the named columns, and inside a foreign key's action a column set
+to null (an account or a question deleted). Anything else is refused with 23001,
+whoever sends it.
+
+#### observations
+
+A professor's private mark on a student. **Append-only** (guard with no columns):
+setting a mark is a row, and so is clearing it (`kind` null). The mark in force for a
+student on a day is the latest row; "one per student per class per day" is the
+server's rule of reading (`services/records.js`).
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `session_id` | uuid | not null, references `sessions(id)` on delete cascade. The room it was written in |
+| `class_id` | uuid | null; references `classes(id)`, no delete action. The room's class (trigger `observations_in_room_class`), null for a room with no class |
+| `class_student_id` | uuid | null; references `class_students(id)`, no delete action (a roster row with records is removed, never deleted). Null exactly when `class_id` is (`observations_subject_check`); on the room's class's roster (the trigger) |
+| `roll_no` | text | not null; the room's form (`observations_roll_check`, as `class_students_roll_check`). The roll number at the time; the key in a room with no class |
+| `day` | date | not null. The day the room was opened, in India's time (`roomDay`) |
+| `kind` | text | null (a clear) or `understood`, `participated`, `revision`, `support` (`observations_kind_check`) |
+| `note` | text | not null, default `''`; at most 280 characters, and `''` on a clear (`observations_note_check`). The server also refuses an email address or a mobile number |
+| `observed_by` | uuid | null; references `accounts(id)` on delete set null |
+| `observed_at` | timestamptz | not null, default now(). The server writes each strictly after the last of that student's day |
+
+Indexes: `observations_session_idx` (`session_id`), `observations_class_day_idx`
+(`class_id, day`), `observations_student_idx` (`class_student_id, day`),
+`observations_observer_idx` (`observed_by`); the last three where not null.
+
+#### wheel_rounds
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `session_id` | uuid | not null, references `sessions(id)` on delete cascade |
+| `round` | integer | not null, at least 1. Unique with `session_id` (`wheel_rounds_session_round_key`) |
+| `present_only`, `no_repeat` | boolean | not null, default true. The only columns that may change |
+| `started_at` | timestamptz | not null, default now() |
+| `started_by` | uuid | null; references `accounts(id)` on delete set null |
+
+#### wheel_picks
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `session_id`, `round` | uuid, integer | not null; `(session_id, round)` references `wheel_rounds` on delete cascade (`wheel_picks_round_fkey`) |
+| `pick_order` | integer | not null, at least 1; unique with `(session_id, round)` (`wheel_picks_session_round_order_key`) |
+| `roll_no` | text | not null; the room's form (`wheel_picks_roll_check`) |
+| `class_student_id` | uuid | null; references `class_students(id)`, no delete action; on the room's class's roster (trigger `wheel_picks_student_in_room_class`, `0016`'s function) |
+| `pool_size` | integer | not null, at least 1. How many were on the wheel: each had 1 in `pool_size` |
+| `present_only`, `no_repeat` | boolean | not null. The settings it was drawn under |
+| `ask` | text | not null, default `bank`; `bank`, `diagram` or `demo`, and `question_id` only on `bank` (`wheel_picks_ask_check`) |
+| `question_id` | uuid | null; references `questions(id)` on delete set null |
+| `status` | text | not null, default `pending`; `pending`, `answered`, `passed`, `help`, `skipped` or `absent`, and `status_at` set exactly when it is not pending (`wheel_picks_status_check`) |
+| `picked_at` | timestamptz | not null, default now() |
+| `picked_by`, `status_by` | uuid | null; reference `accounts(id)` on delete set null |
+| `status_at` | timestamptz | null |
+
+Only `ask`, `question_id`, `status`, `status_at` and `status_by` may change (trigger
+`wheel_picks_keep_draw`): who was drawn, in which round and place, from how many and
+under which settings is written once.
+
+#### hand_tallies
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `session_id` | uuid | not null, references `sessions(id)` on delete cascade |
+| `seq` | integer | not null, at least 1; unique with `session_id`: the order asked |
+| `question_id` | uuid | null; references `questions(id)` on delete set null. A question of the room's bank |
+| `question_text` | text | not null, 1 to 1000 characters once trimmed. Always stored, from the bank when a question is named |
+| `option_labels` | text[] | not null, default four `''`; exactly four, none null (`hand_tallies_labels_check`) |
+| `counts` | integer[] | not null, default `{0,0,0,0}`; exactly four, none null, **none below 0** (`hand_tallies_counts_check`) |
+| `revealed` | boolean | not null, default false |
+| `correct_option` | smallint | null, or 0 to 3 |
+| `created_at`, `updated_at` | timestamptz | not null, default now() |
+| `created_by` | uuid | null; references `accounts(id)` on delete set null |
+
+`seq`, `created_at` and `created_by` are written once (trigger `hand_tallies_keep_history`).
+The server refuses a typed question or label holding an email address or a mobile
+number (a bank question's own text and options are not screened); the database does
+not check that.
+
+#### room_activities
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `session_id` | uuid | not null, references `sessions(id)` on delete cascade |
+| `seq` | integer | not null, at least 1; unique with `session_id` |
+| `kind` | text | not null; `check`, `think`, `group`, `diagram` or `real` |
+| `outcome` | text | not null, default `''`; at most 280 characters |
+| `groups` | jsonb | not null, default `[]`; an array of at most 100, and `[]` unless `kind` is `group` (`room_activities_groups_check`). `[{ label, gotIt }]`: groups, never students |
+| `tally_id` | uuid | null; references `hand_tallies(id)` on delete set null; only on a `check` (`room_activities_tally_check`), and a tally of the same room (trigger `room_activities_same_room`, 23503) |
+| `created_at`, `updated_at` | timestamptz | not null, default now() |
+| `created_by` | uuid | null; references `accounts(id)` on delete set null |
+
+Only `outcome`, `groups`, `tally_id` and `updated_at` may change (trigger
+`room_activities_keep_history`). The server keeps a group's label to 40 characters,
+each label once, and refuses one holding an email address or a mobile number.
+
+#### insight_actions
+
+**Append-only** (guard with no columns): a professor dismissed or acted on a flag.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `session_id` | uuid | not null, references `sessions(id)` on delete cascade |
+| `flag_id` | text | not null; 1 to 120 characters once trimmed, no control characters. The Insights code's own id for the flag: since the live insights, an insight card's `flagId`, `<kind>:<evidence key>` (`focus:analyse`, `support:<16 hex>`, `participation:<16 hex>`; `services/insights.js`). Since the Phase 3 review the server takes only that shape, `^(focus\|support\|participation):[a-z0-9-]{1,64}$`, so no free text about a student rides in on a flag id; the database still allows any 1 to 120 characters. A card is dismissed while the latest row for its current id says `dismissed` |
+| `action` | text | not null; `dismissed` or `acted` |
+| `note` | text | not null, default `''`; at most 280 characters |
+| `acted_by` | uuid | null; references `accounts(id)` on delete set null |
+| `acted_at` | timestamptz | not null, default now() |
+
+Index `insight_actions_session_idx` (`session_id, acted_at`).
+
+All six are written by the repo methods `addObservation`, `addWheelRound`,
+`updateWheelRound`, `addWheelPick`, `updateWheelPick`, `addTally`, `updateTally`,
+`addActivity`, `updateActivity` and `addInsightAction`, from `routes/records.js`
+only, and read by the matching `list*` methods there, by
+`GET /api/classes/:id/students/:studentId/observations`, and by the room archive.
+Every foreign key to an account, a question, a class student and a tally has its own
+partial index.
+
+### projector_links (0018)
+
+A read-only link for a classroom projector, one room each. The projector is often a
+second machine with nobody signed in, so it connects over the socket with the
+link's token (`projector:watch`) instead of a professor's credentials. Not evidence,
+and not archived: a room's links are deleted with it. RLS on, no policies.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `session_id` | uuid | not null; references `sessions(id)` on delete cascade |
+| `token_hash` | text | not null, unique (`projector_links_token_hash_key`, also the lookup index); 64 lower-case hex characters. The SHA-256 of the token; the token itself (32 random bytes, base64url) is handed to the professor once and stored nowhere |
+| `created_at` | timestamptz | not null, default now(). The link works for 12 hours from this (the server's `PROJECTOR_LINK_HOURS`; no column) |
+| `created_by` | uuid | null; references `accounts(id)` on delete set null |
+| `revoked_at` | timestamptz | null: the link works (while its room is not closed and it is under 12 hours old) |
+| `revoked_by` | uuid | null; references `accounts(id)` on delete set null; only with `revoked_at` (`projector_links_revoked_check`) |
+
+Trigger `projector_links_keep` is `0017`'s `teacher_records_guard('revoked_at',
+'revoked_by')`: only the revocation may change, and a link is deleted only with its
+room. Indexes on `session_id`, and on `created_by` and `revoked_by` where not null.
+
+Written by the repo methods `addProjectorLink` and `revokeProjectorLink` from
+`routes/projector.js`; read by `getProjectorLinkByHash` (the projector's socket,
+`services/projector.js`) and `listProjectorLinks`. The server checks on every
+connection that the link is not revoked, is under 12 hours old and its room is not
+closed. What the
+projector shows is held in the server's memory, not here.
 
 ### accounts (0001, 0003, 0006)
 
@@ -524,4 +840,9 @@ the new `questions` and `contents` columns, because without them every generated
 question would fail to save; the same fallback applies. Since `0014` it also probes
 the `media` table, so apply `0014` before deploying a server that serves uploads.
 Since `0015` it also probes `sessions.question_ids`, because `createSession` writes
-it and without it no room could open.
+it and without it no room could open. Since `0016` it also probes `classes`,
+`class_students`, `attendance` and `sessions.class_id`, for the same reason:
+`createSession` writes `class_id` on every room. Since `0017` it also probes the six
+teacher-record tables. Since `0018` it also probes `projector_links` and the five
+new `sessions` columns (`mode`, `adapt`, `start_level`, `questions_per_student`,
+`time_per_question`), which `createSession` writes on every room.

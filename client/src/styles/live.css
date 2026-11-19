@@ -310,6 +310,19 @@ td.lc-sigc, th.lc-sigc { width: 44px; padding-right: 20px !important; }
 .lc-trail-src[data-observed='true'] { color: var(--text); font-weight: 700; }
 .lc-trail-what { font: 400 13px/1.45 var(--font); color: var(--text-2); overflow-wrap: anywhere; }
 
+/* ------------------------------------------------ questions (item report) */
+
+/* The item rows sit in the same scroll box as the heatmaps; that box draws the
+   top hairline, so the first row does not draw a second. */
+.lc-qscroll .it-items:first-child > .it-item:first-child { border-top: 0; }
+.lc-qskel { padding-top: 14px; border-top: 1px solid var(--line); }
+.lc-qskel > .it-skel-row:first-child { border-top: 0; }
+.lc-legend > .it-rules { max-width: none; }
+
+.lc-keyhelp-q { font: 600 14px/1.5 var(--font); color: var(--text); overflow-wrap: anywhere; }
+.lc-keyhelp-steps { display: flex; flex-direction: column; gap: 6px; padding-left: 20px; list-style: decimal; font: 400 13.5px/1.5 var(--font); color: var(--text-2); }
+.lc-keyhelp-steps b { font-weight: 700; color: var(--text); }
+
 /* ----------------------------------------------------------- narrower */
 
 @media (max-width: 1240px) {

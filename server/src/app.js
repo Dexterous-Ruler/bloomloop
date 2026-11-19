@@ -23,6 +23,10 @@ import exportRoutes from './routes/export.js';
 import classroomRoutes from './routes/classroom.js';
 import reviewRoutes from './routes/review.js';
 import mediaRoutes from './routes/media.js';
+import classRoutes from './routes/classes.js';
+import recordRoutes from './routes/records.js';
+import projectorRoutes from './routes/projector.js';
+import insightRoutes from './routes/insights.js';
 
 /**
  * Any successful write to a question bank drops the live loop's cached copy of
@@ -113,6 +117,22 @@ export function createApp() {
   // Mixed: students read GET /:code, everything else is the teacher's. Gated
   // per-route inside the router rather than at the mount.
   app.use('/api/session', sessionRoutes);
+  // The teacher-record store (Phase 3): /api/session/:code/observations, wheel,
+  // tallies, activities, insights. After the room router, and gated per route,
+  // because GET /api/session/:code (one segment) is the phones' and stays open.
+  app.use('/api/session', recordRoutes);
+  // The projector's controls (Phase 3): /api/session/:code/projector and its
+  // links. Gated per route for the same reason. The projector itself connects
+  // over the socket with a link's token and never calls these.
+  app.use('/api/session', projectorRoutes);
+  // Live insights and the student card (Phase 3): /api/session/:code/insights
+  // and /api/session/:code/students/:roll/card. Staff-only, gated per route for
+  // the same reason; the same insights are pushed to teacher screens only.
+  app.use('/api/session', insightRoutes);
+
+  // Teacher-only: class rosters are names and roll numbers, and nothing a phone
+  // needs. Whose class is whose is checked inside, by ownership.js.
+  app.use('/api/classes', requireTeacher, classRoutes);
 
   // Teacher-only: the queue carries students' written answers and the question
   // snapshots with their rubrics. Which rooms a teacher may read or decide on is

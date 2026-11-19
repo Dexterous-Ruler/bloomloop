@@ -1,9 +1,33 @@
 // MongoDB Atlas / Mongoose implementation. This is the documented primary
 // store (report section 5.6). memoryRepo is the fallback with the same surface.
 
-import { Content, Question, Session, Profile, Answer, RoomArchive, AnswerReview, Media } from '../models/index.js';
+import {
+  Content, Question, Session, Profile, Answer, RoomArchive, AnswerReview, Media, Class, ClassStudent, Attendance,
+  Observation, WheelRound, WheelPick, HandTally, RoomActivity, InsightAction, ProjectorLink,
+} from '../models/index.js';
 
 const lean = (d) => (d ? JSON.parse(JSON.stringify(d)) : null);
+
+/** A duplicate key on a record's place in its room, as the 409 Postgres's unique constraint gives. */
+async function placed(what, write) {
+  try {
+    return lean(await write());
+  } catch (err) {
+    if (err?.code === 11000) {
+      throw Object.assign(new Error(`That ${what} was taken by another request. Nothing was changed.`), { status: 409 });
+    }
+    throw err;
+  }
+}
+
+/** Only the named fields the caller sent; a malformed id is "not found". */
+async function patchOne(Model, id, patch, allowed) {
+  const set = Object.fromEntries(Object.entries(patch).filter(([k, v]) => allowed.includes(k) && v !== undefined));
+  return lean(await Model.findByIdAndUpdate(id, { $set: set }, { new: true, runValidators: true }).lean()
+    .catch((err) => { if (err?.name === 'CastError') return null; throw err; }));
+}
+
+const byRollNo = (a, b) => String(a.rollNo).localeCompare(String(b.rollNo), undefined, { numeric: true });
 
 export function createMongoRepo() {
   return {
@@ -61,6 +85,13 @@ export function createMongoRepo() {
       // Mongo has no cascade, so the profiles go first - the other way round
       // would leave them unreachable if the second call failed.
       await AnswerReview.deleteMany({ sessionId: String(id) });
+      await Attendance.deleteMany({ sessionId: String(id) });
+      // The room's teacher records (0017), archived with it first.
+      for (const M of [Observation, WheelPick, WheelRound, HandTally, RoomActivity, InsightAction]) {
+        await M.deleteMany({ sessionId: String(id) });
+      }
+      // Its projector links (0018), which are not evidence and are not archived.
+      await ProjectorLink.deleteMany({ sessionId: String(id) });
       await Answer.deleteMany({ sessionId: id });
       await Profile.deleteMany({ sessionId: id });
       await Session.findByIdAndDelete(id);
@@ -73,6 +104,10 @@ export function createMongoRepo() {
     // See memoryRepo.
     async listSessionsForContent(contentId) {
       return lean(await Session.find({ contentId }).sort({ startedAt: -1 }).lean()) ?? [];
+    },
+    // See memoryRepo.
+    async listSessionsForClass(classId) {
+      return lean(await Session.find({ classId: String(classId) }).sort({ startedAt: -1 }).lean()) ?? [];
     },
 
     async getProfile(sessionId, rollNo) {
@@ -198,6 +233,152 @@ export function createMongoRepo() {
         return { ...lean(meta), data: Buffer.from(doc.data) };
       }
       return lean(await Media.findById(id).select('-data').lean().catch(() => null));
+    },
+
+    // -- classes and rosters (0016; see memoryRepo for the contract) --
+    // A malformed id is a CastError here: not found, as for archives and media.
+    async createClass(doc) {
+      return lean(await Class.create(doc));
+    },
+    async getClass(id) {
+      return lean(await Class.findById(id).lean().catch(() => null));
+    },
+    async listClasses() {
+      return lean(await Class.find().sort({ createdAt: -1 }).lean()) ?? [];
+    },
+    async updateClass(id, patch) {
+      const allowed = ['courseName', 'section', 'termLabel'];
+      const set = Object.fromEntries(Object.entries(patch).filter(([k, v]) => allowed.includes(k) && v !== undefined));
+      return lean(await Class.findByIdAndUpdate(id, { $set: set }, { new: true, runValidators: true }).lean()
+        .catch((err) => { if (err?.name === 'CastError') return null; throw err; }));
+    },
+    async listClassStudents(classId) {
+      return (lean(await ClassStudent.find({ classId: String(classId) }).lean()) ?? []).sort(byRollNo);
+    },
+    async getClassStudent(id) {
+      return lean(await ClassStudent.findById(id).lean().catch(() => null));
+    },
+    // One at a time, skipping a duplicate key, so only the rows added come back
+    // (Postgres's ON CONFLICT DO NOTHING). A roster is a few hundred rows at most.
+    async addClassStudents(classId, docs) {
+      const made = [];
+      for (const d of docs) {
+        try {
+          made.push(lean(await ClassStudent.create({ ...d, classId: String(classId) })));
+        } catch (err) {
+          if (err?.code !== 11000) throw err;
+        }
+      }
+      return made;
+    },
+    async updateClassStudent(id, patch) {
+      const allowed = ['name', 'rollNo', 'removedAt'];
+      const set = Object.fromEntries(Object.entries(patch).filter(([k, v]) => allowed.includes(k) && v !== undefined));
+      try {
+        return lean(await ClassStudent.findByIdAndUpdate(id, { $set: set }, { new: true }).lean());
+      } catch (err) {
+        if (err?.code === 11000) {
+          throw Object.assign(new Error(`Roll number ${patch.rollNo} is already on this class's roster.`), { status: 409 });
+        }
+        if (err?.name === 'CastError') return null;
+        throw err;
+      }
+    },
+
+    // -- attendance (0016; see memoryRepo for the contract) --
+    async listAttendance(sessionId) {
+      return lean(await Attendance.find({ sessionId: String(sessionId) }).lean()) ?? [];
+    },
+    async saveAttendance(docs) {
+      const out = [];
+      for (const d of docs) {
+        const key = { sessionId: String(d.sessionId), classStudentId: String(d.classStudentId) };
+        out.push(lean(await Attendance.findOneAndUpdate(
+          key,
+          { $set: { ...d, ...key, markedBy: d.markedBy ?? null } },
+          { upsert: true, new: true, runValidators: true },
+        ).lean()));
+      }
+      return out;
+    },
+    async addAttendanceIfAbsent(doc) {
+      try {
+        await Attendance.create({ ...doc, sessionId: String(doc.sessionId), classStudentId: String(doc.classStudentId) });
+        return { created: true };
+      } catch (err) {
+        if (err?.code === 11000) return { created: false };
+        throw err;
+      }
+    },
+
+    // -- teacher records (0017; see memoryRepo for the contract) --
+    // _id breaks a tie on time: an ObjectId grows with the order rows were made.
+    async addObservation(doc) {
+      return lean(await Observation.create({ ...doc, sessionId: String(doc.sessionId) }));
+    },
+    async listObservations({ sessionId, classId, classStudentId, day } = {}) {
+      const q = {};
+      if (sessionId) q.sessionId = String(sessionId);
+      if (classId) q.classId = String(classId);
+      if (classStudentId) q.classStudentId = String(classStudentId);
+      if (day) q.day = day;
+      return lean(await Observation.find(q).sort({ observedAt: 1, _id: 1 }).lean()) ?? [];
+    },
+    async listWheelRounds(sessionId) {
+      return lean(await WheelRound.find({ sessionId: String(sessionId) }).sort({ round: 1 }).lean()) ?? [];
+    },
+    async addWheelRound(doc) {
+      return placed('round', () => WheelRound.create({ ...doc, sessionId: String(doc.sessionId) }));
+    },
+    async updateWheelRound(id, patch) {
+      return patchOne(WheelRound, id, patch, ['presentOnly', 'noRepeat']);
+    },
+    async listWheelPicks(sessionId) {
+      return lean(await WheelPick.find({ sessionId: String(sessionId) }).sort({ round: 1, order: 1 }).lean()) ?? [];
+    },
+    async addWheelPick(doc) {
+      return placed('place on the wheel', () => WheelPick.create({ ...doc, sessionId: String(doc.sessionId) }));
+    },
+    async updateWheelPick(id, patch) {
+      return patchOne(WheelPick, id, patch, ['ask', 'questionId', 'status', 'statusAt', 'statusBy']);
+    },
+    async listTallies(sessionId) {
+      return lean(await HandTally.find({ sessionId: String(sessionId) }).sort({ seq: 1 }).lean()) ?? [];
+    },
+    async addTally(doc) {
+      return placed('place in the room\'s questions', () => HandTally.create({ ...doc, sessionId: String(doc.sessionId) }));
+    },
+    async updateTally(id, patch) {
+      return patchOne(HandTally, id, patch, ['questionId', 'text', 'labels', 'counts', 'revealed', 'correct', 'updatedAt']);
+    },
+    async listActivities(sessionId) {
+      return lean(await RoomActivity.find({ sessionId: String(sessionId) }).sort({ seq: 1 }).lean()) ?? [];
+    },
+    async addActivity(doc) {
+      return placed('place in the room\'s activities', () => RoomActivity.create({ ...doc, sessionId: String(doc.sessionId) }));
+    },
+    async updateActivity(id, patch) {
+      return patchOne(RoomActivity, id, patch, ['outcome', 'groups', 'tallyId', 'updatedAt']);
+    },
+    async addInsightAction(doc) {
+      return lean(await InsightAction.create({ ...doc, sessionId: String(doc.sessionId) }));
+    },
+    async listInsightActions(sessionId) {
+      return lean(await InsightAction.find({ sessionId: String(sessionId) }).sort({ actedAt: 1, _id: 1 }).lean()) ?? [];
+    },
+
+    // -- projector links (0018; see memoryRepo for the contract) --
+    async addProjectorLink(doc) {
+      return placed('projector token', () => ProjectorLink.create({ ...doc, sessionId: String(doc.sessionId) }));
+    },
+    async getProjectorLinkByHash(tokenHash) {
+      return lean(await ProjectorLink.findOne({ tokenHash: String(tokenHash) }).lean());
+    },
+    async listProjectorLinks(sessionId) {
+      return lean(await ProjectorLink.find({ sessionId: String(sessionId) }).sort({ createdAt: 1, _id: 1 }).lean()) ?? [];
+    },
+    async revokeProjectorLink(id, { revokedAt, revokedBy = null }) {
+      return patchOne(ProjectorLink, id, { revokedAt, revokedBy }, ['revokedAt', 'revokedBy']);
     },
   };
 }

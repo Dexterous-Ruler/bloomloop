@@ -169,7 +169,43 @@ export const REDEMPTION_RULE = [
  */
 export const REDEEMS_ONLY_FIRST_TRY = true;
 
-/** The three settings, defaulted and clamped. One reader, so no caller can drift. */
+/*
+ * How the room runs (Phase 3, 0018): the rest of the handoff's room screen.
+ * Like the three above, chosen when the room opens and never changed after, and
+ * every default is exactly how a room ran before the setting existed.
+ *
+ *   mode                 how students answer. 'devices': on their phones, as
+ *                        always. 'teacher-led': no phone is served; the
+ *                        professor runs the class from the roster. 'mixed':
+ *                        phones answer and teacher records come in beside them.
+ *   adapt                false keeps every student at the start level: the
+ *                        ladder still records each answer but moves nobody. The
+ *                        below-40% ceiling is NOT the ladder and still applies
+ *                        (CONTRACT.md section 6 rule 4), so selectNext() keeps
+ *                        serving such a student Remember and Understand only.
+ *   startLevel           where every student starts; COLD_START_LEVEL before.
+ *   questionsPerStudent  the most questions one student is served; null, none.
+ *   timePerQuestion      seconds, sent to the phone, which times it; null, none.
+ *                        A late answer is never refused: hall wifi makes phones
+ *                        late through no fault of the student's.
+ */
+export const ROOM_MODES = ['devices', 'teacher-led', 'mixed'];
+export const DEFAULT_MODE = 'devices';
+// The handoff offers 3 to 30. The bound here is the store's (0018), wide enough
+// for a long revision room and far under anything a phone would sit through.
+export const QUESTIONS_PER_STUDENT = { min: 1, max: 500 };
+// The handoff offers 30, 60 and 90. Under 10 seconds nobody reads the stem;
+// over ten minutes it is homework, not a timed question.
+export const TIME_PER_QUESTION = { min: 10, max: 600 };
+
+/** A whole number inside the range, or null for "not set". */
+function wholeIn(raw, { min, max }) {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= min && n <= max ? n : null;
+}
+
+/** Every room setting, defaulted and clamped. One reader, so no caller can drift. */
 export function sessionSettings(session = {}) {
   const goal = Number(session?.masteryGoal);
   const tries = Math.trunc(Number(session?.reattempts));
@@ -179,10 +215,18 @@ export function sessionSettings(session = {}) {
     // Strictly true, so a string, a 1 or an absent column is off. Off is the
     // side to be wrong on: redemption can only ever raise an accuracy figure.
     redemption: session?.redemption === true,
+    mode: ROOM_MODES.includes(session?.mode) ? session.mode : DEFAULT_MODE,
+    // Strictly false, so an absent column adapts, as every room did before 0018.
+    adapt: session?.adapt !== false,
+    startLevel: LEVELS.includes(session?.startLevel) ? session.startLevel : COLD_START_LEVEL,
+    questionsPerStudent: wholeIn(session?.questionsPerStudent, QUESTIONS_PER_STUDENT),
+    timePerQuestion: wholeIn(session?.timePerQuestion, TIME_PER_QUESTION),
   };
 }
 
-export function emptyProfile({ sessionId, rollNo, name = '', accountId = null }) {
+export function emptyProfile({ sessionId, rollNo, name = '', accountId = null, startLevel = COLD_START_LEVEL }) {
+  // The room's start level (0018); Understand for every room before it.
+  const start = LEVELS.includes(startLevel) ? startLevel : COLD_START_LEVEL;
   return {
     sessionId,
     rollNo: String(rollNo).trim(),
@@ -191,9 +235,9 @@ export function emptyProfile({ sessionId, rollNo, name = '', accountId = null })
     // roster, when there is one. Null for a guest roll number.
     accountId,
     levels: emptyLevels(),
-    workingLevel: COLD_START_LEVEL,
+    workingLevel: start,
     history: [],
-    reason: 'No history yet - starting at Understand.',
+    reason: `No history yet - starting at ${LABEL[start]}.`,
     // The question this student is currently on. Held server-side so a closed
     // tab comes back to the SAME item rather than a fresh one.
     served: null,
@@ -462,7 +506,7 @@ export function applyAnswer(
   profile,
   {
     questionId, bloom, correct, score = null, at = null, tries = 1, redemption = false,
-    topic = '', kind = 'mcq', answerId = '',
+    topic = '', kind = 'mcq', answerId = '', adapt = true,
   },
 ) {
   const next = hydrate(profile);
@@ -537,11 +581,33 @@ export function applyAnswer(
     }
   }
 
-  const decision = recomputeWorkingLevel(next);
+  // A room with adapt off (0018) records the answer like any other and moves
+  // nobody: strictly false, so every room before the setting adapts as it did.
+  const decision = adapt === false ? heldLevel(next) : recomputeWorkingLevel(next);
   next.workingLevel = decision.workingLevel;
   next.reason = decision.reason;
 
   return { profile: next, decision, redeemed };
+}
+
+/**
+ * The decision in a room that does not adapt: the level stays where it is, and
+ * the sentence says why. Inside the below-40% band it says the ceiling still
+ * holds, because it does (selectNext() reads the band, not the ladder), and a
+ * reason that claimed "staying at Apply" while serving Remember would be false.
+ */
+function heldLevel(profile) {
+  const level = profile.workingLevel;
+  const off = `Adaptive levels are off in this room - staying at ${LABEL[level]}`;
+  if (isSlowLearner(profile)) {
+    const pct = Math.round(overallAccuracy(profile) * 100);
+    return {
+      workingLevel: level,
+      reason: `${off}, but overall ${pct}% is inside the below-40% band - serving Remember and Understand items only.`,
+      changed: false,
+    };
+  }
+  return { workingLevel: level, reason: `${off}.`, changed: false };
 }
 
 /**

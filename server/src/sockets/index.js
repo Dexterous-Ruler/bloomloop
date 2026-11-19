@@ -35,16 +35,20 @@ import {
   noteSecondSocket,
   checkLevelJump,
 } from '../services/integrity.js';
+// Roll numbers in the wild look like 21BCE1234, CS-045, 2/A. Anything else is a
+// typo or a probe, and an empty one would collide with every other empty one.
+// ROLL_SHAPE lives with the roster so a class list can never hold a roll number
+// no phone could join with.
+import { ROLL_SHAPE, markJoined, classGrid } from '../services/roster.js';
+import { TEACHER_LED_MESSAGE, WAITING_MESSAGE, capReason, roomFeed } from '../services/modes.js';
+import { claimConnection, pushProjector, watchWall } from '../services/projector.js';
+import { roomInsights, sampleFromGrid, scheduleInsights } from '../services/insights.js';
 
 const presence = new Map(); // `${code}:${rollNo}` -> socket.id
 const bankCache = new Map(); // sessionId -> Promise<question[]>
 const sessionCache = new Map(); // code -> open session document
 const profileLocks = new Map(); // `${sessionId}:${rollNo}` -> tail of that student's queue
 const deletingRooms = new Map(); // sessionId -> how many deletes of it are under way
-
-// Roll numbers in the wild look like 21BCE1234, CS-045, 2/A. Anything else is a
-// typo or a probe, and an empty one would collide with every other empty one.
-const ROLL_SHAPE = /^[A-Z0-9][A-Z0-9 ._\-\/]{0,23}$/;
 
 // The idempotency key a phone sends with every attempt. One key per attempt,
 // reused verbatim on every resend of that attempt, so the server can tell "the
@@ -208,12 +212,33 @@ function loadBank(session) {
   return pending;
 }
 
-async function gridRows(session) {
-  const profiles = await getRepo().listProfiles(session._id);
+/**
+ * The `teacher:grid` payload: { rows, code }, and for a room opened for a class
+ * each row's `rosterName` and the room's `attendance` (classGrid in
+ * services/roster.js, which the REST grid uses too); while a room waits to
+ * start, `waiting`, and in a Mixed or Teacher-led room, `feed` (roomFeed in
+ * services/modes.js, likewise). Teacher screens only: the roster's names, the
+ * present count and the teacher records never go to a phone.
+ *
+ * Every grid built here is also a sample of the room's KPIs for the live
+ * insights' series (sampleFromGrid), from what this already read.
+ */
+async function gridPayload(session) {
+  const repo = getRepo();
+  const profiles = await repo.listProfiles(session._id);
   // The room's own mastery goal, so the live grid and the REST grid agree.
   const { masteryGoal } = sessionSettings(session);
-  return profiles.map((p) =>
+  const rows = profiles.map((p) =>
     buildGridRow(p, { online: isOnline(session.code, p.rollNo), goal: masteryGoal }));
+  const seen = {};
+  const { rows: decorated, attendance } = await classGrid(repo, session, rows, seen);
+  sampleFromGrid(session, { profiles, ...seen });
+  return {
+    rows: decorated,
+    code: session.code,
+    ...(attendance ? { attendance } : {}),
+    ...(await roomFeed(repo, session, decorated, attendance)),
+  };
 }
 
 /**
@@ -255,12 +280,18 @@ function retriesAllowed(question, settings, rollNo, supports) {
   return retriesFor(shown, settings.reattempts);
 }
 
-/** Push the room's grid to every teacher screen watching it. Also used after a review. */
+/**
+ * Push the room's grid to every teacher screen watching it. Also used after a
+ * review. A projector showing the class's progress moves with the same joins
+ * and answers, so it is pushed too; on any other screen it has nothing new.
+ * The live insights follow the grid to the same teacher screens, throttled
+ * (teacher:insights, services/insights.js scheduleInsights); never to a phone or
+ * the projector.
+ */
 export async function broadcastGrid(io, session) {
-  io.to(`teacher:${session.code}`).emit('teacher:grid', {
-    rows: await gridRows(session),
-    code: session.code,
-  });
+  io.to(`teacher:${session.code}`).emit('teacher:grid', await gridPayload(session));
+  await pushProjector(io, getRepo(), session, { onlyIf: 'progress' });
+  scheduleInsights(io, getRepo(), session);
 }
 
 /**
@@ -270,6 +301,15 @@ export async function broadcastGrid(io, session) {
 async function dispatchNext(socket, { profile, session, bank = null, resume = false }) {
   const supports = socket.data.student?.supports ?? null;
   try {
+    const settings = sessionSettings(session);
+    // The room's cap on questions per student (0018). `history` holds one entry
+    // per question finished, so a question still being retried is under it.
+    const cap = settings.questionsPerStudent;
+    if (cap && profile.history.length >= cap) {
+      socket.emit('server:exhausted', { profile: buildGridRow(profile, { online: true }), reason: capReason(cap) });
+      return;
+    }
+
     const items = bank ?? (await loadBank(session));
 
     // Resuming: serve the question this student was already on, not a new one.
@@ -312,7 +352,7 @@ async function dispatchNext(socket, { profile, session, bank = null, resume = fa
     // same board rather than rearranging under a half-finished answer.
     // Goes left on this question. A resumed question may already have spent
     // some, and the phone has to say so rather than promise a fresh set.
-    const allowed = retriesAllowed(q, sessionSettings(session), profile.rollNo, supports);
+    const allowed = retriesAllowed(q, settings, profile.rollNo, supports);
     const spent = triesSpent(profile, q._id);
 
     socket.emit('server:question', {
@@ -327,6 +367,9 @@ async function dispatchNext(socket, { profile, session, bank = null, resume = fa
       // every join, including a brand-new student's very first question, and
       // false in the one case it was written for: a pin saved with no reason.
       resumed,
+      // Seconds for this question, when the room set them (0018). The phone
+      // keeps the time; a late answer is taken like any other.
+      ...(settings.timePerQuestion ? { timePerQuestion: settings.timePerQuestion } : {}),
     });
   } catch (err) {
     logError('dispatch', err);
@@ -343,6 +386,14 @@ async function handleJoin(io, socket, payload) {
     }
     if (session.status === 'closed') {
       reject(socket, 'That session has already been closed.');
+      return;
+    }
+    // A Teacher-led room (0018) takes no answers from phones. The phone is told
+    // so in its own event and goes no further: no profile, no attendance mark
+    // (the professor takes attendance in this room), no place on the wheel, and
+    // never a question.
+    if (sessionSettings(session).mode === 'teacher-led') {
+      socket.emit('session:teacher-led', { code: session.code, title: session.title ?? '', message: TEACHER_LED_MESSAGE });
       return;
     }
 
@@ -372,7 +423,7 @@ async function handleJoin(io, socket, payload) {
     // TC-07: the same roll number resumes the same profile. Never a second row.
     const profile = stored
       ? hydrate({ ...stored, name: stored.name || name })
-      : hydrate(emptyProfile({ sessionId: String(session._id), rollNo, name }));
+      : hydrate(emptyProfile({ sessionId: String(session._id), rollNo, name, startLevel: sessionSettings(session).startLevel }));
     const linkChanged = Boolean(link) && profile.accountId !== link.id;
     if (linkChanged) profile.accountId = link.id;
     if (!stored || linkChanged || profile.name !== (stored.name ?? '')) await repo.saveProfile(profile);
@@ -389,6 +440,18 @@ async function handleJoin(io, socket, payload) {
       await repo.saveProfile(profile).catch((err) => logError('integrity', err));
     }
 
+    // A room opened for a class: a roll number on its roster marks that student
+    // present, unless the professor has already marked them; one off the roster
+    // joins as always and marks nobody (services/roster.js markJoined). The
+    // phone is told nothing about it. Decision 7's known gap: the roll number is
+    // typed, not proven, so a classmate's phone can mark someone present.
+    // Here, under this student's lock and after the profile is saved, so a room
+    // being deleted has either waited for this or is seen and nothing is written.
+    // Never allowed to stop a join: a failed write is logged, not shown.
+    if (session.classId && !roomDeleting(session._id)) {
+      await markJoined(repo, session, rollNo).catch((err) => logError('attendance', err));
+    }
+
     // A rejoin replaces the entry rather than kicking the old socket: kicking it
     // would make two tabs on one roll number fight each other forever.
     presence.set(key(session.code, rollNo), socket.id);
@@ -400,6 +463,10 @@ async function handleJoin(io, socket, payload) {
       // The full set, for forStudent() and score(). The phone is told only the
       // rendering switches (phoneSupports), never that options were removed.
       supports,
+      // True once this join has told the phone to wait for the start (below);
+      // the start serves only such phones (startRoom), so a phone this join
+      // served itself is not served a second time.
+      waiting: false,
     };
     socket.join(`session:${session.code}`);
 
@@ -419,10 +486,33 @@ async function handleJoin(io, socket, payload) {
       socket.emit('session:paused', { code: session.code });
       return;
     }
+    // A waiting room (0018): in the room, nothing to answer until the professor
+    // starts it. Read again from the store, not the cache, and only after this
+    // phone is in the room (socket.data.student above): a start lands either
+    // before this read, which then finds the room open and serves the phone
+    // here, or after it, and then finds this phone among the waiting ones and
+    // serves it (startRoom, which takes this student's lock, so after this join).
+    let room = session;
+    if (session.status === 'waiting') {
+      room = await repo.getSession(session._id);
+      if (room?.status === 'waiting') {
+        socket.data.student.waiting = true;
+        socket.emit('server:waiting', { code: session.code, title: session.title ?? '', message: WAITING_MESSAGE });
+        return;
+      }
+      if (!room || room.status === 'closed') {
+        socket.emit('session:closed', {});
+        return;
+      }
+      if (room.status === 'paused') {
+        socket.emit('session:paused', { code: session.code });
+        return;
+      }
+    }
     // `resume` because every join is potentially a reconnect: the same roll
     // number finding an existing profile IS the resume case, and a first join
     // simply has no pin to honour.
-    await dispatchNext(socket, { profile, session, bank, resume: true });
+    await dispatchNext(socket, { profile, session: room, bank, resume: true });
   } catch (err) {
     logError('student:join', err);
     reject(socket, 'Could not join - try again.');
@@ -487,6 +577,7 @@ async function replayStored(io, socket, { session, profile, prior, settings }) {
         score: prior.score,
         tries: prior.attempt,
         redemption: settings.redemption,
+        adapt: settings.adapt,
       }).profile;
     // A row a professor has reviewed: the rebuilt entry is tagged the way
     // applyReview tags it. Without the tag the mark is the professor's but reads
@@ -540,6 +631,11 @@ async function handleAnswer(io, socket, payload) {
     }
     if (session.status === 'paused') {
       socket.emit('session:paused', { code: session.code });
+      return;
+    }
+    // Nothing has been served in a room still waiting to start (0018).
+    if (session.status === 'waiting') {
+      socket.emit('server:waiting', { code: session.code, title: session.title ?? '', message: WAITING_MESSAGE });
       return;
     }
 
@@ -603,6 +699,14 @@ async function handleAnswer(io, socket, payload) {
     // new key. A double-tap on a phone must not score twice - but the phone still
     // has to hear something back, or it sits with its options disabled.
     const already = profile.history.find((h) => String(h.questionId) === questionId);
+    // A student at the room's cap (0018) has finished: an answer to a question
+    // they were never served is not taken. Below `already`, so a resend of the
+    // answer that reached the cap is still answered from what was recorded.
+    const cap = settings.questionsPerStudent;
+    if (!already && cap && profile.history.length >= cap) {
+      socket.emit('server:exhausted', { profile: buildGridRow(profile, { online: true }), reason: capReason(cap) });
+      return;
+    }
     if (already) {
       const stale = await repo.getQuestion(questionId).catch(() => null);
       socket.emit('server:result', {
@@ -795,6 +899,7 @@ async function handleAnswer(io, socket, payload) {
       at: answeredAt,
       tries: attempt,
       redemption: settings.redemption,
+      adapt: settings.adapt,
     });
     checkLevelJump(next);
     // Answered, so the pin is spent. Leaving it set would resume a student onto
@@ -852,6 +957,10 @@ async function handleNext(socket) {
       socket.emit('session:paused', { code: session.code });
       return;
     }
+    if (session.status === 'waiting') {
+      socket.emit('server:waiting', { code: session.code, title: session.title ?? '', message: WAITING_MESSAGE });
+      return;
+    }
 
     // dispatchNext() writes the pin back over the profile read here.
     release = await lockProfile(ctx.sessionId, ctx.rollNo);
@@ -867,6 +976,41 @@ async function handleNext(socket) {
   } finally {
     release?.();
   }
+}
+
+/**
+ * A waiting room has just been started (POST /api/session/:code/start): every
+ * phone waiting in it gets its first question, the teacher screens hear the new
+ * status, and the projector shows it. Each phone under its own student's lock,
+ * as every serve is; a phone that joins while this runs is served by its own
+ * join (handleJoin reads the status again once it is in the room).
+ *
+ * Only a phone its join told to wait (`waiting`), and that flag is spent here
+ * under the student's lock: a join that overlapped the start and found the room
+ * open has served its phone already, and serving it again sent the same
+ * question twice. The route calls this under the room's status lock, so a
+ * close waits for it and a second start finds the room open and is refused.
+ */
+export async function startRoom(io, session) {
+  const id = String(session._id);
+  io.to(`teacher:${session.code}`).emit('teacher:status', { code: session.code, status: session.status });
+  const waiting = [...io.sockets.sockets.values()].filter((s) => s.data.student?.sessionId === id);
+  await Promise.all(waiting.map(async (socket) => {
+    const release = await lockProfile(id, socket.data.student.rollNo);
+    try {
+      const ctx = socket.data.student;
+      if (ctx?.sessionId !== id || !ctx.waiting) return;
+      ctx.waiting = false;
+      const stored = await getRepo().getProfile(id, ctx.rollNo);
+      if (stored && socket.connected) await dispatchNext(socket, { profile: hydrate(stored), session, resume: true });
+    } catch (err) {
+      logError('start', err);
+    } finally {
+      release();
+    }
+  }));
+  await broadcastGrid(io, session);
+  await pushProjector(io, getRepo(), session);
 }
 
 async function handleWatch(socket, payload) {
@@ -902,8 +1046,16 @@ async function handleWatch(socket, payload) {
 
     socket.data.teacher = { code: session.code, accountId: who.accountId, role: who.role };
     socket.join(`teacher:${session.code}`);
-    socket.emit('teacher:grid', { rows: await gridRows(session), code: session.code });
+    socket.emit('teacher:grid', await gridPayload(session));
     socket.emit('teacher:status', { code: session.code, status: session.status });
+    // The live insights at once, as the grid is; then with every grid push. A
+    // failure leaves this screen without them until the next push, never
+    // without its grid.
+    try {
+      socket.emit('teacher:insights', await roomInsights(getRepo(), session));
+    } catch (err) {
+      logError('teacher:insights', err);
+    }
   } catch (err) {
     logError('teacher:watch', err);
   }
@@ -963,11 +1115,26 @@ async function handleSignal(socket, payload) {
 
 export function attachSockets(io) {
   io.on('connection', (socket) => {
-    socket.on('student:join', (payload) => handleJoin(io, socket, payload));
-    socket.on('student:signal', (payload) => handleSignal(socket, payload));
-    socket.on('student:answer', (payload) => handleAnswer(io, socket, payload));
-    socket.on('student:next', () => handleNext(socket));
-    socket.on('teacher:watch', (payload) => handleWatch(socket, payload));
+    // A projector's connection carries projector events and nothing else
+    // (services/projector.js), so once it has asked to watch with a link,
+    // everything a phone or a teacher's screen would send is ignored on it:
+    // answered, it would put a phone's or a teacher's event on the wall. The
+    // claim is made here, before the handler's first await, so a connection
+    // sending student:join and projector:watch together is one or the other.
+    const unlessProjector = (event, handler) => (...args) => {
+      if (socket.data.projector || !claimConnection(socket, 'room')) {
+        logIgnored(event, 'sent on a projector connection');
+        return undefined;
+      }
+      return handler(...args);
+    };
+    socket.on('student:join', unlessProjector('student:join', (payload) => handleJoin(io, socket, payload)));
+    socket.on('student:signal', unlessProjector('student:signal', (payload) => handleSignal(socket, payload)));
+    socket.on('student:answer', unlessProjector('student:answer', (payload) => handleAnswer(io, socket, payload)));
+    socket.on('student:next', unlessProjector('student:next', () => handleNext(socket)));
+    socket.on('teacher:watch', unlessProjector('teacher:watch', (payload) => handleWatch(socket, payload)));
+    socket.on('projector:watch', (payload) => watchWall(io, getRepo(), socket, payload)
+      .catch((err) => logError('projector:watch', err)));
     socket.on('disconnect', () => handleDisconnect(io, socket));
   });
 }

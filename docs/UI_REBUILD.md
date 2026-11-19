@@ -201,6 +201,61 @@ shell have a new composition; the data layer (`client/src/lib/*`) is untouched.
 - **Student phone:** a written answer's first mark says "Your teacher may
   review this mark."
 
+### Phase 2: question bank and authoring (19 Nov)
+
+- **Questions (`teach/Bank.jsx`):** generated questions arrive as drafts, and
+  the screen opens on them.
+  - The views are Drafts, Approved, Set aside, and "How it went" once any room
+    has answered.
+  - Each draft shows:
+    - who wrote it ("AI draft · review" or "Offline template · review");
+    - the slides it was read from, in mono;
+    - each failed rule check, with its message, as a warn line.
+  - Approve, Reject and Edit stay in view on every draft. Ticked drafts can be
+    approved or rejected together.
+  - **Approve all** asks first when any draft is flagged, offering "Approve the N
+    that passed" or all of them. Afterwards it lists the flagged questions it
+    let through, each with Open.
+  - Approving a flagged question names the check it failed.
+  - **For the room** counts approved questions only, with "N drafts waiting for
+    your review" under it.
+  - The source label comes from `model`, never from `source`, so a professor's
+    own question has none.
+  - The row menu holds Write a harder version, Write an easier version (each a
+    new draft; the original stays), Rewrite it (confirmed first, since the
+    question leaves rooms until its replacement is approved) and Set aside.
+  - Approved rows carry their answers, % correct and band "for this class".
+    Unfolded, they show the option spread and the wrong-key flag, whose Check
+    the key opens the editor.
+  - A replacing run while a room on the chapter is open shows the server's
+    sentence and offers to add the questions instead.
+- **Planner:** warns that replacing deletes the drafts waiting too. Each level
+  offers "A mix of N" (the server's default spread over that level's kinds) or
+  one kind.
+- **Editor (`teach/Editor.jsx`, `teach/Media.jsx`):**
+  - Editors for hot text (click the words), dropdown (one set of options per
+    `____`), table (each cell given or written by the student) and grid (tick
+    the matches).
+  - A stimulus section: a passage with its source, or an image upload (PNG,
+    JPEG or WebP, 500 KB at most) with required alt text. It is previewed as
+    the phone shows it, from a blob url, since an `<img>` sends no token.
+  - The failed checks are at the top.
+  - A draft can be saved, or saved and approved.
+  - **Write your own** opens it empty and says plainly that the question goes
+    straight into the bank, approved.
+- **Room (`teach/Room.jsx`):**
+  - The whole approved bank (6 or more), or a set you pick (1 or more), with a
+    level spread of the set.
+  - A chapter with only drafts says so before the server refuses, with a button
+    to the drafts.
+  - The projector and `/rooms` show a set room's size ("Set of 8").
+- **Live class:** a Questions view beside Students and Topics: the room's item
+  statistics, flagged first. Its Check the key opens the question in the
+  editor.
+- **Counts everywhere:** Material, the step pills, the library and the
+  professor's dashboard say "N approved · M to review", never "no questions
+  yet" while drafts wait.
+
 ## References and what they shaped
 
 - Karim's Goodfor design (Claude Design file, Nov 2026) shaped the direction:
@@ -253,6 +308,19 @@ opened. Behance pages gave text but no images, and Pinterest was not used.
   finish screen were checked through the dev gallery.
 - **Live class:** checked against pretend classes, with pause and resume
   exercised for real.
+- **Phase 2, against the Phase 2 server on the in-memory store:**
+  - Approve, reject, approve all, and approving only the drafts that passed.
+  - Harder (made a draft) and Harder refused (the server's 502 sentence shown).
+  - A replacing run refused while a room was open (the 409).
+  - A set room opened (HW3EKZ, 8 questions).
+  - The drafts-only room screen.
+  - Item statistics from a 14-student pretend class.
+  - An edit saved to each new kind, a question written from scratch, and a PNG
+    uploaded and attached.
+  - The build passes. `/join` is 161.0 KiB gzipped and still loads no
+    teacher code.
+  - The new gallery entries (bank, author, items, room) render with no
+    console errors at 1280 and 390, in light and dark.
 
 ## Not finished
 
@@ -260,8 +328,9 @@ opened. Behance pages gave text but no images, and Pinterest was not used.
   `lib/auth.js`, so a Google button would do nothing. Google linking stays on
   the profile and results screens.
 - **Data the API does not send yet:**
-  - Slide numbers per topic (Material shows the topic's position instead).
-  - Per-question accuracy in the bank (no meter on question rows).
+  - Slide numbers per topic on Material (it shows the topic's position). A
+    question's own slides are shown in the bank.
+  - The passage a draft was written from: only its slide numbers come back.
   - A class-wide timeline for a professor (the trend is per student).
   - Per-course level data for a head of department (the heatmap rows are the
     department and its professors).
@@ -273,6 +342,10 @@ opened. Behance pages gave text but no images, and Pinterest was not used.
   unreachable today) were checked only through the dev gallery. This includes
   the Phase 1 answer history on Overview and `/me`, and the head of
   department's read-only review.
+- **Phase 2, not run:**
+  - A bearer-token caller: a professor's own chapter, and an HOD's read-only bank.
+  - Generation by Gemini: every draft seen was an offline template.
+  - A poll in the editor: it still says it has no editor.
 - **Fewer choices:** for a student given that support, a stored choose-one or
   choose-all answer can name the wrong option text. The server keeps the full
   option list, not the shorter list the student saw.

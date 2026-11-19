@@ -6,6 +6,8 @@ import mongoose from 'mongoose';
 import { LEVELS } from '../bloom.js';
 import { KINDS } from '../questionTypes.js';
 import { IMAGE_TYPES } from '../services/media.js';
+import { ACTIVITY_KINDS, INSIGHT_ACTIONS, OBSERVATION_KINDS } from '../services/records.js';
+import { ASK_TYPES, PICK_STATUSES } from '../services/wheel.js';
 
 const { Schema, model } = mongoose;
 
@@ -85,7 +87,10 @@ const sessionSchema = new Schema(
     code: { type: String, required: true, unique: true, index: true },
     contentId: { type: Schema.Types.ObjectId, ref: 'Content', required: true },
     title: { type: String, default: '' },
-    status: { type: String, enum: ['open', 'closed'], default: 'open' },
+    // 'paused' (0005) and 'waiting' (0018) as well: a room opened with a waiting
+    // room is CREATED waiting, and create() validates the enum where the
+    // updates that pause a room never did.
+    status: { type: String, enum: ['waiting', 'open', 'paused', 'closed'], default: 'open' },
     startedAt: { type: Date, default: Date.now },
     closedAt: { type: Date, default: null },
 
@@ -107,6 +112,19 @@ const sessionSchema = new Schema(
     // `default: undefined`, because a Mongoose array otherwise defaults to [],
     // which would read as a set of nothing.
     questionIds: { type: [String], default: undefined },
+
+    // Phase 3 (supabase/migrations/0016). The class the room was opened for, or
+    // null. Declared for the same reason again: undeclared, a class room would
+    // save as a room with no class, and take no attendance.
+    classId: { type: String, default: null },
+
+    // Phase 3 (supabase/migrations/0018). How the room runs. Declared for the
+    // same reason again, and defaulting to how every room ran before them.
+    mode: { type: String, enum: ['devices', 'teacher-led', 'mixed'], default: 'devices' },
+    adapt: { type: Boolean, default: true },
+    startLevel: { type: String, enum: LEVELS, default: 'understand' },
+    questionsPerStudent: { type: Number, min: 1, max: 500, default: null },
+    timePerQuestion: { type: Number, min: 10, max: 600, default: null },
   },
   { versionKey: false },
 );
@@ -292,5 +310,180 @@ const mediaSchema = new Schema(
   { timestamps: { createdAt: 'createdAt', updatedAt: false }, versionKey: false },
 );
 export const Media = model('Media', mediaSchema);
+
+// A professor's class and its roster (supabase/migrations/0016). Ids are kept as
+// strings, as for reviews, so a query by either id needs no cast. A roster row
+// holds a roll number and a name and nothing else: Mongoose drops any path it
+// has no schema for, so a phone number sent with a row could not be stored here
+// even if a route forgot to leave it out.
+const classSchema = new Schema(
+  {
+    ownerId: { type: String, default: null, index: true },
+    courseName: { type: String, required: true, maxlength: 120 },
+    section: { type: String, required: true, maxlength: 40 },
+    termLabel: { type: String, default: '', maxlength: 40 },
+  },
+  { timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' }, versionKey: false },
+);
+export const Class = model('Class', classSchema);
+
+const classStudentSchema = new Schema(
+  {
+    classId: { type: String, required: true },
+    rollNo: { type: String, required: true },
+    name: { type: String, required: true, maxlength: 80 },
+    addedAt: { type: String, default: () => new Date().toISOString() },
+    // Removed, never deleted: answers and attendance outlive a correction to the list.
+    removedAt: { type: String, default: null },
+  },
+  { versionKey: false },
+);
+classStudentSchema.index({ classId: 1, rollNo: 1 }, { unique: true });
+export const ClassStudent = model('ClassStudent', classStudentSchema);
+
+// One mark per (room, roster student). 'joined' is only ever present and marked
+// by nobody; the route and the live loop write nothing else.
+const attendanceSchema = new Schema(
+  {
+    sessionId: { type: String, required: true },
+    classStudentId: { type: String, required: true, index: true },
+    status: { type: String, enum: ['present', 'absent', 'late'], required: true },
+    source: { type: String, enum: ['joined', 'teacher'], required: true },
+    markedAt: { type: String, default: () => new Date().toISOString() },
+    markedBy: { type: String, default: null },
+  },
+  { versionKey: false },
+);
+attendanceSchema.index({ sessionId: 1, classStudentId: 1 }, { unique: true });
+export const Attendance = model('Attendance', attendanceSchema);
+
+// The teacher-record store (supabase/migrations/0017). Staff-only, never read by
+// the ladder. Ids are strings, as for the roster. Every path is declared:
+// Mongoose drops the ones it has no schema for, and a pick that lost its pool
+// size or a tally that lost its counts would be a record of nothing.
+const nowIso = () => new Date().toISOString();
+const by = { type: String, default: null };
+
+// Append-only: the repository inserts and never updates.
+const observationSchema = new Schema(
+  {
+    sessionId: { type: String, required: true, index: true },
+    classId: { type: String, default: null },
+    classStudentId: { type: String, default: null, index: true },
+    rollNo: { type: String, required: true },
+    day: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
+    kind: { type: String, enum: OBSERVATION_KINDS.map((k) => k.id), default: null },
+    note: { type: String, default: '', maxlength: 280 },
+    observedBy: by,
+    observedAt: { type: String, default: nowIso },
+  },
+  { versionKey: false },
+);
+observationSchema.index({ classId: 1, day: 1 });
+export const Observation = model('Observation', observationSchema);
+
+const wheelRoundSchema = new Schema(
+  {
+    sessionId: { type: String, required: true },
+    round: { type: Number, required: true, min: 1 },
+    presentOnly: { type: Boolean, default: true },
+    noRepeat: { type: Boolean, default: true },
+    startedAt: { type: String, default: nowIso },
+    startedBy: by,
+  },
+  { versionKey: false },
+);
+wheelRoundSchema.index({ sessionId: 1, round: 1 }, { unique: true });
+export const WheelRound = model('WheelRound', wheelRoundSchema);
+
+const wheelPickSchema = new Schema(
+  {
+    sessionId: { type: String, required: true },
+    round: { type: Number, required: true, min: 1 },
+    order: { type: Number, required: true, min: 1 },
+    rollNo: { type: String, required: true },
+    classStudentId: { type: String, default: null },
+    poolSize: { type: Number, required: true, min: 1 },
+    presentOnly: { type: Boolean, required: true },
+    noRepeat: { type: Boolean, required: true },
+    ask: { type: String, enum: ASK_TYPES.map((a) => a.id), default: 'bank' },
+    questionId: { type: String, default: null },
+    status: { type: String, enum: ['pending', ...PICK_STATUSES.map((s) => s.id)], default: 'pending' },
+    pickedAt: { type: String, default: nowIso },
+    pickedBy: by,
+    statusAt: { type: String, default: null },
+    statusBy: by,
+  },
+  { versionKey: false },
+);
+wheelPickSchema.index({ sessionId: 1, round: 1, order: 1 }, { unique: true });
+export const WheelPick = model('WheelPick', wheelPickSchema);
+
+const handTallySchema = new Schema(
+  {
+    sessionId: { type: String, required: true },
+    seq: { type: Number, required: true, min: 1 },
+    questionId: { type: String, default: null },
+    text: { type: String, required: true, maxlength: 1000 },
+    labels: { type: [String], default: () => ['', '', '', ''] },
+    // Never below 0: a count is a number of hands.
+    counts: { type: [{ type: Number, min: 0 }], default: () => [0, 0, 0, 0] },
+    revealed: { type: Boolean, default: false },
+    correct: { type: Number, min: 0, max: 3, default: null },
+    createdAt: { type: String, default: nowIso },
+    createdBy: by,
+    updatedAt: { type: String, default: nowIso },
+  },
+  { versionKey: false },
+);
+handTallySchema.index({ sessionId: 1, seq: 1 }, { unique: true });
+export const HandTally = model('HandTally', handTallySchema);
+
+const roomActivitySchema = new Schema(
+  {
+    sessionId: { type: String, required: true },
+    seq: { type: Number, required: true, min: 1 },
+    kind: { type: String, enum: ACTIVITY_KINDS.map((k) => k.id), required: true },
+    outcome: { type: String, default: '', maxlength: 280 },
+    // Groups, never students: [{ label, gotIt }].
+    groups: { type: Schema.Types.Mixed, default: () => [] },
+    tallyId: { type: String, default: null },
+    createdAt: { type: String, default: nowIso },
+    createdBy: by,
+    updatedAt: { type: String, default: nowIso },
+  },
+  { versionKey: false, minimize: false },
+);
+roomActivitySchema.index({ sessionId: 1, seq: 1 }, { unique: true });
+export const RoomActivity = model('RoomActivity', roomActivitySchema);
+
+// Append-only, like observations.
+const insightActionSchema = new Schema(
+  {
+    sessionId: { type: String, required: true, index: true },
+    flagId: { type: String, required: true, maxlength: 120 },
+    action: { type: String, enum: INSIGHT_ACTIONS, required: true },
+    note: { type: String, default: '', maxlength: 280 },
+    actedBy: by,
+    actedAt: { type: String, default: nowIso },
+  },
+  { versionKey: false },
+);
+export const InsightAction = model('InsightAction', insightActionSchema);
+
+// A classroom projector's link (supabase/migrations/0018). Only the token's
+// SHA-256 is kept; the repository changes nothing but the revocation.
+const projectorLinkSchema = new Schema(
+  {
+    sessionId: { type: String, required: true, index: true },
+    tokenHash: { type: String, required: true, unique: true, match: /^[0-9a-f]{64}$/ },
+    createdAt: { type: String, default: nowIso },
+    createdBy: by,
+    revokedAt: { type: String, default: null },
+    revokedBy: by,
+  },
+  { versionKey: false },
+);
+export const ProjectorLink = model('ProjectorLink', projectorLinkSchema);
 
 export { levelCounter };

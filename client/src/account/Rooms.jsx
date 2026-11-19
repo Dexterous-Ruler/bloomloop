@@ -127,6 +127,12 @@ function RoomRow({ room: r, busy, onPause, onResume, onAskClose, onAskDelete }) 
         <span className="ac-room-sub">
           <span title={stampOf(when) || undefined}>{roomWhen(r)}</span>
           <Settings settings={r.settings} />
+          {/* null is the whole approved bank; a list is the set picked when it opened. */}
+          {Array.isArray(r.questionIds) && (
+            <span className="ac-set" title="This room serves a set of questions picked when it opened, and no others">
+              Set of {r.questionIds.length}
+            </span>
+          )}
           {!r.canControl && <span className="ac-set is-ro">Read only</span>}
           {r.banded > 0 && <span className="ac-room-band">{r.banded} in the support band</span>}
         </span>

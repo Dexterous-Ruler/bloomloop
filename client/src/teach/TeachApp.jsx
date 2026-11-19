@@ -52,7 +52,8 @@ const BANK_SUB = {
   first: 'Choose how many questions and how they spread over the six levels. Nothing is written until you start the run.',
   again: 'A second run over the same chapter. Replace the bank, or add to it.',
   writing: 'Each question is tagged to one level as it is written. A run takes a minute or two.',
-  curating: 'Read, fix and trim what was written. The room opens on the questions you keep.',
+  curating: 'Read, fix and trim what was written. A room serves approved questions and nothing else.',
+  review: 'Written questions wait here as drafts. Approve the ones you would put in front of this class; only approved questions reach a room.',
 };
 
 /** The shape of the step about to come back: head, stepper, a panel and its side. */
@@ -85,6 +86,8 @@ export default function TeachApp() {
   const [closed, setClosed] = useState(false);
   // Which of its states the question step is in, so the head can say so.
   const [bankPhase, setBankPhase] = useState('');
+  // A view the question step should open on, asked for by another step.
+  const [bankFocus, setBankFocus] = useState('');
   // Why a locked step said no, shown beside the stepper for a moment.
   const [why, setWhy] = useState('');
 
@@ -174,7 +177,7 @@ export default function TeachApp() {
       const reachable = {
         content: true,
         bank: Boolean(loaded),
-        session: finished ? false : Boolean(reopened) || (banked?.active ?? 0) > 0,
+        session: finished ? false : Boolean(reopened) || (banked?.active ?? 0) > 0 || (banked?.drafts ?? 0) > 0,
         live: Boolean(reopened),
       };
       const wanted = STEP_IDS.includes(openedWith.view) ? openedWith.view : null;
@@ -225,14 +228,17 @@ export default function TeachApp() {
   if (student) return <Navigate to={HOME_FOR.student} replace />;
   if (!open) return <Gate onUnlock={(v) => { teacherKey.set(v); setUnlocked(true); }} />;
 
+  // Approved questions are what a room serves; drafts wait for the teacher.
   const questions = bank?.questions ?? [];
-  const kept = questions.filter((q) => q.status !== 'discarded');
-  const activeCount = kept.length;
-  const levelCounts = LEVELS.reduce((a, l) => ({ ...a, [l]: kept.filter((q) => q.bloom === l).length }), {});
+  const approved = questions.filter((q) => q.status === 'active');
+  const activeCount = approved.length;
+  const draftCount = questions.filter((q) => q.status === 'draft').length;
+  const levelCounts = LEVELS.reduce((a, l) => ({ ...a, [l]: approved.filter((q) => q.bloom === l).length }), {});
   const reachable = {
     content: true,
     bank: Boolean(content),
-    session: activeCount > 0 || Boolean(session),
+    // Reachable on drafts alone, so the room step can say what is missing.
+    session: activeCount > 0 || draftCount > 0 || Boolean(session),
     live: Boolean(session),
   };
 
@@ -260,7 +266,8 @@ export default function TeachApp() {
       ...s,
       group: s.id === 'live' ? 'teach' : 'prepare',
       locked: !reachable[s.id],
-      badge: s.id === 'bank' && activeCount > 0 ? activeCount
+      badge: s.id === 'bank' && draftCount > 0 ? `${draftCount} to review`
+        : s.id === 'bank' && activeCount > 0 ? activeCount
         : s.id === 'live' && session ? (closed ? 'Closed' : 'Live') : undefined,
       tone: s.id === 'live' && session ? (closed ? 'quiet' : 'live') : undefined,
     })),
@@ -287,7 +294,7 @@ export default function TeachApp() {
   const crumb = session
     ? <><span className="mono strong">{session.code}</span><span aria-hidden="true">·</span><span className="clip">{chapter}</span></>
     : content ? <span className="clip">{content.title}</span> : <span>Teacher console</span>;
-  const phase = bankPhase || (activeCount > 0 ? 'curating' : 'first');
+  const phase = bankPhase || (draftCount > 0 ? 'review' : activeCount > 0 ? 'curating' : 'first');
   const head = {
     content: {
       title: 'Material',
@@ -314,8 +321,10 @@ export default function TeachApp() {
     {
       id: 'bank',
       label: 'Questions',
-      sub: activeCount > 0 ? `${activeCount} kept` : content ? 'Not written' : '',
-      done: activeCount > 0,
+      sub: draftCount > 0
+        ? `${activeCount} approved · ${draftCount} to review`
+        : activeCount > 0 ? `${activeCount} approved` : content ? 'Not written' : '',
+      done: activeCount > 0 && draftCount === 0,
       locked: !reachable.bank,
       why: STEPS[1].why,
     },
@@ -417,7 +426,8 @@ export default function TeachApp() {
               content={content}
               selected={selected}
               bank={bank}
-              hasBank={activeCount > 0}
+              hasBank={activeCount + draftCount > 0}
+              drafts={draftCount}
               onContent={handleContent}
               onSelected={setSelected}
               onNext={() => setView('bank')}
@@ -430,6 +440,8 @@ export default function TeachApp() {
               bank={bank}
               onBank={setBank}
               onPhase={setBankPhase}
+              focus={bankFocus}
+              onFocused={() => setBankFocus('')}
               onBack={() => setView('content')}
               onNext={() => setView('session')}
             />
@@ -437,8 +449,11 @@ export default function TeachApp() {
           {view === 'session' && (
             <Room
               content={content}
+              bank={bank}
               activeCount={activeCount}
+              draftCount={draftCount}
               levels={levelCounts}
+              onDrafts={() => { setBankFocus('drafts'); setView('bank'); }}
               onSession={onSession}
               onBack={() => setView('bank')}
             />
@@ -450,6 +465,7 @@ export default function TeachApp() {
               closed={closed}
               onClosed={() => setClosed(true)}
               onProjector={() => setView('session')}
+              onOpenQuestion={content ? (id) => { setBankFocus(`edit:${id}`); setView('bank'); } : undefined}
             />
           )}
         </>

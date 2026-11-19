@@ -134,7 +134,7 @@ function sameSnapshot(label, a, b) {
 async function rowCounts(db) {
   const out = {};
   for (const table of ['contents', 'questions', 'sessions', 'profiles', 'accounts', 'invites', 'answers', 'room_archives',
-    'answer_reviews', 'media']) {
+    'answer_reviews', 'media', 'classes', 'class_students', 'attendance', ...RECORD_TABLES, 'projector_links']) {
     const exists = await db.query(`select to_regclass('public.${table}') is not null as ok`);
     if (!exists.rows[0].ok) continue;
     out[table] = Number((await db.query(`select count(*)::int as n from public.${table}`)).rows[0].n);
@@ -150,7 +150,8 @@ const COLUMNS_THE_SERVER_USES = {
   questions: ['id', 'content_id', 'topic', 'text', 'kind', 'options', 'answer_idx', 'bloom', 'status',
     'source', 'payload', 'created_at', 'model', 'source_ref', 'checks', 'created_by', 'approved_by', 'approved_at'],
   sessions: ['id', 'code', 'content_id', 'title', 'status', 'owner_id', 'started_at', 'closed_at', 'paused_at',
-    'mastery_goal', 'reattempts', 'redemption', 'question_ids'],
+    'mastery_goal', 'reattempts', 'redemption', 'question_ids', 'class_id', 'mode', 'adapt', 'start_level',
+    'questions_per_student', 'time_per_question'],
   profiles: ['id', 'session_id', 'roll_no', 'name', 'levels', 'working_level', 'reason', 'history', 'served_id',
     'served_at', 'served_why', 'served_tries', 'served_last', 'integrity', 'account_id', 'updated_at'],
   answers: ['id', 'session_id', 'answer_key', 'roll_no', 'account_id', 'question_id', 'content_id', 'topic', 'bloom',
@@ -166,7 +167,28 @@ const COLUMNS_THE_SERVER_USES = {
   answer_reviews: ['id', 'answer_id', 'session_id', 'decision', 'correct', 'score', 'note', 'reviewed_by',
     'reviewed_at'],
   media: ['id', 'owner_id', 'content_id', 'mime', 'bytes', 'sha256', 'data', 'alt', 'created_at'],
+  classes: ['id', 'owner_id', 'course_name', 'section', 'term_label', 'created_at', 'updated_at'],
+  class_students: ['id', 'class_id', 'roll_no', 'name', 'added_at', 'removed_at'],
+  attendance: ['id', 'session_id', 'class_student_id', 'status', 'source', 'marked_at', 'marked_by'],
+  observations: ['id', 'session_id', 'class_id', 'class_student_id', 'roll_no', 'day', 'kind', 'note', 'observed_by',
+    'observed_at'],
+  wheel_rounds: ['id', 'session_id', 'round', 'present_only', 'no_repeat', 'started_at', 'started_by'],
+  wheel_picks: ['id', 'session_id', 'round', 'pick_order', 'roll_no', 'class_student_id', 'pool_size', 'present_only',
+    'no_repeat', 'ask', 'question_id', 'status', 'picked_at', 'picked_by', 'status_at', 'status_by'],
+  hand_tallies: ['id', 'session_id', 'seq', 'question_id', 'question_text', 'option_labels', 'counts', 'revealed',
+    'correct_option', 'created_at', 'created_by', 'updated_at'],
+  room_activities: ['id', 'session_id', 'seq', 'kind', 'outcome', 'groups', 'tally_id', 'created_at', 'created_by',
+    'updated_at'],
+  insight_actions: ['id', 'session_id', 'flag_id', 'action', 'note', 'acted_by', 'acted_at'],
+  projector_links: ['id', 'session_id', 'token_hash', 'created_at', 'created_by', 'revoked_at', 'revoked_by'],
 };
+
+// The teacher-record tables (0017), every one a room's record.
+const RECORD_TABLES = ['observations', 'wheel_rounds', 'wheel_picks', 'hand_tallies', 'room_activities', 'insight_actions'];
+
+// A roster holds a roll number and a name, and nothing that identifies a person
+// any further. A column added to it should be a decision, so this says so.
+const ROSTER_COLUMNS = ['id', 'class_id', 'roll_no', 'name', 'added_at', 'removed_at'];
 
 // The fields outAccount() in services/accounts.js reads off an accounts_below() row.
 const OUT_ACCOUNT_FIELDS = ['id', 'role', 'full_name', 'email', 'code', 'department', 'reports_to', 'roll_no',
@@ -839,6 +861,439 @@ section('a question set per room (0015)');
   }
 }
 
+section('classes, rosters and attendance (0016)');
+
+{
+  {
+    const { rows } = await db.query(
+      `select column_name from information_schema.columns where table_schema = 'public' and table_name = 'class_students'`);
+    const extra = rows.map((r) => r.column_name).filter((c) => !ROSTER_COLUMNS.includes(c));
+    check('a roster row holds a roll number and a name and nothing else about the student', extra.length === 0,
+      `extra columns: ${extra.join(', ')}`);
+  }
+
+  // The insert createClass() sends (server/src/repo/supabaseRepo.js).
+  const insertClass = (c = {}) => db.query(
+    `insert into public.classes (owner_id, course_name, section, term_label) values ($1, $2, $3, $4) returning *`,
+    [given(c, 'ownerId', PROF), given(c, 'courseName', 'Computer Networks'), given(c, 'section', 'TY-CSF B'),
+      given(c, 'termLabel', 'Sem V')]);
+  const [cls] = (await accepts('a professor\'s class: course, section and term', () => insertClass())) ?? [];
+  check('it reads back as written, with its times filled',
+    cls?.course_name === 'Computer Networks' && cls?.section === 'TY-CSF B' && cls?.term_label === 'Sem V'
+    && cls?.owner_id === PROF && cls?.created_at instanceof Date && cls?.updated_at instanceof Date);
+  const [keyClass] = (await accepts('a class from the shared key: no owner and no term', () =>
+    db.query(`insert into public.classes (course_name, section) values ('Discrete Maths', 'FY A') returning *`))) ?? [];
+  check('no term reads back as an empty term', keyClass?.term_label === '' && keyClass?.owner_id === null);
+  await rejects('a class with a blank course name', () => insertClass({ courseName: '   ' }),
+    { code: '23514', match: /classes_course_name_check/ });
+  await rejects('a class with no section', () => insertClass({ section: null }), { code: '23502' });
+  await rejects('a section over 40 characters', () => insertClass({ section: 'x'.repeat(41) }),
+    { code: '23514', match: /classes_section_check/ });
+  await rejects('a class owned by an account that does not exist', () => insertClass({ ownerId: randomUUID() }),
+    { code: '23503' });
+
+  // The insert addClassStudents() sends: ON CONFLICT DO NOTHING, so only the
+  // rows added come back.
+  const addStudents = (classId, rows) => db.query(
+    `insert into public.class_students (class_id, roll_no, name)
+     select $1, r.roll, r.name from jsonb_to_recordset($2::jsonb) as r(roll text, name text)
+     on conflict (class_id, roll_no) do nothing returning *`,
+    [classId, JSON.stringify(rows)]);
+  const added = await accepts('a roster of three, roll numbers in the room\'s form', () => addStudents(cls?.id, [
+    { roll: '21CS01', name: 'Asha Rao' }, { roll: '21CS 02', name: 'Bilal Khan' }, { roll: '2/A', name: 'Chitra' }]));
+  check('all three are on it and none is removed',
+    added?.length === 3 && added.every((r) => r.removed_at === null && r.added_at instanceof Date));
+  {
+    const again = await addStudents(cls?.id, [{ roll: '21CS01', name: 'Someone else' }, { roll: '21CS04', name: 'Dev' }]);
+    check('a roll number the class already holds is skipped, and the rest are added',
+      again.rows.length === 1 && again.rows[0].roll_no === '21CS04');
+  }
+  const SHAPE = { code: '23514', match: /class_students_roll_check/ };
+  await rejects('a roll number in lower case (not the room\'s form)', () => addStudents(cls?.id, [{ roll: '21cs05', name: 'E' }]), SHAPE);
+  await rejects('a roll number with two spaces', () => addStudents(cls?.id, [{ roll: '21CS  05', name: 'E' }]), SHAPE);
+  await rejects('a roll number with a trailing space', () => addStudents(cls?.id, [{ roll: '21CS05 ', name: 'E' }]), SHAPE);
+  await rejects('a roll number no phone can send', () => addStudents(cls?.id, [{ roll: '21CS#05', name: 'E' }]), SHAPE);
+  await rejects('a roll number over 24 characters', () => addStudents(cls?.id, [{ roll: 'A'.repeat(25), name: 'E' }]), SHAPE);
+  await rejects('a blank name', () => addStudents(cls?.id, [{ roll: '21CS05', name: '  ' }]),
+    { code: '23514', match: /class_students_name_check/ });
+  await rejects('a name over 80 characters', () => addStudents(cls?.id, [{ roll: '21CS05', name: 'n'.repeat(81) }]),
+    { code: '23514', match: /class_students_name_check/ });
+  await accepts('the same roll number in another class', () => addStudents(keyClass?.id, [{ roll: '21CS01', name: 'Asha Rao' }]));
+
+  const roster = Object.fromEntries((await db.query('select id, roll_no from public.class_students where class_id = $1',
+    [cls?.id])).rows.map((r) => [r.roll_no, r.id]));
+  const [otherClassStudent] = (await db.query('select id from public.class_students where class_id = $1', [keyClass?.id])).rows;
+
+  // The insert createSession() sends, with the class.
+  const openRoom = (code, classId) => db.query(
+    `insert into public.sessions (code, content_id, title, status, owner_id, mastery_goal, reattempts, redemption, question_ids, class_id)
+     values ($1, $2, 'Class room', 'open', $3, 0.80, 0, false, null, $4) returning *`,
+    [code, content?.id, PROF, classId]);
+  const [classRoom] = (await accepts('a room opened for the class', () => openRoom('CLS001', cls?.id))) ?? [];
+  check('its class reads back', classRoom?.class_id === cls?.id);
+  const [plainRoom] = (await accepts('a room opened for no class', () => openRoom('CLS002', null))) ?? [];
+  check('reads back with no class', plainRoom?.class_id === null);
+  await rejects('a room for a class that does not exist', () => openRoom('CLS003', randomUUID()), { code: '23503' });
+
+  // What the server writes: a join (addAttendanceIfAbsent), and the teacher's
+  // marks (saveAttendance, an upsert that replaces).
+  const join = (sessionId, studentId) => db.query(
+    `insert into public.attendance (session_id, class_student_id, status, source, marked_at, marked_by)
+     values ($1, $2, 'present', 'joined', now(), null)
+     on conflict (session_id, class_student_id) do nothing returning *`, [sessionId, studentId]);
+  const teacherMark = (sessionId, studentId, status, markedBy = PROF) => db.query(
+    `insert into public.attendance (session_id, class_student_id, status, source, marked_at, marked_by)
+     values ($1, $2, $3, 'teacher', now(), $4)
+     on conflict (session_id, class_student_id) do update set
+       status = excluded.status, source = excluded.source, marked_at = excluded.marked_at, marked_by = excluded.marked_by
+     returning *`, [sessionId, studentId, status, markedBy]);
+  const markOf = async (studentId, sessionId = classRoom?.id) => (await db.query(
+    'select status, source, marked_by from public.attendance where session_id = $1 and class_student_id = $2',
+    [sessionId, studentId])).rows;
+
+  const [joined] = (await accepts('a phone joins with a roster roll number: present, by the join', () =>
+    join(classRoom?.id, roster['21CS01']))) ?? [];
+  check('the join reads back present, marked by nobody, with a time',
+    joined?.status === 'present' && joined?.source === 'joined' && joined?.marked_by === null && joined?.marked_at instanceof Date);
+  await accepts('the professor marks a student absent', () => teacherMark(classRoom?.id, roster['21CS 02'], 'absent'));
+  await accepts('late, from the shared key: no marker', () => teacherMark(classRoom?.id, roster['2/A'], 'late', null));
+  await accepts('the professor overrides the join', () => teacherMark(classRoom?.id, roster['21CS01'], 'absent'));
+  {
+    const rows = await markOf(roster['21CS01']);
+    check('one mark per student: the professor\'s replaced the join',
+      rows.length === 1 && rows[0].status === 'absent' && rows[0].source === 'teacher' && rows[0].marked_by === PROF);
+    const later = await join(classRoom?.id, roster['21CS01']);
+    const after = await markOf(roster['21CS01']);
+    check('a later join adds nothing and leaves the professor\'s mark',
+      later.rows.length === 0 && after.length === 1 && after[0].status === 'absent' && after[0].source === 'teacher');
+  }
+  const insertMark = (m) => db.query(
+    `insert into public.attendance (session_id, class_student_id, status, source, marked_by) values ($1, $2, $3, $4, $5)`,
+    [given(m, 'sessionId', classRoom?.id), given(m, 'studentId', roster['21CS04']), given(m, 'status', 'present'),
+      given(m, 'source', 'teacher'), given(m, 'markedBy', null)]);
+  await rejects('a status outside present/absent/late', () => insertMark({ status: 'excused' }),
+    { code: '23514', match: /attendance_status_check/ });
+  await rejects('a source outside joined/teacher', () => insertMark({ source: 'phone' }),
+    { code: '23514', match: /attendance_source_check/ });
+  await rejects('a join that marks someone absent', () => insertMark({ source: 'joined', status: 'absent' }),
+    { code: '23514', match: /attendance_joined_check/ });
+  await rejects('a join with a marker', () => insertMark({ source: 'joined', markedBy: PROF }),
+    { code: '23514', match: /attendance_joined_check/ });
+  await rejects('a mark for a student of another class', () => insertMark({ studentId: otherClassStudent?.id }),
+    { code: '23503', match: /not on the roster of the class/ });
+  await rejects('a mark in a room opened for no class', () => insertMark({ sessionId: plainRoom?.id }),
+    { code: '23503', match: /not on the roster of the class/ });
+  await rejects('a second row for one student in one room', () => insertMark({ studentId: roster['21CS 02'] }),
+    { code: '23505', match: /attendance_session_student_key/ });
+  await rejects('moving a mark onto another class\'s student', () =>
+    db.query('update public.attendance set class_student_id = $1 where session_id = $2 and class_student_id = $3',
+      [otherClassStudent?.id, classRoom?.id, roster['2/A']]),
+  { code: '23503', match: /not on the roster of the class/ });
+
+  // Removed, never deleted.
+  await accepts('removing a student from the roster', () =>
+    db.query('update public.class_students set removed_at = now() where id = $1', [roster['21CS 02']]));
+  check('their attendance stays', (await markOf(roster['21CS 02']))[0]?.status === 'absent');
+  await rejects('deleting a roster row that has attendance', () =>
+    db.query('delete from public.class_students where id = $1', [roster['21CS 02']]), { code: '23503' });
+
+  // A marker who later leaves: the mark stays, unattributed.
+  const MARKER = randomUUID();
+  await db.query('insert into auth.users (id) values ($1)', [MARKER]);
+  await insertAccount({ id: MARKER, role: 'professor', fullName: 'Marker', email: 'mark@example.test', code: 'BL-MK0001', reportsTo: HOD });
+  await teacherMark(classRoom?.id, roster['21CS04'], 'present', MARKER);
+  await db.query('delete from auth.users where id = $1', [MARKER]);
+  {
+    const rows = await markOf(roster['21CS04']);
+    check('deleting the marker\'s account keeps the mark, with marked_by cleared',
+      rows.length === 1 && rows[0].status === 'present' && rows[0].marked_by === null);
+  }
+
+  // A room's attendance goes with it; the server archives it first.
+  await db.query('delete from public.sessions where id = $1', [classRoom?.id]);
+  {
+    const marks = await db.query('select count(*)::int as n from public.attendance where session_id = $1', [classRoom?.id]);
+    const kept = await db.query('select count(*)::int as n from public.class_students where class_id = $1', [cls?.id]);
+    check('deleting a room deletes its attendance and leaves the roster', marks.rows[0].n === 0 && kept.rows[0].n === 4);
+  }
+
+  const idx = await db.query(`select indexname from pg_indexes where schemaname = 'public'
+                              and indexname in ('classes_owner_idx', 'sessions_class_idx', 'attendance_student_idx', 'attendance_marker_idx')`);
+  check('classes by owner, rooms by class and marks by student and by marker have their indexes', idx.rows.length === 4,
+    idx.rows.map((r) => r.indexname).join(', '));
+}
+
+section('teacher records (0017)');
+
+{
+  const KEPT = { code: '23001' };
+  // A class of two, another class, a room for the class and a room for none.
+  const [cls] = (await db.query(
+    `insert into public.classes (owner_id, course_name, section) values ($1, 'Data Structures', 'SY-CS A') returning *`, [PROF])).rows;
+  const [otherCls] = (await db.query(
+    `insert into public.classes (owner_id, course_name, section) values ($1, 'Signals', 'SY-EC A') returning *`, [PROF])).rows;
+  const [asha, bilal] = (await db.query(
+    `insert into public.class_students (class_id, roll_no, name) values ($1, '01', 'Asha'), ($1, '02', 'Bilal') returning *`,
+    [cls.id])).rows;
+  const [outsider] = (await db.query(
+    `insert into public.class_students (class_id, roll_no, name) values ($1, '01', 'Gita') returning *`, [otherCls.id])).rows;
+  const openRoom = (code, classId) => db.query(
+    `insert into public.sessions (code, content_id, owner_id, class_id) values ($1, $2, $3, $4) returning *`,
+    [code, content?.id, PROF, classId]);
+  const [room] = (await openRoom('REC001', cls.id)).rows;
+  const [plain] = (await openRoom('REC002', null)).rows;
+  const [question] = (await db.query(
+    `insert into public.questions (content_id, text, options, answer_idx, bloom)
+     values ($1, 'Which traversal visits the root first?', '["Inorder","Preorder","Postorder","Level-order"]', 1, 'remember')
+     returning *`, [content?.id])).rows;
+
+  // -- observations: the insert addObservation() sends. Append-only.
+  const observe = (o = {}) => db.query(
+    `insert into public.observations (session_id, class_id, class_student_id, roll_no, day, kind, note, observed_by, observed_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, now()) returning *`,
+    [given(o, 'sessionId', room.id), given(o, 'classId', cls.id), given(o, 'studentId', asha.id), given(o, 'rollNo', '01'),
+      given(o, 'day', '2026-11-19'), given(o, 'kind', 'understood'), given(o, 'note', ''), given(o, 'by', PROF)]);
+  const [first] = (await accepts('a professor marks a roster student understood', () => observe({ note: 'Explained inorder well' }))) ?? [];
+  check('it reads back with its day as a date and its note', first?.kind === 'understood' && first?.note === 'Explained inorder well'
+    && first?.day instanceof Date && first?.observed_by === PROF);
+  await accepts('the day\'s mark replaced: a second row, the first kept', () => observe({ kind: 'revision' }));
+  await accepts('the mark cleared: a row with no kind and no note', () => observe({ kind: null }));
+  await accepts('in a room opened for no class: keyed by the room and a roll number', () =>
+    observe({ sessionId: plain.id, classId: null, studentId: null, rollNo: 'GUEST9', kind: 'participated' }));
+  {
+    const { rows } = await db.query(
+      `select kind from public.observations where class_student_id = $1 and day = '2026-11-19' order by observed_at, id`, [asha.id]);
+    check('all three events of the day are kept, in order', JSON.stringify(rows.map((r) => r.kind)) === '["understood","revision",null]');
+  }
+  await rejects('a kind outside the four', () => observe({ kind: 'excellent' }), { code: '23514', match: /observations_kind_check/ });
+  await rejects('a note over 280 characters', () => observe({ note: 'n'.repeat(281) }), { code: '23514', match: /observations_note_check/ });
+  await rejects('a cleared mark with a note', () => observe({ kind: null, note: 'gone' }), { code: '23514', match: /observations_note_check/ });
+  await rejects('a class with no roster student', () => observe({ studentId: null }), { code: '23514', match: /observations_subject_check/ });
+  await rejects('a roll number not in the room\'s form', () => observe({ rollNo: '01 ' }), { code: '23514', match: /observations_roll_check/ });
+  await rejects('a student of another class', () => observe({ studentId: outsider.id }), { code: '23503', match: /not on the roster/ });
+  await rejects('a class that is not the room\'s', () => observe({ sessionId: plain.id }), { code: '23503', match: /another class or none/ });
+  await rejects('no class in a room opened for one', () => observe({ classId: null, studentId: null }), { code: '23503' });
+  await rejects('editing an observation', () =>
+    db.query(`update public.observations set kind = 'support' where id = $1`, [first?.id]), KEPT);
+  await rejects('deleting one', () => db.query('delete from public.observations where id = $1', [first?.id]), KEPT);
+
+  // -- the wheel: the inserts addWheelRound() and addWheelPick() send.
+  const startRound = (r = {}) => db.query(
+    `insert into public.wheel_rounds (session_id, round, present_only, no_repeat, started_by) values ($1, $2, $3, $4, $5) returning *`,
+    [given(r, 'sessionId', room.id), given(r, 'round', 1), given(r, 'presentOnly', true), given(r, 'noRepeat', true), PROF]);
+  const [round1] = (await accepts('round 1 of the wheel, present only, no repeats', () => startRound())) ?? [];
+  await rejects('round 1 again', () => startRound(), { code: '23505', match: /wheel_rounds_session_round_key/ });
+  await rejects('round 0', () => startRound({ round: 0 }), { code: '23514' });
+  const draw = (p = {}) => db.query(
+    `insert into public.wheel_picks (session_id, round, pick_order, roll_no, class_student_id, pool_size, present_only, no_repeat,
+       ask, question_id, status, picked_at, picked_by)
+     values ($1, $2, $3, $4, $5, $6, true, true, $7, $8, 'pending', now(), $9) returning *`,
+    [given(p, 'sessionId', room.id), given(p, 'round', 1), given(p, 'order', 1), given(p, 'rollNo', '01'),
+      given(p, 'studentId', asha.id), given(p, 'poolSize', 2), given(p, 'ask', 'bank'), given(p, 'questionId', null), PROF]);
+  const [pick] = (await accepts('a pick: who, the round, the place and the pool', () => draw())) ?? [];
+  check('it starts pending, asked from the bank', pick?.status === 'pending' && pick?.ask === 'bank' && pick?.status_at === null);
+  await accepts('a phone off the roster picked: no roster student', () => draw({ order: 2, rollNo: 'GUEST9', studentId: null, poolSize: 1 }));
+  await rejects('a second pick in the same place', () => draw({ rollNo: '02', studentId: bilal.id }),
+    { code: '23505', match: /wheel_picks_session_round_order_key/ });
+  await rejects('a pick in a round that was never started', () => draw({ round: 2 }), { code: '23503' });
+  await rejects('a pick from an empty wheel', () => draw({ order: 3, poolSize: 0 }), { code: '23514', match: /wheel_picks_order_check/ });
+  await rejects('an ask outside bank, diagram and demo', () => draw({ order: 3, ask: 'quiz' }), { code: '23514', match: /wheel_picks_ask_check/ });
+  await rejects('a bank question on a diagram ask', () => draw({ order: 3, ask: 'diagram', questionId: question.id }),
+    { code: '23514', match: /wheel_picks_ask_check/ });
+  await rejects('a student of another class', () => draw({ order: 3, studentId: outsider.id }), { code: '23503', match: /not on the roster/ });
+  await accepts('the pick filled in: a bank question, answered', () => db.query(
+    `update public.wheel_picks set question_id = $1, status = 'answered', status_at = now(), status_by = $2 where id = $3`,
+    [question.id, PROF, pick?.id]));
+  await rejects('a response with no time', () =>
+    db.query(`update public.wheel_picks set status = 'help', status_at = null where id = $1`, [pick?.id]),
+  { code: '23514', match: /wheel_picks_status_check/ });
+  await rejects('a status outside the five', () =>
+    db.query(`update public.wheel_picks set status = 'late', status_at = now() where id = $1`, [pick?.id]),
+  { code: '23514', match: /wheel_picks_status_check/ });
+  await rejects('changing who was drawn', () =>
+    db.query(`update public.wheel_picks set roll_no = '02', class_student_id = $1 where id = $2`, [bilal.id, pick?.id]), KEPT);
+  await rejects('changing how many were on the wheel', () =>
+    db.query('update public.wheel_picks set pool_size = 9 where id = $1', [pick?.id]), KEPT);
+  await rejects('deleting a pick', () => db.query('delete from public.wheel_picks where id = $1', [pick?.id]), KEPT);
+  await accepts('the round\'s settings changed', () =>
+    db.query('update public.wheel_rounds set present_only = false where id = $1', [round1?.id]));
+  await rejects('the round\'s number changed', () =>
+    db.query('update public.wheel_rounds set round = 5 where id = $1', [round1?.id]), KEPT);
+  await rejects('a round deleted ("start new round" never deletes)', () =>
+    db.query('delete from public.wheel_rounds where id = $1', [round1?.id]), KEPT);
+
+  // -- the raised-hands tally: the insert addTally() sends.
+  const tally = (t = {}) => db.query(
+    `insert into public.hand_tallies (session_id, seq, question_id, question_text, option_labels, counts, revealed, correct_option, created_by)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning *`,
+    [given(t, 'sessionId', room.id), given(t, 'seq', 1), given(t, 'questionId', question.id),
+      given(t, 'text', 'Which traversal visits the root first?'), given(t, 'labels', ['Inorder', 'Preorder', 'Postorder', 'Level-order']),
+      given(t, 'counts', [3, 18, 6, 2]), given(t, 'revealed', false), given(t, 'correct', 1), PROF]);
+  const [hands] = (await accepts('a question asked aloud with four options and its hands', () => tally())) ?? [];
+  check('its counts and labels read back as four of each',
+    JSON.stringify(hands?.counts) === '[3,18,6,2]' && hands?.option_labels?.length === 4 && hands?.correct_option === 1);
+  await rejects('a count below 0', () => tally({ seq: 2, counts: [0, -1, 0, 0] }), { code: '23514', match: /hand_tallies_counts_check/ });
+  await rejects('three options', () => tally({ seq: 2, counts: [1, 2, 3] }), { code: '23514', match: /hand_tallies_counts_check/ });
+  await rejects('a missing count', () => tally({ seq: 2, counts: [1, null, 3, 4] }), { code: '23514', match: /hand_tallies_counts_check/ });
+  await rejects('five labels', () => tally({ seq: 2, labels: ['a', 'b', 'c', 'd', 'e'] }), { code: '23514', match: /hand_tallies_labels_check/ });
+  await rejects('a correct option past D', () => tally({ seq: 2, correct: 4 }), { code: '23514', match: /hand_tallies_correct_check/ });
+  await rejects('no question text', () => tally({ seq: 2, text: '  ' }), { code: '23514', match: /hand_tallies_text_check/ });
+  await rejects('a second tally in the same place', () => tally(), { code: '23505', match: /hand_tallies_session_seq_key/ });
+  await accepts('a hand more, and the answer revealed', () =>
+    db.query(`update public.hand_tallies set counts = '{3,19,6,2}', revealed = true, updated_at = now() where id = $1`, [hands?.id]));
+  await rejects('a count taken below 0 by an update', () =>
+    db.query(`update public.hand_tallies set counts = '{3,19,-1,2}' where id = $1`, [hands?.id]), { code: '23514' });
+  await rejects('its place in the room changed', () => db.query('update public.hand_tallies set seq = 7 where id = $1', [hands?.id]), KEPT);
+  await rejects('a tally deleted', () => db.query('delete from public.hand_tallies where id = $1', [hands?.id]), KEPT);
+
+  // -- activities: the insert addActivity() sends.
+  const activity = (a = {}) => db.query(
+    `insert into public.room_activities (session_id, seq, kind, outcome, groups, tally_id, created_by)
+     values ($1, $2, $3, $4, $5, $6, $7) returning *`,
+    [given(a, 'sessionId', room.id), given(a, 'seq', 1), given(a, 'kind', 'group'), given(a, 'outcome', ''),
+      JSON.stringify(given(a, 'groups', [])), given(a, 'tallyId', null), PROF]);
+  const [challenge] = (await accepts('a group challenge records groups, not students', () => activity({
+    outcome: 'Most benches found the postorder', groups: [{ label: 'Bench 3', gotIt: 'yes' }, { label: 'Bench 4', gotIt: 'partly' }] }))) ?? [];
+  check('its groups read back', challenge?.groups?.[0]?.label === 'Bench 3' && challenge?.groups?.length === 2);
+  await accepts('a quick check pointing at its tally', () => activity({ seq: 2, kind: 'check', tallyId: hands?.id }));
+  await rejects('groups on a think-and-explain', () => activity({ seq: 3, kind: 'think', groups: [{ label: 'A', gotIt: 'yes' }] }),
+    { code: '23514', match: /room_activities_groups_check/ });
+  await rejects('a tally on anything but a quick check', () => activity({ seq: 3, kind: 'think', tallyId: hands?.id }),
+    { code: '23514', match: /room_activities_tally_check/ });
+  await rejects('an activity outside the five', () => activity({ seq: 3, kind: 'quiz' }), { code: '23514', match: /room_activities_kind_check/ });
+  await rejects('an outcome over 280 characters', () => activity({ seq: 3, kind: 'real', outcome: 'o'.repeat(281) }),
+    { code: '23514', match: /room_activities_outcome_check/ });
+  await rejects('a tally from another room', () => activity({ sessionId: plain.id, seq: 1, kind: 'check', tallyId: hands?.id }),
+    { code: '23503', match: /was not asked in room/ });
+  await accepts('an outcome written after the class', () =>
+    db.query(`update public.room_activities set outcome = 'Bench 4 got it on a second go', updated_at = now() where id = $1`, [challenge?.id]));
+  await rejects('an activity deleted', () => db.query('delete from public.room_activities where id = $1', [challenge?.id]), KEPT);
+
+  // -- insight actions: append-only.
+  const act = (a = {}) => db.query(
+    `insert into public.insight_actions (session_id, flag_id, action, note, acted_by) values ($1, $2, $3, $4, $5) returning *`,
+    [given(a, 'sessionId', room.id), given(a, 'flagId', 'focus:analyse'), given(a, 'action', 'acted'),
+      given(a, 'note', 'Asked two Analyse questions aloud'), PROF]);
+  const [done] = (await accepts('a professor acted on a flag', () => act())) ?? [];
+  await accepts('and dismissed another', () => act({ flagId: 'support:02', action: 'dismissed', note: '' }));
+  await rejects('an action outside dismissed and acted', () => act({ action: 'snoozed' }), { code: '23514', match: /insight_actions_action_check/ });
+  await rejects('a blank flag', () => act({ flagId: ' ' }), { code: '23514', match: /insight_actions_flag_check/ });
+  await rejects('a flag with a control character', () => act({ flagId: 'a\nb' }), { code: '23514', match: /insight_actions_flag_check/ });
+  await rejects('editing an action', () => db.query(`update public.insight_actions set action = 'dismissed' where id = $1`, [done?.id]), KEPT);
+  await rejects('deleting one', () => db.query('delete from public.insight_actions where id = $1', [done?.id]), KEPT);
+
+  // A marker who later leaves: their records stay, unattributed (ON DELETE SET NULL passes the guard).
+  const MARKER = randomUUID();
+  await db.query('insert into auth.users (id) values ($1)', [MARKER]);
+  await insertAccount({ id: MARKER, role: 'professor', fullName: 'Marker', email: 'mark2@example.test', code: 'BL-MK0002', reportsTo: HOD });
+  await observe({ studentId: bilal.id, rollNo: '02', by: MARKER });
+  await db.query('insert into public.insight_actions (session_id, flag_id, action, acted_by) values ($1, $2, $3, $4)',
+    [room.id, 'by-marker', 'acted', MARKER]);
+  await accepts('deleting the marker\'s sign-in', () => db.query('delete from auth.users where id = $1', [MARKER]));
+  {
+    const o = await db.query('select observed_by from public.observations where class_student_id = $1', [bilal.id]);
+    const a = await db.query(`select acted_by from public.insight_actions where flag_id = 'by-marker'`);
+    check('their observation and action stay, with the marker cleared',
+      o.rows.length === 1 && o.rows[0].observed_by === null && a.rows.length === 1 && a.rows[0].acted_by === null);
+  }
+  await rejects('a roster student with records cannot be deleted (removed, never deleted)', () =>
+    db.query('delete from public.class_students where id = $1', [asha.id]), { code: '23503' });
+  {
+    await db.query('delete from public.questions where id = $1', [question.id]);
+    const t = await db.query('select question_id, question_text from public.hand_tallies where id = $1', [hands?.id]);
+    const p = await db.query('select question_id, status from public.wheel_picks where id = $1', [pick?.id]);
+    check('deleting a question keeps the tally\'s text and the pick, with the question cleared',
+      t.rows[0]?.question_id === null && t.rows[0]?.question_text === 'Which traversal visits the root first?'
+      && p.rows[0]?.question_id === null && p.rows[0]?.status === 'answered');
+  }
+
+  // A room's records go with it; the server archives them first.
+  await accepts('deleting the class room', () => db.query('delete from public.sessions where id = $1', [room.id]));
+  await accepts('deleting the room with no class', () => db.query('delete from public.sessions where id = $1', [plain.id]));
+  {
+    const left = [];
+    for (const table of RECORD_TABLES) {
+      const { rows } = await db.query(`select count(*)::int as n from public.${table} where session_id = any($1)`, [[room.id, plain.id]]);
+      if (rows[0].n) left.push(`${table}: ${rows[0].n}`);
+    }
+    const kept = await db.query('select count(*)::int as n from public.class_students where class_id = $1', [cls.id]);
+    check('deleting a room deletes every record of it and leaves the roster', left.length === 0 && kept.rows[0].n === 2, left.join(', '));
+  }
+
+  const idx = await db.query(`select count(*)::int as n from pg_indexes where schemaname = 'public' and tablename = any($1)`, [RECORD_TABLES]);
+  // 6 primary keys, 4 unique places, and 15 for rooms, students, days, questions and markers.
+  check('the record tables carry their indexes (unique places, rooms, students, days, markers)', idx.rows[0].n === 25, `${idx.rows[0].n} indexes`);
+}
+
+section('room modes, the waiting room and projector links (0018)');
+
+{
+  const KEPT = { code: '23001' };
+  const [cls] = (await db.query(
+    `insert into public.classes (owner_id, course_name, section) values ($1, 'Networks', 'TY-CS B') returning *`, [PROF])).rows;
+  // The columns createSession() writes, and only those this room sets.
+  const room = (code, cols = {}) => {
+    const all = { code, content_id: content?.id, owner_id: PROF, ...cols };
+    const names = Object.keys(all);
+    return db.query(`insert into public.sessions (${names.join(', ')}) values (${names.map((_, i) => `$${i + 1}`).join(', ')}) returning *`,
+      Object.values(all));
+  };
+
+  // -- the settings: today's behaviour unless a room asks for something else.
+  const [plain] = (await accepts('a room opened as every room was', () => room('MOD001'))) ?? [];
+  check('it runs on Student devices, adapting, from Understand, with no cap and no time per question',
+    plain?.mode === 'devices' && plain?.adapt === true && plain?.start_level === 'understand'
+    && plain?.questions_per_student === null && plain?.time_per_question === null, JSON.stringify(plain));
+  const [set] = (await accepts('a mixed room that does not adapt, from Apply, 12 questions of 60 seconds', () =>
+    room('MOD002', { mode: 'mixed', adapt: false, start_level: 'apply', questions_per_student: 12, time_per_question: 60 }))) ?? [];
+  check('its settings read back', set?.mode === 'mixed' && set?.adapt === false && set?.start_level === 'apply'
+    && set?.questions_per_student === 12 && set?.time_per_question === 60);
+  await accepts('a teacher-led room for a class', () => room('MOD003', { mode: 'teacher-led', class_id: cls.id }));
+  await rejects('a teacher-led room with no class', () => room('MOD004', { mode: 'teacher-led' }), { code: '23514' });
+  await rejects('a mode outside devices, teacher-led and mixed', () => room('MOD005', { mode: 'lecture' }), { code: '23514' });
+  await rejects('a start level spelt analyze', () => room('MOD006', { start_level: 'analyze' }), { code: '23514' });
+  await rejects('a cap of 0 questions', () => room('MOD007', { questions_per_student: 0 }), { code: '23514' });
+  await rejects('a cap of 501 questions', () => room('MOD008', { questions_per_student: 501 }), { code: '23514' });
+  await rejects('5 seconds per question', () => room('MOD009', { time_per_question: 5 }), { code: '23514' });
+  await rejects('601 seconds per question', () => room('MOD010', { time_per_question: 601 }), { code: '23514' });
+
+  // -- the waiting room: a status of its own, started into 'open'.
+  const [waiting] = (await accepts('a room opened with a waiting room', () => room('MOD011', { status: 'waiting' }))) ?? [];
+  check('its status is waiting', waiting?.status === 'waiting');
+  await accepts('starting it', () => db.query(`update public.sessions set status = 'open' where id = $1`, [waiting?.id]));
+  await rejects('a status outside waiting, open, paused and closed', () =>
+    db.query(`update public.sessions set status = 'started' where id = $1`, [waiting?.id]), { code: '23514' });
+
+  // -- projector links: only the hash of the token is kept.
+  const hash = (c) => c.repeat(64);
+  const link = (sessionId, tokenHash, by = PROF) => db.query(
+    'insert into public.projector_links (session_id, token_hash, created_by) values ($1, $2, $3) returning *',
+    [sessionId, tokenHash, by]);
+  const [made] = (await accepts('a projector link for a room', () => link(set?.id, hash('a')))) ?? [];
+  check('it is not revoked', made?.revoked_at === null && made?.created_by === PROF);
+  await rejects('a second link with the same token', () => link(plain?.id, hash('a')), { code: '23505', match: /projector_links_token_hash_key/ });
+  await rejects('a token hash that is not 64 lower-case hex characters', () => link(set?.id, 'A'.repeat(64)), { code: '23514' });
+  await rejects('revoked_by without revoked_at', () =>
+    db.query('update public.projector_links set revoked_by = $1 where id = $2', [PROF, made?.id]), { code: '23514' });
+  await accepts('revoking it', () =>
+    db.query('update public.projector_links set revoked_at = now(), revoked_by = $1 where id = $2', [PROF, made?.id]));
+  await rejects('changing its token', () =>
+    db.query('update public.projector_links set token_hash = $1 where id = $2', [hash('b'), made?.id]), KEPT);
+  await rejects('moving it to another room', () =>
+    db.query('update public.projector_links set session_id = $1 where id = $2', [plain?.id, made?.id]), KEPT);
+  await rejects('deleting it on its own', () => db.query('delete from public.projector_links where id = $1', [made?.id]), KEPT);
+  await accepts('a second link for the same room', () => link(set?.id, hash('c')));
+  await accepts('deleting the room', () => db.query('delete from public.sessions where id = $1', [set?.id]));
+  {
+    const { rows } = await db.query('select count(*)::int as n from public.projector_links where session_id = $1', [set?.id]);
+    check('deleting a room deletes its projector links', rows[0].n === 0);
+  }
+  const idx = await db.query(`select count(*)::int as n from pg_indexes where schemaname = 'public' and tablename = 'projector_links'`);
+  // The primary key, the token, and the room, creator and revoker.
+  check('projector_links carries its indexes (token, room, creator, revoker)', idx.rows[0].n === 5, `${idx.rows[0].n} indexes`);
+  await db.query('delete from public.sessions where code like $1', ['MOD0%']);
+}
+
 section('deleting');
 
 await rejects('deleting the sign-in of a professor who owns material and students', () =>
@@ -852,6 +1307,14 @@ await rejects('deleting the sign-in of a professor who owns material and student
 // ---------------------------------------------------- re-run over real data --
 
 section('re-run over a database holding data');
+
+// A room in its waiting room while the whole set is re-run: 0005 re-adds the
+// status check, and must not narrow it below what 0018 allows.
+{
+  const content = (await db.query('select id from public.contents limit 1')).rows[0];
+  await accepts('a room left waiting before the re-run', () =>
+    db.query(`insert into public.sessions (code, content_id, status) values ('WAIT01', $1, 'waiting')`, [content?.id]));
+}
 
 const beforeRerun = await rowCounts(db);
 const shapeBeforeRerun = await snapshot(db);
@@ -908,6 +1371,17 @@ section('upgrading a v1 database that already holds data');
       s.rows[0]?.owner_id === null && Number(s.rows[0]?.mastery_goal) === 0.8 && s.rows[0]?.reattempts === 0
       && s.rows[0]?.redemption === false && s.rows[0]?.status === 'closed');
     check('v1 rooms get no question set: they go on serving the whole bank (0015)', s.rows[0]?.question_ids === null);
+    const c16 = await old.query('select class_id from public.sessions');
+    check('v1 rooms are opened for no class (0016)', c16.rows.length === 1 && c16.rows[0]?.class_id === null);
+    const m18 = await old.query(
+      'select mode, adapt, start_level, questions_per_student, time_per_question, status from public.sessions');
+    check('v1 rooms run as they ran: Student devices, adapting, from Understand, no cap, no time, status kept (0018)',
+      m18.rows[0]?.mode === 'devices' && m18.rows[0]?.adapt === true && m18.rows[0]?.start_level === 'understand'
+      && m18.rows[0]?.questions_per_student === null && m18.rows[0]?.time_per_question === null
+      && m18.rows[0]?.status === 'closed', JSON.stringify(m18.rows[0]));
+    const records = await rowCounts(old);
+    check('v1 rooms have no teacher records, and the tables are there to take them (0017)',
+      RECORD_TABLES.every((t) => records[t] === 0), JSON.stringify(records));
     const p = await old.query('select integrity, served_tries, account_id, history from public.profiles');
     check('v1 profiles keep their history and get empty integrity, no pin, no account',
       JSON.stringify(p.rows[0]?.integrity) === '[]' && p.rows[0]?.served_tries === 0 && p.rows[0]?.account_id === null

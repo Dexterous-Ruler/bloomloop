@@ -28,8 +28,12 @@ const ownerKeyOf = (req) => String(req.viewer?.id ?? 'legacy-teacher-key');
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
-/** A room students are in: open, or paused with its phones still connected (as services/media.js). */
-const RUNNING = ['open', 'paused'];
+/**
+ * A room students are in: open, paused with its phones still connected, or
+ * waiting to start with its phones joined (as services/media.js). Replacing the
+ * bank under a waiting room would leave it nothing to serve when it starts.
+ */
+const RUNNING = ['waiting', 'open', 'paused'];
 
 const cleanTopics = (topics, content) =>
   (Array.isArray(topics) ? topics : (content?.topics ?? []))

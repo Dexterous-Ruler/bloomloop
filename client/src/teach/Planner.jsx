@@ -45,7 +45,7 @@ function readKindSets(res) {
   return Object.keys(out).length > 0 ? out : null;
 }
 
-export default function Planner({ contentId, topics, existing, draft, held, onDraft, onPlan, onRun, onConfirm, onDismissHeld }) {
+export default function Planner({ contentId, topics, existing, drafts = 0, draft, held, onDraft, onPlan, onRun, onConfirm, onDismissHeld }) {
   const [presets, setPresets] = useState(null);
   const [presetsError, setPresetsError] = useState('');
   const [confirmAbove, setConfirmAbove] = useState(CONFIRM_ABOVE);
@@ -108,17 +108,19 @@ export default function Planner({ contentId, topics, existing, draft, held, onDr
     preset: 'custom',
   });
 
+  // Left unset, a level is spread over all of its kinds (the server's default
+  // mix). Picking one asks the whole level that one way.
   function setKind(level, kind) {
-    if (!(kindSets?.[level] ?? []).includes(kind)) return;
     const next = { ...kinds };
-    // The first in a set is the default, and the default is not sent.
-    if (kind === kindSets[level][0]) delete next[level]; else next[level] = kind;
+    if (!kind) delete next[level];
+    else if ((kindSets?.[level] ?? []).includes(kind)) next[level] = kind;
+    else return;
     onDraft({ kinds: next });
   }
 
   const plan = preview?.plan ?? null;
   const banked = preview?.existing ?? existing;
-  const after = mode === 'append' ? banked + (plan?.total ?? 0) : (plan?.total ?? 0);
+  const waiting = preview?.existingDrafts ?? drafts;
   const covered = plan ? plan.topics.filter((t) => t.count > 0).length : 0;
   const kindRows = plan ? Object.entries(plan.perKind).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]) : [];
   const markAt = Math.min(1, Math.max(0, (confirmAbove - MIN_TOTAL) / (HARD_CAP - MIN_TOTAL)));
@@ -185,7 +187,7 @@ export default function Planner({ contentId, topics, existing, draft, held, onDr
             {LEVELS.map((l) => {
               const w = Number(activeMix?.[l]) || 0;
               const set = kindSets?.[l] ?? [];
-              const chosen = kinds[l] ?? set[0];
+              const chosen = kinds[l] ?? '';
               return (
                 <div className="tc-chan" key={l}>
                   <Level level={l} className="tc-chan-name" />
@@ -205,10 +207,11 @@ export default function Planner({ contentId, topics, existing, draft, held, onDr
                       aria-label={`How ${LABEL[l]} is asked`}
                       onChange={(e) => setKind(l, e.target.value)}
                     >
+                      <option value="">A mix of {set.length}</option>
                       {set.map((k) => <option key={k} value={k}>{KIND_LABEL[k] ?? k}</option>)}
                     </select>
                   ) : (
-                    <span className="tc-chan-only">{KIND_LABEL[chosen] ?? chosen ?? ''}</span>
+                    <span className="tc-chan-only">{KIND_LABEL[set[0]] ?? set[0] ?? ''}</span>
                   )}
                 </div>
               );
@@ -217,7 +220,8 @@ export default function Planner({ contentId, topics, existing, draft, held, onDr
 
           <p className="hint">
             Weights are relative, not counts. Each level offers only its own interactions, because the level decides how a
-            question is asked: swapping within a level changes the surface, not the thinking it demands.
+            question is asked. Left as a mix, a level is spread over all of its interactions; picking one asks the whole
+            level that way.
           </p>
         </section>
       </div>
@@ -251,7 +255,7 @@ export default function Planner({ contentId, topics, existing, draft, held, onDr
           </div>
         )}
 
-        {existing > 0 && (
+        {(existing > 0 || waiting > 0) && (
           <div className="stack stack-2">
             <Segmented
               label="What this run does to the existing bank"
@@ -259,7 +263,17 @@ export default function Planner({ contentId, topics, existing, draft, held, onDr
               onChange={(id) => onDraft({ mode: id })}
               options={[{ id: 'replace', label: 'Replace the bank' }, { id: 'append', label: 'Add to it' }]}
             />
-            <p className="hint">{banked} in the bank now, {after} after this run.</p>
+            <p className="hint">
+              {banked} approved{waiting > 0 ? ` and ${waiting} draft${waiting === 1 ? '' : 's'}` : ''} now.
+              {' '}This run writes {plan?.total ?? '—'} new draft{plan?.total === 1 ? '' : 's'}
+              {mode === 'replace' ? ', and the bank keeps none of what is there.' : `, so ${banked} stay approved.`}
+            </p>
+            {mode === 'replace' && waiting > 0 && (
+              <Note icon="alert">
+                Replacing deletes the {waiting} draft{waiting === 1 ? '' : 's'} waiting for your review as well. To keep
+                {waiting === 1 ? ' it' : ' them'}, add to the bank instead.
+              </Note>
+            )}
           </div>
         )}
 
@@ -270,7 +284,7 @@ export default function Planner({ contentId, topics, existing, draft, held, onDr
           <Note icon="alert">
             <b>{plan.total} questions is a big run.</b> It takes about {mmss(plan.estimateSeconds)} and spends real model
             quota. {held.mode === 'replace'
-              ? 'Everything already in this bank, discarded questions included, is deleted first.'
+              ? 'Everything already in this bank, drafts and discarded questions included, is deleted first.'
               : `They are added on top of the ${existing} already in this bank.`}
             <div className="cluster" style={{ marginTop: 12 }}>
               <Button variant="accent" size="sm" onClick={onConfirm}>Yes, write {plan.total}</Button>

@@ -1,19 +1,225 @@
 # Changelog
 
 Newest first. Nothing below is deployed. The 18 November entries are committed as
-`b4585a0` on branch `roadmap-phase0-evidence`, and the Phase 1 entries of
-19 November as `05daf56`. The Phase 2 entries of 19 November are uncommitted.
+`b4585a0` on branch `roadmap-phase0-evidence`, the Phase 1 entries of 19 November as
+`05daf56` and the Phase 2 entries as `27559ca`. The Phase 3 entries of 19 November are
+uncommitted.
 
 ## Unreleased: 19 November 2026
 
-Server and database only. No screen uses any of this yet. At the end of Phase 1
+Server and database only; the client is the UI session's (`docs/UI_REBUILD.md`), and
+no screen uses anything from Phase 3. At the end of Phase 1
 every suite was rerun: unit 172/172, live loop 41/41, security 13/13, migrations
 204/204, review 83/83, evidence 37/37, resume and integrity pass, and the
 question-kind round trip had its 5 known failures. After Phase 2 and its review
 fixes, the rerun gave unit 343/343, migrations 270/270, approval gate 73/73, kinds
 43/43, media 67/67, items 49/49, live loop 41/41, security 13/13, review 83/83,
-evidence 37/37, resume and integrity pass, and the round trip 0 failures. Nothing
-was run against Supabase, Mongo, Gemini or with a signed-in account.
+evidence 37/37, resume and integrity pass, and the round trip 0 failures. After
+Phase 3 and its review fixes, the rerun through the offline runner gave unit
+475/475, migrations 451/451, roster 80/80, records 97/97, modes 101/101, insights
+65/65, and every earlier suite as before. Nothing was run against Supabase, Mongo,
+Gemini or with a real Auth token (the Phase 3 suites answer the Auth calls
+themselves).
+
+### Phase 3: full rerun and docs
+
+No code change. Every suite was run again through the offline runner after the
+Phase 3 review fixes; each number above is what the run printed (`docs/TESTING.md`).
+The new examples in `docs/API.md` were captured from a real server on the in-process
+store with the network settings blanked.
+
+- `docs/API.md`: an index of every new and changed Phase 3 endpoint and socket event,
+  with who may call each, and what phones, teacher screens and the projector receive,
+  with captured examples (the phone's new events and fields, the projector's three
+  events and its 409 on revealing a bank key in a Mixed room, the teacher's grid with
+  `rosterName`, `attendance`, `waiting` and `feed`). Two findings of the Phase 3 review
+  not acted on, and a tally's increment and decrement pushing nothing, added to the
+  open issues. Commit status and the client's status brought up to date.
+- `docs/IMPLEMENTATION_STATUS.md`: one Phase 3 checklist by the roadmap's step 3
+  items, in place of the four per-part lists; a box ticked only where an end-to-end
+  test covers it, every screen unticked, and unticked lines for the phone's row
+  still carrying the band, decision 7's attendance gap, the observations that go with
+  their room, the "AI teaching move", and the absence of leaderboards (checked by
+  reading only). "Absent (by roadmap phase)", the test table (475, 451, 80, 97, 101,
+  65) and the risks updated: migrations `0013` to `0018` before the server, re-running
+  `0005` once a room waits, the band on the phone, state held in one process, a
+  deleted room's teacher channel, the Supabase row cap.
+- `docs/TESTING.md`: the offline runner as the rule, with what it does and what a new
+  script must do; the four Phase 3 scripts' newer checks; the full rerun.
+- `docs/ARCHITECTURE.md`: who is sent what in a room (phones, teacher screens,
+  projectors), the room locks, and the state held in memory.
+- `docs/DATABASE_SCHEMA.md`: the `0005` re-run issue; the server-side text rules on
+  classes, roster names, tallies, groups and flag ids; the roster read's row cap.
+- `docs/PRODUCT_DECISIONS.md`: the defaults gathered for the owner (band cut points
+  and minimum, Absent on the wheel, attendance, the waiting room, projector links,
+  a dismissed card's "evidence changed", the KPI sampling, six levels and level bands
+  side by side while decision 6 is open), with the projector rows brought up to date.
+
+### Phase 3: fixes from the review
+
+Server and docs only (uncommitted); no migration, no repo method and no new
+dependency. Each fix has a check that failed before it. Suites after, all through the
+offline runner: unit 475/475 (8 new), migrations 451/451, modes 101/101 (17 new, 1
+replaced; five runs), records 97/97 (1 new), insights 65/65, roster 80/80, live loop
+41/41, security 13/13, review 83/83, evidence 37/37, resume and integrity 0 failures,
+round trip 0 failures, approval gate 73/73, kinds 43/43, media 67/67, items 49/49.
+
+- **The projector never shows the key of a question a phone may still be served.**
+  `PATCH /:code/projector { revealed: true }` on a bank question, or on a question asked
+  aloud from the bank, is a 409 outside a Teacher-led room. A typed-in question's key
+  may still go up anywhere.
+- **The projector's progress screen** shows counts per level only once 5 students have
+  answered (`levels: null` and `minAnswered: 5` before that): with one phone, the
+  counts were that student's own answers.
+- **A socket connection is a projector or a phone / teacher screen, never both.** The
+  first of `projector:watch`, `student:*`, `teacher:watch` decides, before any await.
+- **One 404 sentence** for a missing code and another professor's room on `GET /grid`,
+  pause, resume, close, delete and the integrity read (`That session was not found.`).
+- **Free text keeps no contact details**: a tally's text and labels, a group's label
+  and a class's course, section and term refuse an email address or a mobile number,
+  as notes did; a flag id must have the insights' shape (`focus:`, `support:`,
+  `participation:`); a roster name with a short date (`12-5-04`) is refused.
+- **First names on the projector stay off after a restart** for a room opened before
+  it, rather than coming back on by themselves.
+- **Projector links work for 12 hours** (`link.expiresAt`); a projector whose link
+  runs out is dropped at the next change of screen.
+- **Start, pause, resume and close take one status lock per room** and read the status
+  again under it; a delete waits it out. A close during a start leaves the room closed
+  (it used to be written back to open, its phones served after `session:closed`); of
+  two starts one is a 409; a start serves only phones told to wait, so none is served
+  twice. Each of these is a 409 while the room is being deleted.
+- **A room opened for no class archives with no `classId` key**, byte for byte as before.
+- **Attendance `fromJoins` is a 409 in a Teacher-led room**, where it marked the whole
+  class absent.
+- **Not fixed, for the owner** (`docs/PRODUCT_DECISIONS.md`): the phone's row and its
+  band sentences (a `CONTRACT.md` conflict), re-running `0005` once a room is waiting
+  (a one-line edit to an applied migration; `supabase/README.md` says how to re-run
+  until then), and a class room's observations going with the room they were typed in.
+
+### Phase 3: live insights, the student card and class analytics
+
+Server only (uncommitted); no migration and no new dependency. One repo method,
+`listSessionsForClass`, in all three repos. Suites after this work, all through the
+offline runner: unit 467/467 (33 new), insights 65/65 (new; seven runs), migrations 451/451 (unchanged: no migration), modes 85, records 96, roster 80, and every other suite unchanged (live loop 41, security 13, review 83, evidence 37, resume and integrity 0 failures, round trip 0 failures, approval gate 73, kinds 43, media 67, items 49).
+
+- **Three accuracy bands** for the live view: Needs support below 0.4 (exactly the
+  engine's below-40% band), Developing, Excelling from 0.6, in one constant
+  (`BAND_CUTS`), from 3 graded answers and null below. A default
+  (`docs/PRODUCT_DECISIONS.md`): the handoff's code cut at 0.62, its own legend at 60%.
+- **`GET /api/session/:code/insights`** (read rule): each student's band and why, the
+  three sort orders (By band, Lowest first, Roll), the Focus, Support and Participation
+  cards (evidence in the text, an action at the end, a flag id built from the
+  evidence), KPI tiles for class accuracy, Needs support and participation with each
+  one's start and change, a per-minute series for sparklines (in memory; lost on a
+  restart), and a Mixed or Teacher-led room's teacher records counted apart (hands
+  raised, answered aloud, observations by kind). Pushed as **`teacher:insights`** to the
+  room's teacher screens only, at most once every 2 seconds per room.
+- **Dismissing a card** is an insight action against its `flagId`; it stays dismissed
+  until its evidence changes (another bottleneck level; a student entering or leaving
+  Needs support; a present student answering for the first time, or a silent one
+  marked present), and an "acted" ends it.
+- **`GET /api/session/:code/students/:roll/card`** (read rule): band, the level being
+  served and the ceiling, accuracy per level with the answers behind it and the
+  class's, the last ten final answers in the professor's view, the next set as the
+  selector itself would serve it (marked as a plan, not the handoff's fixed 3 + 1 + 1),
+  and this room's records about the student. A roster student with no phone has one.
+- **`GET /api/classes/:id/analytics?last=4|8`** (read rule on the class): the class's
+  last rooms with accuracy, participation, attendance, band counts, six levels and
+  decision 6's three level bands side by side, the trend, the histogram pooled per
+  student, and the hardest questions through the item report; every figure with the
+  answers it rests on. Empty lists for a class with no room.
+- Nothing of it reaches a phone or the projector (searched over a whole run in
+  `scripts/insights.mjs`); `buildGridRow` is unchanged.
+
+### Phase 3: room modes, the waiting room and the projector
+
+Server and database only (uncommitted); no new dependency. Migration `0018`. Suites
+after this work, all through the offline runner: unit 434/434 (17 new), migrations
+451/451 (37 new), modes 85/85 (new; five runs), records 96/96, roster 80/80, and every
+other suite unchanged (live loop 41, security 13, review 83, evidence 37, resume and
+integrity 0 failures, round trip 0 failures, approval gate 73, kinds 43, media 67,
+items 49).
+
+- **Room settings** on `POST /api/session`, all optional, today's behaviour by default
+  and returned wherever settings are: `mode` (`devices`, `teacher-led`, `mixed`),
+  `adapt` (off holds every student at the start level; the below-40% ceiling still
+  applies, as the contract requires), `startLevel`, `questionsPerStudent` (then
+  `server:exhausted` with a `reason`) and `timePerQuestion` (sent with each question;
+  a late answer is never refused). Kept in a deleted room's archive when changed.
+- **The waiting room**: `lobby: true` opens a room `waiting`; phones join and get
+  `server:waiting`; `POST /api/session/:code/start` serves every waiting phone and
+  opens the room; the teacher's grid has "N / M present". Every reader of a room's
+  status handles `waiting` (pause and resume refuse it; the image rule and a
+  replacing generate count it as running).
+- **Teacher-led** needs a class; a phone that joins gets `session:teacher-led` and is
+  never served, profiled or marked present; the records routes run the class.
+  **Mixed** works as Student devices; in both, the teacher's grid carries `feed`, the
+  digital answers and the teacher records each labelled, pushed after each record.
+- **The projector**: a link per room (`/api/session/:code/projector/links`), its token
+  stored as a SHA-256, revocable, dead once the room closes; `projector:watch` over the
+  socket, then `projector:state` only. Question (no key until revealed), diagram (an
+  image loadable with no credential, in a waiting room too) and class progress
+  (counts); the wheel's pick as roll number and first name. Every payload passes one
+  whitelist (`toProjector`), and `modes.mjs` walks every projector event of a run
+  against its own copy.
+
+### Phase 3: the teacher-record store
+
+Server and database only (uncommitted); no new dependency. Migration `0017`. Suites
+after this work, all through the offline runner: unit 417/417 (43 new), migrations
+414/414 (88 new), records 96/96 (new), roster 80/80, and every other suite unchanged
+(live loop 41, security 13, review 83, evidence 37, resume and integrity 0 failures,
+round trip 0 failures, approval gate 73, kinds 43, media 67, items 49).
+
+- **Observations** (`GET`, `POST /api/session/:code/observations`;
+  `GET /api/classes/:id/students/:studentId/observations`): Understood,
+  Participated, Needs revision, Needs additional support, with a short note. One per
+  student per class per day, kept as an append-only log so a replaced or cleared mark
+  is never lost.
+- **The wheel** (`/api/session/:code/wheel`, `/draw`, `/rounds`, `/picks/:id`): a fair
+  draw on the server with crypto randomness, stored before any screen spins; present
+  only, no repeats, rounds, "N picked of M"; each pick's ask and response. Absent also
+  marks attendance absent unless told not to. `pickForProjector` for the Modes work.
+- **The raised-hands tally** (`/api/session/:code/tallies`): counts per option that
+  never go below 0, revealed, the correct option, "N of M present responded".
+- **No-device activities** (`/api/session/:code/activities`): the handoff's five; a
+  group challenge records groups, never students.
+- **Insight actions** (`/api/session/:code/insights/actions`): what a professor did
+  about a flag, append-only, for the Insights work.
+- All teacher-only, all working in a class room with no phone joined, none reaching a
+  phone or the projector, none moving a level. A deleted room's archive keeps every
+  record; a delete waits for a record being written.
+
+### Phase 3: the roster, rooms opened for a class, and attendance
+
+Server and database only (uncommitted); no new dependency. Migration `0016`.
+Suites after this work, all through the offline runner: unit 374/374 (31 new),
+migrations 326/326 (56 new), roster 80/80 (new), and every other suite unchanged
+(live loop 41, security 13, review 83, evidence 37, resume and integrity 0 failures,
+round trip 0 failures, approval gate 73, kinds 43, media 67, items 49).
+
+- **Classes and rosters** (`routes/classes.js`, `services/roster.js`, `0016`): a
+  professor's classes (course, section, optional term) with a roster of roll numbers
+  and names, nothing else. Bulk add from a JSON list with each refused row and its
+  reason, and any other field dropped and named; edit, remove (soft, `removed_at`)
+  and restore one student. Ownership as for chapters: an HOD reads, never writes;
+  anyone else gets the same 404 as for nothing.
+- **A room opened for a class**: `POST /api/session` takes `classId` (a class the
+  caller may change, else 404) and returns it; the room list and the archive keep it.
+- **Attendance** (`GET` and `POST /api/session/:code/attendance`): a phone joining
+  with a roster roll number marks the student present, unless the professor has;
+  the professor marks one, many, or "joined present, the rest absent" (hand marks
+  kept); unmarked stays unmarked; "N / M present". Teacher-only. A typed roll number
+  is not proof of identity (decision 7), said in the reply.
+- **The live grid** of a class room carries `rosterName` per row and `attendance`
+  in the payload, on `teacher:grid` and `GET /grid`. Nothing renamed; rooms without
+  a class unchanged; the phone's own row unchanged.
+- **The room archive** keeps `room.classId` and a class room's marks.
+- `ROLL_SHAPE` moved from `sockets/index.js` to `services/roster.js` (same rule), so
+  the roster and the live loop cannot disagree on what a roll number may be.
+- `server/scripts/roster.mjs`: the first suite to run signed-in callers. It answers
+  the server's three Supabase Auth calls in-process from `http://supabase.invalid`
+  and refuses any other request off the machine.
 
 ### Phase 2: full rerun and docs
 

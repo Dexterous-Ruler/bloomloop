@@ -30,6 +30,10 @@ const AREAS = {
   dash: { title: 'Dashboards', line: 'Where a head of department and a professor run things.' },
   insight: { title: 'Insight', line: 'A student’s own results, and analytics for all three roles.' },
   review: { title: 'Review', line: 'Written answers a professor confirms or changes.' },
+  bank: { title: 'Question bank', line: 'Drafts waiting for approval, and the approved bank.' },
+  author: { title: 'Authoring', line: 'Editing and writing questions: the new kinds, passages and images.' },
+  items: { title: 'Item statistics', line: 'How each question did with this class, and the wrong-key flag.' },
+  room: { title: 'Room set-up', line: 'The question set a room serves, and why a room cannot open yet.' },
   auth: { title: 'Auth', line: 'Sign in, sign up and the profile.' },
 };
 

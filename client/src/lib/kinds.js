@@ -41,6 +41,10 @@ export const KIND_TICK = {
   order: 'Order',
   rank: 'Rank',
   open: 'Open',
+  hottext: 'Words',
+  dropdown: 'Gaps',
+  table: 'Table',
+  grid: 'Grid',
 };
 
 /**
@@ -60,6 +64,10 @@ export const KIND_SHAPE = {
   order: 'Three to five items in the correct order. The student sees them shuffled.',
   rank: 'Three to five items in order, and the criterion they are ranked against.',
   open: 'Two to five rubric points, each a few words a real answer would use.',
+  hottext: 'A sentence of 3 to 40 words, what to pick in it, and the words that meet it: at least one, never all.',
+  dropdown: 'Two to four ____ in the text, each with two to five choices and one of them right.',
+  table: 'Two to four columns and two to six rows. Each cell is given or written by the student, and at least one is written.',
+  grid: 'Two to six rows and two to five columns. Tick every pairing that holds: at least one, never all of them.',
 };
 
 /**

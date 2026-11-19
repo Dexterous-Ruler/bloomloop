@@ -130,7 +130,13 @@ function Library({ saved, loaded, currentId, busy, onOpen }) {
                 <span className="tc-lib-main">
                   <b>{c.title}</b>
                   <small>
-                    {[fmtDay(c.createdAt), `${c.topics?.length ?? 0} topics`, c.questionCount ? `${c.questionCount} questions` : 'no questions yet']
+                    {[
+                      fmtDay(c.createdAt),
+                      `${c.topics?.length ?? 0} topics`,
+                      c.questionCount ? `${c.questionCount} approved` : null,
+                      c.draftCount ? `${c.draftCount} draft${c.draftCount === 1 ? '' : 's'} to review` : null,
+                      !c.questionCount && !c.draftCount ? 'no questions yet' : null,
+                    ]
                       .filter(Boolean).join(' · ')}
                   </small>
                 </span>
@@ -161,7 +167,7 @@ function LevelTicks({ mix, peak }) {
   );
 }
 
-export default function Material({ content, selected, bank, hasBank, onContent, onSelected, onNext }) {
+export default function Material({ content, selected, bank, hasBank, drafts = 0, onContent, onSelected, onNext }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -444,7 +450,7 @@ export default function Material({ content, selected, bank, hasBank, onContent, 
               <b>{yieldTotal == null ? '—' : <>{hasBank ? '' : '~'}<Num value={yieldTotal} /></>}</b>
               <span>
                 {hasBank
-                  ? `questions kept, over ${bankTopics} topic${bankTopics === 1 ? '' : 's'}`
+                  ? `questions${drafts > 0 ? `, ${drafts} still drafts,` : ' approved'} over ${bankTopics} topic${bankTopics === 1 ? '' : 's'}`
                   : selected.length === 0
                     ? 'Tick a topic to see what it makes'
                     : `questions from ${selected.length} ticked topic${selected.length === 1 ? '' : 's'}`}
@@ -456,7 +462,9 @@ export default function Material({ content, selected, bank, hasBank, onContent, 
               <Icon name="forward" />
             </Button>
             <p className="tc-yield-note">
-              {hasBank
+              {hasBank && drafts > 0
+                ? 'Drafts reach a room only once you approve them. Review them in the question bank.'
+                : hasBank
                 ? 'Plan another run from the question bank to add to it or replace it.'
                 : 'You set the exact number and the mix of levels on the next step. Nothing is written until then.'}
             </p>

@@ -31,7 +31,8 @@ export default function Projector({ session, content, activeCount, onLive }) {
   const shownUrl = joinUrl.replace(/^https?:\/\//, '');
   const base = shownUrl.slice(0, shownUrl.length - session.code.length);
   // After a mid-class reload the bank has not been fetched again, so the count
-  // the server handed back with the room is the one that is still true.
+  // the server handed back with the room is the one that is still true. For a
+  // room on a picked set it is the set's size, not the bank's.
   const bankCount = session.bankCount ?? activeCount;
   const chapter = session.title || content?.title || 'Live room';
 
@@ -73,7 +74,7 @@ export default function Projector({ session, content, activeCount, onLive }) {
 
       <main className="pj-main">
         <div className="pj-title">
-          <span className="pj-label">Today{bankCount ? ` · ${bankCount} questions` : ''}</span>
+          <span className="pj-label">Today{bankCount ? ` · ${bankCount} question${bankCount === 1 ? '' : 's'}` : ''}</span>
           <h1 className="clip">{chapter}</h1>
         </div>
 

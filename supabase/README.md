@@ -5,7 +5,7 @@ other SQL files to run.
 
 ## Applying
 
-Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0015`).
+Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0018`).
 
 `0013` must be in place before the Phase 2 server is deployed: every generated
 question is saved with columns it adds, and the server's boot probe falls back to
@@ -13,7 +13,18 @@ the in-process store (nothing saved) when they are missing. The same goes for
 `0014`: the probe also checks the `media` table that image uploads are kept in. And
 for `0015`: every room is opened with `sessions.question_ids`, so the probe checks
 that column too. `0015` changes no row; existing rooms keep serving their whole
-approved bank.
+approved bank. And for `0016` (classes, rosters and attendance): every room is
+opened with `sessions.class_id`, and the probe checks it and the three new tables.
+`0016` changes no row; existing rooms are opened for no class and behave as before.
+And for `0017` (the teacher-record store): the probe checks its six tables. `0017`
+changes no row, and from it on the database refuses to edit an observation or an
+insight action, to change who a wheel pick drew, and to delete any teacher record
+except with its room. And for `0018` (room modes, the waiting room and projector
+links): every room is opened with its five new `sessions` columns, so the probe
+checks them and the `projector_links` table. `0018` changes no row; existing rooms
+get the values that reproduce how they ran (Student devices, adapting, from
+Understand, no cap, no time per question), and `sessions.status` now also allows
+`waiting`.
 
 `0011` creates its index only if no two accounts in one department hold the same
 roll number once trimmed, single-spaced and upper-cased. If some do, it raises a
@@ -48,6 +59,10 @@ narrows a type. On a database that already has a table or column, its `create` /
 `add column` is skipped; constraints are dropped by name and added again; functions
 and triggers are replaced. So after pulling new migrations, run the whole set again
 rather than working out which files are new.
+
+`0005` re-adds `sessions_status_check`, and it lists `'waiting'` (added by `0018`)
+as well, so a re-run never narrows the check below what a later file allows. The
+migration test re-runs the set with a room left waiting.
 
 The set needs Supabase's `auth.users` table (accounts and invites point at it). On
 plain Postgres, create `auth.users (id uuid primary key)` first.

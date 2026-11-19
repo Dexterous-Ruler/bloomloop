@@ -19,6 +19,34 @@ export function createMemoryRepo() {
   const archives = new Map(); // key: _id; one per sessionId
   const reviews = new Map(); // key: _id; append-only, insertion order is review order
   const media = new Map(); // key: _id -> { rec, data }; the bytes apart, since clone() would mangle a Buffer
+  const classes = new Map(); // key: _id
+  const classStudents = new Map(); // key: _id; never deleted, only removed (removedAt)
+  const attendance = new Map(); // key: `${sessionId}:${classStudentId}`, one mark per student per room
+  // Teacher records (0017). Observations and insight actions are append-only
+  // lists, in the order written; the rest are keyed by _id.
+  const observations = [];
+  const wheelRounds = new Map();
+  const wheelPicks = new Map();
+  const tallies = new Map();
+  const activities = new Map();
+  const insightActions = [];
+  const projectorLinks = new Map(); // key: _id (0018); only the token's hash is kept
+
+  // Unique on (classId, rollNo), as the Postgres constraint and the Mongo index are.
+  const rollHeld = (classId, rollNo, exceptId = null) => [...classStudents.values()]
+    .some((s) => s.classId === String(classId) && s.rollNo === rollNo && s._id !== exceptId);
+
+  // A row whose place another row of the room already holds is a 409, as the
+  // unique constraints on (session_id, round), (session_id, round, pick_order)
+  // and (session_id, seq) make it in Postgres.
+  const taken = (what) => Object.assign(new Error(`That ${what} was taken by another request. Nothing was changed.`), { status: 409 });
+  const ofRoom = (map, sessionId) => [...map.values()].filter((r) => r.sessionId === String(sessionId));
+  const update = (map, id, patch, keys) => {
+    const rec = map.get(String(id));
+    if (!rec) return null;
+    for (const k of keys) if (patch[k] !== undefined) rec[k] = clone(patch[k]);
+    return clone(rec);
+  };
 
   return {
     kind: 'memory',
@@ -115,6 +143,15 @@ export function createMemoryRepo() {
         // The room's question set (0015); null serves the whole approved bank,
         // as the Postgres column and the Mongoose path default to.
         questionIds: null,
+        // The class the room was opened for (0016); null for none.
+        classId: null,
+        // How the room runs (0018), defaulting as the Postgres columns do to how
+        // every room ran before: phones, adapting, from Understand, no cap or time.
+        mode: 'devices',
+        adapt: true,
+        startLevel: 'understand',
+        questionsPerStudent: null,
+        timePerQuestion: null,
         ...doc,
         contentId: String(doc.contentId),
       };
@@ -155,6 +192,15 @@ export function createMemoryRepo() {
       for (const [rid, review] of reviews) {
         if (review.sessionId === key) reviews.delete(rid);
       }
+      for (const [k, mark] of attendance) {
+        if (mark.sessionId === key) attendance.delete(k);
+      }
+      for (const list of [observations, insightActions]) {
+        for (let i = list.length - 1; i >= 0; i -= 1) if (list[i].sessionId === key) list.splice(i, 1);
+      }
+      for (const map of [wheelRounds, wheelPicks, tallies, activities, projectorLinks]) {
+        for (const [id, rec] of map) if (rec.sessionId === key) map.delete(id);
+      }
       return sessions.delete(key);
     },
 
@@ -166,6 +212,13 @@ export function createMemoryRepo() {
     async listSessionsForContent(contentId) {
       return clone([...sessions.values()]
         .filter((s) => s.contentId === String(contentId))
+        .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)));
+    },
+
+    /** Every room opened for one class (Phase 3 class analytics), newest first, whatever its status. */
+    async listSessionsForClass(classId) {
+      return clone([...sessions.values()]
+        .filter((s) => s.classId != null && String(s.classId) === String(classId))
         .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)));
     },
 
@@ -349,6 +402,276 @@ export function createMemoryRepo() {
       const held = media.get(String(id));
       if (!held) return null;
       return withData ? { ...clone(held.rec), data: Buffer.from(held.data) } : clone(held.rec);
+    },
+
+    // -- classes and rosters (0016) --
+    async createClass(doc) {
+      const _id = oid();
+      const now = new Date().toISOString();
+      const rec = { _id, ownerId: null, termLabel: '', createdAt: now, updatedAt: now, ...clone(doc) };
+      classes.set(_id, rec);
+      return clone(rec);
+    },
+
+    async getClass(id) {
+      return clone(classes.get(String(id)) ?? null);
+    },
+
+    /** Newest first. Who may see which is the route's business (ownership.js). */
+    async listClasses() {
+      return clone([...classes.values()].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
+    },
+
+    async updateClass(id, patch) {
+      const rec = classes.get(String(id));
+      if (!rec) return null;
+      for (const k of ['courseName', 'section', 'termLabel']) if (patch[k] !== undefined) rec[k] = patch[k];
+      rec.updatedAt = new Date().toISOString();
+      return clone(rec);
+    },
+
+    /** The whole roster, removed students included, in roll-number order. */
+    async listClassStudents(classId) {
+      return clone([...classStudents.values()]
+        .filter((s) => s.classId === String(classId))
+        .sort((a, b) => String(a.rollNo).localeCompare(String(b.rollNo), undefined, { numeric: true })));
+    },
+
+    async getClassStudent(id) {
+      return clone(classStudents.get(String(id)) ?? null);
+    },
+
+    /**
+     * Add roster rows. A roll number the class already holds is skipped, as
+     * Postgres's ON CONFLICT DO NOTHING skips it: only the rows actually added
+     * come back, so a caller can tell a row that lost a race from one that won.
+     */
+    async addClassStudents(classId, docs) {
+      const made = [];
+      for (const d of docs) {
+        if (rollHeld(classId, d.rollNo)) continue;
+        const _id = oid();
+        const rec = { _id, addedAt: new Date().toISOString(), removedAt: null, ...clone(d), classId: String(classId) };
+        classStudents.set(_id, rec);
+        made.push(rec);
+      }
+      return clone(made);
+    },
+
+    /** Name, roll number and removedAt only. A roll number another row holds is a 409. */
+    async updateClassStudent(id, patch) {
+      const rec = classStudents.get(String(id));
+      if (!rec) return null;
+      if (patch.rollNo !== undefined && rollHeld(rec.classId, patch.rollNo, rec._id)) {
+        throw Object.assign(new Error(`Roll number ${patch.rollNo} is already on this class's roster.`), { status: 409 });
+      }
+      for (const k of ['name', 'rollNo', 'removedAt']) if (patch[k] !== undefined) rec[k] = patch[k];
+      return clone(rec);
+    },
+
+    // -- attendance (0016): one mark per (room, roster student) --
+    async listAttendance(sessionId) {
+      return clone([...attendance.values()].filter((m) => m.sessionId === String(sessionId)));
+    },
+
+    /** Upsert: each mark replaces whatever that student had in that room. */
+    async saveAttendance(docs) {
+      const out = [];
+      for (const d of docs) {
+        const k = `${d.sessionId}:${d.classStudentId}`;
+        const rec = {
+          _id: attendance.get(k)?._id ?? oid(),
+          markedBy: null,
+          markedAt: new Date().toISOString(),
+          ...clone(d),
+          sessionId: String(d.sessionId),
+          classStudentId: String(d.classStudentId),
+        };
+        attendance.set(k, rec);
+        out.push(rec);
+      }
+      return clone(out);
+    },
+
+    /** Insert unless that student already has a mark in that room, which is kept. */
+    async addAttendanceIfAbsent(doc) {
+      const k = `${doc.sessionId}:${doc.classStudentId}`;
+      if (attendance.has(k)) return { created: false };
+      await this.saveAttendance([doc]);
+      return { created: true };
+    },
+
+    // -- teacher records (0017; services/records.js, services/wheel.js) --
+
+    /** Append-only: a set or a clear (kind null) is a new row; nothing is updated. */
+    async addObservation(doc) {
+      const rec = {
+        _id: oid(),
+        classId: null,
+        classStudentId: null,
+        kind: null,
+        note: '',
+        observedBy: null,
+        observedAt: new Date().toISOString(),
+        ...clone(doc),
+        sessionId: String(doc.sessionId),
+      };
+      observations.push(rec);
+      return clone(rec);
+    },
+
+    /** Oldest first. Filters are ANDed; at least one is expected. */
+    async listObservations({ sessionId, classId, classStudentId, day } = {}) {
+      return clone(observations
+        .filter((o) => (!sessionId || o.sessionId === String(sessionId))
+          && (!classId || o.classId === String(classId))
+          && (!classStudentId || o.classStudentId === String(classStudentId))
+          && (!day || o.day === day))
+        // Stable, so rows written in one millisecond keep the order they were written in.
+        .sort((a, b) => (a.observedAt < b.observedAt ? -1 : a.observedAt > b.observedAt ? 1 : 0)));
+    },
+
+    /** Round order. */
+    async listWheelRounds(sessionId) {
+      return clone(ofRoom(wheelRounds, sessionId).sort((a, b) => a.round - b.round));
+    },
+
+    async addWheelRound(doc) {
+      if (ofRoom(wheelRounds, doc.sessionId).some((r) => r.round === doc.round)) throw taken('round');
+      const rec = { _id: oid(), startedBy: null, startedAt: new Date().toISOString(), ...clone(doc), sessionId: String(doc.sessionId) };
+      wheelRounds.set(rec._id, rec);
+      return clone(rec);
+    },
+
+    /** The two settings only: a round's number and start are written once. */
+    async updateWheelRound(id, patch) {
+      return update(wheelRounds, id, patch, ['presentOnly', 'noRepeat']);
+    },
+
+    /** Round, then place in the round. */
+    async listWheelPicks(sessionId) {
+      return clone(ofRoom(wheelPicks, sessionId).sort((a, b) => a.round - b.round || a.order - b.order));
+    },
+
+    async addWheelPick(doc) {
+      if (ofRoom(wheelPicks, doc.sessionId).some((p) => p.round === doc.round && p.order === doc.order)) throw taken('place on the wheel');
+      const rec = {
+        _id: oid(),
+        classStudentId: null,
+        ask: 'bank',
+        questionId: null,
+        status: 'pending',
+        pickedBy: null,
+        pickedAt: new Date().toISOString(),
+        statusAt: null,
+        statusBy: null,
+        ...clone(doc),
+        sessionId: String(doc.sessionId),
+      };
+      wheelPicks.set(rec._id, rec);
+      return clone(rec);
+    },
+
+    /** What was asked and how they responded. Who was drawn, and from what, is written once. */
+    async updateWheelPick(id, patch) {
+      return update(wheelPicks, id, patch, ['ask', 'questionId', 'status', 'statusAt', 'statusBy']);
+    },
+
+    /** The order they were asked in. */
+    async listTallies(sessionId) {
+      return clone(ofRoom(tallies, sessionId).sort((a, b) => a.seq - b.seq));
+    },
+
+    async addTally(doc) {
+      if (ofRoom(tallies, doc.sessionId).some((t) => t.seq === doc.seq)) throw taken('place in the room\'s questions');
+      const now = new Date().toISOString();
+      const rec = {
+        _id: oid(),
+        questionId: null,
+        labels: ['', '', '', ''],
+        counts: [0, 0, 0, 0],
+        revealed: false,
+        correct: null,
+        createdBy: null,
+        createdAt: now,
+        updatedAt: now,
+        ...clone(doc),
+        sessionId: String(doc.sessionId),
+      };
+      tallies.set(rec._id, rec);
+      return clone(rec);
+    },
+
+    async updateTally(id, patch) {
+      return update(tallies, id, patch, ['questionId', 'text', 'labels', 'counts', 'revealed', 'correct', 'updatedAt']);
+    },
+
+    async listActivities(sessionId) {
+      return clone(ofRoom(activities, sessionId).sort((a, b) => a.seq - b.seq));
+    },
+
+    async addActivity(doc) {
+      if (ofRoom(activities, doc.sessionId).some((a) => a.seq === doc.seq)) throw taken('place in the room\'s activities');
+      const now = new Date().toISOString();
+      const rec = {
+        _id: oid(),
+        outcome: '',
+        groups: [],
+        tallyId: null,
+        createdBy: null,
+        createdAt: now,
+        updatedAt: now,
+        ...clone(doc),
+        sessionId: String(doc.sessionId),
+      };
+      activities.set(rec._id, rec);
+      return clone(rec);
+    },
+
+    async updateActivity(id, patch) {
+      return update(activities, id, patch, ['outcome', 'groups', 'tallyId', 'updatedAt']);
+    },
+
+    /** Append-only: what a professor did about a flag. */
+    async addInsightAction(doc) {
+      const rec = { _id: oid(), note: '', actedBy: null, actedAt: new Date().toISOString(), ...clone(doc), sessionId: String(doc.sessionId) };
+      insightActions.push(rec);
+      return clone(rec);
+    },
+
+    /** Oldest first. */
+    async listInsightActions(sessionId) {
+      return clone(insightActions
+        .filter((a) => a.sessionId === String(sessionId))
+        .sort((a, b) => (a.actedAt < b.actedAt ? -1 : a.actedAt > b.actedAt ? 1 : 0)));
+    },
+
+    // -- projector links (0018) --
+    // One token per link: a second link with the same hash is refused, as
+    // projector_links_token_hash_key refuses it in Postgres.
+    async addProjectorLink(doc) {
+      if ([...projectorLinks.values()].some((l) => l.tokenHash === doc.tokenHash)) throw taken('projector token');
+      const rec = {
+        _id: oid(), createdAt: new Date().toISOString(), createdBy: null, revokedAt: null, revokedBy: null,
+        ...clone(doc), sessionId: String(doc.sessionId),
+      };
+      projectorLinks.set(rec._id, rec);
+      return clone(rec);
+    },
+
+    async getProjectorLinkByHash(tokenHash) {
+      return clone([...projectorLinks.values()].find((l) => l.tokenHash === String(tokenHash)) ?? null);
+    },
+
+    /** Oldest first. */
+    async listProjectorLinks(sessionId) {
+      return clone(ofRoom(projectorLinks, sessionId)
+        .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0)));
+    },
+
+    /** Only revokedAt and revokedBy ever change, as 0018's guard allows. */
+    async revokeProjectorLink(id, { revokedAt, revokedBy = null }) {
+      return update(projectorLinks, id, { revokedAt, revokedBy }, ['revokedAt', 'revokedBy']);
     },
   };
 }

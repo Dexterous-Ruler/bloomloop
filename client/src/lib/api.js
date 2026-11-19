@@ -120,7 +120,40 @@ export const api = {
   getBank: (contentId) => req(`/bank/${contentId}`),
   discardQuestion: (id) => json('PATCH')(`/bank/question/${id}`, { status: 'discarded' }),
   restoreQuestion: (id) => json('PATCH')(`/bank/question/${id}`, { status: 'active' }),
-  regenerateQuestion: (id) => json('POST')(`/bank/question/${id}/regenerate`),
+  // With no direction: a same-level replacement, written as a draft, and the
+  // old one discarded (`warnings` says so when the old one was in use).
+  // 'harder' / 'easier': a new draft one level up or down; the original stays.
+  regenerateQuestion: (id, direction) =>
+    json('POST')(`/bank/question/${id}/regenerate`, direction ? { direction } : undefined),
+
+  // Phase 2: the approval gate. Generated questions arrive as drafts, which no
+  // room serves. None of these takes a body; each answers with the failed
+  // checks so an approval never hides a flag.
+  approveQuestion: (id) => json('POST')(`/bank/question/${encodeURIComponent(id)}/approve`),
+  rejectQuestion: (id) => json('POST')(`/bank/question/${encodeURIComponent(id)}/reject`),
+  approveAll: (contentId) => json('POST')(`/bank/${encodeURIComponent(contentId)}/approve-all`),
+  // Write your own: created active, model null. A 400 carries the validator's sentence.
+  createQuestion: (contentId, body) => json('POST')(`/bank/${encodeURIComponent(contentId)}/questions`, body),
+  // One stimulus (or null to take it off) on many questions at once.
+  bulkStimulus: (ids, stimulus) => json('POST')('/bank/bulk', { ids, action: 'stimulus', stimulus }),
+  // Item statistics across every room run on this chapter.
+  bankStats: (contentId) => req(`/bank/${encodeURIComponent(contentId)}/stats`),
+  // An image for a stimulus: PNG, JPEG or WebP, at most 500 KB, with alt text.
+  uploadMedia: (file, contentId, alt) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('contentId', contentId);
+    fd.append('alt', alt);
+    return req('/media', { method: 'POST', body: fd });
+  },
+  // An <img> sends no bearer token, so a console preview fetches the bytes with
+  // this browser's credentials and shows them from a blob url. The caller
+  // revokes the url when it is done with it.
+  mediaBlobUrl: async (url) => {
+    const path = String(url).replace(/^(https?:\/\/[^/]+)?\/api/, '');
+    const res = await send(path);
+    return URL.createObjectURL(await res.blob());
+  },
 
   // The editor. `patch` is the whole question as the teacher left it — text,
   // level, kind and that kind's payload — because the server validates the
@@ -136,7 +169,11 @@ export const api = {
   // F4
   // settings: { masteryGoal, reattempts, redemption }; the server validates
   // each one and applies its own default to any left out.
+  // `questionIds` (optional): approved ids of this chapter; the room serves
+  // only those, fixed once it opens. Left out, it serves the whole approved bank.
   createSession: (contentId, title, settings = {}) => json('POST')('/session', { contentId, title, ...settings }),
+  // Item statistics for one room.
+  roomItems: (code) => req(`/session/${encodeURIComponent(code)}/items`),
   getSession: (code) => req(`/session/${code}`),
   getGrid: (code) => req(`/session/${code}/grid`),
   closeSession: (code) => json('POST')(`/session/${code}/close`),

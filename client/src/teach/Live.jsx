@@ -19,7 +19,9 @@
  * because a quiet class and a dead page otherwise look identical.
  *
  * Two reads are not the socket's: the stored record. The heatmap card turns
- * to topics, counted by the server from final, marked answers; the inspector
+ * to topics or to questions (the item report: how each question did, and
+ * which keys are worth a look), counted by the server from final, marked
+ * answers; the inspector
  * lists the selected student's every attempt with the question as their phone
  * showed it. Both are read over HTTP, and read again only when the roster says
  * there is something new to read.
@@ -34,6 +36,7 @@ import { LABEL, LEVELS, pct } from '../lib/bloom.js';
 import { KIND_LABEL } from '../lib/kinds.js';
 import { Avatar, Button, Dialog, Field, Fig, Icon, Level, Menu, Note, Num, Panel, Segmented, Spark } from '../ui/index.jsx';
 import Draw from './Draw.jsx';
+import { ItemList, Thresholds } from './ItemStats.jsx';
 import useRoomFeed from './useRoomFeed.js';
 
 const ZERO = { seen: 0, correct: 0 };
@@ -166,9 +169,10 @@ function Radar({ mine = {}, theirs = {}, goal, current, who }) {
 /* ------------------------------------------------- the stored record */
 
 const PAGE = 8;
-// The topic report is read at most this often while the class is answering.
+// The topic and question reports are read at most this often while the class is answering.
 const TOPICS_EVERY = 10_000;
 const NO_TOPICS = { status: 'idle', data: null, error: '', at: 0 };
+const NO_ITEMS = NO_TOPICS;
 
 const list = (v) => (Array.isArray(v) ? v : []);
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
@@ -572,7 +576,67 @@ function TopicGrid({ topics, onRetry, closed }) {
   );
 }
 
-export default function Live({ code, title, closed, onClosed, onProjector }) {
+/**
+ * The item report for this room: one row per question, flagged first, each
+ * opening into what the class chose. Read over HTTP like the topics.
+ */
+function RoomQuestions({ items, onRetry, closed, onCheckKey }) {
+  const { status, data, error, at } = items;
+  if (status === 'idle' || (status === 'loading' && !data)) {
+    return (
+      <div className="it-skel lc-qskel" aria-busy="true" aria-label="Counting how each question did">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="it-skel-row"><span className="skel" /><span className="skel" /><span className="skel" /></div>
+        ))}
+      </div>
+    );
+  }
+  if (status === 'error' && !data) {
+    return (
+      <div className="lc-none" role="alert">
+        <Icon name="alert" />
+        <div>
+          <b>Could not read how the questions did.</b> {error}
+          <div style={{ marginTop: 8 }}><Button size="sm" icon="refresh" onClick={onRetry}>Try again</Button></div>
+        </div>
+      </div>
+    );
+  }
+
+  const all = list(data?.items);
+  const answers = Number(data?.counted?.answers) || 0;
+  const read = at ? ` Read at ${CLOCK.format(at)}.` : '';
+
+  if (!all.length) {
+    return (
+      <div className="lc-tempty">
+        <p>
+          <b>No marked answers yet.</b>{' '}
+          {closed
+            ? 'The room closed before a final answer was marked.'
+            : 'A question gets a row as soon as a final answer to it is marked. Retries and polls are not counted.'}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="lc-heat-scroll lc-qscroll" role="region" aria-label="Questions in this room" tabIndex={0}>
+        <ItemList items={all} thresholds={data.thresholds} onCheckKey={onCheckKey} />
+      </div>
+      <div className="lc-legend">
+        <Thresholds thresholds={data.thresholds} className="lc-legend-note" />
+        <p className="lc-legend-note">
+          From {answers} final, marked {plural(answers, 'answer')}: a wrong try followed by a retry and a poll are left out.{read}
+          {status === 'error' && ` The last read failed (${error}); this is the one before it.`}
+        </p>
+      </div>
+    </>
+  );
+}
+
+export default function Live({ code, title, closed, onClosed, onProjector, onOpenQuestion }) {
   const { rows, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus } = useRoomFeed(code);
   const paused = roomStatus === 'paused';
   const [toggling, setToggling] = useState(false);
@@ -584,6 +648,10 @@ export default function Live({ code, title, closed, onClosed, onProjector }) {
   // The heatmap card's two readings: the roster, or the room by topic.
   const [lens, setLens] = useState('students');
   const [topics, setTopics] = useState(NO_TOPICS);
+  // The Questions side: the room's item report, and the question whose key
+  // the teacher asked about.
+  const [items, setItems] = useState(NO_ITEMS);
+  const [keyFor, setKeyFor] = useState(null);
   const [filter, setFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [classroom, setClassroom] = useState(null);
@@ -732,6 +800,38 @@ export default function Live({ code, title, closed, onClosed, onProjector }) {
     const timer = setTimeout(loadTopics, Math.max(0, topicsFor.current.at + TOPICS_EVERY - Date.now()));
     return () => clearTimeout(timer);
   }, [lens, topicsSig, loadTopics]);
+
+  // ---- the question report ---------------------------------------------------
+  // The same rhythm as the topics: read when the Questions side is opened,
+  // again when the roster moves, never more often than TOPICS_EVERY, and once
+  // more when the room closes.
+  const itemsReq = useRef(0);
+  const itemsFor = useRef({ sig: null, at: 0 });
+  const itemsSig = `${topicsSig}:${closed ? 'closed' : 'open'}`;
+  const itemsSigNow = useRef(itemsSig);
+  itemsSigNow.current = itemsSig;
+  const loadItems = useCallback(() => {
+    const id = ++itemsReq.current;
+    itemsFor.current = { sig: itemsSigNow.current, at: Date.now() };
+    setItems((t) => ({ ...t, status: t.data ? t.status : 'loading' }));
+    api.roomItems(code).then(
+      (data) => { if (itemsReq.current === id) setItems({ status: 'ready', data, error: '', at: Date.now() }); },
+      (err) => { if (itemsReq.current === id) setItems((t) => ({ ...t, status: 'error', error: err.message })); },
+    );
+  }, [code]);
+  useEffect(() => {
+    itemsReq.current += 1;
+    itemsFor.current = { sig: null, at: 0 };
+    setItems(NO_ITEMS);
+    setKeyFor(null);
+  }, [code]);
+  useEffect(() => {
+    if (lens !== 'questions' || itemsFor.current.sig === itemsSig) return undefined;
+    const timer = setTimeout(loadItems, Math.max(0, itemsFor.current.at + TOPICS_EVERY - Date.now()));
+    return () => clearTimeout(timer);
+  }, [lens, itemsSig, loadItems]);
+  const itemList = list(items.data?.items);
+  const keyItem = keyFor ? itemList.find((i) => i.questionId === keyFor) ?? null : null;
 
   // ---- what this page has seen happen --------------------------------------
   // The hook's own empty start is not a delivery, so it is told apart by
@@ -1113,8 +1213,15 @@ export default function Live({ code, title, closed, onClosed, onProjector }) {
             <section className="card lc-grid" style={fade} aria-labelledby="lc-grid-h">
               <div className="lc-grid-head">
                 <div className="sec">
-                  <h2 id="lc-grid-h">{lens === 'topics' ? 'Topics × Bloom level' : 'Students × Bloom level'}</h2>
-                  {lens === 'topics' ? (
+                  <h2 id="lc-grid-h">{lens === 'questions' ? 'How each question did' : lens === 'topics' ? 'Topics × Bloom level' : 'Students × Bloom level'}</h2>
+                  {lens === 'questions' ? (
+                    <p>
+                      {items.data && itemList.length
+                        ? `${itemList.length} ${plural(itemList.length, 'question')}, ${items.data.counted?.students ?? 0} ${plural(items.data.counted?.students ?? 0, 'student')}${closed ? ', final' : ''}. `
+                        : ''}
+                      Flagged first; open one to see what the class chose.
+                    </p>
+                  ) : lens === 'topics' ? (
                     <p>
                       {topics.data && list(topics.data.topics).length
                         ? `${list(topics.data.topics).length} ${plural(list(topics.data.topics).length, 'topic')} across ${topics.data.students} ${plural(topics.data.students, 'student')}${closed ? ', final' : ''}. `
@@ -1135,11 +1242,14 @@ export default function Live({ code, title, closed, onClosed, onProjector }) {
                   options={[
                     { id: 'students', label: 'Students', count: rows.length },
                     { id: 'topics', label: 'Topics', count: topics.data ? list(topics.data.topics).length : undefined },
+                    { id: 'questions', label: 'Questions', count: items.data ? itemList.length : undefined },
                   ]}
                 />
               </div>
 
-              {lens === 'topics' ? (
+              {lens === 'questions' ? (
+                <RoomQuestions items={items} onRetry={loadItems} closed={closed} onCheckKey={setKeyFor} />
+              ) : lens === 'topics' ? (
                 <TopicGrid topics={topics} onRetry={loadTopics} closed={closed} />
               ) : (
                 <>
@@ -1411,6 +1521,32 @@ export default function Live({ code, title, closed, onClosed, onProjector }) {
               {(courses ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </Field>
+        )}
+      </Dialog>
+
+      <Dialog
+        open={Boolean(keyItem)}
+        onOpenChange={(v) => { if (!v) setKeyFor(null); }}
+        title="Check the key"
+        description="The key is changed in the question bank, not in the live room."
+        footer={onOpenQuestion && keyItem?.status !== 'deleted' ? (
+          <>
+            <Button variant="ghost" onClick={() => setKeyFor(null)}>Not now</Button>
+            <Button variant="primary" icon="edit" onClick={() => { const id = keyItem.questionId; setKeyFor(null); onOpenQuestion(id); }}>Open it in the editor</Button>
+          </>
+        ) : <Button variant="primary" onClick={() => setKeyFor(null)}>Done</Button>}
+      >
+        {keyItem && (
+          <div className="stack stack-3 lc-keyhelp">
+            <p className="lc-keyhelp-q">{keyItem.text}</p>
+            {list(keyItem.flags).map((f) => <p key={f.id} className="said">{f.message}</p>)}
+            <ol className="lc-keyhelp-steps">
+              <li>Open <b>Questions</b>, under Prepare in the menu.</li>
+              <li>Find this question{keyItem.topic ? <> under <b>{keyItem.topic}</b></> : ''} and fold out its answer key.</li>
+              <li>Check the key against the material first, then the wording. Press <b>Edit</b> to change either.</li>
+            </ol>
+            <p className="hint">Answers given after an edit count towards a new version of the question, and this report says when that has happened.</p>
+          </div>
         )}
       </Dialog>
 

@@ -717,7 +717,8 @@ function Chapters({ contents, counts }) {
                 <span className="grow">
                   <span className="clip ac-chapter-t">{c.title || 'Untitled chapter'}</span>
                   <span className="t-meta">
-                    {plural(c.topics, 'topic')} · {c.questions ? plural(c.questions, 'question') : 'no questions yet'}
+                    {plural(c.topics, 'topic')} · {c.questions ? `${c.questions} approved` : c.drafts ? '' : 'no questions yet'}
+                    {c.drafts > 0 && `${c.questions ? ' · ' : ''}${c.drafts} to review`}
                     {c.sessions > 0 && ` · ${plural(c.sessions, 'room')} run`}
                     {dayOf(c.createdAt) && ` · loaded ${dayOf(c.createdAt)}`}
                   </span>

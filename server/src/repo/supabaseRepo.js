@@ -134,6 +134,14 @@ const outSession = (r) =>
     redemption: r.redemption === true,
     // uuid[] (0015) arrives as a JSON array of strings; null is the whole bank.
     questionIds: Array.isArray(r.question_ids) ? r.question_ids.map(String) : null,
+    // 0016: the class the room was opened for, or null.
+    classId: r.class_id ?? null,
+    // 0018: how the room runs. smallint comes back as a number, unlike numeric.
+    mode: r.mode ?? 'devices',
+    adapt: r.adapt !== false,
+    startLevel: r.start_level ?? 'understand',
+    questionsPerStudent: r.questions_per_student ?? null,
+    timePerQuestion: r.time_per_question ?? null,
   };
 
 const outProfile = (r) =>
@@ -252,6 +260,154 @@ const outMedia = (r) =>
   };
 const MEDIA_META = 'id, owner_id, content_id, mime, bytes, sha256, alt, created_at';
 
+// 0016: a class, a roster row and an attendance mark.
+const outClass = (r) =>
+  r && {
+    _id: r.id,
+    ownerId: r.owner_id ?? null,
+    courseName: r.course_name,
+    section: r.section,
+    termLabel: r.term_label ?? '',
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+
+const outClassStudent = (r) =>
+  r && {
+    _id: r.id,
+    classId: r.class_id,
+    rollNo: r.roll_no,
+    name: r.name,
+    addedAt: r.added_at,
+    removedAt: r.removed_at ?? null,
+  };
+
+const outAttendance = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    classStudentId: r.class_student_id,
+    status: r.status,
+    source: r.source,
+    markedAt: r.marked_at,
+    markedBy: r.marked_by ?? null,
+  };
+
+const inAttendance = (d) => ({
+  session_id: d.sessionId,
+  class_student_id: d.classStudentId,
+  status: d.status,
+  source: d.source,
+  marked_at: d.markedAt ?? new Date().toISOString(),
+  marked_by: d.markedBy ?? null,
+});
+
+/** A unique violation as the 409 a route can answer with, rather than a 500. */
+const conflict = (message) => Object.assign(new Error(message), { status: 409 });
+
+// 0017: the teacher-record store.
+const outObservation = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    classId: r.class_id ?? null,
+    classStudentId: r.class_student_id ?? null,
+    rollNo: r.roll_no,
+    // A Postgres date arrives as 'YYYY-MM-DD', the form the server writes.
+    day: r.day,
+    kind: r.kind ?? null,
+    note: r.note ?? '',
+    observedBy: r.observed_by ?? null,
+    observedAt: r.observed_at,
+  };
+
+const outRound = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    round: Number(r.round),
+    presentOnly: r.present_only === true,
+    noRepeat: r.no_repeat === true,
+    startedAt: r.started_at,
+    startedBy: r.started_by ?? null,
+  };
+
+const outPick = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    round: Number(r.round),
+    order: Number(r.pick_order),
+    rollNo: r.roll_no,
+    classStudentId: r.class_student_id ?? null,
+    poolSize: Number(r.pool_size),
+    presentOnly: r.present_only === true,
+    noRepeat: r.no_repeat === true,
+    ask: r.ask,
+    questionId: r.question_id ?? null,
+    status: r.status,
+    pickedAt: r.picked_at,
+    pickedBy: r.picked_by ?? null,
+    statusAt: r.status_at ?? null,
+    statusBy: r.status_by ?? null,
+  };
+
+const outTally = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    seq: Number(r.seq),
+    questionId: r.question_id ?? null,
+    text: r.question_text,
+    // text[] and integer[] arrive as JSON arrays.
+    labels: Array.isArray(r.option_labels) ? r.option_labels : ['', '', '', ''],
+    counts: Array.isArray(r.counts) ? r.counts.map(Number) : [0, 0, 0, 0],
+    revealed: r.revealed === true,
+    correct: r.correct_option == null ? null : Number(r.correct_option),
+    createdAt: r.created_at,
+    createdBy: r.created_by ?? null,
+    updatedAt: r.updated_at,
+  };
+
+const outActivity = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    seq: Number(r.seq),
+    kind: r.kind,
+    outcome: r.outcome ?? '',
+    groups: Array.isArray(r.groups) ? r.groups : [],
+    tallyId: r.tally_id ?? null,
+    createdAt: r.created_at,
+    createdBy: r.created_by ?? null,
+    updatedAt: r.updated_at,
+  };
+
+const outInsightAction = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    flagId: r.flag_id,
+    action: r.action,
+    note: r.note ?? '',
+    actedBy: r.acted_by ?? null,
+    actedAt: r.acted_at,
+  };
+
+const outProjectorLink = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    tokenHash: r.token_hash,
+    createdAt: r.created_at,
+    createdBy: r.created_by ?? null,
+    revokedAt: r.revoked_at ?? null,
+    revokedBy: r.revoked_by ?? null,
+  };
+
+/** A record's place in its room already held (23505), as the 409 the routes answer with. */
+const placeTaken = (what) => conflict(`That ${what} was taken by another request. Nothing was changed.`);
+
 const inAnswer = (d) => ({
   session_id: d.sessionId,
   answer_key: d.answerKey,
@@ -304,6 +460,25 @@ export function createSupabaseRepo() {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { headers: { 'x-application-name': 'bloomloop' } },
   });
+
+  /**
+   * Every row of one room-scoped teacher-record read (0017), a page at a time:
+   * PostgREST caps one response at its max-rows setting (1000 by default)
+   * whatever is asked, and the room archive reads whole rooms through these.
+   * Not a repo method: the three repos expose the same methods, and this is
+   * only how this one reads.
+   */
+  const allRecords = async (op, table, filter, order, out) => {
+    const PAGE = 1000;
+    const rows = [];
+    for (let offset = 0; ; offset += PAGE) {
+      let q = filter(db.from(table).select('*'));
+      for (const col of order) q = q.order(col, { ascending: true });
+      const page = unwrap(op, await q.range(offset, offset + PAGE - 1)) ?? [];
+      rows.push(...page.map(out));
+      if (page.length < PAGE) return rows;
+    }
+  };
 
   return {
     kind: 'supabase',
@@ -443,6 +618,16 @@ export function createSupabaseRepo() {
             // Written once, for the same reason: which questions a room serves
             // is part of what its answers mean.
             question_ids: Array.isArray(doc.questionIds) ? doc.questionIds : null,
+            // 0016. Written once too: who the room's attendance is taken against.
+            class_id: doc.classId ?? null,
+            // 0018. Written once, like the settings above: how the room runs is
+            // part of what its answers mean. Each defaults to the column's own
+            // default, which is how every room ran before.
+            mode: doc.mode ?? 'devices',
+            adapt: doc.adapt !== false,
+            start_level: doc.startLevel ?? 'understand',
+            questions_per_student: doc.questionsPerStudent ?? null,
+            time_per_question: doc.timePerQuestion ?? null,
           })
           .select()
           .single(),
@@ -495,6 +680,16 @@ export function createSupabaseRepo() {
       const rows = unwrap(
         'listSessionsForContent',
         await db.from('sessions').select('*').eq('content_id', contentId).order('started_at', { ascending: false }),
+      );
+      return (rows ?? []).map(outSession);
+    },
+
+    // See memoryRepo. Indexed by sessions_class_idx (0016).
+    async listSessionsForClass(classId) {
+      if (!isUuid(classId)) return [];
+      const rows = unwrap(
+        'listSessionsForClass',
+        await db.from('sessions').select('*').eq('class_id', classId).order('started_at', { ascending: false }),
       );
       return (rows ?? []).map(outSession);
     },
@@ -762,6 +957,347 @@ export function createSupabaseRepo() {
       if (error) fail('getMedia')(error);
       return outMedia(data);
     },
+
+    // -- classes and rosters (0016; see memoryRepo for the contract) --
+    async createClass(doc) {
+      const row = unwrap('createClass', await db
+        .from('classes')
+        .insert({
+          owner_id: doc.ownerId ?? null,
+          course_name: doc.courseName,
+          section: doc.section,
+          term_label: doc.termLabel ?? '',
+        })
+        .select()
+        .single());
+      return outClass(row);
+    },
+
+    async getClass(id) {
+      if (!isUuid(id)) return null;
+      const { data, error } = await db.from('classes').select('*').eq('id', id).maybeSingle();
+      if (error) fail('getClass')(error);
+      return outClass(data);
+    },
+
+    async listClasses() {
+      const rows = unwrap('listClasses', await db
+        .from('classes')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1000));
+      return (rows ?? []).map(outClass);
+    },
+
+    async updateClass(id, patch) {
+      if (!isUuid(id)) return null;
+      const set = pick(patch, { courseName: 'course_name', section: 'section', termLabel: 'term_label' });
+      if (Object.keys(set).length === 0) return this.getClass(id);
+      // No updated_at trigger on the table, so the timestamp is set here.
+      set.updated_at = new Date().toISOString();
+      const { data, error } = await db.from('classes').update(set).eq('id', id).select().maybeSingle();
+      if (error) fail('updateClass')(error);
+      return outClass(data);
+    },
+
+    async listClassStudents(classId) {
+      if (!isUuid(classId)) return [];
+      // A roster is at most MAX_CLASS_SIZE active rows plus the removed ones;
+      // asked for explicitly rather than left to PostgREST's 1000-row default.
+      const rows = unwrap('listClassStudents', await db
+        .from('class_students')
+        .select('*')
+        .eq('class_id', classId)
+        .limit(5000));
+      // Sorted in JS so '2' comes before '10', which a text column will not do.
+      return (rows ?? []).map(outClassStudent)
+        .sort((a, b) => String(a.rollNo).localeCompare(String(b.rollNo), undefined, { numeric: true }));
+    },
+
+    async getClassStudent(id) {
+      if (!isUuid(id)) return null;
+      const { data, error } = await db.from('class_students').select('*').eq('id', id).maybeSingle();
+      if (error) fail('getClassStudent')(error);
+      return outClassStudent(data);
+    },
+
+    // ON CONFLICT DO NOTHING on (class_id, roll_no): only the rows added come back.
+    async addClassStudents(classId, docs) {
+      if (!docs?.length) return [];
+      const out = [];
+      const CHUNK = 200;
+      for (let i = 0; i < docs.length; i += CHUNK) {
+        const rows = unwrap('addClassStudents', await db
+          .from('class_students')
+          .upsert(
+            docs.slice(i, i + CHUNK).map((d) => ({ class_id: classId, roll_no: d.rollNo, name: d.name })),
+            { onConflict: 'class_id,roll_no', ignoreDuplicates: true },
+          )
+          .select());
+        out.push(...(rows ?? []).map(outClassStudent));
+      }
+      return out;
+    },
+
+    async updateClassStudent(id, patch) {
+      if (!isUuid(id)) return null;
+      const set = pick(patch, { name: 'name', rollNo: 'roll_no', removedAt: 'removed_at' });
+      if (Object.keys(set).length === 0) return this.getClassStudent(id);
+      const { data, error } = await db.from('class_students').update(set).eq('id', id).select().maybeSingle();
+      if (error?.code === '23505') throw conflict(`Roll number ${patch.rollNo} is already on this class's roster.`);
+      if (error) fail('updateClassStudent')(error);
+      return outClassStudent(data);
+    },
+
+    // -- attendance (0016; see memoryRepo for the contract) --
+    async listAttendance(sessionId) {
+      if (!isUuid(sessionId)) return [];
+      const rows = unwrap('listAttendance', await db
+        .from('attendance')
+        .select('*')
+        .eq('session_id', sessionId)
+        .limit(5000));
+      return (rows ?? []).map(outAttendance);
+    },
+
+    // ON CONFLICT (session_id, class_student_id) DO UPDATE: each mark replaces the last.
+    async saveAttendance(docs) {
+      if (!docs?.length) return [];
+      const rows = unwrap('saveAttendance', await db
+        .from('attendance')
+        .upsert(docs.map(inAttendance), { onConflict: 'session_id,class_student_id' })
+        .select());
+      return (rows ?? []).map(outAttendance);
+    },
+
+    // ON CONFLICT DO NOTHING: a mark already there (a professor's above all) is kept.
+    async addAttendanceIfAbsent(doc) {
+      const rows = unwrap('addAttendanceIfAbsent', await db
+        .from('attendance')
+        .upsert(inAttendance(doc), { onConflict: 'session_id,class_student_id', ignoreDuplicates: true })
+        .select());
+      return { created: (rows ?? []).length > 0 };
+    },
+
+    // -- teacher records (0017; see memoryRepo for the contract) --
+
+    // Append-only: no update, and the database refuses one (0017's guard).
+    async addObservation(doc) {
+      const row = unwrap('addObservation', await db
+        .from('observations')
+        .insert({
+          session_id: doc.sessionId,
+          class_id: doc.classId ?? null,
+          class_student_id: doc.classStudentId ?? null,
+          roll_no: doc.rollNo,
+          day: doc.day,
+          kind: doc.kind ?? null,
+          note: doc.note ?? '',
+          observed_by: doc.observedBy ?? null,
+          observed_at: doc.observedAt ?? new Date().toISOString(),
+        })
+        .select()
+        .single());
+      return outObservation(row);
+    },
+
+    async listObservations({ sessionId, classId, classStudentId, day } = {}) {
+      if ([sessionId, classId, classStudentId].some((id) => id !== undefined && id !== null && !isUuid(id))) return [];
+      return allRecords('listObservations', 'observations', (q) => {
+        let f = q;
+        if (sessionId) f = f.eq('session_id', sessionId);
+        if (classId) f = f.eq('class_id', classId);
+        if (classStudentId) f = f.eq('class_student_id', classStudentId);
+        if (day) f = f.eq('day', day);
+        return f;
+      }, ['observed_at', 'id'], outObservation);
+    },
+
+    async listWheelRounds(sessionId) {
+      if (!isUuid(sessionId)) return [];
+      return allRecords('listWheelRounds', 'wheel_rounds', (q) => q.eq('session_id', sessionId), ['round'], outRound);
+    },
+
+    async addWheelRound(doc) {
+      const { data, error } = await db.from('wheel_rounds').insert({
+        session_id: doc.sessionId,
+        round: doc.round,
+        present_only: doc.presentOnly,
+        no_repeat: doc.noRepeat,
+        started_at: doc.startedAt ?? new Date().toISOString(),
+        started_by: doc.startedBy ?? null,
+      }).select().single();
+      if (error?.code === '23505') throw placeTaken('round');
+      if (error) fail('addWheelRound')(error);
+      return outRound(data);
+    },
+
+    async updateWheelRound(id, patch) {
+      if (!isUuid(id)) return null;
+      const set = pick(patch, { presentOnly: 'present_only', noRepeat: 'no_repeat' });
+      if (!Object.keys(set).length) return null;
+      const { data, error } = await db.from('wheel_rounds').update(set).eq('id', id).select().maybeSingle();
+      if (error) fail('updateWheelRound')(error);
+      return outRound(data);
+    },
+
+    async listWheelPicks(sessionId) {
+      if (!isUuid(sessionId)) return [];
+      return allRecords('listWheelPicks', 'wheel_picks', (q) => q.eq('session_id', sessionId), ['round', 'pick_order'], outPick);
+    },
+
+    async addWheelPick(doc) {
+      const { data, error } = await db.from('wheel_picks').insert({
+        session_id: doc.sessionId,
+        round: doc.round,
+        pick_order: doc.order,
+        roll_no: doc.rollNo,
+        class_student_id: doc.classStudentId ?? null,
+        pool_size: doc.poolSize,
+        present_only: doc.presentOnly,
+        no_repeat: doc.noRepeat,
+        ask: doc.ask ?? 'bank',
+        question_id: doc.questionId ?? null,
+        status: doc.status ?? 'pending',
+        picked_at: doc.pickedAt ?? new Date().toISOString(),
+        picked_by: doc.pickedBy ?? null,
+      }).select().single();
+      if (error?.code === '23505') throw placeTaken('place on the wheel');
+      if (error) fail('addWheelPick')(error);
+      return outPick(data);
+    },
+
+    async updateWheelPick(id, patch) {
+      if (!isUuid(id)) return null;
+      const set = pick(patch, { ask: 'ask', questionId: 'question_id', status: 'status', statusAt: 'status_at', statusBy: 'status_by' });
+      if (!Object.keys(set).length) return null;
+      const { data, error } = await db.from('wheel_picks').update(set).eq('id', id).select().maybeSingle();
+      if (error) fail('updateWheelPick')(error);
+      return outPick(data);
+    },
+
+    async listTallies(sessionId) {
+      if (!isUuid(sessionId)) return [];
+      return allRecords('listTallies', 'hand_tallies', (q) => q.eq('session_id', sessionId), ['seq'], outTally);
+    },
+
+    async addTally(doc) {
+      const now = new Date().toISOString();
+      const { data, error } = await db.from('hand_tallies').insert({
+        session_id: doc.sessionId,
+        seq: doc.seq,
+        question_id: doc.questionId ?? null,
+        question_text: doc.text,
+        option_labels: doc.labels ?? ['', '', '', ''],
+        counts: doc.counts ?? [0, 0, 0, 0],
+        revealed: doc.revealed === true,
+        correct_option: doc.correct ?? null,
+        created_at: doc.createdAt ?? now,
+        created_by: doc.createdBy ?? null,
+        updated_at: doc.updatedAt ?? now,
+      }).select().single();
+      if (error?.code === '23505') throw placeTaken('place in the room\'s questions');
+      if (error) fail('addTally')(error);
+      return outTally(data);
+    },
+
+    async updateTally(id, patch) {
+      if (!isUuid(id)) return null;
+      const set = pick(patch, {
+        questionId: 'question_id', text: 'question_text', labels: 'option_labels', counts: 'counts',
+        revealed: 'revealed', correct: 'correct_option', updatedAt: 'updated_at',
+      });
+      if (!Object.keys(set).length) return null;
+      const { data, error } = await db.from('hand_tallies').update(set).eq('id', id).select().maybeSingle();
+      if (error) fail('updateTally')(error);
+      return outTally(data);
+    },
+
+    async listActivities(sessionId) {
+      if (!isUuid(sessionId)) return [];
+      return allRecords('listActivities', 'room_activities', (q) => q.eq('session_id', sessionId), ['seq'], outActivity);
+    },
+
+    async addActivity(doc) {
+      const now = new Date().toISOString();
+      const { data, error } = await db.from('room_activities').insert({
+        session_id: doc.sessionId,
+        seq: doc.seq,
+        kind: doc.kind,
+        outcome: doc.outcome ?? '',
+        groups: doc.groups ?? [],
+        tally_id: doc.tallyId ?? null,
+        created_at: doc.createdAt ?? now,
+        created_by: doc.createdBy ?? null,
+        updated_at: doc.updatedAt ?? now,
+      }).select().single();
+      if (error?.code === '23505') throw placeTaken('place in the room\'s activities');
+      if (error) fail('addActivity')(error);
+      return outActivity(data);
+    },
+
+    async updateActivity(id, patch) {
+      if (!isUuid(id)) return null;
+      const set = pick(patch, { outcome: 'outcome', groups: 'groups', tallyId: 'tally_id', updatedAt: 'updated_at' });
+      if (!Object.keys(set).length) return null;
+      const { data, error } = await db.from('room_activities').update(set).eq('id', id).select().maybeSingle();
+      if (error) fail('updateActivity')(error);
+      return outActivity(data);
+    },
+
+    // Append-only, like observations.
+    async addInsightAction(doc) {
+      const row = unwrap('addInsightAction', await db
+        .from('insight_actions')
+        .insert({
+          session_id: doc.sessionId,
+          flag_id: doc.flagId,
+          action: doc.action,
+          note: doc.note ?? '',
+          acted_by: doc.actedBy ?? null,
+          acted_at: doc.actedAt ?? new Date().toISOString(),
+        })
+        .select()
+        .single());
+      return outInsightAction(row);
+    },
+
+    async listInsightActions(sessionId) {
+      if (!isUuid(sessionId)) return [];
+      return allRecords('listInsightActions', 'insight_actions', (q) => q.eq('session_id', sessionId), ['acted_at', 'id'], outInsightAction);
+    },
+
+    // -- projector links (0018; see memoryRepo for the contract) --
+    async addProjectorLink(doc) {
+      const { data, error } = await db.from('projector_links').insert({
+        session_id: doc.sessionId,
+        token_hash: doc.tokenHash,
+        created_at: doc.createdAt ?? new Date().toISOString(),
+        created_by: doc.createdBy ?? null,
+      }).select().single();
+      if (error?.code === '23505') throw placeTaken('projector token');
+      if (error) fail('addProjectorLink')(error);
+      return outProjectorLink(data);
+    },
+
+    async getProjectorLinkByHash(tokenHash) {
+      const { data, error } = await db.from('projector_links').select('*').eq('token_hash', String(tokenHash)).maybeSingle();
+      if (error) fail('getProjectorLinkByHash')(error);
+      return outProjectorLink(data);
+    },
+
+    async listProjectorLinks(sessionId) {
+      if (!isUuid(sessionId)) return [];
+      return allRecords('listProjectorLinks', 'projector_links', (q) => q.eq('session_id', sessionId), ['created_at', 'id'], outProjectorLink);
+    },
+
+    async revokeProjectorLink(id, { revokedAt, revokedBy = null }) {
+      if (!isUuid(id)) return null;
+      const { data, error } = await db.from('projector_links')
+        .update({ revoked_at: revokedAt, revoked_by: revokedBy ?? null }).eq('id', id).select().maybeSingle();
+      if (error) fail('revokeProjectorLink')(error);
+      return outProjectorLink(data);
+    },
   };
 }
 
@@ -777,6 +1313,9 @@ export async function probeSupabase() {
     ['contents', '0000'], ['questions', '0000'], ['sessions', '0000'], ['profiles', '0000'],
     ['accounts', '0001'], ['invites', '0002'], ['answers', '0008'], ['room_archives', '0009'],
     ['answer_reviews', '0010'], ['media', '0014'],
+    ['classes', '0016'], ['class_students', '0016'], ['attendance', '0016'],
+    ['observations', '0017'], ['wheel_rounds', '0017'], ['wheel_picks', '0017'], ['hand_tallies', '0017'],
+    ['room_activities', '0017'], ['insight_actions', '0017'], ['projector_links', '0018'],
   ];
   const missing = [];
   for (const [table, file] of tables) {
@@ -791,6 +1330,10 @@ export async function probeSupabase() {
     ['contents', 'topic_slides', '0013'],
     // Without it every room fails to open: createSession writes the column.
     ['sessions', 'question_ids', '0015'],
+    // Likewise: createSession writes class_id on every room.
+    ['sessions', 'class_id', '0016'],
+    // And these five, on every room.
+    ['sessions', 'mode, adapt, start_level, questions_per_student, time_per_question', '0018'],
   ];
   for (const [table, cols, file] of columns) {
     const { error } = await db.from(table).select(cols, { count: 'exact', head: true });

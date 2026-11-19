@@ -364,14 +364,21 @@ export async function withUpload(repo, stimulus, contentId) {
   return { ...stimulus, url: mediaUrl(media._id), alt };
 }
 
-/** A room students are in: open, or paused with its phones still connected. */
-const RUNNING = ['open', 'paused'];
+/**
+ * A room students are in: open, paused with its phones still connected, or
+ * waiting to start (0018). A waiting room serves phones nothing yet, but its
+ * projector may show a diagram from its questions (services/projector.js), and
+ * the projector carries no credential either; the room's phones are shown the
+ * same questions the moment it starts.
+ */
+const RUNNING = ['waiting', 'open', 'paused'];
 
 /**
- * May a phone, which carries no credential, load this upload now?
+ * May a phone, or the room's projector, neither of which carries a credential,
+ * load this upload now?
  *
  * Only while both hold:
- *   - a room on the upload's chapter is running (open or paused), and
+ *   - a room on the upload's chapter is running (waiting, open or paused), and
  *   - an approved question of that chapter shows it.
  *
  * Why this rule. A student joins with a room code and a roll number, and an

@@ -28,9 +28,12 @@
 -- Phase 4/5: a room can be paused. 'paused' keeps every student connected and
 -- resumes them exactly where they stopped; 'closed' is final and cannot reopen.
 -- Before this the only way to interrupt a class was to end it.
+-- 'waiting' is added by 0018 (the waiting room). It is listed here too because
+-- re-running this file must never narrow the check below what a later file
+-- allows: a re-run with a room in its waiting room would otherwise fail.
 alter table public.sessions drop constraint if exists sessions_status_check;
 alter table public.sessions
-  add constraint sessions_status_check check (status in ('open', 'paused', 'closed'));
+  add constraint sessions_status_check check (status in ('waiting', 'open', 'paused', 'closed'));
 
 alter table public.sessions add column if not exists paused_at timestamptz;
 

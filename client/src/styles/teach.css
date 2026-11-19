@@ -220,6 +220,8 @@
 .tc-qsearch { flex: 0 1 300px; min-width: 200px; }
 .tc-tchips { flex: 1 1 200px; min-width: 0; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px; }
 .tc-tchips::-webkit-scrollbar { display: none; }
+/* On its own row under the bar, it sizes to its chips. */
+.page > .tc-tchips { flex: none; margin-top: -6px; }
 .tc-tchip {
   flex: none; max-width: 240px; height: 30px; padding: 0 12px; border-radius: var(--r-full); cursor: pointer;
   border: 1px solid var(--glass-line); background: var(--glass); box-shadow: var(--sh-1); color: var(--text-2);
@@ -261,6 +263,25 @@
 .tc-q-chev { margin: 0 6px; color: var(--text-4); transition: transform var(--t-2) var(--ease); }
 .tc-q[data-open='true'] .tc-q-chev { transform: rotate(180deg); }
 .tc-q-key { grid-column: 2 / -1; padding: 0 20px 20px 4px; animation: rise var(--t-3) var(--ease); }
+
+/* Drafts: the decision stays in view, a flag reads as a quiet warning line. */
+button.link { background: none; border: 0; padding: 0; font: inherit; font-weight: 700; color: var(--primary); cursor: pointer; }
+button.link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.tc-q-slides { font: 500 11.5px/1 var(--mono); color: var(--text-3); }
+.tc-q-flags { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; max-width: 90ch; }
+.tc-q-flags > span { display: flex; align-items: flex-start; gap: 7px; font: 500 12.5px/1.45 var(--font); color: var(--warn); }
+.tc-q-flags svg { flex: none; margin-top: 2px; }
+.tc-q-decide { display: flex; align-items: center; gap: 4px; }
+.tc-q[data-draft='true'] .tc-q-acts { padding-top: 10px; }
+.tc-forroom-wait { display: flex; align-items: center; gap: 8px; margin: 0; padding: 10px 12px; border-radius: var(--r-2); background: color-mix(in srgb, var(--on-panel) 8%, transparent); font: 500 13px/1.3 var(--font); color: var(--on-panel-2); }
+.tc-forroom-wait b { color: var(--on-panel); font-weight: 600; }
+.tc-forroom-wait svg { color: var(--mint); flex: none; }
+.tc-forroom-wait .link { margin-left: auto; color: var(--mint); }
+.tc-flagged { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; }
+.tc-flagged > li { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); }
+.tc-flagged .tc-ref { padding-top: 3px; }
+.tc-flagged-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tc-flagged-txt .clip { font: 500 13.5px/1.45 var(--font); color: var(--text); }
 
 /* ---- the answer key */
 
@@ -434,6 +455,9 @@ label.tc-ed-mark { cursor: pointer; }
   .tc-q { grid-template-columns: 36px minmax(0, 1fr); }
   .tc-q-pick { padding-left: 4px; }
   .tc-q-acts { grid-column: 2; padding: 0 12px 10px 0; }
+  .tc-q[data-draft='true'] .tc-q-acts { padding-top: 0; }
+  .tc-flagged > li { grid-template-columns: 34px minmax(0, 1fr); }
+  .tc-flagged > li > .btn { grid-column: 2; justify-self: start; }
   .tc-q-key { padding-right: 14px; }
   .tc-qsearch { flex: 1 1 100%; }
   .tc-rule, .tc-rules-head { padding-left: 18px; padding-right: 18px; }

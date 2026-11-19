@@ -6,3 +6,6 @@ import '../styles/account.css';
 import '../styles/auth.css';
 import '../styles/insight.css';
 import '../styles/review.css';
+import '../styles/author.css';
+import '../styles/items.css';
+import '../styles/roomset.css';

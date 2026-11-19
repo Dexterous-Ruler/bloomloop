@@ -22,6 +22,9 @@ import {
   MAX_REATTEMPTS,
   DEFAULT_MASTERY_GOAL,
   REDEMPTION_RULE,
+  ROOM_MODES,
+  QUESTIONS_PER_STUDENT,
+  TIME_PER_QUESTION,
 } from '../services/mastery.js';
 import { summarise, HONESTY } from '../services/integrity.js';
 import { ARCHIVE_LIMIT_BYTES, buildRoomArchive } from '../services/archive.js';
@@ -33,8 +36,27 @@ import { isRecordId } from '../ids.js';
 // carries a bearer token and no shared key, and the v1 guard 401s her out of
 // the console she was just routed to.
 import { requireTeacher } from '../auth.js';
-import { assertCanRead, assertCanWrite, canWrite, readable } from '../ownership.js';
-import { isOnline, releaseSession, holdRoomForDelete } from '../sockets/index.js';
+import { assertCanRead, assertCanWrite, canRead, canWrite, ownerOf, readable } from '../ownership.js';
+import {
+  isOnline,
+  releaseSession,
+  holdRoomForDelete,
+  lockProfile,
+  roomDeleting,
+  broadcastGrid,
+  startRoom,
+} from '../sockets/index.js';
+import { roomFeed, startBlocker } from '../services/modes.js';
+import { closeWall, forgetScreen, pushProjector } from '../services/projector.js';
+import {
+  ATTENDANCE_LOCK,
+  attendanceReport,
+  classGrid,
+  marksFrom,
+  marksFromJoins,
+} from '../services/roster.js';
+import { RECORDS_LOCK } from '../services/records.js';
+import { forgetInsights } from '../services/insights.js';
 
 const router = express.Router();
 
@@ -125,11 +147,79 @@ async function requireSession(rawCode) {
   return session;
 }
 
+/**
+ * A room by code for a teacher's route, by the read rule or, with `write`, the
+ * write rule. "No such code" and "not a room you may see" are one 404 in one
+ * sentence: requireSession names the code, so a route that used it told a
+ * caller which codes exist by the wording alone. An HOD who may read the room
+ * still gets the write rule's 403.
+ */
+async function teacherRoom(rawCode, viewer, { write = false } = {}) {
+  const code = String(rawCode ?? '').trim().toUpperCase();
+  const session = code ? await getRepo().getSessionByCode(code) : null;
+  return (write ? assertCanWrite : assertCanRead)(viewer, session, 'That session');
+}
+
+/**
+ * The lock every change of a room's status takes (start, pause, resume and
+ * close; lockProfile in sockets/index.js), and that a delete waits out. '#' is
+ * outside ROLL_SHAPE, so it is never a student's own lock.
+ */
+const STATUS_LOCK = '#status';
+
+/**
+ * Change a room's status under STATUS_LOCK, from the status read again under
+ * it. Each of these used to read the room, check it and write it with nothing
+ * held, so a close landing while a start was at work was undone (the closed
+ * room written back to open, and its phones served after they were told it had
+ * closed), and two starts both started. `fn` gets the room as stored now.
+ * Refused while the room is being deleted, as every other room write is.
+ */
+async function withStatusLock(session, what, fn) {
+  const release = await lockProfile(session._id, STATUS_LOCK);
+  try {
+    if (roomDeleting(session._id)) throw fail('That room is being deleted. Nothing was changed.', 409);
+    const now = await getRepo().getSession(session._id);
+    if (!now) throw fail(`${what} was not found.`, 404);
+    return await fn(now);
+  } finally {
+    release();
+  }
+}
+
+/**
+ * The teacher's grid: { rows } for any room, plus each row's `rosterName` and
+ * the room's `attendance` ("N / M present") for a room opened for a class
+ * (services/roster.js classGrid, which the socket's broadcast uses too), and
+ * `waiting` and `feed` for a waiting room and a Mixed or Teacher-led one
+ * (services/modes.js roomFeed, which the broadcast uses too).
+ */
 async function gridFor(session) {
-  const profiles = await getRepo().listProfiles(session._id);
+  const repo = getRepo();
+  const profiles = await repo.listProfiles(session._id);
   const { masteryGoal } = sessionSettings(session);
-  return profiles.map((p) =>
+  const rows = profiles.map((p) =>
     buildGridRow(p, { online: isOnline(session.code, p.rollNo), goal: masteryGoal }));
+  const grid = await classGrid(repo, session, rows);
+  return { ...grid, ...(await roomFeed(repo, session, grid.rows, grid.attendance)) };
+}
+
+/**
+ * The class a room is being opened for, from a `classId` the caller did send,
+ * or null for none. Only a class the caller may CHANGE: opening a room for a
+ * class is a write to its attendance. Any other class, and one that does not
+ * exist, is one 404 with one message, so ids cannot be probed.
+ */
+async function roomClassFrom(raw, viewer) {
+  if (raw === undefined || raw === null) return null;
+  const id = typeof raw === 'string' ? raw.trim() : '';
+  if (!isRecordId(id)) throw fail('classId is not a valid id', 400);
+  const cls = await getRepo().getClass(id);
+  const owner = ownerOf(cls);
+  if (!cls || !(await canRead(viewer, owner)) || !(await canWrite(viewer, owner))) {
+    throw fail('That class was not found.', 404);
+  }
+  return String(cls._id);
 }
 
 /**
@@ -167,6 +257,36 @@ function settingsFrom(body = {}) {
   if (body.redemption !== undefined && body.redemption !== null) {
     if (typeof body.redemption !== 'boolean') throw fail('redemption must be true or false.', 400);
     out.redemption = body.redemption;
+  }
+
+  // How the room runs (0018). Each is left out of the stored room when not sent,
+  // so the store's default (how every room ran before) is what it gets.
+  if (body.mode !== undefined && body.mode !== null) {
+    if (!ROOM_MODES.includes(body.mode)) {
+      throw fail(`mode must be one of ${ROOM_MODES.join(', ')}: Student devices, Teacher-led or Mixed.`, 400);
+    }
+    out.mode = body.mode;
+  }
+
+  if (body.adapt !== undefined && body.adapt !== null) {
+    if (typeof body.adapt !== 'boolean') throw fail('adapt must be true or false.', 400);
+    out.adapt = body.adapt;
+  }
+
+  if (body.startLevel !== undefined && body.startLevel !== null) {
+    if (!LEVELS.includes(body.startLevel)) throw fail(`startLevel must be one of ${LEVELS.join(', ')}.`, 400);
+    out.startLevel = body.startLevel;
+  }
+
+  for (const [key, range, unit] of [
+    ['questionsPerStudent', QUESTIONS_PER_STUDENT, 'questions'],
+    ['timePerQuestion', TIME_PER_QUESTION, 'seconds'],
+  ]) {
+    if (body[key] === undefined || body[key] === null) continue;
+    if (!Number.isInteger(body[key]) || body[key] < range.min || body[key] > range.max) {
+      throw fail(`${key} must be a whole number of ${unit} from ${range.min} to ${range.max}, or left out for none.`, 400);
+    }
+    out[key] = body[key];
   }
 
   return out;
@@ -220,6 +340,9 @@ router.post('/', requireTeacher, async (req, res, next) => {
     // You may only open a room over material you are allowed to touch.
     await assertCanWrite(req.viewer, content, 'That content');
 
+    // Before the set and the bank floor, and before a code is drawn, like them.
+    const classId = await roomClassFrom(req.body?.classId, req.viewer);
+
     // Checked before the bank floor, and before a code is drawn, so a bad set is
     // a 400 that names the set rather than the size of the bank.
     const asked = req.body?.questionIds;
@@ -253,14 +376,25 @@ router.post('/', requireTeacher, async (req, res, next) => {
     // Validated before the code is spent. A 400 after allocateCode() would burn
     // a room code on a request that never opened a room.
     const settings = settingsFrom(req.body);
+    // No phone joins a Teacher-led room, so its class roster is the only list of
+    // who is in it: the wheel, attendance and observations all work from it.
+    if (settings.mode === 'teacher-led' && !classId) {
+      throw fail('A Teacher-led room needs a class: no phones join it, so the wheel, attendance and observations '
+        + 'work from the class roster. Send classId, or open the room for Student devices or Mixed.', 400);
+    }
+    // A waiting room (0018): phones may join, and nothing is served until the
+    // professor starts it (POST /:code/start). Left out, the room opens as always.
+    const lobby = req.body?.lobby;
+    if (lobby !== undefined && lobby !== null && typeof lobby !== 'boolean') throw fail('lobby must be true or false.', 400);
     const session = await repo.createSession({
       code,
       contentId,
       title,
-      status: 'open',
+      status: lobby === true ? 'waiting' : 'open',
       ownerId: req.viewer?.id ?? null,
       ...settings,
       questionIds,
+      classId,
     });
 
     // Read back off the stored row rather than echoed from the request, so the
@@ -273,6 +407,10 @@ router.post('/', requireTeacher, async (req, res, next) => {
       bankCount,
       settings: sessionSettings(session),
       questionIds: session.questionIds ?? null,
+      // The class the room takes attendance against, or null.
+      classId: session.classId ?? null,
+      // 'open', or 'waiting' for a room opened with a waiting room.
+      status: session.status,
     });
   } catch (err) {
     next(err);
@@ -357,10 +495,19 @@ router.get('/:code', async (req, res, next) => {
 
 router.get('/:code/grid', requireTeacher, async (req, res, next) => {
   try {
-    const session = await requireSession(req.params.code);
     // An HOD may read any session in their department; a professor only theirs.
-    await assertCanRead(req.viewer, session, 'That session');
-    res.json({ rows: await gridFor(session), levels: LEVELS });
+    const session = await teacherRoom(req.params.code, req.viewer);
+    const { rows, attendance, waiting, feed } = await gridFor(session);
+    // `attendance` only for a room opened for a class, `waiting` only while a
+    // room waits to start, `feed` only in a Mixed or Teacher-led room: every
+    // other room's grid is exactly what it was.
+    res.json({
+      rows,
+      levels: LEVELS,
+      ...(attendance ? { attendance } : {}),
+      ...(waiting ? { waiting } : {}),
+      ...(feed ? { feed } : {}),
+    });
   } catch (err) {
     next(err);
   }
@@ -458,6 +605,121 @@ router.get('/:code/items', requireTeacher, async (req, res, next) => {
   }
 });
 
+/** The room's class, or a 409 for a room opened for none: it has no roster to mark against. */
+async function roomClass(session) {
+  const cls = session.classId ? await getRepo().getClass(session.classId) : null;
+  if (!cls) {
+    throw fail('This room was not opened for a class, so it has no roster to take attendance against. '
+      + 'Open the room with a classId to take attendance.', 409);
+  }
+  return cls;
+}
+
+/** The whole attendance report for a class room (services/roster.js attendanceReport). */
+async function attendanceBody(session, cls) {
+  const repo = getRepo();
+  const [roster, marks, profiles] = await Promise.all([
+    repo.listClassStudents(cls._id),
+    repo.listAttendance(session._id),
+    repo.listProfiles(session._id),
+  ]);
+  return {
+    room: { code: session.code, title: session.title ?? '', startedAt: session.startedAt ?? null, status: session.status },
+    class: { id: String(cls._id), courseName: cls.courseName, section: cls.section, termLabel: cls.termLabel ?? '' },
+    ...attendanceReport({ roster, marks, profiles }),
+  };
+}
+
+/*
+ * Attendance, for a room opened for a class. Teacher-only, like every
+ * two-segment room route: never sent to a phone, and not in GET /:code, which
+ * any phone holding the code can read. Not a Bloom level and not accuracy: it
+ * moves nothing in the live loop.
+ */
+
+/**
+ * Every student on the class roster with their mark in this room ('unmarked'
+ * where nobody has marked them, which is not 'absent'), removed students who
+ * still have a mark, phones that joined with a roll number the roster does not
+ * hold, the counts and "N / M present". Read rule, and one 404, as for /answers.
+ */
+router.get('/:code/attendance', requireTeacher, async (req, res, next) => {
+  try {
+    const session = await readableRoom(req.params.code, req.viewer);
+    res.json(await attendanceBody(session, await roomClass(session)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * The professor marks attendance: { marks: [{ studentId, status }] } for one
+ * student or many (present, absent or late), or { fromJoins: true } for
+ * "everyone who joined present, the rest absent". Every mark here is the
+ * teacher's, and a later join never replaces it. With fromJoins, a student
+ * already marked by hand keeps that mark. Answers with the report, as GET does.
+ * fromJoins is a 409 in a Teacher-led room: no phone joins one, so it would
+ * mark every student not yet marked absent.
+ *
+ * Write rule: the room's owner (404 for anyone who may not read it, 403 for an
+ * HOD who may). Allowed on a closed room: attendance is often corrected after
+ * the class. Refused (409) while the room is being deleted, since a mark landing
+ * after its archive was read would be deleted with it.
+ */
+router.post('/:code/attendance', requireTeacher, async (req, res, next) => {
+  try {
+    const code = String(req.params.code ?? '').trim().toUpperCase();
+    const session = await assertCanWrite(req.viewer, code ? await getRepo().getSessionByCode(code) : null, 'That room');
+    const cls = await roomClass(session);
+    const repo = getRepo();
+    if (req.body?.fromJoins === true && sessionSettings(session).mode === 'teacher-led') {
+      throw fail('This room is Teacher-led, so no phone joins it: "everyone who joined present, the rest absent" '
+        + 'would mark every student not yet marked absent. Mark them by hand with { marks: [{ studentId, status }] }. '
+        + 'Nothing was changed.', 409);
+    }
+
+    const release = await lockProfile(session._id, ATTENDANCE_LOCK);
+    let changed = 0;
+    let kept = 0;
+    try {
+      if (roomDeleting(session._id)) throw fail('That room is being deleted. Nothing was changed.', 409);
+      const [roster, marks, profiles] = await Promise.all([
+        repo.listClassStudents(cls._id),
+        repo.listAttendance(session._id),
+        repo.listProfiles(session._id),
+      ]);
+      let wanted;
+      if (req.body?.fromJoins === true) {
+        ({ marks: wanted, kept } = marksFromJoins({ roster, marks, profiles }));
+      } else {
+        wanted = marksFrom(req.body?.marks, roster);
+      }
+      const markedAt = new Date().toISOString();
+      if (wanted.length) {
+        await repo.saveAttendance(wanted.map((m) => ({
+          sessionId: String(session._id),
+          classStudentId: m.classStudentId,
+          status: m.status,
+          source: 'teacher',
+          markedAt,
+          markedBy: req.viewer?.id ?? null,
+        })));
+      }
+      changed = wanted.length;
+    } finally {
+      release();
+    }
+
+    // The present count on every teacher screen watching the room.
+    const io = req.app.get('io');
+    if (io) await broadcastGrid(io, session).catch((err) => console.error('[attendance] grid push failed:', err));
+
+    res.json({ changed, kept, ...(await attendanceBody(session, cls)) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 /**
  * Every room this viewer may see, newest first, for the management screen.
  *
@@ -498,6 +760,8 @@ router.get('/', requireTeacher, async (req, res, next) => {
           settings: sessionSettings(session),
           // The room's question set, or null for its whole approved bank.
           questionIds: session.questionIds ?? null,
+          // The class the room was opened for, or null.
+          classId: session.classId ?? null,
           // Non-zero only in a room running redemption, and listed beside the
           // accuracy it moved so the two are never read apart.
           withdrawn,
@@ -530,34 +794,45 @@ router.get('/', requireTeacher, async (req, res, next) => {
  */
 async function setPaused(req, res, next, paused) {
   try {
-    const session = await requireSession(req.params.code);
-    await assertCanWrite(req.viewer, session, 'That session');
-    if (session.status === 'closed') throw fail('That room is closed - it cannot be reopened.', 409);
+    const found = await teacherRoom(req.params.code, req.viewer, { write: true });
+    // Under the status lock, from the status as it is now: a close landing
+    // between a resume's read and its write was undone by that write.
+    const updated = await withStatusLock(found, 'That session', async (session) => {
+      if (session.status === 'closed') throw fail('That room is closed - it cannot be reopened.', 409);
+      // A waiting room has served nothing to pause, and resuming it would start it
+      // without the start's checks: it is started (POST /:code/start) or closed.
+      if (session.status === 'waiting') {
+        throw fail('That room has not started yet, so there is nothing to pause or resume. Start it, or close it.', 409);
+      }
 
-    const updated = await getRepo().updateSession(session._id, {
-      status: paused ? 'paused' : 'open',
-      pausedAt: paused ? new Date().toISOString() : null,
+      const written = await getRepo().updateSession(session._id, {
+        status: paused ? 'paused' : 'open',
+        pausedAt: paused ? new Date().toISOString() : null,
+      });
+
+      // The socket layer caches only OPEN sessions, so the cached copy has to go
+      // either way: on pause so the loop stops serving, and on resume so the next
+      // read picks up the new status rather than the stale paused one.
+      releaseSession({ sessionId: session._id, code: session.code });
+
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`session:${session.code}`).emit(paused ? 'session:paused' : 'session:resumed', {
+          code: session.code,
+        });
+        // The teacher's own screens watch a different room; without this the Live
+        // screen never learned the class had been paused from elsewhere.
+        io.to(`teacher:${session.code}`).emit('teacher:status', {
+          code: session.code,
+          status: paused ? 'paused' : 'open',
+        });
+        // The projector says the room is paused (it shows no student either way).
+        await pushProjector(io, getRepo(), written ?? session);
+      }
+      return written ?? session;
     });
 
-    // The socket layer caches only OPEN sessions, so the cached copy has to go
-    // either way: on pause so the loop stops serving, and on resume so the next
-    // read picks up the new status rather than the stale paused one.
-    releaseSession({ sessionId: session._id, code: session.code });
-
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`session:${session.code}`).emit(paused ? 'session:paused' : 'session:resumed', {
-        code: session.code,
-      });
-      // The teacher's own screens watch a different room; without this the Live
-      // screen never learned the class had been paused from elsewhere.
-      io.to(`teacher:${session.code}`).emit('teacher:status', {
-        code: session.code,
-        status: paused ? 'paused' : 'open',
-      });
-    }
-
-    res.json({ session: updated ?? session });
+    res.json({ session: updated });
   } catch (err) {
     next(err);
   }
@@ -565,6 +840,52 @@ async function setPaused(req, res, next, paused) {
 
 router.post('/:code/pause', requireTeacher, (req, res, next) => setPaused(req, res, next, true));
 router.post('/:code/resume', requireTeacher, (req, res, next) => setPaused(req, res, next, false));
+
+/**
+ * Start a room opened with a waiting room (0018): 'waiting' becomes 'open',
+ * every phone waiting in it gets its first question, and a phone that joins
+ * later is served as in any open room.
+ *
+ * A REST route rather than a teacher socket event, like pause, resume and close:
+ * it is the same kind of act (the owner changes the room's status), it answers
+ * with the room or an honest 409, and the write rule is checked the way every
+ * other room write checks it.
+ *
+ * Write rule (an HOD who may read the room gets 403, anyone else the room's
+ * 404). 409 for a room that is not waiting (already started, or closed), and for
+ * a Student-devices or Mixed room nobody has joined: starting it would serve
+ * nobody, as the handoff's Start button says by staying disabled. A Teacher-led
+ * room starts with no phones at all.
+ *
+ * Under the room's status lock, from the status read again under it, and the
+ * waiting phones are served before it is let go: a close waits for the start and
+ * then closes the room (its phones hear "closed" after their first question,
+ * never before it), and of two starts at once the second finds the room open.
+ */
+router.post('/:code/start', requireTeacher, async (req, res, next) => {
+  try {
+    const code = String(req.params.code ?? '').trim().toUpperCase();
+    const repo = getRepo();
+    const found = await assertCanWrite(req.viewer, code ? await repo.getSessionByCode(code) : null, 'That room');
+    const updated = await withStatusLock(found, 'That room', async (session) => {
+      if (session.status === 'closed') throw fail('That room is closed - it cannot be started.', 409);
+      if (session.status !== 'waiting') throw fail('That room has already started.', 409);
+      const blocker = startBlocker(session, (await repo.listProfiles(session._id)).length);
+      if (blocker) throw fail(blocker, 409);
+
+      const written = (await repo.updateSession(session._id, { status: 'open' })) ?? { ...session, status: 'open' };
+      releaseSession({ sessionId: session._id, code: session.code });
+
+      const io = req.app.get('io');
+      if (io) await startRoom(io, written);
+      return written;
+    });
+
+    res.json({ session: updated, settings: sessionSettings(updated) });
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * Delete a room, keeping everything recorded in it as a JSON archive.
@@ -580,8 +901,7 @@ router.post('/:code/resume', requireTeacher, (req, res, next) => setPaused(req, 
  */
 router.delete('/:code', requireTeacher, async (req, res, next) => {
   try {
-    const session = await requireSession(req.params.code);
-    await assertCanWrite(req.viewer, session, 'That session');
+    const session = await teacherRoom(req.params.code, req.viewer, { write: true });
 
     const typed = String(req.query.confirm ?? '').trim().toUpperCase();
     if (typed !== session.code) {
@@ -598,7 +918,11 @@ router.delete('/:code', requireTeacher, async (req, res, next) => {
     let profiles = [];
     const lift = await holdRoomForDelete(session._id, async () => {
       profiles = await repo.listProfiles(session._id);
-      return profiles.map((p) => p.rollNo);
+      // A class room's attendance is written by the teacher under a lock of its
+      // own (POST /:code/attendance), and archived with the room: waited out too.
+      // So are the teacher records (routes/records.js), in any room, and a
+      // change of status (a start serving its waiting phones, above all).
+      return [...profiles.map((p) => p.rollNo), ...(session.classId ? [ATTENDANCE_LOCK] : []), RECORDS_LOCK, STATUS_LOCK];
     });
     let archive;
     try {
@@ -620,6 +944,11 @@ router.delete('/:code', requireTeacher, async (req, res, next) => {
 
     const io = req.app.get('io');
     if (io) io.to(`session:${session.code}`).emit('session:closed', {});
+    // A deleted room's projector links went with it; its projectors are told.
+    closeWall(io, { session, reason: 'This room was deleted.' });
+    forgetScreen(session._id);
+    // Its live insights' series (held in memory) goes with it.
+    forgetInsights(session._id);
 
     res.json({
       ok: true,
@@ -641,8 +970,7 @@ router.delete('/:code', requireTeacher, async (req, res, next) => {
  */
 router.get('/:code/integrity/:rollNo', requireTeacher, async (req, res, next) => {
   try {
-    const session = await requireSession(req.params.code);
-    await assertCanRead(req.viewer, session, 'That session');
+    const session = await teacherRoom(req.params.code, req.viewer);
     const stored = await getRepo().getProfile(session._id, String(req.params.rollNo));
     if (!stored) throw fail('No such student in this room.', 404);
     const profile = hydrate(stored);
@@ -660,27 +988,34 @@ router.get('/:code/integrity/:rollNo', requireTeacher, async (req, res, next) =>
 
 router.post('/:code/close', requireTeacher, async (req, res, next) => {
   try {
-    const session = await requireSession(req.params.code);
     // Ending someone else's live class is a write, and an HOD does not get it.
-    await assertCanWrite(req.viewer, session, 'That session');
-    const updated =
-      session.status === 'closed'
-        ? session
-        : await getRepo().updateSession(session._id, {
-            status: 'closed',
-            closedAt: new Date().toISOString(),
-          });
+    const found = await teacherRoom(req.params.code, req.viewer, { write: true });
+    // Under the status lock, so a start at work finishes first and nothing
+    // writes the room back to open after this (withStatusLock).
+    const updated = await withStatusLock(found, 'That session', async (session) => {
+      const written =
+        session.status === 'closed'
+          ? session
+          : await getRepo().updateSession(session._id, {
+              status: 'closed',
+              closedAt: new Date().toISOString(),
+            });
 
-    // Drop the cached bank and session doc so the live loop stops serving items.
-    releaseSession({ sessionId: session._id, code: session.code });
+      // Drop the cached bank and session doc so the live loop stops serving items.
+      releaseSession({ sessionId: session._id, code: session.code });
 
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`session:${session.code}`).emit('session:closed', {});
-      io.to(`teacher:${session.code}`).emit('teacher:status', { code: session.code, status: 'closed' });
-    }
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`session:${session.code}`).emit('session:closed', {});
+        io.to(`teacher:${session.code}`).emit('teacher:status', { code: session.code, status: 'closed' });
+      }
+      // A projector link works only while its room is not closed.
+      closeWall(io, { session, reason: 'This room is closed.' });
+      forgetScreen(session._id);
+      return written ?? session;
+    });
 
-    res.json({ session: updated ?? session });
+    res.json({ session: updated });
   } catch (err) {
     next(err);
   }

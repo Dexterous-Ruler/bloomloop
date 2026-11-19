@@ -1,0 +1,442 @@
+// The class roster and a room's attendance (Phase 3).
+//
+// A room only ever knew the phones that joined it. A professor teaches a class:
+// a course and a section with a list of students, some of whom never join. The
+// roster is that list, kept as a roll number and a name and nothing else, and a
+// room opened for a class can say who of it was there.
+//
+// Everything here is teacher-only. Attendance and roster names never go to a
+// phone: not in the live loop's payloads (buildGridRow in routes/session.js
+// feeds the phone too, so the roster name is added AFTER it, on the teacher's
+// grid only), and not in GET /api/session/:code, which anyone holding the room
+// code can read. A phone that typed a roll number would otherwise be told the
+// real name behind it, which turns a projected room code into a way to look up
+// a class list one roll number at a time.
+//
+// Attendance is evidence of its own kind. It never moves a Bloom level and is
+// never blended into accuracy (decision 3's safe default, PRODUCT_DECISIONS.md).
+
+import { rollKey } from './accounts.js';
+
+/**
+ * What a phone may join with (and so what a roster may hold): letters, digits,
+ * space and . _ - /, starting with a letter or digit, at most 24 characters,
+ * once trimmed, single-spaced and upper-cased. The live loop imports this, so a
+ * roster can never hold a roll number no phone could send.
+ */
+export const ROLL_SHAPE = /^[A-Z0-9][A-Z0-9 ._\-\/]{0,23}$/;
+
+export const MAX_NAME = 80;
+export const MAX_COURSE_NAME = 120;
+export const MAX_SECTION = 40;
+export const MAX_TERM_LABEL = 40;
+// Per class, and per request. Far over an Indian college section (60 to 120),
+// and the most profiles one room's grid reads back from Supabase (listProfiles).
+export const MAX_CLASS_SIZE = 500;
+
+export const ATTENDANCE_STATUSES = ['present', 'absent', 'late'];
+
+/**
+ * The lock the teacher's attendance writes take (lockProfile in
+ * sockets/index.js), so a room being deleted waits for them as it waits for each
+ * student. '#' is outside ROLL_SHAPE, so it is never a student's own lock.
+ */
+export const ATTENDANCE_LOCK = '#attendance';
+
+/**
+ * Decision 7's known gap, said wherever a 'joined' mark is shown. A room has no
+ * sign-in: the roll number is whatever was typed, so a classmate can be marked
+ * present by someone else's phone. Not solved here; it needs the phone to
+ * present a signed-in student's token (docs/PRODUCT_DECISIONS.md, decision 7).
+ */
+export const JOINED_CAVEAT =
+  '"Joined" means a phone joined this room with that roll number. A room has no sign-in, '
+  + 'so a typed roll number is not proof of who was holding the phone.';
+
+// The keys a roster row may carry. Anything else (a phone number, an email) is
+// left out of what is stored and named back in `ignoredFields`.
+const ROW_KEYS = new Set(['roll', 'rollNo', 'name']);
+
+const fail = (message, status) => Object.assign(new Error(message), { status });
+
+/** A roll number in the room's form, or null when a phone could not join with it. */
+export function rosterRoll(raw) {
+  if (typeof raw !== 'string' && !(typeof raw === 'number' && Number.isFinite(raw))) return null;
+  const roll = rollKey(raw);
+  return ROLL_SHAPE.test(roll) ? roll : null;
+}
+
+/** Trimmed and single-spaced; '' for anything that is not text. */
+export function cleanName(raw) {
+  return typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim() : '';
+}
+
+// An email address, and an Indian mobile number (ten digits from 6 to 9, spaced
+// or not, with or without +91). Narrow on purpose: a teacher's note may well
+// name a roll number, and many roll numbers are long runs of digits.
+const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/;
+const MOBILE = /(?<!\d)(?:\+?91[\s-]?)?[6-9](?:[\s-]?\d){9}(?!\d)/;
+// A day, a month and a year: 12-5-04, 1/5/04, 01.05.2004.
+const DATE = /(?<!\d)\d{1,2}[-/.]\d{1,2}[-/.](?:\d{2}|\d{4})(?!\d)/;
+
+/**
+ * Does this text carry an email address or a mobile number? Every free-text
+ * field the server keeps about a class or its teaching is screened with it: a
+ * roster keeps a roll number and a name only, and a field meant for something
+ * else (a note, a group's label, a course name) is the easiest place for a
+ * parent's number to end up.
+ */
+export function holdsContact(text) {
+  return EMAIL.test(text) || MOBILE.test(text);
+}
+
+/** `field` off a body, refused when it carries an email address or a phone number (holdsContact). */
+export function withoutContact(text, field) {
+  if (holdsContact(text)) throw fail(`${field} holds an email address or a phone number; teacher records keep neither.`, 400);
+  return text;
+}
+
+/**
+ * Why this name cannot go on a roster, or null. A roster keeps a roll number and
+ * a name only, and a pasted spreadsheet row ("Asha Rao 98450 12345") is the usual
+ * way something else arrives inside the name.
+ */
+export function nameProblem(name) {
+  if (!name) return 'the name is missing';
+  if (name.length > MAX_NAME) return `the name is longer than ${MAX_NAME} characters`;
+  if (name.includes('@')) return 'the name looks like it holds an email address; a roster keeps a roll number and a name only';
+  if ((name.match(/\d/g) ?? []).length >= 6) {
+    return 'the name holds a long number (a phone number or a date of birth?); a roster keeps a roll number and a name only';
+  }
+  // A short date has too few digits for the rule above ("Asha 12-5-04").
+  if (DATE.test(name)) return 'the name holds a date (a date of birth?); a roster keeps a roll number and a name only';
+  return null;
+}
+
+const textField = (body, key) => {
+  const value = body?.[key];
+  if (value === undefined) return undefined;
+  if (value === null) return '';
+  if (typeof value !== 'string') throw fail(`${key} must be text.`, 400);
+  return withoutContact(value.replace(/\s+/g, ' ').trim(), key);
+};
+
+/**
+ * A class's own fields off a request body, or an honest 400. `partial` is an
+ * edit: only what was sent, and at least one of the three.
+ */
+export function classFields(body = {}, { partial = false } = {}) {
+  const out = {};
+  const courseName = textField(body, 'courseName');
+  const section = textField(body, 'section');
+  const termLabel = textField(body, 'termLabel');
+
+  if (courseName !== undefined || !partial) {
+    if (!courseName) throw fail('courseName is required: the course this class takes, such as "Computer Networks".', 400);
+    if (courseName.length > MAX_COURSE_NAME) throw fail(`courseName is longer than ${MAX_COURSE_NAME} characters.`, 400);
+    out.courseName = courseName;
+  }
+  if (section !== undefined || !partial) {
+    if (!section) throw fail('section is required, such as "TY-CSF B".', 400);
+    if (section.length > MAX_SECTION) throw fail(`section is longer than ${MAX_SECTION} characters.`, 400);
+    out.section = section;
+  }
+  if (termLabel !== undefined || !partial) {
+    if ((termLabel ?? '').length > MAX_TERM_LABEL) throw fail(`termLabel is longer than ${MAX_TERM_LABEL} characters.`, 400);
+    out.termLabel = termLabel ?? '';
+  }
+  if (partial && !Object.keys(out).length) throw fail('Send courseName, section or termLabel to change.', 400);
+  return out;
+}
+
+/** Roll-number order, numerically, so '2' comes before '10'. */
+export function byRoll(a, b) {
+  return String(a.rollNo).localeCompare(String(b.rollNo), undefined, { numeric: true });
+}
+
+/**
+ * Which rows of a pasted list may join the roster, and why each other one may
+ * not. Nothing is refused silently and nothing is half-added: every row is
+ * either in `accepted` or in `refused` with a reason a professor can act on.
+ *
+ * `existing` is the whole roster, removed students included: a removed
+ * student's roll number is refused with "restore them" rather than added as a
+ * second row, because their answers and attendance hang off the first.
+ *
+ * @returns {{ accepted: {index, rollNo, name}[], refused: {index, roll, name, reason}[], ignoredFields: string[] }}
+ */
+export function validateRoster(list, existing = []) {
+  if (!Array.isArray(list)) throw fail('students must be a list of { roll, name }.', 400);
+  if (!list.length) throw fail('students is empty: send at least one { roll, name }.', 400);
+  if (list.length > MAX_CLASS_SIZE) {
+    throw fail(`students lists ${list.length} rows; ${MAX_CLASS_SIZE} is the most one request may add.`, 400);
+  }
+
+  const held = new Map(existing.map((s) => [s.rollNo, s]));
+  let room = MAX_CLASS_SIZE - existing.filter((s) => !s.removedAt).length;
+  const taken = new Set();
+  const accepted = [];
+  const refused = [];
+  const ignored = new Set();
+
+  list.forEach((row, index) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      refused.push({ index, roll: null, name: null, reason: 'not a { roll, name } object' });
+      return;
+    }
+    for (const k of Object.keys(row)) if (!ROW_KEYS.has(k)) ignored.add(k);
+
+    const given = row.roll ?? row.rollNo;
+    const refuse = (reason) => refused.push({
+      index,
+      roll: given === undefined || given === null ? null : String(given),
+      name: typeof row.name === 'string' ? row.name : null,
+      reason,
+    });
+
+    if (given === undefined || given === null || String(given).trim() === '') return refuse('the roll number is missing');
+    const rollNo = rosterRoll(given);
+    if (!rollNo) {
+      return refuse('the roll number is not one a phone can join with: letters, digits, spaces and . _ - / only, '
+        + 'starting with a letter or digit, at most 24 characters');
+    }
+    const name = cleanName(row.name);
+    const problem = nameProblem(name);
+    if (problem) return refuse(problem);
+
+    const prior = held.get(rollNo);
+    if (prior && !prior.removedAt) return refuse(`roll number ${rollNo} is already on this class's roster`);
+    if (prior) return refuse(`roll number ${rollNo} was removed from this class; restore that student instead of adding them again`);
+    if (taken.has(rollNo)) return refuse(`roll number ${rollNo} appears more than once in this list`);
+    if (room <= 0) return refuse(`the class would have more than ${MAX_CLASS_SIZE} students`);
+
+    room -= 1;
+    taken.add(rollNo);
+    accepted.push({ index, rollNo, name });
+    return undefined;
+  });
+
+  return { accepted, refused, ignoredFields: [...ignored].sort() };
+}
+
+/** One roster row as a teacher's screen gets it. Field by field: nothing else stored is sent. */
+export function studentView(s) {
+  return {
+    id: String(s._id),
+    rollNo: s.rollNo,
+    name: s.name,
+    active: !s.removedAt,
+    addedAt: s.addedAt ?? null,
+    removedAt: s.removedAt ?? null,
+  };
+}
+
+/** A class as a teacher's screen gets it. `size` is the active roster. */
+export function classView(cls, roster = []) {
+  return {
+    id: String(cls._id),
+    courseName: cls.courseName,
+    section: cls.section,
+    termLabel: cls.termLabel ?? '',
+    ownerId: cls.ownerId ?? null,
+    createdAt: cls.createdAt ?? null,
+    updatedAt: cls.updatedAt ?? null,
+    size: roster.filter((s) => !s.removedAt).length,
+  };
+}
+
+/** The student on the roster (not removed) a phone's roll number names, or null. */
+export function activeStudentFor(roster, rollNo) {
+  const wanted = rollKey(rollNo);
+  if (!wanted) return null;
+  return roster.find((s) => !s.removedAt && s.rollNo === wanted) ?? null;
+}
+
+/** Present or late: in the room. The "N" of "N / M present". */
+const inRoom = (mark) => mark?.status === 'present' || mark?.status === 'late';
+
+const markOf = (marks) => new Map(marks.map((m) => [String(m.classStudentId), m]));
+
+/**
+ * A room's attendance against its class roster.
+ *
+ *   students     every student on the roster now, with their mark, or
+ *                'unmarked' (which is not absent: nobody has said)
+ *   removed      students removed from the roster since who still have a mark
+ *                in this room. Kept and shown, not counted
+ *   notOnRoster  phones that joined with a roll number the roster does not hold
+ *                (a removed student's included), so the professor can add them.
+ *                They were let in, as every roll number is
+ *   counts       present, late, absent, unmarked, classSize (the roster now),
+ *                joined (roster students with a phone in the room), notOnRoster
+ *   summary      "N / M present", N counting late arrivals: they were there
+ */
+export function attendanceReport({ roster = [], marks = [], profiles = [] } = {}) {
+  const joined = new Map(profiles.map((p) => [String(p.rollNo), p]));
+  const byStudent = markOf(marks);
+  const sorted = [...roster].sort(byRoll);
+  const active = sorted.filter((s) => !s.removedAt);
+  const onRoster = new Set(active.map((s) => s.rollNo));
+  const removedRolls = new Set(sorted.filter((s) => s.removedAt).map((s) => s.rollNo));
+
+  const row = (s) => {
+    const m = byStudent.get(String(s._id));
+    return {
+      studentId: String(s._id),
+      rollNo: s.rollNo,
+      name: s.name,
+      status: m?.status ?? 'unmarked',
+      source: m?.source ?? null,
+      markedAt: m?.markedAt ?? null,
+      markedBy: m?.markedBy ?? null,
+      joined: joined.has(s.rollNo),
+    };
+  };
+
+  const students = active.map(row);
+  const removed = sorted
+    .filter((s) => s.removedAt && byStudent.has(String(s._id)))
+    .map((s) => ({ ...row(s), removedAt: s.removedAt }));
+  const notOnRoster = profiles
+    .filter((p) => !onRoster.has(String(p.rollNo)))
+    .map((p) => ({ rollNo: p.rollNo, name: p.name ?? '', removedFromRoster: removedRolls.has(String(p.rollNo)) }));
+
+  const count = (status) => students.filter((s) => s.status === status).length;
+  const counts = {
+    present: count('present'),
+    late: count('late'),
+    absent: count('absent'),
+    unmarked: count('unmarked'),
+    classSize: active.length,
+    joined: students.filter((s) => s.joined).length,
+    notOnRoster: notOnRoster.length,
+  };
+  return {
+    students,
+    removed,
+    notOnRoster,
+    counts,
+    summary: `${counts.present + counts.late} / ${counts.classSize} present`,
+    caveat: JOINED_CAVEAT,
+  };
+}
+
+/** "N / M present" for the live grid, by the same rule as the report. */
+export function presentCount(roster = [], marks = []) {
+  const byStudent = markOf(marks);
+  const active = roster.filter((s) => !s.removedAt);
+  const present = active.filter((s) => inRoom(byStudent.get(String(s._id)))).length;
+  return { present, classSize: active.length, summary: `${present} / ${active.length} present` };
+}
+
+/**
+ * The teacher's marks off a request body, checked against the roster, or an
+ * honest 400. All or nothing: a list with one bad row changes nobody, so a
+ * professor never has to work out which half of a press went through.
+ */
+export function marksFrom(raw, roster) {
+  if (!Array.isArray(raw) || !raw.length) {
+    throw fail('marks must be a list of { studentId, status }, or send { fromJoins: true }.', 400);
+  }
+  if (raw.length > MAX_CLASS_SIZE) throw fail(`marks lists ${raw.length} rows; ${MAX_CLASS_SIZE} is the most.`, 400);
+  // Any case: a uuid may be typed either way, as for a room's question set.
+  const active = new Map(roster.filter((s) => !s.removedAt).map((s) => [String(s._id).toLowerCase(), s]));
+  const seen = new Set();
+  const out = [];
+  let outside = 0;
+  raw.forEach((m, i) => {
+    const status = m?.status;
+    if (!ATTENDANCE_STATUSES.includes(status)) {
+      throw fail(`marks[${i}]: status must be ${ATTENDANCE_STATUSES.join(', ').replace(/, (?=[^,]*$)/, ' or ')}.`, 400);
+    }
+    const id = typeof m?.studentId === 'string' ? m.studentId.trim().toLowerCase() : '';
+    const student = active.get(id);
+    if (!student) { outside += 1; return; }
+    if (seen.has(id)) throw fail(`marks names roll number ${student.rollNo} twice.`, 400);
+    seen.add(id);
+    out.push({ classStudentId: String(student._id), status });
+  });
+  if (outside) {
+    throw fail(
+      `${outside} of the ${raw.length} marks name${outside === 1 ? 's' : ''} a student who is not on this class's roster. `
+        + 'Nothing was changed.',
+      400,
+    );
+  }
+  return out;
+}
+
+/**
+ * "Everyone who joined present, the rest absent", as marks. A student the
+ * professor already marked by hand keeps that mark (someone marked late stays
+ * late); only joins and unmarked students are written, as the teacher's.
+ */
+export function marksFromJoins({ roster = [], marks = [], profiles = [] } = {}) {
+  const joined = new Set(profiles.map((p) => String(p.rollNo)));
+  const byStudent = markOf(marks);
+  const out = [];
+  let kept = 0;
+  for (const s of roster.filter((r) => !r.removedAt)) {
+    if (byStudent.get(String(s._id))?.source === 'teacher') { kept += 1; continue; }
+    out.push({ classStudentId: String(s._id), status: joined.has(s.rollNo) ? 'present' : 'absent' });
+  }
+  return { marks: out, kept };
+}
+
+/**
+ * Mark a roster student present because a phone joined the room with their
+ * roll number. Only if nobody has marked them yet: the professor's mark wins
+ * over a later join, and a rejoin changes nothing. A roll number not on the
+ * roster is let into the room as always and simply marks nobody.
+ *
+ * Decision 7's known gap applies (JOINED_CAVEAT): the roll number is typed, not
+ * proven, so this records that a phone claimed the student, nothing more.
+ *
+ * @returns {Promise<{created: boolean} | null>} null when the room has no class or the roll is not on it
+ */
+export async function markJoined(repo, session, rollNo, { now = new Date() } = {}) {
+  if (!session?.classId) return null;
+  const student = activeStudentFor(await repo.listClassStudents(session.classId), rollNo);
+  if (!student) return null;
+  return repo.addAttendanceIfAbsent({
+    sessionId: String(session._id),
+    classStudentId: String(student._id),
+    status: 'present',
+    source: 'joined',
+    markedAt: now.toISOString(),
+    markedBy: null,
+  });
+}
+
+/**
+ * The teacher's grid for a class room: each row with the roster's name for its
+ * roll number (`rosterName`, null for a roll number not on the roster), and the
+ * present count. A room with no class gets its rows back untouched and no
+ * `attendance`, exactly as before. Absent students who never joined have no
+ * profile, so they are not rows.
+ *
+ * Never allowed to break the grid: it is pushed after every answer, and a
+ * failed roster read must not tell a phone its saved answer "did not save".
+ *
+ * `seen`, when given, is handed the roster and the marks this read, so the live
+ * insights' sample of the same push (services/insights.js sampleFromGrid) counts
+ * who is present without reading them again. Left empty when the read fails.
+ */
+export async function classGrid(repo, session, rows, seen = null) {
+  if (!session?.classId) return { rows };
+  try {
+    const [roster, marks] = await Promise.all([
+      repo.listClassStudents(session.classId),
+      repo.listAttendance(session._id),
+    ]);
+    if (seen) Object.assign(seen, { roster, marks });
+    const names = new Map(roster.filter((s) => !s.removedAt).map((s) => [s.rollNo, s.name]));
+    return {
+      rows: rows.map((r) => ({ ...r, rosterName: names.get(String(r.rollNo)) ?? null })),
+      attendance: presentCount(roster, marks),
+    };
+  } catch (err) {
+    console.error('[roster] class grid failed:', err);
+    return { rows };
+  }
+}
