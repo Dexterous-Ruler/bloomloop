@@ -29,8 +29,8 @@ import {
   Avatar, Button, Chip, Dialog, Empty, Field, Icon, Note, Num, Panel, Section, Segmented, Spark, Tip,
 } from '../ui/index.jsx';
 import {
-  ago, big, busiest, byLevel, CodeBlock, CopyButton, dateOf, dayOf, daysUntil, Facts, LevelRows, plural, Rate,
-  RoomDot, seriesOf, share, thinnest, useMedia,
+  ago, big, busiest, byLevel, CodeBlock, CopyButton, dateOf, dayOf, daysUntil, Facts, LEVEL_BANDS, LevelReading,
+  LevelSummary, plural, Rate, restsOn, RoomDot, seriesOf, share, thinnest, useMedia,
 } from './dashParts.jsx';
 
 /* Each filter carries its own test, so its count and the rows it shows cannot
@@ -183,10 +183,12 @@ const STEPS = [
 const stepOf = (acc) => (acc < 0.2 ? 1 : acc < 0.4 ? 2 : acc < 0.6 ? 3 : acc < 0.8 ? 4 : 5);
 
 /** One accuracy as a cell on a single green scale: darker is stronger. */
-function Cell({ level, entry }) {
+function Cell({ name, entry }) {
   const seen = entry?.seen ?? 0;
+  // A band from the server brings its count sentence: said on hover and to a screen reader.
+  const said = entry?.sentence ? ` ${entry.sentence}` : '';
   if (!seen) {
-    return <td><span className="ac-cell" data-empty="true" title={`${LABEL[level]}: not answered`}>—</span></td>;
+    return <td><span className="ac-cell" data-empty="true" title={`${name}: not answered.${said}`}>—</span></td>;
   }
   const correct = entry.correct ?? 0;
   const acc = correct / seen;
@@ -195,28 +197,53 @@ function Cell({ level, entry }) {
       <span
         className="ac-cell"
         data-step={stepOf(acc)}
-        title={`${LABEL[level]}: ${correct.toLocaleString()} of ${seen.toLocaleString()} correct`}
+        title={`${name}: ${correct.toLocaleString()} of ${seen.toLocaleString()} correct.${said}`}
       >
         {Math.round(acc * 100)}
-        <span className="sr-only">% of {seen.toLocaleString()}</span>
+        <span className="sr-only">% of {seen.toLocaleString()}.{said}</span>
       </span>
     </td>
   );
 }
 
+/* The map's columns: the three level bands (decision 6, the default for a
+   summary) or the six levels. Each column is a set of levels, so a cell is
+   the answers at those levels added together. */
+const COLUMNS = {
+  bands: LEVEL_BANDS.map((b) => ({ id: b.id, name: b.label, levels: b.levels })),
+  levels: LEVELS.map((l) => ({ id: l, name: LABEL[l], levels: [l] })),
+};
+const entryOf = (bloom, col, sent) => {
+  // The server's own band, as the dashboard and analytics send `levelBands`
+  // since the Phase 5 follow-ups; the column's levels added up only when a
+  // read carries none.
+  const given = Array.isArray(sent) ? sent.find((b) => b.id === col.id) : null;
+  if (given) return { seen: given.answers ?? 0, correct: given.correct ?? 0, sentence: given.sentence };
+  const map = byLevel(bloom);
+  return col.levels.reduce(
+    (e, l) => ({ seen: e.seen + (map[l]?.seen ?? 0), correct: e.correct + (map[l]?.correct ?? 0) }),
+    { seen: 0, correct: 0 },
+  );
+};
+
 /**
- * Where the department's answers land, level by level. The department is one
- * row and is always there; each professor is a row of their own once asked
- * for, read from their own analytics, because nothing on the dashboard carries
- * a level profile per professor.
+ * Where the department's answers land, in three level bands first and the six
+ * levels on request. The department is one row and is always there; each
+ * professor is a row of their own once asked for, read from their own
+ * analytics, because nothing on the dashboard carries a level profile per
+ * professor.
  */
-function LevelMap({ bloom, professors, details, onInspect, onPick }) {
+function LevelMap({ bloom, bands, professors, details, onInspect, onPick }) {
   const [open, setOpen] = useState(false);
+  const [by, setBy] = useState('bands');
+  const cols = COLUMNS[by];
+  const sentFor = (b) => (by === 'bands' ? b : null);
   const ran = professors.filter((p) => p.sessions > 0);
   const idle = professors.filter((p) => p.sessions === 0);
-  const peak = busiest(bloom);
   const seen = bloom.reduce((n, b) => n + (b.seen ?? 0), 0);
-  const dept = byLevel(bloom);
+  const dept = cols.map((c) => entryOf(bloom, c, sentFor(bands)));
+  // The column most answers landed in, marked in the head.
+  const peak = seen ? cols[dept.reduce((at, e, i) => (e.seen > dept[at].seen ? i : at), 0)] : null;
 
   // Opening the comparison is what asks for each professor's levels: one read
   // each, and the cache in the container means never twice.
@@ -232,28 +259,39 @@ function LevelMap({ bloom, professors, details, onInspect, onPick }) {
         <Section
           as="h2"
           title="Accuracy by level"
-          sub="Correct of answered at each of the six levels. Darker is stronger; a dash is a level nobody has been asked."
+          sub={by === 'bands'
+            ? 'Correct of answered in three bands of two levels each, so each figure rests on more answers. Darker is stronger; a dash is a band nobody has been asked.'
+            : 'Correct of answered at each of the six levels. Darker is stronger; a dash is a level nobody has been asked.'}
         />
-        <div className="ac-legend" aria-hidden="true">
-          <span>0%</span>
-          {STEPS.map((s) => <i key={s.step} data-step={s.step} title={s.label} />)}
-          <span>100%</span>
-          <i data-empty="true" />
-          <span>Not asked</span>
+        <div className="ac-heat-tools">
+          <LevelReading value={by} onChange={setBy} />
+          <div className="ac-legend" aria-hidden="true">
+            <span>0%</span>
+            {STEPS.map((s) => <i key={s.step} data-step={s.step} title={s.label} />)}
+            <span>100%</span>
+            <i data-empty="true" />
+            <span>Not asked</span>
+          </div>
         </div>
       </div>
 
       <div className="ac-heat-wrap">
-        <table className="ac-heat">
-          <caption className="sr-only">Accuracy at each level, as a percentage of answers that level was asked</caption>
+        <table className={`ac-heat${by === 'bands' ? ' is-bands' : ''}`}>
+          <caption className="sr-only">
+            {by === 'bands'
+              ? 'Accuracy in each level band, as a percentage of the answers asked at its two levels'
+              : 'Accuracy at each level, as a percentage of answers that level was asked'}
+          </caption>
           <thead>
             <tr>
               <th scope="col"><span className="sr-only">Who</span></th>
-              {LEVELS.map((l, i) => (
-                <th key={l} scope="col" data-level={l} data-peak={seen && peak?.level === l ? 'true' : undefined}>
-                  <span className="ac-heat-lv"><i className="swatch" />{i + 1}</span>
-                  <span className="ac-heat-name">{LABEL[l]}</span>
-                  {seen > 0 && peak?.level === l && <span className="sr-only"> (most answers)</span>}
+              {cols.map((c) => (
+                <th key={c.id} scope="col" data-peak={peak?.id === c.id ? 'true' : undefined}>
+                  <span className="ac-heat-lv">
+                    {c.levels.map((l) => <span key={l} className="ac-heat-n" data-level={l}><i className="swatch" />{LEVELS.indexOf(l) + 1}</span>)}
+                  </span>
+                  <span className="ac-heat-name">{c.name}</span>
+                  {peak?.id === c.id && <span className="sr-only"> (most answers)</span>}
                 </th>
               ))}
             </tr>
@@ -264,11 +302,11 @@ function LevelMap({ bloom, professors, details, onInspect, onPick }) {
                 <span className="ac-heat-who">Whole department</span>
                 <small>{seen ? `${seen.toLocaleString()} answers` : 'Fills in from live rooms'}</small>
               </th>
-              {LEVELS.map((l) => <Cell key={l} level={l} entry={dept[l]} />)}
+              {cols.map((c, i) => <Cell key={c.id} name={c.name} entry={dept[i]} />)}
             </tr>
             {ran.length > 0 && (
               <tr className="ac-heat-toggle">
-                <td colSpan={7}>
+                <td colSpan={cols.length + 1}>
                   <button type="button" aria-expanded={open} onClick={toggle}>
                     <Icon name="chevron" size={14} />
                     {open ? 'Hide the professors' : `Compare ${plural(ran.length, 'professor')}`}
@@ -285,16 +323,16 @@ function LevelMap({ bloom, professors, details, onInspect, onPick }) {
                     <small>{plural(p.sessions, 'room')}</small>
                   </th>
                   {d?.error ? (
-                    <td colSpan={6}>
+                    <td colSpan={cols.length}>
                       <span className="ac-heat-err">
                         Did not load: {d.error}{' '}
                         <button type="button" className="link ac-linkbtn" onClick={() => onInspect?.(p.id, true)}>Try again</button>
                       </span>
                     </td>
                   ) : !d?.data ? (
-                    LEVELS.map((l) => <td key={l}><span className="ac-cell skel" aria-hidden="true" /></td>)
+                    cols.map((c) => <td key={c.id}><span className="ac-cell skel" aria-hidden="true" /></td>)
                   ) : (
-                    LEVELS.map((l) => <Cell key={l} level={l} entry={byLevel(d.data.bloom)[l]} />)
+                    cols.map((c) => <Cell key={c.id} name={c.name} entry={entryOf(d.data.bloom, c, sentFor(d.data.levelBands))} />)
                   )}
                 </tr>
               );
@@ -305,15 +343,15 @@ function LevelMap({ bloom, professors, details, onInspect, onPick }) {
                   <span className="ac-heat-who">{names(idle)}</span>
                   <small>No rooms yet</small>
                 </th>
-                <td colSpan={6}><span className="t-meta">A live room is what writes a level profile, so there is nothing to read here yet.</span></td>
+                <td colSpan={cols.length}><span className="t-meta">A live room is what writes a level profile, so there is nothing to read here yet.</span></td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      {seen > 0 && peak && (
+      {peak && (
         <p className="ac-heat-note t-meta">
-          Marked: {LABEL[peak.level]}, where most of the department&rsquo;s questions landed. Nothing here is estimated.
+          Marked: {peak.name}, where most of the department&rsquo;s questions landed. Nothing here is estimated.
         </p>
       )}
     </section>
@@ -334,7 +372,7 @@ function RoomLine({ room, owner }) {
         <span className="t-meta">
           <span className="mono">{room.code}</span>
           {owner !== undefined && ` · ${owner || 'Owner not on the roster'}`}
-          {` · ${room.joined ?? 0} joined · ${share(room.accuracy)}`}
+          {` · ${room.joined ?? 0} joined · ${share(room.accuracy)}${restsOn(room)}`}
           {dayOf(room.startedAt) && ` · ${dayOf(room.startedAt)}`}
           {/* One professor's own list has the room for it; the department's does not. */}
           {owner === undefined && room.banded > 0 && ` · ${room.banded} in support band`}
@@ -391,6 +429,8 @@ function ProfessorDetail({ professor: p, detail, recent, onRetry }) {
   // while the fuller read is out.
   const rooms = d ? [...(d.timeline ?? [])].reverse().slice(0, 4) : recent.slice(0, 4);
   const seen = (d?.bloom ?? []).reduce((n, b) => n + (b.seen ?? 0), 0);
+  // Their classes together are a summary (decision 6): three bands first.
+  const [by, setBy] = useState('bands');
 
   let reading = null;
   if (d && seen > 0) {
@@ -418,7 +458,7 @@ function ProfessorDetail({ professor: p, detail, recent, onRetry }) {
       <section className="ac-sec">
         <div className="ac-sec-head">
           <h3 className="ac-label">Their classes, by level</h3>
-          {p.sessions > 0 && <span className="t-meta">correct of answered</span>}
+          {p.sessions > 0 && d && <LevelReading value={by} onChange={setBy} />}
         </div>
         {p.sessions === 0 ? (
           <p className="said">
@@ -434,8 +474,10 @@ function ProfessorDetail({ professor: p, detail, recent, onRetry }) {
           <div className="stack stack-2">{LEVELS.map((l) => <div key={l} className="skel" style={{ height: 14 }} />)}</div>
         ) : (
           <>
-            <LevelRows bloom={d.bloom} current={busiest(d.bloom)?.level} />
-            {reading && <p className="t-meta">{reading}</p>}
+            <LevelSummary bloom={d.bloom} bands={d.levelBands} by={by} current={busiest(d.bloom)?.level} />
+            <p className="t-meta">
+              Correct of answered.{by === 'bands' ? ' Two levels to a band.' : ''}{reading ? ` ${reading}` : ''}
+            </p>
           </>
         )}
       </section>
@@ -614,7 +656,11 @@ function ProfessorRow({ professor: p, selected, onPick }) {
           <CopyButton value={p.code} label={null} variant="ghost" className="ac-tap" aria-label={`Copy the code for ${p.fullName || 'this account'}`} />
         </span>
         <span className="ac-prof-state">{status}</span>
-        <span className="ac-prof-rate" aria-label={`Mean accuracy ${share(p.accuracy)}`}><Rate value={p.accuracy} /></span>
+        <span className="ac-prof-rate">
+          <span aria-label={`Mean accuracy ${share(p.accuracy)}${restsOn(p)}`}><Rate value={p.accuracy} /></span>
+          {/* What it rests on (Phase 5): their rooms' graded answers. */}
+          {Number(p.answers) > 0 && <small aria-hidden="true">{plural(p.answers, 'answer')}</small>}
+        </span>
       </div>
     </li>
   );
@@ -786,7 +832,7 @@ export function DepartmentView({
             onAnalytics={() => navigate('/analytics')}
           />
 
-          <LevelMap bloom={bloom} professors={professors} details={details} onInspect={onInspect} onPick={pick} />
+          <LevelMap bloom={bloom} bands={data.levelBands} professors={professors} details={details} onInspect={onInspect} onPick={pick} />
 
           <div className="ac-split">
             <section className="card ac-card" aria-labelledby="ac-profs-h">

@@ -57,15 +57,18 @@ const ATT_ORDER = ['present', 'late', 'absent', 'unmarked'];
 const ROOM_STATUS = { waiting: 'Waiting', open: 'Open', paused: 'Paused' };
 
 // Short names for a crowded cell. The full name and what each means are in
-// "How this register was made", from the server's own evidenceTypes.
-const TYPE_ORDER = ['digital', 'humanReviewed', 'aiProvisional'];
-const TYPE_SHORT = { digital: 'Digital', humanReviewed: 'Reviewed', aiProvisional: 'Provisional' };
-const TYPE_LABEL = { digital: 'Digital answers', humanReviewed: 'Reviewed by a professor', aiProvisional: 'Provisional machine marks' };
+// "How this register was made", from the server's own evidenceTypes. A
+// re-vote after a class discussion (Phase 5) is never counted, by any formula.
+const TYPE_ORDER = ['digital', 'humanReviewed', 'aiProvisional', 'revote'];
+const NEVER = new Set(['revote']);
+const TYPE_SHORT = { digital: 'Digital', humanReviewed: 'Reviewed', aiProvisional: 'Provisional', revote: 'Re-vote' };
+const TYPE_LABEL = { digital: 'Digital answers', humanReviewed: 'Reviewed by a professor', aiProvisional: 'Provisional machine marks', revote: 'Re-votes after discussion' };
 // Who wrote the question: the second split every figure carries. Labels are the
-// server's (`questionSources`), shortened only by their last word in a cell.
+// server's (`questionSources`), shortened in a cell to what comes before
+// " questions"; the fallback is used only when the reply carries none.
 const SOURCE_ORDER = ['aiGenerated', 'professorWritten', 'offlineTemplate'];
-const SOURCE_LABEL = { aiGenerated: 'AI-generated questions', professorWritten: 'Professor-written questions', offlineTemplate: 'Offline-template or professor-written questions' };
-const shortSource = (label) => String(label).replace(/\s+questions$/i, '');
+const SOURCE_LABEL = { aiGenerated: 'AI-generated questions', professorWritten: 'Professor-written questions', offlineTemplate: 'Offline-template questions' };
+const shortSource = (label) => String(label).replace(/\s+questions\b.*$/i, '');
 
 // The server's definitions, by key, under a heading a professor reads.
 const DEFINITION_TITLE = {
@@ -107,7 +110,7 @@ function Split({ marks }) {
       const m = marks[t];
       return (
         <span key={t} data-counted={m.counted === false ? 'false' : undefined}>
-          {TYPE_SHORT[t]} {mark(m.obtained)}/{mark(m.possible)}{m.counted === false ? ', not counted' : ''}
+          {TYPE_SHORT[t]} {mark(m.obtained)}/{mark(m.possible)}{NEVER.has(t) ? ', never counted' : m.counted === false ? ', not counted' : ''}
         </span>
       );
     });
@@ -127,9 +130,10 @@ function Sources({ marks, labels }) {
     .filter((id) => (qs[id]?.answers ?? 0) > 0 || (qs[id]?.notCounted ?? 0) > 0)
     .map((id) => {
       const q = qs[id];
+      const label = labels[id] ?? SOURCE_LABEL[id] ?? id;
       return (
-        <span key={id}>
-          {shortSource(labels[id] ?? SOURCE_LABEL[id] ?? id)} {mark(q.obtained)}/{mark(q.possible)}
+        <span key={id} title={label}>
+          {shortSource(label)} {mark(q.obtained)}/{mark(q.possible)}
           {q.notCounted ? <em> +{q.notCounted} not counted</em> : null}
         </span>
       );
@@ -239,8 +243,10 @@ function Brief({ data }) {
   const types = list(data.evidenceTypes);
   const evidence = data.formula?.config?.evidence ?? {};
   const labelOf = (id) => types.find((t) => t.id === id)?.label ?? TYPE_LABEL[id] ?? id;
-  const counted = TYPE_ORDER.filter((t) => evidence[t] === true).map(labelOf);
-  const apart = TYPE_ORDER.filter((t) => evidence[t] === false).map(labelOf);
+  const counted = TYPE_ORDER.filter((t) => !NEVER.has(t) && evidence[t] === true).map(labelOf);
+  const apart = TYPE_ORDER.filter((t) => !NEVER.has(t) && evidence[t] === false).map(labelOf);
+  // Always named: no formula counts a re-vote after discussion.
+  const never = TYPE_ORDER.filter((t) => NEVER.has(t)).map(labelOf);
   const onRoster = students.filter((s) => s.status === 'active').length;
   const removed = students.filter((s) => s.status === 'removed').length;
   const off = students.filter((s) => s.status === 'not-on-roster').length;
@@ -261,6 +267,7 @@ function Brief({ data }) {
         <div className="brief rg-brief-lines">
           {counted.length > 0 && <><b>Counted</b><span>{counted.join('; ')}</span></>}
           {apart.length > 0 && <><b>Shown</b><span>{apart.join('; ')}: in each cell, not counted</span></>}
+          <b>Never counted</b><span>{never.join('; ')}: in each cell, whatever the formula</span>
           <b>Formula</b><span>{formulaLine(data.formula)}</span>
           {num(answers.rows) !== null && (
             <>
@@ -425,7 +432,9 @@ function HowMade({ data }) {
                 <li key={t.id}>
                   <span className="rg-type-head">
                     <b>{t.label}</b>
-                    {t.id in evidence && (
+                    {NEVER.has(t.id) ? (
+                      <span className="rg-count" data-counted="false">Never counted</span>
+                    ) : t.id in evidence && (
                       <span className="rg-count" data-counted={evidence[t.id] ? 'true' : 'false'}>
                         {evidence[t.id] ? 'Counted' : 'Shown, not counted'}
                       </span>

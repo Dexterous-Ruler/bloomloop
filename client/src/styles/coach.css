@@ -37,6 +37,10 @@
 .co-rest { font: 400 11px/1.4 var(--font); color: var(--on-panel-3); text-wrap: pretty; }
 .co-kpi > small + .co-rest { margin-top: -2px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
 .co-kpi > .co-rest + .co-rest { margin-top: -6px; }
+/* Phase 5: what each figure rests on, the server's sentence, under its tile. */
+.co-kpi-wrap { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.co-kpi-wrap > .ptile { flex: 1; }
+.co-kpi-basis { padding: 0 4px; font: 400 11.5px/1.45 var(--font); color: var(--on-panel-2); text-wrap: pretty; }
 
 /* ============================================================ card heads */
 
@@ -62,6 +66,7 @@
 .co-card-k { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font: 600 11px/1.6 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
 .co-card-text { max-width: 72ch; font: 500 14px/1.5 var(--font); color: var(--text); text-wrap: pretty; }
 .co-evid { max-width: 80ch; font: 400 12px/1.45 var(--font); color: var(--text-3); text-wrap: pretty; }
+.co-basis { max-width: 80ch; padding-left: 10px; border-left: 2px solid var(--line-2); font: 500 12px/1.45 var(--font); color: var(--text-2); text-wrap: pretty; }
 .co-last { font: 500 12px/1.4 var(--font); color: var(--text-3); }
 .co-card-acts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; padding-top: 2px; }
 .co-err { font: 500 12.5px/1.45 var(--font); color: var(--bad); }
@@ -120,6 +125,15 @@
 .co-typed { max-width: 18ch; font: 400 12px/1.35 var(--font); color: var(--text-3); }
 .co-st-tags { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
 .co-st-reason { font: 400 12.5px/1.45 var(--font); color: var(--text-3); text-wrap: pretty; }
+.co-st-basis { font: 400 12px/1.45 var(--font); color: var(--text-3); text-wrap: pretty; }
+
+/* A level with too few answers behind it: no fill, a dashed edge in its own colour, and the word. */
+.co-lvb { display: inline-flex; align-items: center; gap: 6px; }
+.lv.co-lv-prov { background: transparent; outline: 1px dashed color-mix(in srgb, var(--lv) 75%, var(--text-3)); outline-offset: -1px; color: var(--text-2); }
+.co-prov {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 5px; outline: 1px dashed var(--line-2); outline-offset: -1px;
+  font: 600 10px/1 var(--font); letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-2); white-space: nowrap;
+}
 .co-away { color: var(--text-2); font-weight: 500; }
 .co-st-go { position: absolute; right: 16px; top: 50%; translate: 0 -50%; color: var(--text-4); transition: transform var(--t-1) var(--ease); }
 .co-st:hover .co-st-go { transform: translateX(2px); color: var(--text-2); }
@@ -209,6 +223,43 @@
 
 .co-serve { display: flex; flex-direction: column; gap: 10px; }
 .co-serve-can { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* Phase 5: the level served and, beside it, what it rests on. */
+.co-serve-now { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.co-serve-basis { flex: 1 1 200px; min-width: 0; font: 500 12.5px/1.45 var(--font); color: var(--text-2); text-wrap: pretty; }
+
+/* Level changes, newest first. */
+.co-moves { display: flex; flex-direction: column; }
+.co-moves > li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; padding: 9px 0; }
+.co-moves > li + li { border-top: 1px solid var(--line); }
+.co-moves > li > time { padding-top: 4px; font-size: 11.5px; color: var(--text-3); }
+.co-move-main { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.co-move-path { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.co-move-arrow { color: var(--text-3); }
+.co-move-hold { font: 500 12px/1.3 var(--font); color: var(--text-3); }
+.co-move-why { font: 400 12.5px/1.45 var(--font); color: var(--text-2); text-wrap: pretty; }
+.co-sc-more {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; padding: 0; border: 0; background: none; cursor: pointer;
+  font: 600 12px/1.4 var(--font); color: var(--text-2);
+}
+.co-sc-more:hover { color: var(--text); }
+
+/* Mastery per level, against the room's goal. */
+.co-mast { display: flex; flex-direction: column; }
+.co-mast > li { display: grid; grid-template-columns: 112px minmax(0, 1fr); align-items: center; gap: 4px 14px; padding: 9px 0; }
+.co-mast > li + li { border-top: 1px solid var(--line); }
+.co-mast > li > .lv { justify-self: start; }
+.co-mast-state { display: inline-flex; align-items: center; gap: 4px; font: 600 12px/1.3 var(--font); color: var(--text-2); }
+.co-mast > li[data-state='mastered'] .co-mast-state { color: var(--ok); }
+.co-mast > li[data-state='provisional'] .co-mast-state { color: var(--text-3); font-weight: 500; }
+.co-mast-why { grid-column: 2; font: 400 12.5px/1.45 var(--font); color: var(--text-3); text-wrap: pretty; }
+
+/* An answer given in another language than the question's own. */
+.co-ans-lang {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 5px; background: var(--sunk);
+  font: 600 10.5px/1 var(--font); letter-spacing: 0.02em; color: var(--text-2);
+}
+.co-lang-note { display: flex; align-items: flex-start; gap: 8px; font: 400 12.5px/1.5 var(--font); color: var(--text-2); text-wrap: pretty; }
+.co-lang-note > svg { flex: none; margin-top: 2px; color: var(--text-3); }
 .co-serve-can > span:first-child { margin-right: 4px; font: 500 12px/1.3 var(--font); color: var(--text-3); }
 
 .co-sc-key { display: inline-flex; align-items: center; gap: 6px; font: 400 12px/1.3 var(--font); color: var(--text-3); }
@@ -311,4 +362,8 @@
   .co-lvls > li { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); }
   .co-lvls > li > .co-lv-n { grid-column: 1 / -1; }
   .co-rec-row { grid-template-columns: minmax(0, 1fr); }
+  .co-mast > li { grid-template-columns: minmax(0, 1fr) auto; }
+  .co-mast-why { grid-column: 1 / -1; }
+  .co-moves > li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .co-moves > li > time { padding-top: 0; }
 }

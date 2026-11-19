@@ -452,6 +452,304 @@ reads only. Server sentences are shown as they come.
     is drawn.
 - **Icons:** a print icon for the printable pages.
 
+### The owner's decisions of 19 Nov, and Phase 5 part 1: confidence taps and class questions (19 Nov)
+
+- **Phone (`/join`):**
+  - **Linking to an account:** a signed-in student's access token goes with
+    the join. It is read from the browser's stored session, so the phone
+    bundle carries no Supabase code. `linkNote` is shown as sent, only when
+    sent. A linked phone's finish screen says the answers are also in the
+    student's history.
+  - **What comes next:** the phone reads the server's `PhoneRow`. The result
+    and finish screens show `next.why` with `next.levels` and the count of
+    answers it rests on. The reason under a question is the server's own
+    sentence.
+  - **Who wrote the question:** a professor's own question reads "Written by
+    your teacher". "Not written by AI" stays for template questions, which
+    also hold older professor questions.
+  - **Confidence tap:** an optional Sure / Think so / Guessing row on every
+    answer kind, labels from the server. It sits above the answer, because a
+    choose-one sends on the tap. The line under it says it never changes the
+    mark or the level.
+  - **Class question:** the phone's own question is parked, not unmounted, so
+    a half-built answer and the timer survive. The options are lettered, with
+    the three taps. A vote can be changed while its round is open, and each
+    vote has a fresh id.
+    - Paused: the message and the phone's own vote.
+    - Re-vote: vote again.
+    - The confirmation never says right or wrong; a vote that did not count
+      shows the server's message.
+    - At the close, the key only when revealed, then back to the parked
+      question (or the new one the server sends).
+- **Live console:**
+  - **A Class question space** (rooms where phones answer), marked "running"
+    while one is open:
+    - Pick an approved choose-one, true-or-false, have-your-say or
+      choose-all question of the room's set; the server's refusals are shown
+      as sent.
+    - Round 1 shows only how many have voted of the phones joined.
+    - Pause shows the spread, the share right (rounded down, with its count)
+      and the taps by right and wrong.
+    - Re-vote, then close, with "Show the key on phones as it closes"
+      (never offered for a poll).
+    - After the close: before and after side by side, and the five changes
+      as counts.
+    - Past class questions of the room can be opened.
+    - Counts only throughout. An HOD reads only.
+  - **Confidence counts:** the room's confidence counts sit below the class
+    question, with the server's note. One student's card gains "How sure they
+    said they were" as counts. No tap is shown beside an answer, and no
+    student is labelled by one.
+  - **Signals off:** a grid row whose `integrity` is null reads "off", never
+    clear and never a signal. The trail shows the server's `message` when
+    `signalsOff`.
+- **Wall and its controls:**
+  - A Teacher-led room's wall shows no join code. The console's projector
+    command and code screen do not offer it either. A room reopened from a
+    link keeps its mode.
+  - A class question on the wall shows its state, the votes this round, and
+    the counts before and after when switched on.
+    - Each round's counts show only once it has closed with 5 or more votes;
+      otherwise the wall says which of those it is waiting for.
+    - The key, the share right and the changes only after the reveal.
+  - Projector controls: a Class questions tab to put one up, the "Show vote
+    counts on the wall" switch (off by default), and a line saying the key
+    goes up by closing with the key on the Class question space.
+- **Roster:**
+  - **Under 18:** a quiet "Under 18" tag per student. The owner can set or
+    remove the mark from the student's row menu. A note says what the mark
+    does and that only staff see it, with the server's `under18Note` once a
+    reply has carried it.
+  - **Paste and CSV import:** a pasted list may have an Under 18 column. The
+    import shows the column it read, the mark on each row to add, the
+    server's `under18` sentence and `under18Note`.
+  - **New class** follows the server's `canCreate`.
+  - **Archive:** the rooms list says a deleted room's records stay in its
+    archive.
+- **Level bands first (decision 6):** "All your classes", the department's
+  level map and a professor's classes open on the three level bands, with the
+  six levels one press away. One student stays at six levels.
+- **A student's own pages:** no `banded` and no support-band wording, and the
+  server's `note` (only rooms joined while signed in appear).
+- **Promotion copy (decision 2):** the room settings and the student's own
+  page say moving up is 70% over the last five answers at a level, with at
+  least three; sign-in says 70% over the last five. The room settings add
+  that stepping back is below 40%, and that the mastery goal is the room's
+  setting, 80% by default.
+- **Bank and editor:**
+  - **Sources:** a professor's own question is "Professor-written"; template
+    text that may be an older professor question is labelled so.
+  - **Rewriting an active question:** it keeps serving until the new draft is
+    approved. The bank no longer asks to confirm the rewrite, because nothing
+    leaves a room at once now. The reply's `note` is shown as sent.
+  - A draft that replaces a question says "Replaces:" with that question.
+    Approve, approve-all, restore and bulk restore name what was retired.
+- **Attainment and register:**
+  - The fourth evidence type, re-votes after discussion, is always shown and
+    marked never counted, with the server's label. The formula never offers
+    to count it.
+  - The template source's label comes from the server.
+- **Dev gallery:** each entry is drawn fresh when moving between entries, so
+  one entry's state never leaks into the next.
+
+### Phase 5 part 2: the review fixes, misconception labels and honest indicators (19 Nov)
+
+- **Phone:**
+  - **Who wrote the question:** under each question, and on a class
+    question, a quiet line with the server's `provenance.text`. It replaces
+    the chips built from `source`, so no "template", "fallback" or model name
+    reaches a student.
+  - **Early days:** when `next.provisional` is true, a gentle note says the
+    level settles after a few more answers.
+  - **Mastered levels:** the finish screen lists them with each level's
+    `masteryBasis` sentence, never a percentage.
+  - **Votes not counted:** shown with the server's sentence. A vote sent
+    while the room is paused leaves the earlier vote in force, and the
+    outbox records it as sent but not counted.
+  - **Never on the phone:** a class question's id is never sent as an
+    answer. No misconception label, level check, level move, translation
+    warning, confidence count or anyone else's vote reaches it.
+- **Live console:**
+  - **Class question:** `answeredAloneNote` shows as soon as one starts,
+    when phones had already answered that question alone. The question's
+    `sourceLabel` is beside it.
+  - **Grid:**
+    - each student's `levelBasis` sentence under their roll number;
+    - a provisional level drawn lighter, with a dashed ring and the word
+      "provisional";
+    - mastered cells ticked, with their `masteryBasis` sentence.
+  - **Insights:**
+    - each KPI's `sentence` and each card's `basis` sentence;
+    - each student's `bandBasis` and `levelBasis`;
+    - a provisional band always reads "Not enough answers yet".
+  - **Student card:**
+    - the `serving.basis` sentence beside the level;
+    - "Level changes": time, from → to and the server's reason, five shown
+      with "Show earlier";
+    - mastery per level;
+    - `languages.note` and a language tag on an answer in another language;
+    - a provisional band never shown as firm.
+  - **Misconceptions in the Insights space** (rooms where phones answer):
+    the most-chosen misunderstandings, then each labelled option's sentence
+    and note, with AI drafts marked and `otherWordingNote`. Counts only.
+- **Item statistics (room and bank):**
+  - `basis.sentence` beside the difficulty;
+  - who wrote the question;
+  - "Level uncertain" with its sentence;
+  - the language note and warning;
+  - each option's misconception label ("AI draft" until confirmed).
+- **Bank and editor:**
+  - **Misconceptions on wrong options**, in the editor for choose-one,
+    choose-all and true-or-false:
+    - a box of up to 120 characters beside each wrong option, never the key,
+      with Save, Clear and Confirm (for an AI draft);
+    - the label's provenance, its counts, and the server's refusal sentence;
+    - saving changes no status and asks for no re-approval;
+    - read-only when `canEdit` is false.
+  - After an edit or a retag that removes labels, `misconceptionsNote` with
+    each removed label and a way to open its question.
+  - Every row has a `provenance.label` chip, with its sentence on hover and
+    in the opened row.
+  - "Level uncertain" sits beside the Bloom tag.
+  - Rewriting a replacement or rejected draft shows `note` and keeps
+    "Replaces:".
+- **Class page:**
+  - **A Misconceptions tab:** the class report with the shared date and room
+    filter.
+  - **Across rooms:**
+    - the server's count sentences beside room accuracy, levels, level bands
+      and the histogram;
+    - the hardest questions with their basis, who wrote them and the
+      uncertain mark.
+- **Account:**
+  - **A student's own pages:** a dash where a linked room's level is null,
+    and the server's new note.
+  - **Dashboards:** the answers and students behind each room's accuracy,
+    and answers on an HOD's professor rows.
+  - **Level bands:** the server's `levelBands` are used when sent, with the
+    client's own pairing kept as the fallback.
+- **Attainment:** one student's report tags class votes and shows the
+  sentence for a vote set aside because the student had answered that
+  question alone.
+
+### The design zip's gaps, client only, and the server follow-ups of 4c1df09 (19 Nov)
+
+The client-only gaps the roadmap chose from `docs/UI_ZIP_AUDIT.md`; each ID is
+its row there.
+
+- **Shell:**
+  - **F2:** a toast (`ui/toast.jsx`, role=status, polite). It is used only
+    where a result would otherwise go unseen; failures stay beside their
+    control. The phone never loads it.
+  - **F4:** a rail badge hides on its own page.
+- **Live console:**
+  - **F3:** the space and the records tab are in the address (`?space=`,
+    `?tab=`), so a reload or a shared link keeps them. Ctrl+K has "Spin the
+    wheel", "Attendance", "Observations" and "Raised hands".
+  - **L3:** a grid footer counts the students mastered at each level, at the
+    room's goal, from the rows' own marks.
+  - **#1:** the time since the room was opened. It is not a planned length,
+    because `startedAt` counts from creation.
+  - **#3:** the median working level.
+  - **#4:** a Cells / Dots view of the heatmap, kept per device.
+  - **#5:** a "Since opened" trend per student, in neutral ink and labelled
+    as counted from this page's opening.
+  - **Insights** open in roll order (the server's `sort.default`).
+- **Room set-up, lobby and the code:**
+  - **R1:** "About N minutes for each student", only when both the cap and
+    the time per question are set, and named as an estimate.
+  - **R2:** who has joined the waiting room: roster names in a class room,
+    roll numbers otherwise, never a typed name. The line under them comes
+    from the server's counts.
+  - **R3:** the code is shown in two halves with a gap, never a dot or a
+    hyphen, on the lobby, the room page, the code screen and the wall.
+    Copying it gives the six characters.
+    - The phone's code field now keeps letters and digits only, so "ABC 123"
+      or "ABC-123", typed or pasted, lands as ABC123. It allows nine
+      characters, so a pasted separator is no longer cut off before it is
+      removed.
+  - **#8:** "Phone browsers, no installs" under the joined count.
+- **Records:**
+  - **W1:** think time. Draw first runs a ten-second countdown, with the
+    question to think about when one is picked. "Skip to draw" draws at once
+    and Cancel draws nothing. The server is asked only when the countdown
+    ends. It runs on the console only.
+  - **W3:** "Start new round" sits inside the empty-wheel note.
+  - **W4:** a Names switch shows roll numbers only, for a mirrored screen.
+    It is kept for the browser session and never sent.
+  - **C1:** in a class room, the observation roster shows each student's
+    attendance mark. Absent rows are dimmed in colour, and the mark is in
+    the row's accessible name.
+  - **#11:** a knowledge check with a tally has "Project to class". It puts
+    that question on the wall and opens the Projector space.
+- **Bank and material:**
+  - **M4:** "Use sample" fills an example unit, only while both fields are
+    empty, and offers "Clear the example".
+  - **B1:** "Draft for these levels" opens the planner in append mode,
+    weighted to the levels the bank calls thin (four drafts each, a client
+    default).
+  - **B2:** a new question starts at the level and topic filters in force.
+  - **#7:** "Reviewed · N of M": approved and waiting per level.
+- **Class page:**
+  - **A2:** two charts over the class's rooms:
+    - accuracy and participation as two labelled lines, with values on the
+      points;
+    - stacked bars of answered, present without an answer, absent and not
+      marked;
+    - each part has its own fill, edge and written counts.
+- **Server follow-ups (4c1df09):**
+  - The server's `levelBands` are read, with each band's sentence.
+  - `under18Note` shows on a fresh load.
+  - Staff student lists are in roll order.
+  - The phone takes `mine` on resume and pause.
+  - The projector shows its reworded refusals as sent.
+
+### Phase 7, stage "First": the phone keeps working offline (19 Nov)
+
+- **Service worker (`client/sw/joinWorker.js`, built to `/sw.js` by
+  `client/sw/plugin.js`):** hand-written, no Workbox.
+  - It is registered by the phone alone, with scope `/join`, and only in
+    production builds. The dev server and every staff screen never have one.
+  - The build writes the precache list into it: the `/join` entry chunk and
+    its imports, the entry CSS and the Latin fonts that CSS names. The cache
+    is named by a hash of that list, and older ones go on activate.
+  - The `/join` page is fetched from the network first and falls back to the
+    kept copy when the network is down or slower than 4 seconds. Hashed files
+    under `/assets/` are served from the cache first.
+  - `/api` and `/socket.io` always go to the network; nothing the server
+    says is cached.
+  - There is no skipWaiting: an open room keeps the build it started with
+    until the tab is closed.
+  - The server's static files vary on Origin (its CORS), so the cache is
+    matched with `ignoreVary`.
+  - To try it, build and serve the build. `vite preview` proxies `/api` and
+    `/socket.io` like the dev server.
+- **Answer outbox (`lib/outbox.js`, IndexedDB):**
+  - Every answer and class vote is written there first, under its
+    `answerId`, then sent.
+  - It is append-only and scoped by room code and roll number.
+  - After the rejoin is accepted, it is replayed one item at a time. The
+    server's result does not carry the `answerId`, so a reply is matched by
+    order, with a 12 second wait.
+  - An item counts as sent only when the server's reply arrives. An unsent
+    item is never deleted.
+  - A refusal for good (the room closed, the set finished) is kept and shown,
+    never retried.
+  - A reply for an earlier question goes to its outbox item and never paints
+    over the question on screen.
+- **Reconnecting:**
+  - The socket retries with jittered backoff, 0.6 to 10 seconds, without end.
+    It also tries at once when the browser says it is back online.
+  - The full-screen "Reconnecting" panel is gone. Offline is now one calm
+    line under the bar: "Offline: your answers are kept on this phone and
+    will be sent when you reconnect". The student can keep answering the
+    question on screen.
+- **Indicators:**
+  - "Saved on this phone" (held), "Sent" (the server has it, not yet marked:
+    a written answer, a poll, a retry) and "Marked" (the result came back).
+  - Nothing says right or wrong before the server has marked it. The phone
+    holds no keys.
+
 ## References and what they shaped
 
 - Karim's Goodfor design (Claude Design file, Nov 2026) shaped the direction:
@@ -616,6 +914,115 @@ opened. Behance pages gave text but no images, and Pinterest was not used.
     sideways scroll. Contrast was measured in the page and passes AA in both
     themes.
 
+## Checks run: the owner's decisions and Phase 5 part 1
+
+Against the current server tree on the in-memory store (shared key), restarted
+19 Nov on the decisions and Phase 5 code.
+
+- **Class question, through the console:** a fresh Student devices room with
+  7 simulated phones, run open, then pause, re-vote and close with the key.
+  - Round 1 showed only "7 of 7 phones joined".
+  - After the pause: 42%, 3 of 7 right.
+  - After the close: 57%, 4 of 7 right.
+  - The spread was 2/1/1/3 before and 2/0/1/4 after.
+  - The changes were 1 wrong to right, 0 right to wrong, 3 right both times
+    and 3 wrong both times on the same answer.
+  - Every figure matched the server's GET.
+  - Each builder also ran its own rooms: the console with 8 and 9 phones,
+    including a choose-all closed without the key; the wall with 8 phones.
+- **Phone:** at 390 px in its own room:
+  - a made-up stored token gave the `linkNote`, and no token gave no note;
+  - a vote, a changed vote and a reload restoring the vote in force;
+  - pause, re-vote and close with the key, then back to a half-built answer
+    intact;
+  - a true-or-false closed without the key, a choose-all with the key, and the
+    room paused and resumed during a class question;
+  - an answer tapped "Think so" counted in the room's confidence counts.
+- **Wall:** open, paused (8 votes), re-vote and closed with the key at
+  1920x1080 and 1280x720, and a Teacher-led wall with no join code.
+- **Roster:** on a class of the builder's own, setting and removing the mark,
+  and a dry run and import with Under 18 and Date of birth columns.
+- **Bank:** a question written in the bank came back as the professor's own.
+  Rewriting it gave a draft with `replacesId` and a `note`. Approving it named
+  the retired question, and so did restore, approve-all and bulk restore.
+- **Attainment:** after a re-vote on the seeded class, the report showed
+  "Re-votes after discussion: 8, never counted", and so did one student's
+  report and the register.
+- **Bundles:** the build passes. `/join` is 158.9 KiB, under its 161 KiB
+  target. It has no class-question, attainment or under-18 routes; its
+  Supabase strings are only the stored-session key it reads.
+- **Galleries:** all 305 entries render with no script error. The new states
+  are at 1280 and 390, light and dark, with contrast measured at AA or better.
+
+## Checks run: the zip gaps and the follow-ups
+
+Against 4c1df09 on the in-memory store, restarted and reseeded 19 Nov.
+
+- **Bundles:** the build passes. `/join` is 162.1 KiB, unchanged by the
+  staff gaps; the toast, think time and charts are not in it.
+- **Galleries:** all 342 entries render, with no script error and no React
+  warning.
+- **Contrast:** measured on the new records entries in light and dark; every
+  text element passes AA.
+- **The phone's code field, in the browser:** "ab-c 12-3" became ABC123,
+  "K7Q 42M" and "k7q·42m" became K7Q42M, and a seventh character was dropped.
+- **Builders' live checks on their own rooms:**
+  - a reload of `space=room&tab=observe` reopening on Observations, and the
+    new palette entries;
+  - L3's count at Remember matching the server;
+  - the lobby going from "Everyone present has joined" to "3 still
+    joining…" as students were marked present;
+  - copied codes giving six characters;
+  - think time, Names off, Start new round and attendance on the
+    observation roster, with 2 absent and 1 late;
+  - "Project to class" putting the tally question on the projector;
+  - B1 writing eight drafts weighted to two thin levels;
+  - the class charts against real rooms;
+  - `under18Note` on a fresh load.
+
+## Checks run: Phase 5 part 2
+
+Against the committed server (2f4fd2b) on the in-memory store, restarted 19
+Nov, with labels added to seven questions of the seeded chapter.
+
+- **Class page, Misconceptions tab:** 12 labels on 6 questions from 271
+  answers across 7 rooms. The top five matched the server's reply.
+- **Live console, Insights space:** room XF5RYZ's report with 14 labels on 7
+  questions from 74 answers, with no console errors.
+- **Builders' own checks:**
+  - phone: provenance, early days and a vote sent while the room was paused
+    (the server counted 1 voted, 1 not counted);
+  - console: a class question with 12 phones that had already answered it
+    alone (the note showed), provisional grid rows, a card with real level
+    changes and mastery;
+  - bank: labels saved, edited, cleared and refused, an edit and a bulk
+    retag that removed labels, and the rewrite of a replacement draft;
+  - account: the class's Across rooms sentences and hardest questions.
+- **Bundles:** the build passes. `/join` is 162.1 KiB, under the 164.9 KiB
+  ceiling, and carries no label, level check, level move or confidence
+  count.
+- **Galleries:** all 334 sample entries render with no script error. One
+  sample listed a student twice, which raised a React key warning; fixed in
+  `dev/records.gallery.jsx`.
+
+## Checks run: Phase 7 "First"
+
+- **Bundles:** the build passes. `/join` is 161.9 KiB, up 3.0 KiB from 158.9
+  (the budget allowed 6). `sw.js` is 3.9 KB. The precache list is the phone's
+  three chunks, its CSS and four Latin fonts, with no staff chunk.
+- **The outage, in headless Chrome against :5050** (a production build under
+  `vite preview`; the outage was the preview stopped), room HQS8FY:
+  - Twice: answered with the network down ("Saved on this phone") and
+    reloaded offline. The page opened from the cache, with the held answer
+    and the offline line. Back online, the same question returned, and the
+    answer was sent and marked.
+  - The socket was cut after an answer was sent but before its result came
+    back. Back online, the phone was on a new question; the old answer was
+    sent again and shown as Marked, with nothing painted over the new one.
+  - A class vote cast offline was confirmed after reconnecting.
+  - On the server: four rows, three answers on three questions and one vote,
+    each a first attempt and final. Nothing was stored twice.
+
 ## Not finished
 
 - **No Google sign-in button.** Sign-in is email and password only in
@@ -657,19 +1064,54 @@ opened. Behance pages gave text but no images, and Pinterest was not used.
 - **Phase 4, not seen live:** a roll number off the roster whose attendance
   mark was made for a roster student (`rollNotes[].tiedTo`) in the attainment
   report. The register showed one; the note sentence carries it in both.
-- **Phase 3, wanted from the server:**
-  - A `canCreate` on `GET /api/classes`. The New class button follows the
-    role until then.
-  - The room's mode in `projector:state`. Today the wall shows the join code
-    in a Teacher-led room too, where a phone only gets the Teacher-led
-    message.
-  - `model` on the phone's question, so it could say "Offline template"
-    again where that is true.
-  - Rewording three server sentences that show API detail to people:
-    - the remove message's "(PATCH with { "active": true })";
-    - the Teacher-led `cardsNote`'s "teacherRecords";
-    - phone `reason` sentences that can name the below-40% band (an open
-      issue).
+- **Owner decisions and Phase 5 part 1, not run:**
+  - A student account: no real token linked a phone (the in-memory store has
+    no accounts), and a student's own pages were checked in the gallery
+    only.
+  - A head of department against the server: read-only class questions,
+    wall controls and roster are drawn in the galleries only.
+  - On the phone, against the server:
+    - a vote that did not count;
+    - a class question arriving over a result or level-change screen;
+    - the new question that follows when the class question was the
+      phone's own.
+  - A server refusal of a class question live (the console disables the
+    button when the room's state rules it out).
+  - The 400 for a formula that counts re-votes (no control sends it).
+- **Zip gaps, not run:**
+  - The Overview and Department pages live (they need a sign-in): gallery
+    only.
+  - "Use sample" with generation on: offline, the bare sample topics cannot
+    give Understand or Analyse drafts (the server answers "Generation
+    produced no valid questions").
+  - A screen reader through think time; the countdown is announced at its
+    start and at five seconds.
+- **Phase 5 part 2, not run:**
+  - An AI draft label from the server: labels written by hand are always
+    the professor's, so Confirm was seen in the gallery only.
+  - A question with an uncertain level, a second answer language, and a
+    mastered tick in the grid: none occurred live, so all three are gallery
+    only.
+  - A head of department, and the "another phone signed in as this student"
+    vote sentence, which needs a signed-in student.
+- **Phase 7 "First", not run:**
+  - A real phone, iOS Safari (which may delete a site's stored data after
+    seven days unused, and in private mode), and an outage of several
+    minutes.
+  - The service worker in the app's own browser pane, which refuses to
+    register one. All service-worker proof is from headless Chrome.
+  - Two answers held offline in a row: the next question comes from the
+    server, so that waits for the question pack ("Next").
+  - Refused items stay on the phone for good. A later stage should age them
+    out.
+- **Wanted from the server:**
+  - `answerId` echoed in `server:result`, `server:exhausted` and
+    `session:rejected`, so the outbox matches a reply by key, not by order
+    and a wait.
+  - `/sw.js` served with `no-cache`. It is sent `immutable` today. The
+    browser checks it anyway (`updateViaCache: 'none'`), but a CDN in front
+    could keep the old worker.
+  - The answer key (`answerKey`) on staff answer reads, for audits.
 - **Fewer choices:** for a student given that support, a stored choose-one or
   choose-all answer can name the wrong option text. The server keeps the full
   option list, not the shorter list the student saw.

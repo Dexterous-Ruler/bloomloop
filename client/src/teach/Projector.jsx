@@ -11,18 +11,27 @@
  * arrive. Nothing here says how anyone is doing; the marbles are one colour.
  *
  * Escape, or the button top right, goes back to the class.
+ *
+ * A Teacher-led room takes no phones, so this page shows it no code: the class
+ * wall for such a room is the projector window (ProjectorControl, /wall).
  */
 
 import { useEffect, useState } from 'react';
 
 import Marbles from '../fx/Marbles.jsx';
+import { api } from '../lib/api.js';
 import { Button, Flow, Icon, Mark, Note, Num } from '../ui/index.jsx';
 import useRoomFeed from './useRoomFeed.js';
+import { SplitCode } from './Wall.jsx';
 
 export default function Projector({ session, content, activeCount, onLive }) {
   const [qr, setQr] = useState('');
   const [copied, setCopied] = useState('');
   const [error, setError] = useState('');
+  // A room reopened from a link carries no settings: its mode is read once.
+  // Until it is known nothing is drawn where the code goes, so a Teacher-led
+  // room's code never flashes up; if the read fails the code is shown.
+  const [mode, setMode] = useState(session.settings?.mode ?? null);
   const { rows } = useRoomFeed(session.code);
 
   // Built from the browser's own origin, so it shows the address the phones
@@ -35,6 +44,16 @@ export default function Projector({ session, content, activeCount, onLive }) {
   // room on a picked set it is the set's size, not the bank's.
   const bankCount = session.bankCount ?? activeCount;
   const chapter = session.title || content?.title || 'Live room';
+  const led = mode === 'teacher-led';
+
+  useEffect(() => {
+    if (session.settings?.mode) { setMode(session.settings.mode); return undefined; }
+    let alive = true;
+    api.getSession(session.code)
+      .then((r) => { if (alive) setMode(r.session?.settings?.mode ?? 'devices'); })
+      .catch(() => { if (alive) setMode('devices'); });
+    return () => { alive = false; };
+  }, [session.code, session.settings?.mode]);
 
   // The QR encoder is imported only here, so no phone ever downloads it.
   useEffect(() => {
@@ -78,42 +97,57 @@ export default function Projector({ session, content, activeCount, onLive }) {
           <h1 className="clip">{chapter}</h1>
         </div>
 
-        <section className="pj-strip" aria-label="How to join">
-          <div className="pj-how">
-            <div className="pj-step">
-              <span className="pj-label">On any phone, go to</span>
-              <span className="pj-url">{base}<em>{session.code}</em></span>
+        {mode === null ? null : led ? (
+          <section className="pj-strip" aria-label="No code to show">
+            <div className="pj-how">
+              <span className="pj-label">Teacher-led room</span>
+              <p className="t-lead">No phone joins a Teacher-led room, so there is no code to show. Put questions and diagrams on the wall from the class’s Projector space.</p>
             </div>
-            <div className="pj-step">
-              <span className="pj-label">Room code</span>
-              <b className="pj-code" aria-label={`Room code ${session.code.split('').join(' ')}`}>{session.code}</b>
+          </section>
+        ) : (
+          <section className="pj-strip" aria-label="How to join">
+            <div className="pj-how">
+              <div className="pj-step">
+                <span className="pj-label">On any phone, go to</span>
+                <span className="pj-url">{base}<em>{session.code}</em></span>
+              </div>
+              <div className="pj-step">
+                <span className="pj-label">Room code</span>
+                <SplitCode code={session.code} className="pj-code" />
+              </div>
+              <div className="cluster">
+                <Button icon={copied === 'code' ? 'check' : 'copy'} onClick={() => copy(session.code, 'code')}>{copied === 'code' ? 'Copied' : 'Copy the code'}</Button>
+                <Button icon={copied === 'url' ? 'check' : 'link'} onClick={() => copy(joinUrl, 'url')}>{copied === 'url' ? 'Copied' : 'Copy the link'}</Button>
+              </div>
+              {error && <Note tone="bad">{error}</Note>}
             </div>
-            <div className="cluster">
-              <Button icon={copied === 'code' ? 'check' : 'copy'} onClick={() => copy(session.code, 'code')}>{copied === 'code' ? 'Copied' : 'Copy the code'}</Button>
-              <Button icon={copied === 'url' ? 'check' : 'link'} onClick={() => copy(joinUrl, 'url')}>{copied === 'url' ? 'Copied' : 'Copy the link'}</Button>
-            </div>
-            {error && <Note tone="bad">{error}</Note>}
-          </div>
 
-          {/* A white card, not a bare image: the encoder is given no quiet zone,
-              so the padding is what makes the code scannable at all. */}
-          <div className="pj-qr">
-            <div className="pj-qr-card">
-              {qr ? <img src={qr} alt={`QR code for ${joinUrl}`} width={260} height={260} /> : <div className="pj-qr-wait" />}
+            {/* A white card, not a bare image: the encoder is given no quiet zone,
+                so the padding is what makes the code scannable at all. */}
+            <div className="pj-qr">
+              <div className="pj-qr-card">
+                {qr ? <img src={qr} alt={`QR code for ${joinUrl}`} width={260} height={260} /> : <div className="pj-qr-wait" />}
+              </div>
+              <span className="pj-label">or scan this</span>
             </div>
-            <span className="pj-label">or scan this</span>
-          </div>
-        </section>
+          </section>
+        )}
 
-        <section className="pj-room" aria-label="Who has arrived">
-          <div className="pj-count" aria-live="polite">
-            <b><Num value={rows.length} /></b>
-            <span>{rows.length === 1 ? 'student in the room' : 'students in the room'}</span>
-          </div>
-          <div className="pj-tray">
-            <Marbles rows={rows} tray height={132} caption={false} />
-          </div>
-        </section>
+        {mode !== null && !led && (
+          <section className="pj-room" aria-label="Who has arrived">
+            <div className="pj-count" aria-live="polite">
+              <b><Num value={rows.length} /></b>
+              <span>{rows.length === 1 ? 'student in the room' : 'students in the room'}</span>
+              {/* Styled here: the code screen's sheet (live.css) is not this file's. */}
+              <span className="pj-count-note" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: '0.85em' }}>
+                <Icon name="check" size={14} />Phone browsers, no installs
+              </span>
+            </div>
+            <div className="pj-tray">
+              <Marbles rows={rows} tray height={132} caption={false} />
+            </div>
+          </section>
+        )}
       </main>
 
       <footer className="pj-foot">

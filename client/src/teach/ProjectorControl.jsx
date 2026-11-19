@@ -19,6 +19,13 @@
  *
  * A head of department reads the room but may not change it (`canControl`
  * false): they see the preview and the links, and no controls.
+ *
+ * Phase 5: a class question of the room (GET …/class-questions) may go on the
+ * wall, and `showCounts` (off by default) lets the wall show its counts. Its
+ * key is never revealed from here: it goes up when the class question is
+ * closed with the key revealed, on the console's Class question space. A
+ * Teacher-led room takes no phones, so its wall shows no code and the controls
+ * offer none.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -27,11 +34,13 @@ import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
 import { KIND_LABEL } from '../lib/kinds.js';
 import { Button, Chip, Icon, Level, Note, Segmented, Switch } from '../ui/index.jsx';
-import { WallScreen } from './Wall.jsx';
+import { WallScreen, countsHeld } from './Wall.jsx';
 
 const MODE_LABEL = { question: 'Question', diagram: 'Diagram', progress: 'Progress' };
 const ROOM_MODE = { devices: 'Student devices', 'teacher-led': 'Teacher-led', mixed: 'Mixed' };
 const POLL_MS = 8000;
+// Where a class question stands, as the professor reads it.
+const CQ_STATE = { open: 'First vote open', paused: 'Paused to talk it over', revote: 'Second vote open', closed: 'Closed' };
 
 /* -------------------------------------------------------------- helpers */
 
@@ -48,6 +57,10 @@ function clock(iso) {
 const same = (a, b) => String(a ?? '').toLowerCase() === String(b ?? '').toLowerCase();
 const stimulusKey = (s) => `${s.kind}|${s.url ?? ''}|${s.text ?? ''}`;
 const excerpt = (text, n) => (text.length > n ? `${text.slice(0, n).trimEnd()}…` : text);
+// What the wall shows with nothing up: a Teacher-led room has no way in to show.
+const nothingUp = (roomMode) => (roomMode === 'teacher-led'
+  ? 'Nothing is up. A Teacher-led room has no code to join, so the wall shows the room’s title.'
+  : 'Nothing is up. The wall shows the room code and how to join.');
 
 /* ------------------------------------------------------------ the parts */
 
@@ -139,7 +152,37 @@ function Item({ q, up, canWrite, busy, onPut, diagram }) {
   );
 }
 
-function QuestionPicker({ questions, questionsError, tallies, screen, picker, onPicker, level, onLevel, canWrite, busy, onPatch, diagram }) {
+/** One of the room's class questions, as it stands now. */
+function ClassItem({ cq, up, canWrite, busy, onPut }) {
+  const running = cq.state !== 'closed';
+  const text = cq.question?.text ?? '';
+  return (
+    <li className="bm-item" data-up={up || undefined}>
+      <div className="bm-item-main">
+        <span className="bm-item-meta">
+          <span className="mono">#{cq.seq}</span>
+          {cq.question?.level && <Level level={cq.question.level} />}
+          <span className="bm-cq-state" data-running={running || undefined}>
+            {running && <i className="live-dot" aria-hidden="true" />}
+            {CQ_STATE[cq.state] ?? cq.state}{cq.state === 'closed' && cq.revealed ? ', key revealed' : ''}
+          </span>
+        </span>
+        <span className="bm-item-text">{text}</span>
+      </div>
+      {up
+        ? <Chip tone="accent" icon="projector">Up</Chip>
+        : canWrite && (
+          <Button size="sm" busy={busy === `c:${cq.id}`} disabled={Boolean(busy)} onClick={() => onPut(cq.id)} aria-label={`Put up: ${excerpt(text, 60)}`}>
+            Put up
+          </Button>
+        )}
+    </li>
+  );
+}
+
+function QuestionPicker({
+  questions, questionsError, tallies, classQs, classError, roomMode, screen, picker, onPicker, level, onLevel, canWrite, busy, onPatch, diagram,
+}) {
   // On the diagram screen several questions often share one passage or
   // picture, and any of them puts up the same thing: each is listed once.
   const pool = useMemo(() => {
@@ -161,7 +204,10 @@ function QuestionPicker({ questions, questionsError, tallies, screen, picker, on
     ? pool.find((q) => upQ?.stimulus && stimulusKey(q.stimulus) === stimulusKey(upQ.stimulus))?.id
     : screen.question?.source === 'bank' ? screen.question.id : null;
   const upTally = !diagram && screen.question?.source === 'tally' ? screen.question.id : null;
-  const tab = diagram ? 'bank' : picker;
+  const upClass = !diagram && screen.question?.source === 'class' ? screen.question.id : null;
+  // The server refuses class questions in a Teacher-led room: it never has one.
+  const classOk = roomMode !== 'teacher-led';
+  const tab = diagram ? 'bank' : picker === 'class' && !classOk ? 'bank' : picker;
 
   return (
     <div className="bm-picker">
@@ -176,6 +222,7 @@ function QuestionPicker({ questions, questionsError, tallies, screen, picker, on
               options={[
                 { id: 'bank', label: 'Room questions', count: questions ? pool.length : null },
                 { id: 'tally', label: 'Asked aloud', count: tallies ? tallies.length : null },
+                ...(classOk ? [{ id: 'class', label: 'Class questions', count: classQs ? classQs.length : null }] : []),
               ]}
             />
           )}
@@ -251,6 +298,90 @@ function QuestionPicker({ questions, questionsError, tallies, screen, picker, on
             </ul>
           )
       )}
+
+      {tab === 'class' && (
+        classError ? <Note tone="bad">{classError}</Note>
+          : !classQs ? <div className="bm-list-skel" aria-hidden="true"><i className="skel" /><i className="skel" /></div>
+            : classQs.length === 0 ? (
+              <p className="bm-quiet">No question has been put to the whole class in this room yet. Ask one from the Class question space, then put it up here.</p>
+            ) : (
+              <ul className="bm-list">
+                {[...classQs].reverse().map((cq) => (
+                  <ClassItem
+                    key={cq.id}
+                    cq={cq}
+                    up={same(cq.id, upClass)}
+                    canWrite={canWrite}
+                    busy={busy}
+                    onPut={(id) => onPatch({ mode: 'question', question: { classQuestionId: id } }, `c:${id}`)}
+                  />
+                ))}
+              </ul>
+            )
+      )}
+    </div>
+  );
+}
+
+/**
+ * A class question on the wall: where it stands, what the wall shows of it
+ * (from the reply's `shows`), the counts switch, and where its key comes from.
+ * There is no reveal here: the server refuses one (400).
+ */
+function NowClass({ q, screen, canWrite, busy, onPatch }) {
+  const c = q.counts ?? null;
+  const poll = q.kind === 'poll';
+  const held = countsHeld(q);
+  const rounds = [c?.before && 'before the discussion', c?.after && 'after it'].filter(Boolean);
+  const key = poll ? 'A poll has no key.'
+    : q.revealed ? `Up, with the share who chose it${c?.changes ? ' and who changed their answer' : ''}.`
+      : 'Not up.';
+  return (
+    <div className="bm-now">
+      <span className="bm-k">Class question on the wall</span>
+      <p className="bm-now-text">{q.text}</p>
+      <dl className="bm-shows">
+        <div><dt>Where it stands</dt><dd>{CQ_STATE[q.state] ?? q.state}</dd></div>
+        <div><dt>Votes</dt><dd>{q.voted} {q.round === 2 ? 'in the second vote' : 'in the first vote'}</dd></div>
+        <div><dt>Counts</dt><dd>{!c ? 'Off.' : rounds.length ? `Up for the votes ${rounds.join(' and ')}.` : 'On, none up yet.'}</dd></div>
+        <div><dt>Key</dt><dd>{key}</dd></div>
+      </dl>
+      {held.length > 0 && (
+        <ul className="bm-held">
+          {held.map((s) => <li key={s}>{s}</li>)}
+        </ul>
+      )}
+
+      <div className="bm-switch">
+        <div>
+          <span>Show vote counts on the wall</span>
+          <small>Off by default. Votes per option and how sure the class was, for a vote that has closed with enough votes in it.</small>
+        </div>
+        <Switch
+          checked={screen.showCounts === true}
+          label="Show vote counts on the wall"
+          disabled={!canWrite || Boolean(busy)}
+          onChange={(v) => onPatch({ showCounts: v }, 'counts')}
+        />
+      </div>
+
+      {/* A head of department cannot close it, so they are not told how. */}
+      {!poll && (canWrite || q.revealed || q.state === 'closed') && (
+        <p className="bm-why">
+          <Icon name={q.revealed ? 'check' : 'lock'} size={13} />
+          {q.revealed ? 'The key was revealed when this class question closed.'
+            : q.state === 'closed' ? 'This class question closed without its key, so the key stays off the wall.'
+              : 'The key is not revealed from here. Close this class question with the key revealed, in the Class question space, and it goes up.'}
+        </p>
+      )}
+
+      {canWrite && (
+        <div className="bm-now-acts">
+          <Button size="sm" variant="ghost" icon="close" busy={busy === 'qdown'} disabled={Boolean(busy)} onClick={() => onPatch({ question: null }, 'qdown')}>
+            Take it down
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -258,9 +389,8 @@ function QuestionPicker({ questions, questionsError, tallies, screen, picker, on
 /** What is up now in the question screen, with its key and its way down. */
 function NowQuestion({ shows, screen, tallies, roomMode, canWrite, busy, onPatch }) {
   const q = shows.question;
-  if (!q) {
-    return <p className="bm-quiet">Nothing is up. The wall shows the room code and how to join.</p>;
-  }
+  if (!q) return <p className="bm-quiet">{nothingUp(roomMode)}</p>;
+  if (q.source === 'class') return <NowClass q={q} screen={screen} canWrite={canWrite} busy={busy} onPatch={onPatch} />;
   const tally = q.source === 'tally' ? (tallies ?? []).find((t) => same(t.id, screen.question?.id)) : null;
   // The server's own test: a bank question's key, or a tally's that came from
   // the bank (or one this screen cannot find), only in a Teacher-led room.
@@ -303,9 +433,9 @@ function NowQuestion({ shows, screen, tallies, roomMode, canWrite, busy, onPatch
   );
 }
 
-function NowDiagram({ shows, canWrite, busy, onPatch }) {
+function NowDiagram({ shows, roomMode, canWrite, busy, onPatch }) {
   const s = shows.diagram?.stimulus;
-  if (!s) return <p className="bm-quiet">Nothing is up. The wall shows the room code and how to join.</p>;
+  if (!s) return <p className="bm-quiet">{nothingUp(roomMode)}</p>;
   return (
     <div className="bm-now">
       <span className="bm-k">{s.kind === 'image' ? 'Diagram on the wall' : 'Passage on the wall'}</span>
@@ -349,11 +479,13 @@ function NowProgress({ shows }) {
  * default export below fetches and changes; the gallery feeds this directly.
  */
 export function ProjectorConsole({
-  body, roomMode = 'devices', canControl, questions, questionsError, tallies,
+  body, roomMode: infoMode = 'devices', canControl, questions, questionsError, tallies, classQs, classError,
   picker = 'bank', onPicker, level = 'all', onLevel, busy = '', error = '', onClearError,
   onPatch, onOpen, onRevoke,
 }) {
   const { shows, screen, links = [], rule, watching } = body;
+  // The wall's own word on the room's mode, when the server sends it.
+  const roomMode = shows.roomMode ?? infoMode;
   const closed = body.room?.status === 'closed';
   const canWrite = Boolean(canControl) && !closed;
   const pick = shows.pick;
@@ -414,7 +546,7 @@ export function ProjectorConsole({
             {screen.mode === 'question' && (
               <NowQuestion shows={shows} screen={screen} tallies={tallies} roomMode={roomMode} canWrite={canWrite} busy={busy} onPatch={onPatch} />
             )}
-            {screen.mode === 'diagram' && <NowDiagram shows={shows} canWrite={canWrite} busy={busy} onPatch={onPatch} />}
+            {screen.mode === 'diagram' && <NowDiagram shows={shows} roomMode={roomMode} canWrite={canWrite} busy={busy} onPatch={onPatch} />}
             {screen.mode === 'progress' && <NowProgress shows={shows} />}
           </div>
 
@@ -424,6 +556,9 @@ export function ProjectorConsole({
                 questions={questions}
                 questionsError={questionsError}
                 tallies={tallies}
+                classQs={classQs}
+                classError={classError}
+                roomMode={roomMode}
                 screen={screen}
                 picker={picker}
                 onPicker={onPicker}
@@ -508,6 +643,8 @@ export default function ProjectorControl({ code, canControl, info, askLevel }) {
   const [questions, setQuestions] = useState(null);
   const [questionsError, setQuestionsError] = useState('');
   const [tallies, setTallies] = useState(null);
+  const [classQs, setClassQs] = useState(null);
+  const [classError, setClassError] = useState('');
   const [picker, setPicker] = useState('bank');
   const [level, setLevel] = useState(askLevel || 'all');
   const seq = useRef(0); // the newest request wins, so a slow poll cannot undo a change
@@ -561,6 +698,23 @@ export default function ProjectorControl({ code, canControl, info, askLevel }) {
   useEffect(() => {
     if (picker === 'tally') loadTallies();
   }, [picker, loadTallies]);
+
+  // The room's class questions, each as it stands: read once for the count,
+  // and again while their list is open, since they move on from the Class
+  // question space. A Teacher-led room never has one.
+  const loadClass = useCallback(() => {
+    api.classQuestions(code)
+      .then((r) => { setClassQs(r.classQuestions ?? []); setClassError(''); })
+      .catch((e) => setClassError(e.message));
+  }, [code]);
+
+  useEffect(() => {
+    if (!canControl || roomMode === 'teacher-led') return undefined;
+    loadClass();
+    if (picker !== 'class') return undefined;
+    const id = setInterval(() => { if (document.visibilityState === 'visible') loadClass(); }, POLL_MS);
+    return () => clearInterval(id);
+  }, [canControl, roomMode, picker, loadClass]);
 
   // The room's questions: its set, or the approved bank when it serves the
   // whole bank. The item report lists only what has been answered, so the bank
@@ -656,6 +810,8 @@ export default function ProjectorControl({ code, canControl, info, askLevel }) {
       questions={questions}
       questionsError={questionsError}
       tallies={tallies}
+      classQs={classQs}
+      classError={classError}
       picker={picker}
       onPicker={setPicker}
       level={level}

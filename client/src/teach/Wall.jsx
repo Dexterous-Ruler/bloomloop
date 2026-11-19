@@ -23,9 +23,15 @@
  * revealed, a diagram or passage, counts for the class, and the wheel's pick
  * as a roll number and first name. Never a score, a band, a student's level,
  * attendance, a note, the tally's hands or any other name.
+ *
+ * A Teacher-led room (`roomMode`) takes no phones, so its wall never shows the
+ * code or the way in. A class question (`question.source: 'class'`) shows how
+ * many have voted and, only when the server sends them, each closed round's
+ * votes per option and confidence taps, and the key, the share right and the
+ * changes once revealed; when a round's counts are missing it says why.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import '../styles/wall.css';
 
@@ -52,6 +58,22 @@ function StatusTag({ status }) {
       {s.icon ? <Icon name={s.icon} /> : <i className="live-dot" aria-hidden="true" />}
       {s.label}
     </span>
+  );
+}
+
+/**
+ * A room code as two halves of three with a gap between them, for reading it
+ * out ("K7Q 42M"). Only a gap, never a dot or a hyphen: the phone's code field
+ * keeps six characters and strips nothing but spaces, and selecting and
+ * copying the code gives the six characters, since the gap is a margin.
+ */
+export function SplitCode({ code, className }) {
+  const c = String(code ?? '');
+  return (
+    <b className={className} aria-label={`Room code ${c.split('').join(' ')}`}>
+      <span>{c.slice(0, 3)}</span>
+      <span style={{ marginLeft: '0.45em' }}>{c.slice(3)}</span>
+    </b>
   );
 }
 
@@ -91,7 +113,7 @@ function JoinHero({ code, title, status }) {
           </div>
           <div className="wl-step">
             <span className="wl-label">Room code</span>
-            <b className="wl-code" aria-label={`Room code ${code.split('').join(' ')}`}>{code}</b>
+            <SplitCode code={code} className="wl-code" />
           </div>
         </div>
         {/* White, padded card: the encoder is given no quiet zone. */}
@@ -106,13 +128,29 @@ function JoinHero({ code, title, status }) {
   );
 }
 
+/**
+ * A Teacher-led room's wall with nothing up: no phone joins it, so there is no
+ * code or address to show, only the room.
+ */
+function IdleHero({ title, status }) {
+  return (
+    <section className="wl-hero wl-idle" aria-label="The room">
+      <div className="wl-hero-title">
+        <span className="wl-label">{status === 'waiting' ? 'Starting soon' : 'Today'}</span>
+        <h1>{title || 'Live room'}</h1>
+      </div>
+      <p className="wl-idle-sub">Questions and diagrams appear here when your professor puts them up.</p>
+    </section>
+  );
+}
+
 /** The code and address, small, in the bar, while something else is up. */
 function JoinTag({ code }) {
   const { base } = joinFor(code);
   return (
     <span className="wl-jointag">
       <span className="wl-jointag-url">{base}</span>
-      <b aria-label={`Room code ${code.split('').join(' ')}`}>{code}</b>
+      <SplitCode code={code} />
     </span>
   );
 }
@@ -176,6 +214,223 @@ function Question({ q }) {
           </ol>
         )}
       </div>
+    </section>
+  );
+}
+
+/* ------------------------------------------------- a class question */
+
+// The taps a phone may send with a vote, and the votes sent with none.
+const TAPS = [['sure', 'Sure'], ['think_so', 'Think so'], ['guessing', 'Guessing'], ['none', 'No tap']];
+
+const CQ_STATE = {
+  open: { label: 'Vote now', live: true },
+  paused: { label: 'Talk it over with the people around you' },
+  revote: { label: 'Vote again', live: true },
+  closed: { label: 'Voting closed' },
+};
+
+// Of those who voted in both rounds. A poll's changes are kept and changed.
+const CHANGES = [
+  ['wrongToRight', 'wrong, then right'],
+  ['rightToWrong', 'right, then wrong'],
+  ['rightToRight', 'right both times'],
+  ['wrongToSameWrong', 'the same wrong answer twice'],
+  ['wrongToOtherWrong', 'a different wrong answer'],
+  ['kept', 'kept their answer'],
+  ['changed', 'changed their answer'],
+];
+
+/** How many have voted in the round on now, in words that fit where it stands. */
+function votedCaption(q) {
+  const one = q.voted === 1;
+  if (q.state === 'open') return one ? 'has voted so far' : 'have voted so far';
+  if (q.state === 'revote') return one ? 'has voted again so far' : 'have voted again so far';
+  if (q.state === 'paused') return 'voted before the discussion';
+  return q.round === 2 ? 'voted after the discussion' : 'voted';
+}
+
+/**
+ * Why counts the wall could show are not on it, in plain words: counts are
+ * off, a round is still open, or too few voted in it. The console's controls
+ * say the same sentences.
+ */
+export function countsHeld(q) {
+  const c = q?.counts ?? null;
+  if (!c) return ['Vote counts are turned off for this question.'];
+  const min = c.minVotes;
+  const out = [];
+  if (!c.before) {
+    if (q.round === 1 && q.state === 'open') out.push('Vote counts appear once this vote closes.');
+    else if (q.round === 1) out.push(`Vote counts appear only when ${min} or more have voted, so no one’s vote stands out. ${q.voted} voted.`);
+    else out.push(`Fewer than ${min} voted before the discussion, so those counts stay off the wall.`);
+  }
+  if (q.round === 2 && !c.after) {
+    if (q.state === 'revote') out.push('Counts for the second vote appear once it closes.');
+    else out.push(`Fewer than ${min} voted after the discussion, so those counts stay off the wall.`);
+  }
+  const graded = q.kind !== 'poll';
+  if (q.state === 'closed' && q.round === 2 && c.before && c.after && !c.changes && (q.revealed || !graded)) {
+    out.push(`Who changed their answer is shown only when ${min} or more voted both times.`);
+  }
+  return out;
+}
+
+const pct = (share) => `${Math.round(share * 100)}%`;
+
+function VoteBar({ votes, of, round }) {
+  return (
+    <span className="wl-vote" data-round={round}>
+      <span className="sr-only">{round === '1' ? 'Before the discussion: ' : 'After the discussion: '}</span>
+      <span className="wl-vote-track" aria-hidden="true"><i style={{ '--w': `${of > 0 ? (votes / of) * 100 : 0}%` }} /></span>
+      <b>{votes}</b>
+    </span>
+  );
+}
+
+/** A round's figures beside each other: the share right (once revealed) and the taps. */
+function RoundTable({ before, after }) {
+  const cols = [before && ['1', 'Before', before], after && ['2', 'After', after]].filter(Boolean);
+  const right = cols.some(([, , r]) => r.correct);
+  const taps = cols.some(([, , r]) => r.confidence);
+  return (
+    <table className="wl-cq-tbl">
+      <thead>
+        <tr>
+          <th scope="col"><span className="sr-only">Count</span></th>
+          {cols.map(([n, label]) => <th key={n} scope="col" data-round={n}><span><i aria-hidden="true" />{label}</span></th>)}
+        </tr>
+      </thead>
+      <tbody>
+        {right && (
+          <tr className="wl-cq-rightrow">
+            <th scope="row">Chose the right answer</th>
+            {cols.map(([n, , r]) => (
+              <td key={n}>
+                {r.correct ? <><b>{pct(r.correct.share)}</b><small>{r.correct.students} of {r.voted}</small></> : '–'}
+              </td>
+            ))}
+          </tr>
+        )}
+        {taps && (
+          <tr className="wl-cq-sub">
+            <th scope="colgroup" colSpan={cols.length + 1}>How sure they said they were</th>
+          </tr>
+        )}
+        {taps && TAPS.map(([id, label]) => (
+          <tr key={id}>
+            <th scope="row">{label}</th>
+            {cols.map(([n, , r]) => <td key={n}>{r.confidence?.[id] ?? '–'}</td>)}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/**
+ * Shrinks a screen's type until it fits its frame, in steps of 6% down to 64%:
+ * a passage and four long options, with counts under them, would otherwise run
+ * under the foot of the wall. Sizes are in --u, so the fit holds at any
+ * resolution; it is measured again when the content or the frame changes.
+ */
+function useFit(ref, key) {
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const fit = () => {
+      let k = 1;
+      el.style.setProperty('--fit', '1');
+      const over = () => [...el.children].some((c) => Math.max(c.offsetHeight, c.scrollHeight) > el.clientHeight + 1);
+      while (k > 0.66 && over()) {
+        k -= 0.06;
+        el.style.setProperty('--fit', k.toFixed(2));
+      }
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    document.fonts?.ready.then(fit).catch(() => {});
+    return () => ro.disconnect();
+  }, [ref, key]);
+}
+
+function ClassQuestion({ q }) {
+  const box = useRef(null);
+  useFit(box, JSON.stringify([q.text, q.options, q.stimulus, q.state, q.round, q.revealed, Boolean(q.counts?.before), Boolean(q.counts?.after), Boolean(q.counts?.changes), q.counts === null]));
+  const options = q.options ?? [];
+  const c = q.counts ?? null;
+  const before = c?.before ?? null;
+  const after = c?.after ?? null;
+  const bars = Boolean(before || after);
+  const correct = q.revealed && Array.isArray(q.correct) && q.correct.length ? q.correct : null;
+  const st = CQ_STATE[q.state] ?? CQ_STATE.open;
+  const held = countsHeld(q);
+  const votes = (round, key) => round?.options?.find((o) => o.key === key)?.votes ?? 0;
+  const longest = Math.max(0, ...options.map((o) => (o.label || '').length));
+  const cols = !bars && options.length % 2 === 0 && longest <= 60 && !q.stimulus ? 2 : 1;
+  const len = (q.text || '').length;
+  const changes = c?.changes ? CHANGES.filter(([k]) => c.changes[k] != null) : [];
+
+  return (
+    <section className="wl-cq" ref={box} aria-label="A question for the whole class">
+      <div className="wl-cq-main">
+        <div className="wl-cq-head">
+          <span className="wl-label">{q.round === 2 ? 'Question for the class · second vote' : 'Question for the class'}</span>
+          <span className="wl-cq-state" data-live={st.live || undefined} data-state={q.state}>
+            {st.live && <i className="live-dot" aria-hidden="true" />}{st.label}
+          </span>
+        </div>
+        {q.stimulus && <Stimulus stimulus={q.stimulus} />}
+        <h1 className="wl-q-text" data-size={len > 200 ? 's' : len > 100 ? 'm' : 'l'}>{q.text}</h1>
+        {bars && (
+          <div className="wl-legend" aria-hidden="true">
+            {before && <span data-round="1"><i />Before the discussion</span>}
+            {after && <span data-round="2"><i />After</span>}
+          </div>
+        )}
+        {options.length > 0 && (
+          <ol className="wl-opts" data-cols={cols} data-bars={bars || undefined} data-long={longest > 70 || undefined} data-many={options.length > 4 || undefined}>
+            {options.map((o) => {
+              const right = correct ? correct.includes(o.key) : null;
+              return (
+                <li key={o.key} data-right={right === null ? undefined : String(right)}>
+                  <b className="wl-key">{o.key}</b>
+                  <span className="wl-opt-label">{o.label}</span>
+                  {right && <span className="wl-right"><Icon name="check" />Correct</span>}
+                  {bars && (
+                    <span className="wl-votes">
+                      {before && <VoteBar votes={votes(before, o.key)} of={before.voted} round="1" />}
+                      {after && <VoteBar votes={votes(after, o.key)} of={after.voted} round="2" />}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        )}
+        {changes.length > 0 && (
+          <div className="wl-changes">
+            <span className="wl-label">Of the {c.changes.both} who voted both times</span>
+            <ol>
+              {changes.map(([k, label]) => <li key={k}><b>{c.changes[k]}</b><span>{label}</span></li>)}
+            </ol>
+          </div>
+        )}
+      </div>
+
+      <aside className="wl-cq-side" aria-label="Votes">
+        <div className="wl-cq-voted" aria-live="polite">
+          <b><Num value={q.voted ?? 0} /></b>
+          <span>{votedCaption(q)}</span>
+        </div>
+        {bars && <RoundTable before={before} after={after} />}
+        {held.length > 0 && (
+          <div className="wl-cq-held">
+            {held.map((s) => <p key={s}>{s}</p>)}
+          </div>
+        )}
+      </aside>
     </section>
   );
 }
@@ -255,25 +510,28 @@ function Pick({ pick }) {
  */
 export function WallScreen({ state }) {
   if (!state) return null;
-  const { code, title, status, mode, question, diagram, progress, pick } = state;
-  const body = mode === 'question' && question ? <Question q={question} />
+  const { code, title, status, mode, roomMode, question, diagram, progress, pick } = state;
+  // No phone joins a Teacher-led room: its wall never shows the way in.
+  const led = roomMode === 'teacher-led';
+  const body = mode === 'question' && question
+    ? (question.source === 'class' ? <ClassQuestion q={question} /> : <Question q={question} />)
     : mode === 'diagram' && diagram?.stimulus ? <Diagram diagram={diagram} />
       : mode === 'progress' && progress ? <Progress p={progress} />
         : null;
 
   return (
-    <div className="wl on-panel" data-mode={body ? mode : 'join'}>
+    <div className="wl on-panel" data-mode={body ? mode : led ? 'idle' : 'join'}>
       <Flow />
       <header className="wl-bar">
         <span className="wl-brand"><Mark size={30} /><span>BloomLoop</span></span>
         {body && <span className="wl-title clip">{title}</span>}
         <StatusTag status={status} />
-        {body && code && <JoinTag code={code} />}
+        {body && code && !led && <JoinTag code={code} />}
       </header>
 
       <main className="wl-main" data-pick={pick ? true : undefined}>
         <div className="wl-content">
-          {body ?? <JoinHero code={code} title={title} status={status} />}
+          {body ?? (led ? <IdleHero title={title} status={status} /> : <JoinHero code={code} title={title} status={status} />)}
         </div>
         {pick && <Pick pick={pick} />}
       </main>

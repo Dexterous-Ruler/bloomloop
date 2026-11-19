@@ -41,10 +41,24 @@ import AccountShell from '../shell/AccountShell.jsx';
 import { useViewer } from '../shell/viewer.js';
 import { Avatar, Button, Chip, Empty, Fig, Icon, Level, Note, Panel, Section, Segmented, Spark } from '../ui/index.jsx';
 import { LevelSpread } from '../ui/viz.jsx';
+import { BandRows, byRoll, LevelReading } from './dashParts.jsx';
 import {
   BAND, MIN_EVIDENCE, RANGES, arrange, asPct, commonWeakest, day, levelN, mean, plural, scope,
 } from './insightData.js';
 import { Hardest, InWords, LevelPairs, Spread, TopicGrid, TrendChart } from './insightParts.jsx';
+
+/**
+ * The list and who is open, as arrange() reads them, except that a professor's
+ * list of students is in roll order (Phase 5 follow-ups: staff student lists
+ * are never in score order by default). An HOD's professors keep arrange()'s
+ * order, most answers first. Exported for the dev gallery.
+ */
+export function arrangeFor(role, data, pickedId) {
+  const arranged = arrange(data, pickedId);
+  if (role !== 'professor') return arranged;
+  const subjects = [...arranged.subjects].sort(byRoll);
+  return { subjects, sel: subjects.find((s) => String(s.id) === String(pickedId)) ?? subjects[0] ?? null };
+}
 
 /** Everything that is worded differently for the three roles, in one table. */
 const FRAMING = {
@@ -70,6 +84,7 @@ const FRAMING = {
     list: 'Students',
     one: 'student',
     many: 'students',
+    order: 'in roll order',
     all: 'All students',
     empty: 'No students on your roster yet',
     emptyBody: 'A student appears here once they are on your roster, and has a record once they have sat a session. Invite one from your overview.',
@@ -82,7 +97,7 @@ const FRAMING = {
     sub: 'Where you are strongest, and where to put the next hour. All of it was measured in a live room.',
     tag: 'Your record',
     empty: 'Nothing to analyse yet',
-    emptyBody: 'Your record is written by the rooms you sit. Join one, answer a few questions, and the six levels start filling in.',
+    emptyBody: 'Your record is written by the rooms you join while signed in on your phone. Join one, answer its questions, and the six levels start filling in.',
     emptyTo: '/join',
     emptyAction: 'Join a room',
   },
@@ -219,6 +234,8 @@ function SelfBrief({ copy, full }) {
             <Link className="btn btn-accent" to="/join"><Icon name="room" />Join a room</Link>
           </div>
         )}
+        {/* Decision 7: why a room they sat may be missing. The server's sentence. */}
+        {full?.note && <p className="in-brief-note"><Icon name="login" size={14} />{full.note}</p>}
       </div>
       {timeline.length > 0 && (
         <div className="in-tiles">
@@ -242,7 +259,9 @@ function SelfBrief({ copy, full }) {
           <div className="ptile in-tile-level" style={{ '--d': '1.8s' }}>
             <span>Last session ended at</span>
             <b>{full.currentLevel ? LABEL[full.currentLevel] : '—'}</b>
-            <Spark values={timeline.map((s) => levelN(s.workingLevel))} label="Level each session ended at" />
+            {/* A room whose level is null (not all its answers were theirs) is
+                left out of the line, not drawn as a level. */}
+            <Spark values={timeline.filter((s) => s.workingLevel).map((s) => levelN(s.workingLevel))} label="Level each session ended at" />
             <small><span>{full.currentLevel ? `level ${levelN(full.currentLevel)} of 6` : ''}</span></small>
           </div>
         </div>
@@ -278,7 +297,7 @@ function People({ copy, subjects, sel, onPick, filter, onFilter, query, onQuery,
         <Section
           title={copy.list}
           sub={shown.length === subjects.length
-            ? `${subjects.length}, most answers first`
+            ? `${subjects.length}, ${copy.order ?? 'most answers first'}`
             : `${shown.length} of ${subjects.length} shown`}
         />
         <Spread
@@ -381,8 +400,12 @@ function List({ cols, head, children, className = '' }) {
   );
 }
 
-/** One student's sessions, newest first. */
-function Sittings({ rows }) {
+/**
+ * One student's sessions, newest first. The support band is staff-only: a
+ * professor reading a student sees it; a student reading their own record
+ * does not (the server no longer sends it to them, and this never draws it).
+ */
+function Sittings({ rows, mine }) {
   return (
     <List
       cols="72px minmax(0, 1fr) 72px 64px 72px 128px"
@@ -392,7 +415,7 @@ function Sittings({ rows }) {
         <li key={`${s.code}-${i}`} className="in-list-row">
           <span className="in-list-main">
             <span className="strong clip" title={s.title || undefined}>{s.title || 'Untitled session'}</span>
-            {s.banded && <Chip tone="warn">Support band</Chip>}
+            {!mine && s.banded && <Chip tone="warn">Support band</Chip>}
           </span>
           <span className="in-list-cells">
             <span className="in-list-date">{day(s.startedAt) || 'No date'}</span>
@@ -400,18 +423,31 @@ function Sittings({ rows }) {
             <span className="in-list-n">{s.correct}<span className="in-list-unit"> right</span></span>
             <span className="in-list-n">{asPct(s.accuracy)}<span className="in-list-unit"> accuracy</span></span>
           </span>
-          <span className="in-list-end"><Level level={s.workingLevel} /></span>
+          <span className="in-list-end">
+            {s.workingLevel
+              ? <Level level={s.workingLevel} />
+              : <span className="t-meta">—<span className="sr-only"> no level shown for this room</span></span>}
+          </span>
         </li>
       ))}
     </List>
   );
 }
 
-/** The rooms one professor has run, newest first. */
+/** What a room's accuracy rests on (Phase 5): its graded answers and the students who gave them. */
+const restsOn = (s) => (Number.isFinite(s?.answers)
+  ? `${plural(s.answers, 'answer')}, ${plural(s.students ?? 0, 'student')}`
+  : '');
+
+/**
+ * The rooms one professor has run, newest first. Each accuracy carries the
+ * count behind it when the server sends one (a professor's timeline read by
+ * their HOD).
+ */
 function Rooms({ rows }) {
   return (
     <List
-      cols="72px minmax(0, 1fr) 64px 96px 72px"
+      cols="72px minmax(0, 1fr) 64px 96px 132px"
       head={<><span>Date</span><span>Room</span><span className="r">Joined</span><span className="r">Support band</span><span className="r">Accuracy</span></>}
     >
       {rows.map((s, i) => (
@@ -422,7 +458,10 @@ function Rooms({ rows }) {
             <span className="in-list-n">{s.joined}<span className="in-list-unit"> joined</span></span>
             <span className="in-list-n">{s.banded}<span className="in-list-unit"> in the support band</span></span>
           </span>
-          <span className="in-list-end in-list-n">{asPct(s.accuracy)}<span className="in-list-unit"> accuracy</span></span>
+          <span className="in-list-end in-list-n in-list-acc">
+            <span>{asPct(s.accuracy)}<span className="in-list-unit"> accuracy</span></span>
+            {restsOn(s) && <small className="in-list-basis">{restsOn(s)}</small>}
+          </span>
         </li>
       ))}
     </List>
@@ -430,7 +469,8 @@ function Rooms({ rows }) {
 }
 
 /**
- * A professor's students, in the server's order: highest accuracy first.
+ * A professor's students in roll order, as the server lists them since the
+ * Phase 5 follow-ups (and sorted so here too): never by score by default.
  *
  * The flag says "under 40% overall", not "support band". The band is a
  * judgement the server makes on one session; this row is a total across all
@@ -441,7 +481,8 @@ function Roster({ students }) {
   // Ten at first: past that a list is scrolled past, not read. Every row is
   // one press away, and the count on the button says how many are folded.
   const [all, setAll] = useState(false);
-  const rows = all ? students : students.slice(0, ROSTER_FIRST);
+  const ordered = [...students].sort(byRoll);
+  const rows = all ? ordered : ordered.slice(0, ROSTER_FIRST);
   return (
     <>
       <List
@@ -489,7 +530,7 @@ function Trend({ full, isProf, mine, range }) {
     label: day(s.startedAt),
     title: s.title || s.code,
     detail: isProf
-      ? `${plural(s.joined ?? 0, 'student')}, ${s.banded ?? 0} in the support band`
+      ? `${plural(s.joined ?? 0, 'student')}, ${s.banded ?? 0} in the support band${restsOn(s) ? `; accuracy from ${restsOn(s)}` : ''}`
       : `${s.correct} of ${s.answered} right`,
   }));
   const prev = previous.map((s) => s.accuracy).filter((v) => v != null);
@@ -518,6 +559,7 @@ function Trend({ full, isProf, mine, range }) {
 }
 
 function RecordBody({ full, mine, isProf, range }) {
+  const [by, setBy] = useState('bands');
   // Six rows in taxonomy order even when nothing has been answered.
   const report = Array.isArray(full.bloom) && full.bloom.length
     ? full.bloom
@@ -568,10 +610,27 @@ function RecordBody({ full, mine, isProf, range }) {
 
       <div className="in-pair-cards">
         <section className="card card-pad in-card" aria-label="By Bloom level">
-          <Section title="By Bloom level" sub="Asked and right at each level, across every session." />
+          {isProf ? (
+            // A professor's record is their classes together: a summary, so it
+            // opens on the three level bands (decision 6). One student's
+            // record is a detail view and keeps all six.
+            <div className="in-ev-head">
+              <Section
+                title="By Bloom level"
+                sub={by === 'bands'
+                  ? 'Right of asked in three bands of two levels each, across every session.'
+                  : 'Asked and right at each level, across every session.'}
+              />
+              {seenTotal > 0 && <LevelReading value={by} onChange={setBy} />}
+            </div>
+          ) : (
+            <Section title="By Bloom level" sub="Asked and right at each level, across every session." />
+          )}
           {seenTotal === 0
             ? <p className="hint">No answers yet. Each level fills in as questions at it are answered.</p>
-            : <LevelPairs bloom={report} current={isProf ? undefined : full.currentLevel} />}
+            : isProf && by === 'bands'
+              ? <BandRows bloom={report} bands={full.levelBands} />
+              : <LevelPairs bloom={report} current={isProf ? undefined : full.currentLevel} />}
           <div className="in-card-rule" />
           <InWords
             bloom={report}
@@ -612,7 +671,7 @@ function RecordBody({ full, mine, isProf, range }) {
         <section className="card card-pad in-card" aria-label="Their students">
           <Section
             title="Their students"
-            sub={roster.length ? `${roster.length}, highest accuracy first` : 'Nobody has sat one of their rooms yet.'}
+            sub={roster.length ? `${roster.length}, in roll order` : 'Nobody has sat one of their rooms yet.'}
           />
           {roster.length > 0 && (
             <>
@@ -641,7 +700,7 @@ function RecordBody({ full, mine, isProf, range }) {
               sub={`${shown.length === timeline.length ? timeline.length : `${shown.length} of ${timeline.length}`}, newest first${span ? ` · ${span}` : ''}`}
             />
           </div>
-          {isProf ? <Rooms rows={[...shown].reverse()} /> : <Sittings rows={[...shown].reverse()} />}
+          {isProf ? <Rooms rows={[...shown].reverse()} /> : <Sittings rows={[...shown].reverse()} mine={mine} />}
           {isProf && (
             <p className="hint in-card-pad in-card-note">
               Accuracy is the room’s, averaged over the students in it. Support band counts those who
@@ -905,7 +964,7 @@ export default function Analytics() {
   const role = data?.role ?? account?.role ?? 'professor';
   const mine = role === 'student';
 
-  const { subjects, sel } = useMemo(() => arrange(data, pickedId), [data, pickedId]);
+  const { subjects, sel } = useMemo(() => arrangeFor(role, data, pickedId), [role, data, pickedId]);
 
   // A student's own record rides along on the list - the same object
   // GET /api/analytics/:id would return - so there is nothing to fetch.

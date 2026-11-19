@@ -70,10 +70,29 @@ function DropZone({ busy, onFile }) {
   );
 }
 
+/*
+ * "Use sample": an example unit that shows the shape the text should take,
+ * one topic per line. Its title says it is an example, and a note says so
+ * beside it until the professor replaces it with their own.
+ */
+const SAMPLE = {
+  title: 'Example: Unit III, Transport layer',
+  text: [
+    'Transport layer services',
+    'Multiplexing and demultiplexing',
+    'User Datagram Protocol (UDP)',
+    'Transmission Control Protocol (TCP)',
+    'The TCP three-way handshake',
+    'Flow control and the receive window',
+    'Congestion control',
+  ].join('\n'),
+};
+
 /** Syllabus text, pasted. */
 function PasteForm({ busy, onText }) {
   const [title, setTitle] = useState('');
   const [text, setText] = useState('');
+  const sample = title === SAMPLE.title || text === SAMPLE.text;
   return (
     <form className="tc-paste" onSubmit={(e) => { e.preventDefault(); onText(title, text); }}>
       <Field label="Title" htmlFor="src-title">
@@ -82,7 +101,21 @@ function PasteForm({ busy, onText }) {
       <Field label="Syllabus text" htmlFor="src-text" hint="A unit outline, a chapter summary, or the syllabus itself. One topic per line reads best.">
         <textarea id="src-text" className="textarea" rows={6} value={text} onChange={(e) => setText(e.target.value)} />
       </Field>
-      <div><Button type="submit" variant="ink" busy={busy === 'text'} disabled={!text.trim()}>Read this text</Button></div>
+      {sample && (
+        <p className="tc-sample-note" role="status">
+          <Icon name="info" size={14} />
+          <span>An example unit, to show the shape: one topic per line. Replace it with your own syllabus before you read it.</span>
+        </p>
+      )}
+      <div className="cluster">
+        <Button type="submit" variant="ink" busy={busy === 'text'} disabled={!text.trim()}>Read this text</Button>
+        {/* Offered only while there is nothing of the professor's own to overwrite. */}
+        {sample ? (
+          <Button type="button" variant="ghost" onClick={() => { setTitle(''); setText(''); }}>Clear the example</Button>
+        ) : !title.trim() && !text.trim() && (
+          <Button type="button" variant="ghost" onClick={() => { setTitle(SAMPLE.title); setText(SAMPLE.text); }}>Use sample</Button>
+        )}
+      </div>
     </form>
   );
 }

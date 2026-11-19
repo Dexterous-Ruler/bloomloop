@@ -131,6 +131,20 @@
 .ac-lvrow[data-here='true'] .ac-lvrow-n { box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--text); }
 .ac-lvrow[data-empty='true'] .ac-lvrow-pct { color: var(--text-4); }
 
+/* The same answers in three bands (decision 6): the band and its two level
+   numbers, the figure and its count on one line, the bar beneath in one green. */
+.ac-bandrows { display: flex; flex-direction: column; gap: 12px; }
+.ac-bandrow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 7px 10px; font: 400 12px/1.3 var(--font); }
+.ac-bandrow-name { display: flex; align-items: center; gap: 8px; min-width: 0; padding-left: 2px; font-weight: 600; color: var(--text); }
+.ac-bandrow-ns { display: inline-flex; gap: 3px; flex: none; }
+.ac-bandrow .ac-lvrow-ct { min-width: 54px; }
+.ac-bandrow-bar { grid-column: 1 / -1; }
+.ac-bandrow-basis { grid-column: 1 / -1; margin-top: -3px; font: 400 11px/1.35 var(--font); color: var(--text-3); }
+.ac-bandrow-bar > i { background: var(--primary); }
+.ac-bandrow[data-empty='true'] .ac-bandrow-name { color: var(--text-3); }
+.ac-bandrow[data-empty='true'] .ac-lvrow-pct { color: var(--text-4); }
+.ac-sec-head > .seg { align-self: center; }
+
 /* Where a student is on the climb: six rungs rising, lit to their level. */
 .ac-climb { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .ac-climb-rungs { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; flex: none; }
@@ -216,7 +230,8 @@
 .ac-prof-code { display: inline-flex; align-items: center; gap: 2px; font: 500 12px/1 var(--mono); letter-spacing: 0.04em; color: var(--text-2); }
 .ac-prof-code .btn { color: var(--text-3); }
 .ac-prof-state { display: flex; min-width: 0; }
-.ac-prof-rate { justify-self: end; }
+.ac-prof-rate { justify-self: end; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.ac-prof-rate > small { font: 400 11px/1.2 var(--font); color: var(--text-3); white-space: nowrap; }
 
 @container (max-width: 600px) {
   .ac-prof { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'who rate' 'code state'; row-gap: 6px; }
@@ -287,7 +302,20 @@
 .ac-heat { width: 100%; min-width: 600px; table-layout: fixed; border-collapse: separate; border-spacing: 4px; }
 .ac-heat thead th:first-child { width: 200px; }
 .ac-heat thead th { padding: 0 2px 6px; vertical-align: bottom; text-align: left; font: 500 11.5px/1.2 var(--font); color: var(--text-3); }
-.ac-heat-lv { display: flex; align-items: center; gap: 5px; font: 600 11px/1 var(--mono); color: var(--text-2); }
+.ac-heat-lv { display: flex; align-items: center; gap: 8px; font: 600 11px/1 var(--mono); color: var(--text-2); }
+.ac-heat-n { display: inline-flex; align-items: center; gap: 5px; }
+/* Three columns of bands: the names are longer, so they wrap, and the table needs less width. */
+.ac-heat.is-bands { min-width: 460px; }
+.ac-heat.is-bands .ac-heat-name { white-space: normal; }
+.ac-heat-tools { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+@media (max-width: 640px) {
+  .ac-heat-tools { align-items: flex-start; }
+  /* Three columns fit a phone without scrolling sideways. */
+  .ac-heat.is-bands { min-width: 0; }
+  .ac-heat.is-bands thead th:first-child { width: 92px; }
+  .ac-heat.is-bands .ac-heat-name { font-size: 11px; overflow: visible; }
+  .ac-heat.is-bands .ac-heat-who { white-space: normal; }
+}
 .ac-heat-name { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ac-heat thead th[data-peak='true'] .ac-heat-name { color: var(--text); font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
 .ac-heat tbody th { padding: 0 8px 0 2px; vertical-align: middle; text-align: left; font-weight: 400; }

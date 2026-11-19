@@ -11,6 +11,11 @@
  * (the server pushes it). What the pick was asked and how they responded stay
  * here: staff only, never on the wall or a phone.
  *
+ * Two switches are this screen's own and never reach the server: think time
+ * (ten seconds for everyone, with the question if one is chosen, before the
+ * draw is asked for) and names (off: roll numbers only, for a laptop the class
+ * can see). They are kept for this browser tab.
+ *
  * Also exported for the other records screens: the privacy line, the clock and
  * the bank-question picker, so the four tools say these things one way.
  */
@@ -51,6 +56,62 @@ export function ReadFailed({ message, onRetry }) {
       {onRetry && <button type="button" className="link rc-linkbtn" onClick={onRetry}>Try again</button>}
     </Note>
   );
+}
+
+/* ------------------------------------------------------------- this screen's own */
+
+export const THINK_SECONDS = 10;
+const PREFS_KEY = 'bloomloop.wheelScreen';
+const PREFS = { think: false, names: true };
+
+/**
+ * Think time and names: kept in sessionStorage for this tab, so they survive
+ * moving between the records tools. Never sent to the server.
+ */
+function useWheelPrefs() {
+  const [prefs, setPrefs] = useState(() => {
+    try { return { ...PREFS, ...JSON.parse(window.sessionStorage.getItem(PREFS_KEY) ?? '{}') }; } catch { return PREFS; }
+  });
+  useEffect(() => {
+    try { window.sessionStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* private mode: this visit only */ }
+  }, [prefs]);
+  const setPref = useCallback((key, value) => setPrefs((p) => ({ ...p, [key]: value })), []);
+  return [prefs, setPref];
+}
+
+/**
+ * The think-time countdown. `start` runs it; when it ends, or on `skip`,
+ * `onDone` is called (the draw). `cancel` stops it with no draw. Counted from
+ * the clock, so a slow tab still ends on time. Leaving the screen stops it.
+ */
+export function useThinkTime(onDone) {
+  const [left, setLeft] = useState(null);
+  const done = useRef(onDone);
+  done.current = onDone;
+  const timer = useRef(null);
+
+  const cancel = useCallback(() => {
+    clearInterval(timer.current);
+    timer.current = null;
+    setLeft(null);
+  }, []);
+  const skip = useCallback(() => {
+    if (!timer.current) return;
+    cancel();
+    done.current?.();
+  }, [cancel]);
+  const start = useCallback(() => {
+    if (timer.current) return;
+    const ends = Date.now() + THINK_SECONDS * 1000;
+    setLeft(THINK_SECONDS);
+    timer.current = setInterval(() => {
+      const s = Math.ceil((ends - Date.now()) / 1000);
+      if (s <= 0) skip(); else setLeft(s);
+    }, 200);
+  }, [skip]);
+
+  useEffect(() => () => clearInterval(timer.current), []);
+  return { left, start, skip, cancel };
 }
 
 const short = (text, n = 96) => {
@@ -132,8 +193,11 @@ const polar = (r, a) => [C + r * Math.cos(a), C + r * Math.sin(a)];
  * `spin` ({ ring, pick }) it walks the lit tick round the students who were on
  * the wheel and stops on the server's pick, then calls `onLanded`. Under
  * reduced motion it stops there at once.
+ *
+ * With `think` ({ left, of }) the middle counts the seconds down and an arc
+ * round the ticks empties with them. With `names` false it shows no name.
  */
-export function Ring({ people, spin, latest, left, onLanded }) {
+export function Ring({ people, spin, latest, left, onLanded, think = null, names = true }) {
   const [hot, setHot] = useState(-1);
   const landed = useRef(onLanded);
   landed.current = onLanded;
@@ -169,6 +233,16 @@ export function Ring({ people, spin, latest, left, onLanded }) {
     <div className="rc-ring" data-spinning={spin ? 'true' : undefined}>
       <svg viewBox="0 0 240 240" aria-hidden="true" focusable="false">
         <circle className="rc-ring-track" cx={C} cy={C} r={94} />
+        {think && (
+          <circle
+            className="rc-ring-think"
+            cx={C} cy={C} r={112}
+            pathLength={1}
+            strokeDasharray="1 1"
+            strokeDashoffset={1 - think.left / think.of}
+            transform={`rotate(-90 ${C} ${C})`}
+          />
+        )}
         {list.map((p, i) => {
           const a = ((-90 + (i * 360) / n) * Math.PI) / 180;
           const on = i === lit;
@@ -186,8 +260,14 @@ export function Ring({ people, spin, latest, left, onLanded }) {
           );
         })}
       </svg>
-      <div className="rc-ring-mid" key={spin ? 'spin' : latest?.id ?? 'none'}>
-        {spin ? (
+      <div className="rc-ring-mid" key={think ? 'think' : spin ? 'spin' : latest?.id ?? 'none'}>
+        {think ? (
+          <>
+            <span className="eyebrow">Think time</span>
+            <b className="rc-ring-roll rc-ring-count mono">{think.left}</b>
+            <span className="rc-ring-sub">{think.left === 1 ? 'second' : 'seconds'}</span>
+          </>
+        ) : spin ? (
           <>
             <span className="eyebrow">Drawing</span>
             <b className="rc-ring-roll mono is-walking">{walking?.rollNo ?? '·  ·  ·'}</b>
@@ -197,7 +277,7 @@ export function Ring({ people, spin, latest, left, onLanded }) {
           <>
             <span className="eyebrow">Drawn</span>
             <b className="rc-ring-roll mono">{latest.rollNo}</b>
-            <span className="rc-ring-name clip">{latest.name || ' '}</span>
+            <span className="rc-ring-name clip">{(names && latest.name) || ' '}</span>
           </>
         ) : (
           <>
@@ -242,7 +322,7 @@ function Responses({ pick, statuses, canControl, busy, onStatus }) {
  * many, when) is fixed: the server keeps no route that changes it.
  */
 export function PickCard({
-  pick, wheel, canControl, classRoom, busy, error, outcome, markAbsent, onMarkAbsent, onPick, questions, drawing,
+  pick, wheel, canControl, classRoom, busy, error, outcome, markAbsent, onMarkAbsent, onPick, questions, drawing, names = true,
 }) {
   const asks = wheel?.asks ?? [];
   const statuses = wheel?.statuses ?? [];
@@ -265,7 +345,7 @@ export function PickCard({
     <section className="card rc-pick" aria-labelledby={`rc-pick-${pick.id}`}>
       <header className="rc-card-h">
         <div className="sec">
-          <h2 id={`rc-pick-${pick.id}`}><span className="mono">{pick.rollNo}</span>{pick.name && <span className="rc-pick-name"> {pick.name}</span>}</h2>
+          <h2 id={`rc-pick-${pick.id}`}><span className="mono">{pick.rollNo}</span>{names && pick.name && <span className="rc-pick-name"> {pick.name}</span>}</h2>
           <p>{roundNote}Drawn at {clock(pick.pickedAt)}, one of {pick.poolSize} on the wheel, each equally likely.</p>
         </div>
         {working && <span className="spinner" aria-label="Saving" />}
@@ -337,7 +417,7 @@ export function PickCard({
 
 /* ------------------------------------------------------------- the log */
 
-function PickLog({ picks, round, selectedId, onSelect }) {
+function PickLog({ picks, round, selectedId, onSelect, names = true }) {
   const rounds = useMemo(() => {
     const by = new Map();
     for (const p of picks) {
@@ -368,7 +448,7 @@ function PickLog({ picks, round, selectedId, onSelect }) {
                     <button type="button" className="rw rc-log-row" aria-current={p.id === selectedId ? 'true' : undefined} onClick={() => onSelect(p.id)}>
                       <b className="mono">{p.rollNo}</b>
                       <span className="grow rc-log-who">
-                        <span className="clip">{p.name}</span>
+                        {names && <span className="clip">{p.name}</span>}
                         <span className="rc-log-meta" data-pending={p.status === 'pending' ? 'true' : undefined}>
                           {p.status === 'pending' ? 'Not filled in' : p.statusLabel}
                           {p.ask && <> · {p.askLabel}</>}
@@ -431,7 +511,20 @@ export function WheelView({
   busy = '', error = '', spin = null, onLanded,
   selectedId, onSelect, onDraw, onRound, onSetting, onPick, onRetry,
   outcome = {}, pickError = {}, markAbsent = true, onMarkAbsent, questions,
+  prefs = PREFS, onPref, think = null, thinkQ = null, onThinkQ, onSkip, onCancel,
 }) {
+  const drawBtn = useRef(null);
+  const refocus = useRef(false);
+  const left = wheel?.pool?.left ?? 0;
+  // Draw is disabled while it draws, Cancel and "Start new round" go away once
+  // used: each time, Draw takes the focus back when it can be pressed again.
+  useEffect(() => {
+    if (!refocus.current || busy || spin || think) return;
+    refocus.current = false;
+    if (left > 0) drawBtn.current?.focus();
+  }, [left, busy, spin, think]);
+  const keep = (fn) => () => { refocus.current = true; fn?.(); };
+
   if (load?.status === 'error') return <ReadFailed message={load.error} onRetry={onRetry} />;
   if (!wheel) return <WheelSkeleton />;
 
@@ -441,7 +534,13 @@ export function WheelView({
   const latest = thisRound.at(-1) ?? null;
   const selected = picks.find((p) => p.id === selectedId) ?? picks.at(-1) ?? null;
   const spinning = Boolean(spin);
-  const blocked = closed || Boolean(busy) || spinning;
+  const thinking = Boolean(think);
+  const blocked = closed || Boolean(busy) || spinning || thinking;
+  const names = prefs.names !== false;
+  const thinkQuestion = thinking && thinkQ ? (questions?.list ?? []).find((q) => q.questionId === thinkQ) : null;
+  const emptyLine = error || pool.empty;
+  // Everyone has had a turn: a new round is the fix, so it sits with the reason.
+  const roundFixes = canControl && !closed && round.noRepeat && round.picks > 0 && pool.total > 0 && pool.left === 0;
 
   return (
     <div className="rc-wheel">
@@ -460,20 +559,55 @@ export function WheelView({
           </header>
 
           <div className="rc-stage-body">
-            <Ring people={people} spin={spin} latest={latest} left={pool.left} onLanded={onLanded} />
+            <Ring people={people} spin={spin} latest={latest} left={pool.left} onLanded={onLanded} think={think} names={names} />
             <div className="rc-stage-side">
               {canControl && (
                 <div className="rc-draw">
-                  <Button variant="primary" size="lg" icon="draw" busy={busy === 'draw'} disabled={blocked || !pool.left} onClick={onDraw}>
-                    {spinning ? 'Drawing' : 'Draw'}
-                  </Button>
+                  {thinking && (
+                    <div className="rc-think">
+                      <span className="eyebrow">Think time · everyone</span>
+                      {thinkQuestion
+                        ? <p className="rc-think-q"><Level level={thinkQuestion.bloom} />{thinkQuestion.text}</p>
+                        : <p className="rc-think-line">Everyone thinks it through. The draw is asked for when the time is up.</p>}
+                    </div>
+                  )}
+                  <div className="rc-draw-row">
+                    {/* One button throughout, so the focus stays on it: Draw, then Skip to draw while the seconds run. */}
+                    <Button
+                      ref={drawBtn}
+                      variant="primary"
+                      size="lg"
+                      icon={thinking ? 'forward' : 'draw'}
+                      busy={busy === 'draw'}
+                      disabled={thinking ? false : blocked || !pool.left}
+                      onClick={keep(thinking ? onSkip : onDraw)}
+                    >
+                      {thinking ? 'Skip to draw' : spinning ? 'Drawing' : 'Draw'}
+                    </Button>
+                    {thinking && <Button variant="ghost" onClick={keep(onCancel)}>Cancel</Button>}
+                  </div>
                   <p className="rc-proj">
                     <Icon name="projector" size={14} />
                     <span>Each draw goes on the projector by itself, as the roll number and first name. Nothing else about a pick is shown there.</span>
                   </p>
                 </div>
               )}
-              {error ? <Note tone="warn" role="alert">{error}</Note> : pool.empty && <Note tone="warn">{pool.empty}</Note>}
+              {emptyLine && (
+                <Note tone="warn" role={error ? 'alert' : undefined} className="rc-empty">
+                  <p>{emptyLine}</p>
+                  {roundFixes && (
+                    <Button
+                      size="sm"
+                      icon="refresh"
+                      busy={busy === 'round'}
+                      disabled={Boolean(busy) || spinning}
+                      onClick={keep(onRound)}
+                    >
+                      Start new round
+                    </Button>
+                  )}
+                </Note>
+              )}
               {closed && <Note>The room is closed, so the wheel no longer draws. Its picks can still be filled in.</Note>}
               <div className="rc-sets">
                 <Setting
@@ -494,6 +628,31 @@ export function WheelView({
                   disabled={blocked}
                   onChange={(v) => onSetting('noRepeat', v)}
                 />
+                {/* These two are this screen's own: nothing is sent. */}
+                <Setting
+                  label="Names"
+                  hint="Off shows roll numbers only on this screen, for a laptop the class can see."
+                  checked={names}
+                  canControl
+                  onChange={(v) => onPref?.('names', v)}
+                />
+                {canControl && (
+                  <Setting
+                    label="Think time"
+                    hint={`${THINK_SECONDS} seconds for everyone to think before each draw. On this screen only.`}
+                    checked={Boolean(prefs.think)}
+                    canControl
+                    disabled={thinking || spinning}
+                    onChange={(v) => onPref?.('think', v)}
+                  />
+                )}
+                {canControl && prefs.think && (
+                  <div className="rc-think-pick">
+                    <label className="label" htmlFor="rc-think-q">Question to think about <span className="opt">optional</span></label>
+                    <QuestionPicker id="rc-think-q" label="Question to think about" questions={questions} value={thinkQ} disabled={thinking || spinning} onChange={(id) => onThinkQ?.(id)} />
+                    <span className="hint">Shown while everyone thinks, and saved as what the next pick was asked.</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -506,7 +665,7 @@ export function WheelView({
               </summary>
               <ul>
                 {pool.onWheel.map((p) => (
-                  <li key={p.rollNo}><b className="mono">{p.rollNo}</b><span className="clip">{p.name}</span></li>
+                  <li key={p.rollNo}><b className="mono">{p.rollNo}</b>{names && <span className="clip">{p.name}</span>}</li>
                 ))}
               </ul>
             </details>
@@ -526,13 +685,18 @@ export function WheelView({
           onPick={onPick}
           questions={questions}
           drawing={spinning && selected?.id === spin?.pick?.id}
+          names={names}
         />
       </div>
 
       {/* The pick being shown arriving joins the log when the ring lands on it. */}
-      <PickLog picks={spinning ? picks.filter((p) => p.id !== spin.pick?.id) : picks} round={round} selectedId={selected?.id} onSelect={onSelect} />
+      <PickLog picks={spinning ? picks.filter((p) => p.id !== spin.pick?.id) : picks} round={round} selectedId={selected?.id} onSelect={onSelect} names={names} />
 
-      <p className="sr-only" aria-live="polite">{!spinning && latest ? `Drawn: ${latest.rollNo}${latest.name ? `, ${latest.name}` : ''}.` : ''}</p>
+      <p className="sr-only" aria-live="polite">{!spinning && latest ? `Drawn: ${latest.rollNo}${names && latest.name ? `, ${latest.name}` : ''}.` : ''}</p>
+      {/* The seconds are said twice, not every second: at the start and at five. */}
+      <p className="sr-only" aria-live="polite">
+        {thinking ? (think.left > 5 ? `Think time: ${think.of} seconds, then the draw.` : 'Five seconds left.') : ''}
+      </p>
       <Privacy text={wheel.privacy} />
     </div>
   );
@@ -550,6 +714,10 @@ export default function Wheel({ code, canControl, closed, classRoom, signal, que
   const [outcome, setOutcome] = useState({});
   const [pickError, setPickError] = useState({});
   const [markAbsent, setMarkAbsent] = useState(true);
+  const [prefs, setPref] = useWheelPrefs();
+  const [thinkQ, setThinkQ] = useState(null);
+  // The draw is asked for only when the think time ends (or is skipped).
+  const think = useThinkTime(() => draw(thinkQ));
 
   const read = useCallback(async () => {
     try {
@@ -565,17 +733,20 @@ export default function Wheel({ code, canControl, closed, classRoom, signal, que
   // A different pick in the editor starts with Absent marking attendance again.
   useEffect(() => { setMarkAbsent(true); }, [selectedId]);
 
-  async function draw() {
+  /** `questionId`: the one everyone thought about, saved on the new pick. */
+  async function draw(questionId = null) {
     if (busy || spin || !wheel) return;
     const ring = ringOf(wheel);
+    let drawn = null;
     setBusy('draw');
     setError('');
     try {
-      const { pick, ...rest } = await api.wheelDraw(code);
+      const { pick: made, ...rest } = await api.wheelDraw(code);
       setWheel(rest);
-      if (pick) {
-        setSelectedId(pick.id);
-        setSpin({ ring, pick });
+      if (made) {
+        drawn = made;
+        setSelectedId(made.id);
+        setSpin({ ring, pick: made });
       }
     } catch (err) {
       // An empty wheel is a 409 with the reason: say it as it came.
@@ -583,6 +754,10 @@ export default function Wheel({ code, canControl, closed, classRoom, signal, que
       read();
     } finally {
       setBusy('');
+    }
+    if (drawn && questionId) {
+      setThinkQ(null);
+      await pick(drawn.id, { ask: 'bank', questionId });
     }
   }
 
@@ -627,7 +802,14 @@ export default function Wheel({ code, canControl, closed, classRoom, signal, que
       onLanded={() => setSpin(null)}
       selectedId={selectedId}
       onSelect={setSelectedId}
-      onDraw={draw}
+      onDraw={() => (prefs.think ? think.start() : draw())}
+      prefs={prefs}
+      onPref={setPref}
+      think={think.left != null ? { left: think.left, of: THINK_SECONDS } : null}
+      thinkQ={thinkQ}
+      onThinkQ={setThinkQ}
+      onSkip={think.skip}
+      onCancel={think.cancel}
       onRound={() => act('round', () => api.wheelNewRound(code))}
       onSetting={(key, value) => act(key, () => api.wheelSettings(code, { [key]: value }))}
       onPick={pick}

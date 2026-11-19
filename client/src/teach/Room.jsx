@@ -97,6 +97,24 @@ function wholeIn(text, { min, max }, what) {
 const className = (c) => [c.courseName, c.section].filter(Boolean).join(' ');
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+/**
+ * How long the room would take a student who uses the whole timer on every
+ * question they are served: the cap times the timer. Only an estimate, and
+ * said as one: most answers come in before the timer, and a late answer is
+ * still taken.
+ */
+function estimate(cap, secs) {
+  const mins = Math.round((cap * secs) / 60);
+  const h = Math.floor(mins / 60);
+  const span = cap * secs < 60 ? 'Under a minute'
+    : h ? `About ${plural(h, 'hour')}${mins % 60 ? ` ${plural(mins % 60, 'minute')}` : ''}`
+      : `About ${plural(mins, 'minute')}`;
+  return {
+    head: `${span} for each student`,
+    line: `An estimate: ${plural(cap, 'question')} × ${plural(secs, 'second')}, if a student uses the full time on every question. A student who answers sooner finishes sooner.`,
+  };
+}
+
 const byLevel = (qs) => LEVELS.reduce((a, l) => ({ ...a, [l]: qs.filter((q) => q.bloom === l).length }), {});
 const topicsIn = (qs) => new Set(qs.map((q) => q.topic).filter(Boolean)).size;
 
@@ -261,9 +279,10 @@ function WaitingRoom({ runMode = 'devices', lobby = false }) {
         <Chip>Not open</Chip>
       </div>
       <div className="tc-wait-body">
-        {/* Six places for a code that does not exist yet. */}
+        {/* Six places for a code that does not exist yet, in the two halves
+            it will be read out in. */}
         <div className="tc-codeslots" aria-hidden="true">
-          {[0, 1, 2, 3, 4, 5].map((i) => <span key={i}>·</span>)}
+          {[0, 1, 2, 3, 4, 5].map((i) => <span key={i} style={i === 3 ? { marginLeft: '0.75em' } : undefined}>·</span>)}
         </div>
         <h3>No one is here yet</h3>
         <p>The code is minted when you open the room. Until then there is nothing to join.</p>
@@ -486,6 +505,8 @@ export default function Room({
   // No phone is served in a Teacher-led room, so its pace settings are not sent.
   const capped = teacherLed ? { value: null } : wholeIn(cap, CAP, 'Questions per student');
   const timed = teacherLed ? { value: null } : wholeIn(timer, TIMER, 'Time per question');
+  // Only when both are set: either one alone says nothing about how long.
+  const est = capped.value != null && timed.value != null ? estimate(capped.value, timed.value) : null;
   const needsClass = teacherLed && !cls;
   const blocked = needsClass
     ? 'A Teacher-led room needs a class. Choose one, or open the room for Student devices or Mixed.'
@@ -695,7 +716,7 @@ export default function Room({
           <div className="tc-rule">
             <div className="tc-rule-txt">
               <b>Mastery goal</b>
-              <p>The accuracy at a level you would sign off as mastered. Separate from moving up a level, which stays at 70%.</p>
+              <p>The accuracy at a level you would sign off as mastered, 80% unless you choose more. Separate from moving up a level, which happens at 70% over a student's last five answers there, with at least three.</p>
             </div>
             <Segmented label="Mastery goal" options={GOALS} value={goal} onChange={setGoal} />
           </div>
@@ -727,7 +748,7 @@ export default function Room({
                   <b>Levels move</b>
                   <p>
                     {adapt
-                      ? 'On: each student moves up or down a level as they answer.'
+                      ? 'On: a student moves up a level at 70% over their last five answers there, with at least three, and steps back below 40%.'
                       : 'Off: everyone stays at the start level. Answers are still recorded and counted, and nobody moves up or down. A student below 40% accuracy is still served Remember and Understand only.'}
                   </p>
                 </div>
@@ -767,6 +788,14 @@ export default function Room({
                 placeholder="None"
                 why={timed.why}
               />
+              {est && (
+                <div className="tc-rule ro-estimate" role="status">
+                  <div className="tc-rule-txt">
+                    <b><Icon name="clock" size={14} />{est.head}</b>
+                    <p>{est.line}</p>
+                  </div>
+                </div>
+              )}
             </>
           )}
           <div className="tc-rule">

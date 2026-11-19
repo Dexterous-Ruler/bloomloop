@@ -7,11 +7,13 @@
  *   Observations   four private marks and a note per student for the day
  *   Activities     the five no-device activities, and what came of each
  *
- * <Records code canControl info rows tab onTab />. `tab` is controlled by the
- * page, so an insight card can open the wheel. `info` is the room's row from
- * the room list ({ code, title, status, classId, contentId, questionIds,
- * settings }); `rows` the live grid, whose length is the signal to read the
- * wheel, the tally and the roster again (somebody joined).
+ * <Records code canControl info rows tab onTab onProject />. `tab` is
+ * controlled by the page, so an insight card can open the wheel. `info` is the
+ * room's row from the room list ({ code, title, status, classId, contentId,
+ * questionIds, settings }); `rows` the live grid, whose length is the signal to
+ * read the wheel, the tally and the roster again (somebody joined). Optional
+ * `onProject` is called once Activities has put a quick check's question on the
+ * projector, so the page can show the projector.
  *
  * All of it is staff only: never on a phone or the projector, never added to
  * accuracy, never a level. Every read carries the server's privacy sentence and
@@ -88,20 +90,22 @@ export function RecordsLayout({ tab, onTab, canControl, children }) {
   );
 }
 
-export default function Records({ code, canControl, info, rows, tab, onTab }) {
+export default function Records({ code, canControl, info, rows, tab, onTab, onProject }) {
   const questions = useRoomQuestions(code, info);
   const current = RECORD_TABS.some((t) => t.id === tab) ? tab : 'wheel';
   const signal = Array.isArray(rows) ? rows.length : 0;
   const shared = { code, canControl: Boolean(canControl) };
+  const closed = info?.status === 'closed';
+  const classRoom = Boolean(info?.classId);
 
   return (
     <RecordsLayout tab={current} onTab={onTab} canControl={Boolean(canControl)}>
       {current === 'wheel' && (
-        <Wheel {...shared} closed={info?.status === 'closed'} classRoom={Boolean(info?.classId)} signal={signal} questions={questions} />
+        <Wheel {...shared} closed={closed} classRoom={classRoom} signal={signal} questions={questions} />
       )}
       {current === 'tally' && <Tally {...shared} signal={signal} questions={questions} />}
-      {current === 'observe' && <Observe {...shared} signal={signal} />}
-      {current === 'activities' && <Activities {...shared} onTab={onTab} />}
+      {current === 'observe' && <Observe {...shared} signal={signal} classRoom={classRoom} />}
+      {current === 'activities' && <Activities {...shared} onTab={onTab} closed={closed} onProject={onProject} />}
     </RecordsLayout>
   );
 }

@@ -60,6 +60,38 @@
 .it-opt[data-key] .it-bar > i { background: var(--ok-fill); }
 .it-unans { font: 400 12px/1.4 var(--font); color: var(--text-3); }
 
+/* The misconception a wrong option is linked to: one quiet line under its bar. */
+.it-opt[data-mc] { grid-template-areas: 't n' 'b b' 'm m'; margin-bottom: 6px; }
+.it-mc { grid-area: m; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-width: 0; margin-top: 1px; font: 400 12.5px/1.45 var(--font); color: var(--text-2); }
+.it-mc-k { flex: none; font: 600 10.5px/1.6 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.it-mc-l { min-width: 0; overflow-wrap: anywhere; }
+.it-mc[data-draft] .it-mc-l { color: var(--text-3); font-style: italic; }
+
+/* "AI draft": a dashed outline, read as not yet settled. Shared with miscon.css. */
+.it-draft {
+  display: inline-flex; align-items: center; flex: none; height: 18px; padding: 0 6px; border-radius: 5px;
+  border: 1px dashed color-mix(in srgb, var(--warn) 60%, transparent); color: var(--warn);
+  font: 600 10.5px/1 var(--font); letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap;
+}
+
+/* Honest indicators: an uncertain level, who wrote it, the count behind the band. */
+.it-unsure {
+  display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px 0 5px; border-radius: 6px;
+  background: var(--warn-soft); color: var(--warn); font: 600 11px/1 var(--font); white-space: nowrap;
+}
+.it-prov { color: var(--text-3); font-weight: 500; }
+.it-band { max-width: 34ch; }
+.it-nums dd.it-basis { display: block; font: 400 12px/1.45 var(--font); letter-spacing: 0; color: var(--text-3); text-wrap: pretty; }
+.it-level-check { display: flex; align-items: flex-start; gap: 9px; max-width: 80ch; font: 400 13px/1.5 var(--font); color: var(--text-2); text-wrap: pretty; }
+.it-level-check > svg { flex: none; margin-top: 2px; color: var(--warn); }
+.it-about { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+.it-about > li { display: flex; align-items: flex-start; gap: 8px; max-width: 80ch; font: 400 12px/1.5 var(--font); color: var(--text-3); text-wrap: pretty; }
+.it-about > li > svg { flex: none; margin-top: 2px; color: var(--text-4); }
+.it-trans { display: flex; align-items: flex-start; gap: 9px; max-width: 92ch; font: 400 12.5px/1.5 var(--font); color: var(--text-2); text-wrap: pretty; }
+.it-trans > svg { flex: none; margin-top: 2px; color: var(--warn); }
+.it-trans b { font-weight: 600; color: var(--text); }
+.it-trans-list { padding: 4px 24px 14px; }
+
 /* ============================================================ the rows */
 
 .it-list { display: flex; flex-direction: column; min-width: 0; }
@@ -127,4 +159,5 @@
   .it-stale { padding: 0 16px 12px; }
   .it-skel { padding: 6px 16px 20px; }
   .it-nums { gap: 12px 24px; }
+  .it-trans-list { padding: 4px 16px 12px; }
 }

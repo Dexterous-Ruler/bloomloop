@@ -86,8 +86,8 @@ export default function LevelMove({ result, busy, onNext }) {
           <Level level={to} size="lg" solid />
         </div>
 
-        {/* The server's own sentence, the same one the teacher sees on the grid,
-            so the student and the teacher are told the same thing. */}
+        {/* The server's own sentence for this phone (`profile.next.why`): the
+            levels and the answers behind the move, never a band. */}
         {result.reason && <p className="said">{result.reason}</p>}
 
         <p className="t-meta">Level {toN} of 6. You move between them all session.</p>

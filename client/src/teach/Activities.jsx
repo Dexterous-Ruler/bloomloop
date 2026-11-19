@@ -7,12 +7,17 @@
  * challenge records groups, never students. Each record keeps a short outcome,
  * and stays editable after the class; its kind is what was run and does not
  * change.
+ *
+ * A quick check's question can be put on the projector from here ("Project to
+ * class"): the question and its options, never the hands. Then `onProject`,
+ * when the page gives one, takes the professor to the projector.
  */
 
 import { useCallback, useEffect, useState } from 'react';
 
 import { api } from '../lib/api.js';
 import { Button, Empty, Field, Icon, Note, Segmented } from '../ui/index.jsx';
+import { toast } from '../ui/toast.jsx';
 import { Privacy, ReadFailed, clock } from './Wheel.jsx';
 
 const MAX_OUTCOME = 280;
@@ -156,9 +161,13 @@ function Outcomes({ groups, results }) {
   );
 }
 
-function Recorded({ activity, kinds, results, tallies, canControl, editing, busy, error, onEdit, onSave, onCancel, onTab, onNeedTallies }) {
+function Recorded({
+  activity, kinds, results, tallies, canControl, editing, busy, error, onEdit, onSave, onCancel, onTab, onNeedTallies,
+  onProject, projecting, projectError,
+}) {
   const about = ABOUT[activity.kind] ?? { icon: 'activity' };
   const linked = activity.tallyId ? tallies?.list?.find((t) => t.id === activity.tallyId) : null;
+  const text = linked?.text ?? '';
   return (
     <li className="rc-act" data-editing={editing ? 'true' : undefined}>
       <span className="rc-act-ic"><Icon name={about.icon} size={15} /></span>
@@ -186,11 +195,25 @@ function Recorded({ activity, kinds, results, tallies, canControl, editing, busy
           <>
             {activity.outcome ? <p className="rc-act-out">{activity.outcome}</p> : <p className="rc-act-out is-none">No outcome written.</p>}
             {activity.tallyId && (
-              <p className="rc-act-link">
-                <Icon name="hand" size={13} />
-                {linked ? <><span className="clip">{linked.text}</span><span className="t-meta">{linked.summary}</span></> : <span className="t-meta">Linked to a raised-hands count.</span>}
-              </p>
+              <div className="rc-act-linkrow">
+                <p className="rc-act-link">
+                  <Icon name="hand" size={13} />
+                  {linked ? <><span className="clip">{linked.text}</span><span className="t-meta">{linked.summary}</span></> : <span className="t-meta">Linked to a raised-hands count.</span>}
+                </p>
+                {onProject && (
+                  <Button
+                    size="sm"
+                    icon="projector"
+                    busy={projecting}
+                    onClick={onProject}
+                    aria-label={text ? `Project to class: ${text.length > 60 ? `${text.slice(0, 59)}…` : text}` : undefined}
+                  >
+                    Project to class
+                  </Button>
+                )}
+              </div>
             )}
+            {projectError && <Note tone="bad" role="alert">{projectError}</Note>}
             <Outcomes groups={activity.groups} results={results} />
           </>
         )}
@@ -216,6 +239,7 @@ function ActivitiesSkeleton() {
 export function ActivitiesView({
   data, load, canControl, tallies, busy = '', error = { for: '', message: '' },
   onCreate, onUpdate, onRetry, onTab, onNeedTallies, initialDraft = null, initialEdit = null,
+  closed = false, onProjectTally,
 }) {
   const [draft, setDraft] = useState(initialDraft);   // the kind being recorded
   const [edit, setEdit] = useState(initialEdit);      // the activity id being changed
@@ -226,6 +250,8 @@ export function ActivitiesView({
   const kinds = data.kinds ?? [];
   const results = data.results ?? [];
   const ran = (data.activities ?? []).slice().reverse();
+  // Only the room's owner sets the projector, and a closed room has none.
+  const canProject = canControl && !closed && Boolean(onProjectTally);
 
   async function create(body) {
     if (await onCreate(body)) setDraft(null);
@@ -302,6 +328,9 @@ export function ActivitiesView({
                 onCancel={() => setEdit(null)}
                 onTab={onTab}
                 onNeedTallies={onNeedTallies}
+                onProject={canProject && a.kind === 'check' && a.tallyId ? () => onProjectTally(a.id, a.tallyId) : null}
+                projecting={busy === `project:${a.id}`}
+                projectError={error.for === `project:${a.id}` ? error.message : ''}
               />
             ))}
           </ul>
@@ -315,7 +344,7 @@ export function ActivitiesView({
 
 /* ------------------------------------------------------------- the screen */
 
-export default function Activities({ code, canControl, onTab }) {
+export default function Activities({ code, canControl, onTab, closed, onProject }) {
   const [data, setData] = useState(null);
   const [load, setLoad] = useState({ status: 'loading', error: '' });
   const [tallies, setTallies] = useState({ status: 'idle', list: [], error: '' });
@@ -377,6 +406,22 @@ export default function Activities({ code, canControl, onTab }) {
     }
   }
 
+  /** The check's question on the wall, as the projector's own control puts a tally up. */
+  async function project(activityId, tallyId) {
+    setBusy(`project:${activityId}`);
+    setError({ for: '', message: '' });
+    try {
+      await api.setProjector(code, { mode: 'question', question: { tallyId } });
+    } catch (err) {
+      setError({ for: `project:${activityId}`, message: err.message });
+      setBusy('');
+      return;
+    }
+    setBusy('');
+    if (onProject) onProject();
+    else toast('The question is on the projector.');
+  }
+
   return (
     <ActivitiesView
       data={data}
@@ -390,6 +435,8 @@ export default function Activities({ code, canControl, onTab }) {
       onRetry={read}
       onTab={onTab}
       onNeedTallies={readTallies}
+      closed={closed}
+      onProjectTally={project}
     />
   );
 }

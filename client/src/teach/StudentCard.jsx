@@ -1,9 +1,16 @@
 /**
  * One student's card in one room (Phase 3), in a sheet docked to the right:
  * their band and the sentence behind it, the level being served and why, their
- * accuracy at each level beside the class's, their last final answers, the
- * planned next set, and this room's teacher records about them. Staff only:
- * never on a phone or the projector.
+ * accuracy at each level beside the class's, how sure they said they were (as
+ * counts, never beside an answer), their last final answers, the planned next
+ * set, and this room's teacher records about them. Staff only: never on a phone
+ * or the projector.
+ *
+ * Phase 5, honest indicators: what the level served rests on (serving.basis)
+ * beside it, every level change the ladder made with its reason
+ * (serving.moves), mastery per level against the room's goal (mastery), and,
+ * once a second language exists, which answers were in another language
+ * (languages). A provisional band or level is never drawn as a firm one.
  *
  * Every figure and sentence is the server's (GET /api/session/:code/students/
  * :roll/card, docs/API.md). The next set is the selector's plan and is labelled
@@ -18,6 +25,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { LABEL } from '../lib/bloom.js';
 import { Dialog, Icon, Level, Note } from '../ui/index.jsx';
+import { TapBars } from './ClassQuestions.jsx';
 
 const list = (v) => (Array.isArray(v) ? v : []);
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -110,9 +118,11 @@ function NextSet({ next, student, room }) {
   );
 }
 
-function LastAnswers({ answers }) {
+function LastAnswers({ answers, languages }) {
   const items = list(answers?.items);
   if (!items.length) return <p className="co-sc-quiet">No final answer yet.</p>;
+  const original = languages?.original ?? null;
+  const nameOf = (code) => list(languages?.languages).find((l) => l.language === code)?.name ?? String(code).toUpperCase();
   return (
     <ol className="co-ans">
       {items.map((a) => {
@@ -127,6 +137,9 @@ function LastAnswers({ answers }) {
                 {a.level && <span className="co-ans-lv" data-level={a.level}><i />{LABEL[a.level] ?? a.level}</span>}
                 {a.topic && <span className="clip">{a.topic}</span>}
                 {a.review?.status === 'provisional' && <span>Not reviewed yet</span>}
+                {original && a.language && a.language !== original && (
+                  <span className="co-ans-lang" title={`Answered in ${nameOf(a.language)}, not the question’s own ${languages?.originalName ?? original}`}>{nameOf(a.language)}</span>
+                )}
                 {a.answeredAt && <time>{clock(a.answeredAt)}</time>}
               </p>
             </div>
@@ -134,6 +147,23 @@ function LastAnswers({ answers }) {
         );
       })}
     </ol>
+  );
+}
+
+/**
+ * Their confidence taps in this room, counted by tap and by right and wrong.
+ * Counts only: never a label on the student, never the tap beside an answer.
+ */
+function Confidence({ confidence }) {
+  const counts = confidence.counts ?? {};
+  const answers = Object.values(counts).reduce((n, c) => n + (num(c?.answers) ?? 0), 0);
+  return (
+    <div className="cq-sc">
+      {answers ? (
+        <TapBars counts={counts} choices={confidence.choices} label="Their final answers in this room at each confidence tap" />
+      ) : <p className="co-sc-quiet">No final answer yet.</p>}
+      {confidence.note && <p className="cq-sc-note">{confidence.note}</p>}
+    </div>
   );
 }
 
@@ -188,6 +218,98 @@ function Records({ records }) {
   );
 }
 
+/** The level served now, and what it rests on, beside it. Provisional is lighter and says so. */
+function Serving({ serving }) {
+  const basis = serving.basis;
+  const prov = Boolean(basis?.provisional);
+  return (
+    <div className="co-serve">
+      <div className="co-serve-now" data-prov={prov ? 'true' : undefined}>
+        <span className="co-lvb">
+          <Level level={serving.level} size="lg" className={prov ? 'co-lv-prov' : ''}>{serving.label}</Level>
+          {prov && <span className="co-prov">provisional</span>}
+        </span>
+        {basis?.sentence && <p className="co-serve-basis">{basis.sentence}</p>}
+      </div>
+      {serving.reason && <p className="said">{serving.reason}</p>}
+      <p className="co-serve-can">
+        <span>Can be served now</span>
+        {list(serving.eligible).map((l) => <Level key={l} level={l} />)}
+      </p>
+      {serving.adapt === false && <p className="co-sc-quiet">This room does not move levels.</p>}
+    </div>
+  );
+}
+
+const SHOWN_MOVES = 5;
+
+/** Every move the ladder made in this room, newest first: when, from and to, and why. */
+function Moves({ moves, adapt }) {
+  const [all, setAll] = useState(false);
+  const items = list(moves);
+  if (!items.length) {
+    return <p className="co-sc-quiet">{adapt === false ? 'This room does not move levels, so there are none.' : 'No level change in this room yet.'}</p>;
+  }
+  const shown = all ? items : items.slice(0, SHOWN_MOVES);
+  return (
+    <>
+      <ol className="co-moves">
+        {shown.map((m, i) => (
+          <li key={`${m.at}-${i}`}>
+            <time className="mono">{clock(m.at)}</time>
+            <div className="co-move-main">
+              <span className="co-move-path">
+                {m.from === m.to ? (
+                  <>
+                    <span className="co-move-hold">Stayed at</span>
+                    <Level level={m.to} />
+                  </>
+                ) : (
+                  <>
+                    <Level level={m.from} />
+                    <Icon name="forward" size={13} className="co-move-arrow" />
+                    <span className="sr-only">to</span>
+                    <Level level={m.to} />
+                  </>
+                )}
+              </span>
+              {m.reason && <p className="co-move-why">{m.reason}</p>}
+            </div>
+          </li>
+        ))}
+      </ol>
+      {items.length > SHOWN_MOVES && (
+        <button type="button" className="co-sc-more" aria-expanded={all} onClick={() => setAll((v) => !v)}>
+          <Icon name={all ? 'chevronUp' : 'chevron'} size={14} />
+          {all ? 'Show the latest only' : `Show ${plural(items.length - SHOWN_MOVES, 'earlier change')}`}
+        </button>
+      )}
+    </>
+  );
+}
+
+/** Per level answered at, whether it counts as mastered against this room's goal, and what that rests on. */
+function Mastery({ mastery }) {
+  const items = list(mastery);
+  if (!items.length) return <p className="co-sc-quiet">No graded answer at any level in this room yet.</p>;
+  return (
+    <ul className="co-mast">
+      {items.map((m) => {
+        const state = m.mastered ? 'mastered' : m.provisional ? 'provisional' : 'not-yet';
+        return (
+          <li key={m.level} data-state={state}>
+            <Level level={m.level} />
+            <span className="co-mast-state">
+              {m.mastered ? <><Icon name="check" size={12} />Mastered</> : m.provisional ? 'Provisional' : 'Not yet'}
+            </span>
+            <p className="co-mast-why">{m.sentence}</p>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function Skeleton() {
   return (
     <div className="co-sc-skel" aria-busy="true" aria-label="Reading the student card">
@@ -214,35 +336,45 @@ export function StudentCardView({ card, error, roll, onClose }) {
     <Dialog open onOpenChange={(v) => { if (!v) onClose?.(); }} sheet title={title} description={facts}>
       {!card ? (error ? <Note tone="bad">{error}</Note> : <Skeleton />) : (
         <div className="co-sc">
-          <div className="co-sc-band">
-            <span className="co-band" data-band={band.id ?? 'none'}>{band.label ?? NO_BAND}</span>
+          <div className="co-sc-band" data-prov={band.provisional ? 'true' : undefined}>
+            {/* Below the minimum there is no band: never drawn as a firm one. */}
+            <span className="co-band" data-band={band.provisional ? 'none' : band.id ?? 'none'}>{band.provisional ? NO_BAND : band.label ?? NO_BAND}</span>
             <p>{band.reason}</p>
           </div>
 
           <Sec title="Being served">
-            {serving ? (
-              <div className="co-serve">
-                <div className="cluster"><Level level={serving.level} size="lg">{serving.label}</Level></div>
-                {serving.reason && <p className="said">{serving.reason}</p>}
-                <p className="co-serve-can">
-                  <span>Can be served now</span>
-                  {list(serving.eligible).map((l) => <Level key={l} level={l} />)}
-                </p>
-                {serving.adapt === false && <p className="co-sc-quiet">This room does not move levels.</p>}
-              </div>
-            ) : <p className="co-sc-quiet">No phone joined this room, so nothing is being served.</p>}
+            {serving ? <Serving serving={serving} /> : <p className="co-sc-quiet">No phone joined this room, so nothing is being served.</p>}
           </Sec>
+
+          {serving && (
+            <Sec title="Level changes" aside={<span className="co-sc-aside">Newest first</span>}>
+              <Moves moves={serving.moves} adapt={serving.adapt} />
+            </Sec>
+          )}
 
           <Sec title="By level" aside={anyAnswer(list(card.levels)) && <span className="co-sc-key"><i className="co-k-me" />Them<i className="co-k-cls" />Class, this room</span>}>
             <Levels levels={list(card.levels)} />
           </Sec>
+
+          {Array.isArray(card.mastery) && (
+            <Sec title="Mastery" aside={<span className="co-sc-aside">Against this room’s goal</span>}>
+              <Mastery mastery={card.mastery} />
+            </Sec>
+          )}
+
+          {card.confidence && (
+            <Sec title="How sure they said they were" aside={<span className="co-sc-aside">Counts only</span>}>
+              <Confidence confidence={card.confidence} />
+            </Sec>
+          )}
 
           <Sec title="Planned next" aside={<span className="co-plan">A plan, not a promise</span>}>
             <NextSet next={card.nextSet} student={s} room={room} />
           </Sec>
 
           <Sec title="Last answers" aside={<span className="co-sc-aside">Final answers, newest first</span>}>
-            <LastAnswers answers={card.lastAnswers} />
+            {card.languages?.note && <p className="co-lang-note"><Icon name="info" size={14} /><span>{card.languages.note}</span></p>}
+            <LastAnswers answers={card.lastAnswers} languages={card.languages} />
           </Sec>
 
           <Sec title="Teacher records" aside={<span className="co-sc-aside">{card.records?.day}</span>}>

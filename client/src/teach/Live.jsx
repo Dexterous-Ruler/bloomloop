@@ -35,7 +35,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 import Marbles from '../fx/Marbles.jsx';
 import { api } from '../lib/api.js';
@@ -48,7 +48,9 @@ import Insights from './Insights.jsx';
 import { ItemList, Thresholds } from './ItemStats.jsx';
 import Lobby from './Lobby.jsx';
 import ProjectorControl from './ProjectorControl.jsx';
-import Records from './Records.jsx';
+import Records, { RECORD_TABS } from './Records.jsx';
+import ClassQuestions, { RoomConfidence } from './ClassQuestions.jsx';
+import { RoomMisconceptions } from './Misconceptions.jsx';
 import StudentCard from './StudentCard.jsx';
 import useRoomFeed from './useRoomFeed.js';
 
@@ -59,7 +61,11 @@ const levelAt = (l) => LEVELS.indexOf(l);
 // What a row carries when the server sent no summary: 'clear', so the absence
 // of data never renders as a signal.
 const NO_SIG = { events: 0, away: 0, awayMs: 0, reported: 0, observed: 0, notes: [], level: 'clear' };
-const sigOf = (row) => row?.integrity ?? NO_SIG;
+// `integrity: null` is not "nothing recorded": signals are not shown for this
+// row (a student marked under 18 in a class room, or a roster read that failed
+// for this push). It draws as off, never as clear and never as a signal.
+const OFF_SIG = { ...NO_SIG, off: true };
+const sigOf = (row) => (row && row.integrity === null ? OFF_SIG : row?.integrity ?? NO_SIG);
 
 // Each filter carries its own test, so the count on the control and the rows
 // it reveals cannot drift apart.
@@ -103,6 +109,48 @@ const ago = (at, now) => {
 const byRoll = (a, b) => String(a.rollNo).localeCompare(String(b.rollNo), undefined, { numeric: true });
 const plural = (n, one, many = `${one}s`) => (n === 1 ? one : many);
 
+/** How long since a moment, in whole minutes: "under a minute", "24 min", "1 h 05 min". */
+const lasted = (ms) => {
+  const m = Math.floor(Math.max(0, ms) / 60_000);
+  if (m < 1) return 'under a minute';
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
+};
+
+// The parts of the room, as the address names them (F3): `?space=` and, for
+// the teacher records, `?tab=`. A reload or a shared link opens on the same one.
+const SPACE_IDS = ['class', 'insights', 'ask', 'attendance', 'room', 'projector'];
+
+/**
+ * A room code split in two for reading aloud: "K7Q 42M", with a visual gap and
+ * never a dot or a hyphen. The gap is a margin, not a character, so copying the
+ * code still gives its six characters.
+ */
+function SplitCode({ code, className = '' }) {
+  const c = String(code ?? '');
+  if (c.length !== 6) return <span className={`mono ${className}`}>{c}</span>;
+  return <span className={`mono lc-code ${className}`}><span>{c.slice(0, 3)}</span><span className="lc-code-b">{c.slice(3)}</span></span>;
+}
+
+/** The lower median of the working levels of students with a graded answer, or null. */
+function medianLevel(rows) {
+  const at = rows.filter((r) => LEVELS.includes(r.workingLevel) && (r.total || ZERO).seen > 0).map((r) => levelAt(r.workingLevel)).sort((a, b) => a - b);
+  return at.length ? { level: LEVELS[at[Math.floor((at.length - 1) / 2)]], of: at.length } : null;
+}
+
+/** A student's running accuracy over the answers this page has watched, one point per delivery. */
+function trendOf(tries = []) {
+  let n = 0;
+  let k = 0;
+  return tries.map((t) => { n += t.n; k += t.k; return k / n; });
+}
+
+// How the heatmap draws accuracy: shaded cells, or dots whose size and
+// opacity carry it (so it can be read without comparing shades). Remembered
+// on this device only.
+const VIEW_KEY = 'bloomloop.heatView';
+const readView = () => { try { return localStorage.getItem(VIEW_KEY) === 'dots' ? 'dots' : 'cells'; } catch { return 'cells'; } };
+const keepView = (v) => { try { localStorage.setItem(VIEW_KEY, v); } catch { /* private window: not kept */ } };
+
 // Four steps of one green, deepest for the best. Unanswered is a step of its
 // own with no fill, so "not asked yet" can never read as "got it wrong".
 const heat = (seen, correct) => {
@@ -133,6 +181,18 @@ function pooled(list) {
   }));
   return out;
 }
+
+/**
+ * Phase 5, honest indicators: what a row's working level rests on
+ * (`levelBasis`: the answers behind it, whether it is still provisional, and
+ * the server's sentence) and, per level answered at, what its mastery rests on
+ * (`masteryBasis`). Both arrive on every grid row; older rows have neither.
+ */
+const basisOf = (r) => (r?.levelBasis && typeof r.levelBasis === 'object' ? r.levelBasis : null);
+const masteryOf = (r) => (Array.isArray(r?.masteryBasis) ? r.masteryBasis : []);
+const masteryAt = (r, level) => masteryOf(r).find((m) => m.level === level) ?? null;
+// Said beside a provisional level unless the server's own sentence already starts with the word.
+const needsProvWord = (b) => Boolean(b?.provisional) && !/^provisional/i.test(String(b.sentence ?? ''));
 
 /**
  * Six axes, one per level: this student's accuracy against the class's pooled
@@ -636,7 +696,7 @@ function RoomQuestions({ items, onRetry, closed, onCheckKey }) {
   return (
     <>
       <div className="lc-heat-scroll lc-qscroll" role="region" aria-label="Questions in this room" tabIndex={0}>
-        <ItemList items={all} thresholds={data.thresholds} onCheckKey={onCheckKey} />
+        <ItemList items={all} thresholds={data.thresholds} translation={data.translation} onCheckKey={onCheckKey} />
       </div>
       <div className="lc-legend">
         <Thresholds thresholds={data.thresholds} className="lc-legend-note" />
@@ -673,7 +733,7 @@ function useRoomInfo(code, status) {
 }
 
 export default function Live({ code, title, closed, onClosed, onProjector, onOpenQuestion }) {
-  const { rows, room, insights, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus } = useRoomFeed(code);
+  const { rows, room, insights, classQuestion, setClassQuestion, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus } = useRoomFeed(code);
   const info = useRoomInfo(code, roomStatus);
   const known = info !== undefined;
   const mode = info?.settings?.mode ?? 'devices';
@@ -684,11 +744,28 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
   const canControl = info ? info.canControl !== false : true;
   const waitingRoom = !closed && (roomStatus || info?.status) === 'waiting';
   const paused = roomStatus === 'paused';
-  // Which part of the room is open. Null until chosen, so a Teacher-led room
-  // opens on its own tools once the room list has said what it is.
-  const [space, setSpace] = useState(null);
-  const [recordsTab, setRecordsTab] = useState('wheel');
-  const [insightSort, setInsightSort] = useState('band');
+  // Which part of the room is open, and which teacher record, read from the
+  // address and written back to it (F3), so a reload or a shared link keeps
+  // them. No space in the address means the room's own default, so a
+  // Teacher-led room opens on its own tools once the room list has said what
+  // it is. Replaced, not pushed: Back still leaves the console.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const asked = new URLSearchParams(location.search);
+  const space = SPACE_IDS.includes(asked.get('space')) ? asked.get('space') : null;
+  const recordsTab = RECORD_TABS.some((t) => t.id === asked.get('tab')) ? asked.get('tab') : 'wheel';
+  const setAddress = useCallback((patch) => {
+    const next = new URLSearchParams(window.location.search);
+    Object.entries(patch).forEach(([k, v]) => (v ? next.set(k, v) : next.delete(k)));
+    const search = next.toString();
+    if (search === window.location.search.replace(/^\?/, '')) return;
+    navigate({ search: search ? `?${search}` : '' }, { replace: true });
+  }, [navigate]);
+  const setSpace = useCallback((id) => setAddress({ space: id }), [setAddress]);
+  const setRecordsTab = useCallback((id) => setAddress({ tab: id }), [setAddress]);
+  // Null: Insights orders the students as the server says by default (roll order).
+  const [insightSort, setInsightSort] = useState(null);
+  const [heatView, setHeatView] = useState(readView);
   const [cardRoll, setCardRoll] = useState('');
   const [askLevel, setAskLevel] = useState(null);
   const [toggling, setToggling] = useState(false);
@@ -1042,16 +1119,31 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
 
   const selTries = sel ? feed.tries[sel.rollNo] ?? [] : [];
 
+  // #1: how long the room has been open, from the room list's own times.
+  // `startedAt` is set when the room is created, so a waiting room's lobby
+  // time is in it, and the label says "since the room was opened".
+  const timeOf = (iso) => { const t = iso ? Date.parse(iso) : NaN; return Number.isFinite(t) ? t : null; };
+  const opened = timeOf(info?.startedAt);
+  const closedAt = timeOf(info?.closedAt);
+  // #3: the class's median working level, over students with a graded answer.
+  const median = medianLevel(rows);
+  // L3: per level, how many have mastered it at the room's goal, by the rows' own marks.
+  const masteredAt = (pool) => LEVELS.map((l) => pool.filter((r) => Array.isArray(r.mastered) && r.mastered.includes(l)).length);
+
   // ---- Phase 3: the parts of the room beside the class ---------------------
-  const current = space ?? (led ? 'room' : 'class');
   const spaces = [
     !led && { id: 'class', label: 'Class' },
     { id: 'insights', label: 'Insights' },
+    // Phase 5: one question put to every phone. Only where phones answer.
+    !led && { id: 'ask', label: 'Class question', count: classQuestion && classQuestion.state !== 'closed' ? 'running' : undefined },
     classRoom && { id: 'attendance', label: 'Attendance' },
     { id: 'room', label: 'In the room' },
     { id: 'projector', label: 'Projector' },
   ].filter(Boolean);
-  function spinWheel() { setRecordsTab('wheel'); setSpace('room'); }
+  // A space the address names but this room has not (Attendance in a room
+  // with no class, Class in a Teacher-led one) falls back to the default.
+  const current = spaces.some((s) => s.id === space) ? space : (led ? 'room' : 'class');
+  function spinWheel() { setAddress({ space: 'room', tab: 'wheel' }); }
   // An insight card's own action: ask a question at its level (on the wall),
   // sort the list its way, or go to the wheel.
   function onAct(action = {}) {
@@ -1068,7 +1160,17 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
             {status.spin ? <span className="spinner" style={{ width: 10, height: 10 }} /> : <i className={status.tone === 'live' ? 'live-dot' : 'lc-dot'} />}
             <span>{status.text}</span>
             <span aria-hidden="true">·</span>
-            <span>room <span className="mono">{code}</span></span>
+            <span>room <SplitCode code={code} /></span>
+            {opened && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="lc-elapsed" title="Counted from when the room was opened, any time in the waiting room included.">
+                  {closed
+                    ? (closedAt ? `${lasted(closedAt - opened)} from opening to close` : null)
+                    : `${lasted(now - opened)} since the room was opened`}
+                </span>
+              </>
+            )}
           </div>
           <h1>{title || 'Live room'}</h1>
           <p className="sub">
@@ -1134,6 +1236,7 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
         <Lobby
           code={code}
           waiting={room.waiting}
+          rows={rows}
           canControl={canControl}
           mode={mode}
           onStarted={() => setRoomStatus('open')}
@@ -1178,7 +1281,7 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
           {!closed && (
             <div className="lc-empty-code" aria-label={`Room code ${code.split('').join(' ')}`}>
               <span>Room code</span>
-              <b className="mono">{code}</b>
+              <b><SplitCode code={code} /></b>
             </div>
           )}
         </Panel>
@@ -1299,7 +1402,7 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
           {room.feed && <FeedSplit feed={room.feed} />}
 
           <div className="lc-cols">
-            <section className="card lc-grid" style={fade} aria-labelledby="lc-grid-h">
+            <section className="card lc-grid" style={fade} aria-labelledby="lc-grid-h" data-view={lens === 'students' ? heatView : undefined}>
               <div className="lc-grid-head">
                 <div className="sec">
                   <h2 id="lc-grid-h">{lens === 'questions' ? 'How each question did' : lens === 'topics' ? 'Topics × Bloom level' : 'Students × Bloom level'}</h2>
@@ -1348,6 +1451,12 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
                       <Icon name="search" />
                       <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a student" aria-label="Find a student" />
                     </label>
+                    <Segmented
+                      label="Draw accuracy as"
+                      value={heatView}
+                      onChange={(v) => { setHeatView(v); keepView(v); }}
+                      options={[{ id: 'cells', label: 'Cells' }, { id: 'dots', label: 'Dots' }]}
+                    />
                   </div>
 
                   {shown.length === 0 ? (
@@ -1367,6 +1476,7 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
                               </th>
                             ))}
                             <th className="lc-acc" scope="col">Acc.</th>
+                            <th className="lc-trendc" scope="col" title="Each student's accuracy over the answers given since this page opened">Since opened</th>
                             <th className="lc-sigc" scope="col"><span className="sr-only">Signals</span></th>
                           </tr>
                         </thead>
@@ -1377,7 +1487,7 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
                           return (
                             <tbody key={g.id}>
                               <tr className="lc-band">
-                                <th colSpan={9} scope="rowgroup">
+                                <th colSpan={10} scope="rowgroup">
                                   <span className="lc-band-in">
                                     {g.level ? <Level level={g.level} /> : <span className="t-meta">Not placed yet</span>}
                                     <span className="lc-band-n">{g.rows.length} {plural(g.rows.length, 'student')}</span>
@@ -1388,6 +1498,7 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
                               {g.rows.map((r) => {
                                 const total = r.total || ZERO;
                                 const sig = sigOf(r);
+                                const basis = basisOf(r);
                                 const sigTitle = sig.notes.length
                                   ? `${sig.notes.join(' ')} Open ${r.rollNo} for the full trail.`
                                   : `${sig.events} recorded. Open ${r.rollNo} for the full trail.`;
@@ -1410,21 +1521,39 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
                                         </span>
                                         <span className="lc-names">
                                           <b className="clip">{r.name || r.rollNo}</b>
-                                          {r.name && <span className="mono">{r.rollNo}</span>}
+                                          <span className="lc-sub">
+                                            {r.name && <span className="mono">{r.rollNo}</span>}
+                                            {basis?.sentence && (
+                                              <span className="lc-basis" data-prov={basis.provisional ? 'true' : undefined} title={basis.sentence}>
+                                                {needsProvWord(basis) && <i className="lc-prov">provisional</i>}
+                                                {basis.sentence}
+                                              </span>
+                                            )}
+                                          </span>
                                         </span>
                                       </span>
                                     </td>
                                     {LEVELS.map((l) => {
                                       const c = (r.levels || {})[l] || ZERO;
+                                      const cur = r.workingLevel === l;
+                                      const m = masteryAt(r, l);
+                                      const said = [
+                                        c.seen ? `${LABEL[l]}: ${c.correct} of ${c.seen} right (${pct(c.seen, c.correct)}).` : `${LABEL[l]}: not answered yet.`,
+                                        cur && basis?.sentence ? `Level served now${basis.provisional ? ', provisional' : ''}. ${basis.sentence}` : '',
+                                        m?.sentence ?? '',
+                                      ].filter(Boolean).join(' ');
                                       return (
                                         <td key={l} className="lc-lv">
                                           <span
                                             className="lc-cell"
                                             data-heat={heat(c.seen, c.correct)}
-                                            data-cur={r.workingLevel === l ? 'true' : undefined}
-                                            title={c.seen ? `${LABEL[l]}: ${c.correct} of ${c.seen} right (${pct(c.seen, c.correct)})` : `${LABEL[l]}: not answered yet`}
+                                            data-cur={cur ? 'true' : undefined}
+                                            data-prov={cur && basis?.provisional ? 'true' : undefined}
+                                            data-mastered={m?.mastered ? 'true' : undefined}
+                                            title={said}
                                           >
-                                            {c.seen ? `${c.correct}/${c.seen}` : ''}
+                                            {c.seen ? <span className="lc-cell-n">{`${c.correct}/${c.seen}`}</span> : ''}
+                                            {m?.mastered && <span className="sr-only">, mastered</span>}
                                           </span>
                                         </td>
                                       );
@@ -1433,8 +1562,24 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
                                       <span className="mono">{pct(total.seen, total.correct)}</span>
                                       {r.slowLearner && <span className="lc-support">support</span>}
                                     </td>
+                                    <td className="lc-trendc">
+                                      {(() => {
+                                        // #5: in neutral ink, never green or red; from this page's own view only.
+                                        const tries = feed.tries[r.rollNo] ?? [];
+                                        const n = tries.reduce((s, t) => s + t.n, 0);
+                                        const k = tries.reduce((s, t) => s + t.k, 0);
+                                        return tries.length > 1
+                                          ? <span className="lc-trend"><Spark values={trendOf(tries)} height={18} label={`${k} of ${n} right since this page opened`} /></span>
+                                          : <span className="lc-trend-none" title={n ? `${k} of ${n} right since this page opened` : 'No answer since this page opened'}>{n ? `${k}/${n}` : ''}</span>;
+                                      })()}
+                                    </td>
                                     <td className="lc-sigc">
-                                      {sig.level !== 'clear' && <span className="lc-sig" data-level={sig.level} title={sigTitle}>{sig.notes.length || null}</span>}
+                                      {sig.off ? (
+                                        <span className="lc-sig-off" title="No signals are shown for this student.">
+                                          <span aria-hidden="true">off</span>
+                                          <span className="sr-only">No signals shown</span>
+                                        </span>
+                                      ) : sig.level !== 'clear' && <span className="lc-sig" data-level={sig.level} title={sigTitle}>{sig.notes.length || null}</span>}
                                     </td>
                                   </tr>
                                 );
@@ -1442,6 +1587,22 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
                             </tbody>
                           );
                         })}
+                        {/* L3: how many of those shown have mastered each level at the room's goal, by the rows' own marks. */}
+                        <tfoot>
+                          <tr className="lc-mfoot">
+                            <th scope="row" className="lc-who">
+                              <span className="lc-mfoot-k">{goal ? `Mastered at the ${Math.round(goal * 100)}% goal` : 'Mastered at the goal'}</span>
+                              <span className="lc-mfoot-of">of {shown.length} {plural(shown.length, 'student')}{shown.length === rows.length ? '' : ' shown'}</span>
+                            </th>
+                            {masteredAt(shown).map((n, i) => (
+                              <td key={LEVELS[i]} className="lc-lv" title={`${n} of ${shown.length} ${plural(shown.length, 'student')} ${n === 1 ? 'has' : 'have'} mastered ${LABEL[LEVELS[i]]}${goal ? ` at the ${Math.round(goal * 100)}% goal` : ''}.`}>
+                                <b className="mono" data-zero={n ? undefined : 'true'}>{n}</b>
+                                <span className="sr-only"> of {shown.length} mastered {LABEL[LEVELS[i]]}</span>
+                              </td>
+                            ))}
+                            <td colSpan={3} />
+                          </tr>
+                        </tfoot>
                       </table>
                     </div>
                   )}
@@ -1452,12 +1613,22 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
                       <span key={h}><i className="lc-cell lc-key" data-heat={h} />{label}</span>
                     ))}
                     <span><i className="lc-cell lc-key" data-cur="true" data-heat={0} />level served now</span>
+                    {rows.some((r) => basisOf(r)?.provisional) && (
+                      <span><i className="lc-cell lc-key" data-cur="true" data-prov="true" data-heat={0} />provisional: too few answers behind it</span>
+                    )}
+                    {rows.some((r) => masteryOf(r).some((m) => m.mastered)) && (
+                      <span><i className="lc-cell lc-key" data-mastered="true" data-heat={0} />mastered at the room’s goal</span>
+                    )}
                     {rows.some((r) => sigOf(r).level !== 'clear') && (
                       <span className="lc-legend-sig">
                         <i className="lc-sig" data-level="note" /> reported by the browser
                         <i className="lc-sig" data-level="watch" /> worked out by the server
                       </span>
                     )}
+                    <span className="lc-legend-note">
+                      {heatView === 'dots' ? 'A bigger, darker dot is a higher accuracy. ' : ''}
+                      Since opened: each student’s running accuracy over the answers given since this page opened; a reload starts it again.
+                    </span>
                   </div>
                 </>
               )}
@@ -1469,6 +1640,13 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
                   <h2 id="lc-tubes-h">Where the class is</h2>
                   <p>One marble is one student. It changes tube when they change level.</p>
                 </div>
+                {median && (
+                  <p className="lc-median">
+                    <span>Median working level</span>
+                    <Level level={median.level} />
+                    <span className="lc-median-of">of {median.of} {plural(median.of, 'student')} with an answer</span>
+                  </p>
+                )}
                 <Marbles rows={rows} selected={sel?.rollNo} onSelect={setPickedRoll} frozen={stale || closed} height={196} />
               </section>
 
@@ -1486,11 +1664,25 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
                     </div>
                   </div>
 
-                  <div className="lc-insp-now">
+                  <div className="lc-insp-now" data-prov={basisOf(sel)?.provisional ? 'true' : undefined}>
                     <span className="t-meta">Working at</span>
-                    <Level level={sel.workingLevel} size="lg" />
+                    <span className="lc-insp-lv">
+                      {basisOf(sel)?.provisional && <span className="lc-prov">provisional</span>}
+                      <Level level={sel.workingLevel} size="lg" className={basisOf(sel)?.provisional ? 'lc-lv-prov' : ''} />
+                    </span>
                   </div>
+                  {basisOf(sel)?.sentence && <p className="lc-insp-basis">{basisOf(sel).sentence}</p>}
                   {sel.reason && <p className="said">{sel.reason}</p>}
+                  {masteryOf(sel).some((m) => m.mastered) && (
+                    <ul className="lc-mastered" aria-label="Levels mastered, and what each rests on">
+                      {masteryOf(sel).filter((m) => m.mastered).map((m) => (
+                        <li key={m.level}>
+                          <Level level={m.level}><Icon name="check" size={12} />{LABEL[m.level] ?? m.level}</Level>
+                          <span>{m.sentence}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
 
                   <div className="figs ruled lc-insp-figs">
                     <Fig value={pct(selTotal.seen, selTotal.correct)} label="accuracy" />
@@ -1545,17 +1737,19 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
                     <div className="lc-insp-h">
                       <h3>Signals</h3>
                       <span className="t-meta">
-                        {selSig.events === 0 ? 'nothing recorded' : `${selSig.reported} reported, ${selSig.observed} observed`}
+                        {selSig.off ? 'not shown' : selSig.events === 0 ? 'nothing recorded' : `${selSig.reported} reported, ${selSig.observed} observed`}
                       </span>
                     </div>
-                    {selSig.events === 0 ? (
+                    {selSig.off ? (
+                      <p className="hint">No signals are shown for this student. The trail says why.</p>
+                    ) : selSig.events === 0 ? (
                       <p className="hint">This student's browser has reported nothing, and nothing has been worked out from their answers.</p>
                     ) : selSig.notes.length ? (
                       <ul className="stack stack-2">{selSig.notes.map((note) => <li key={note} className="said">{note}</li>)}</ul>
                     ) : (
                       <p className="hint">Nothing recorded has crossed the threshold for a note. The trail lists every one of the {selSig.events} events.</p>
                     )}
-                    {selSig.events > 0 && (
+                    {(selSig.events > 0 || selSig.off) && (
                       <div><Button size="sm" icon="checklist" busy={trailBusy} onClick={() => loadTrail(sel.rollNo)}>{shownTrail ? 'Load the trail again' : 'Load the full trail'}</Button></div>
                     )}
                     {trailError && <Note tone="bad">{trailError}</Note>}
@@ -1563,8 +1757,10 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
                     {shownTrail && (
                       <>
                         {/* The server's own caveat travels with the events. */}
-                        <Note>{shownTrail.honesty}</Note>
-                        {shownTrail.events.length === 0 ? (
+                        {shownTrail.signalsOff ? (
+                          <Note>{shownTrail.message}</Note>
+                        ) : shownTrail.honesty && <Note>{shownTrail.honesty}</Note>}
+                        {shownTrail.signalsOff ? null : !shownTrail.events?.length ? (
                           <p className="hint">Nothing is on record for {shownTrail.rollNo}.</p>
                         ) : (
                           <ul className="lc-trail">
@@ -1599,11 +1795,27 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
           onOpenStudent={setCardRoll}
         />
       )}
+      {/* Phase 5: which wrong options students chose, by the misunderstanding
+          labelled on them. Counts only. Only where phones answer. */}
+      {current === 'insights' && !led && <RoomMisconceptions code={code} />}
+      {current === 'ask' && !led && (
+        <div className="stack stack-4">
+          <ClassQuestions
+            code={code}
+            canControl={canControl}
+            info={info}
+            pushed={classQuestion}
+            onPushed={setClassQuestion}
+            onOpenProjector={() => setSpace('projector')}
+          />
+          <RoomConfidence code={code} />
+        </div>
+      )}
       {current === 'attendance' && classRoom && (
         <Attendance code={code} canControl={canControl} mode={mode} summary={room.attendance} />
       )}
       {current === 'room' && (
-        <Records code={code} canControl={canControl} info={info} rows={rows} tab={recordsTab} onTab={setRecordsTab} />
+        <Records code={code} canControl={canControl} info={info} rows={rows} tab={recordsTab} onTab={setRecordsTab} onProject={() => setSpace('projector')} />
       )}
       {current === 'projector' && (
         <ProjectorControl code={code} canControl={canControl} info={info} askLevel={askLevel} />

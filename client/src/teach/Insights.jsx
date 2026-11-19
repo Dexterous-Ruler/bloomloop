@@ -10,10 +10,16 @@
  * as they come; this file only lays them out. Students are listed in the three
  * orders the server sends, never numbered or ranked.
  *
+ * Phase 5, honest indicators: each KPI's `sentence` sits under its tile, each
+ * card's `basis.sentence` under its text, and each student carries `bandBasis`
+ * and `levelBasis`. A provisional estimate is never drawn as a firm one: a
+ * provisional band shows as no band, a provisional level lighter and named so.
+ *
  *   <Insights code insights canControl sort onSort onAct onOpenStudent />
  *     insights   the last `teacher:insights` body, or null: then it is read once here
  *     canControl false (an HOD): read only, no act or dismiss
- *     sort       'band' | 'lowest' | 'roll' (falls back to its own state when not given)
+ *     sort       'band' | 'lowest' | 'roll'; when not given, its own choice, else the
+ *                server's default order (`sort.default`, roll order since the Phase 5 follow-ups)
  *     onAct      (card.action) after an "acted" is recorded: { do: 'ask', level } |
  *                { do: 'sort', sort } | { do: 'wheel' }. A sort is also applied here.
  *   <InsightsView data ... onAction />  the same, drawn from a body (the gallery uses it)
@@ -56,14 +62,17 @@ function changeText(change, ratio) {
 function Kpi({ k, values, ratio, now, start, delay, trend }) {
   const v = num(k?.value);
   return (
-    <div className="ptile co-kpi" style={{ '--d': delay }}>
-      <span>{k?.label}</span>
-      <b><Num value={v === null ? '—' : ratio ? pct(v) : v} /></b>
-      <Spark values={values} label={values.length > 1 ? trend : undefined} />
-      {values.length < 2 && <i className="co-spark-wait" aria-hidden="true" />}
-      <small>{changeText(k?.change, ratio)} <i>since the start</i></small>
-      <span className="co-rest">{now}</span>
-      <span className="co-rest">{start}</span>
+    <div className="co-kpi-wrap">
+      <div className="ptile co-kpi" style={{ '--d': delay }}>
+        <span>{k?.label}</span>
+        <b><Num value={v === null ? '—' : ratio ? pct(v) : v} /></b>
+        <Spark values={values} label={values.length > 1 ? trend : undefined} />
+        {values.length < 2 && <i className="co-spark-wait" aria-hidden="true" />}
+        <small>{changeText(k?.change, ratio)} <i>since the start</i></small>
+        <span className="co-rest">{now}</span>
+        <span className="co-rest">{start}</span>
+      </div>
+      {k?.sentence && <p className="co-kpi-basis">{k.sentence}</p>}
     </div>
   );
 }
@@ -200,6 +209,7 @@ function CardRow({ card, canControl, onRun }) {
           {open && (
             <div id={`${id}-text`} className="co-card-open">
               <p className="co-card-text">{card.text}</p>
+              {card.basis?.sentence && <p className="co-basis">{card.basis.sentence}</p>}
               {card.evidence && <p className="co-evid">{card.evidence}</p>}
             </div>
           )}
@@ -222,6 +232,7 @@ function CardRow({ card, canControl, onRun }) {
       <div className="co-card-body">
         <p className="co-card-k">{card.title}</p>
         <p className="co-card-text">{card.text}</p>
+        {card.basis?.sentence && <p className="co-basis">{card.basis.sentence}</p>}
         {card.evidence && <p className="co-evid">{card.evidence}</p>}
         {last?.action === 'acted' && last.actedAt && <p className="co-last">Acted on at {clock(last.actedAt)}</p>}
         {form && (
@@ -273,14 +284,29 @@ function Cards({ data, canControl, onRun }) {
 
 /* --------------------------------------------------------- the students */
 
-function BandTag({ band, label }) {
+/** A band, or no band. A provisional band (too few graded answers) is never drawn as a firm one. */
+function BandTag({ band, label, provisional }) {
+  if (provisional) return <span className="co-band" data-band="none">{NO_BAND}</span>;
   return <span className="co-band" data-band={band ?? 'none'}>{label ?? NO_BAND}</span>;
+}
+
+/** A student's level, lighter and named "provisional" while too few answers are behind it. */
+export function BasisLevel({ level, basis, size }) {
+  if (!level) return null;
+  const prov = Boolean(basis?.provisional);
+  return (
+    <span className="co-lvb" data-prov={prov ? 'true' : undefined}>
+      <Level level={level} size={size} className={prov ? 'co-lv-prov' : ''} />
+      {prov && <span className="co-prov">provisional</span>}
+    </span>
+  );
 }
 
 function Students({ data, sort, onSort, onOpenStudent, listRef }) {
   const keys = list(data.sort?.keys);
   const orders = data.sort?.orders ?? {};
-  const cur = orders[sort] ? sort : 'band';
+  const fallback = orders[data.sort?.default] ? data.sort.default : orders.roll ? 'roll' : 'band';
+  const cur = orders[sort] ? sort : fallback;
   const byRoll = new Map(list(data.students).map((s) => [s.rollNo, s]));
   const rows = list(orders[cur]).map((r) => byRoll.get(r)).filter(Boolean);
   const rule = keys.find((k) => k.id === cur)?.rule;
@@ -300,22 +326,28 @@ function Students({ data, sort, onSort, onOpenStudent, listRef }) {
       );
     }
     const name = s.rosterName || s.name || s.rollNo;
+    const bandSaid = s.bandBasis?.sentence ?? s.reason;
+    const levelSaid = s.levelBasis?.sentence;
     items.push(
       <li key={s.rollNo}>
-        <button type="button" className="co-st" onClick={() => onOpenStudent?.(s.rollNo)} aria-label={`${name}, ${s.rollNo}. ${s.reason} Open their card.`}>
+        <button
+          type="button" className="co-st" onClick={() => onOpenStudent?.(s.rollNo)}
+          aria-label={`${name}, ${s.rollNo}. ${bandSaid ?? ''}${levelSaid ? ` ${levelSaid}` : ''} Open their card.`}
+        >
           <span className="co-st-top">
             <b className="co-st-name clip">{name}</b>
             <span className="co-roll mono">{s.rollNo}</span>
             {s.rosterName && s.name && s.name !== s.rosterName && <span className="co-typed clip">typed “{s.name}”</span>}
             <span className="co-st-tags">
-              {s.answers > 0 && <Level level={s.workingLevel} />}
-              <BandTag band={s.band} label={s.bandLabel} />
+              {s.answers > 0 && <BasisLevel level={s.workingLevel} basis={s.levelBasis} />}
+              <BandTag band={s.band} label={s.bandLabel} provisional={s.bandBasis?.provisional} />
             </span>
           </span>
           <span className="co-st-reason">
-            {s.reason}
+            {bandSaid}
             {s.present === false && <span className="co-away"> Not marked present.</span>}
           </span>
+          {levelSaid && levelSaid !== bandSaid && <span className="co-st-basis">{levelSaid}</span>}
           <Icon name="chevronRight" size={16} className="co-st-go" />
         </button>
       </li>,
@@ -423,9 +455,10 @@ function Skeleton() {
  * records the action and returns a promise; a refusal's sentence is shown on the card.
  */
 export function InsightsView({ data, error, onRetry, canControl = false, sort, onSort, onAction, onOpenStudent }) {
-  const [ownSort, setOwnSort] = useState('band');
+  // Roll order unless someone chooses otherwise: the server's own default.
+  const [ownSort, setOwnSort] = useState(null);
   const listRef = useRef(null);
-  const cur = sort ?? ownSort;
+  const cur = sort ?? ownSort ?? data?.sort?.default ?? 'roll';
   const changeSort = (id) => { setOwnSort(id); onSort?.(id); };
 
   async function onRun(card, kind, note) {

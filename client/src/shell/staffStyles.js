@@ -24,3 +24,7 @@ import '../styles/reports.css';
 import '../styles/outcomes.css';
 import '../styles/attain.css';
 import '../styles/register.css';
+// Phase 5: class questions and confidence counts on the console.
+import '../styles/ask.css';
+// Phase 5: misconception reports for a room and a class.
+import '../styles/miscon.css';

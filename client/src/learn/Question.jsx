@@ -9,10 +9,10 @@ import { Fragment, useEffect, useState } from 'react';
 import { LABEL } from '../lib/bloom.js';
 import { BLANK_MARK, KIND_LABEL } from '../lib/kinds.js';
 import Mark from '../fx/Mark.jsx';
-import { Button, Chip, Icon, Ladder, Level, Tip } from '../ui/index.jsx';
+import { Button, Icon, Ladder, Level } from '../ui/index.jsx';
 import Answer from './Answer.jsx';
 import Stimulus from './Stimulus.jsx';
-import { Dock } from './parts.jsx';
+import { Dock, Held, NextUp, SaveState, Sure } from './parts.jsx';
 
 const VERDICT = {
   yes: { mark: 'check', word: 'Correct' },
@@ -28,6 +28,8 @@ const VERDICT = {
  * @param retry  { triesLeft, detail } after a wrong attempt the room lets them retry
  * @param triesLeft  goes this question allows, before any are spent
  * @param readAloud  the student's professor turned on the read-aloud support
+ * @param sure   the confidence tap: { choices, value, onChange }, or null for none
+ * @param save   where this question's answer is in the outbox: { state, note }, or null
  *
  * The page arrives block by block, six at most, so this renders no more than
  * that: the answer is one block however many pieces its kind has.
@@ -96,9 +98,20 @@ function Clock({ seconds, paused }) {
   );
 }
 
+/**
+ * Who wrote the question and whether it was checked, in the server's own
+ * sentence (`question.provenance.text`, honest indicators): a quiet line, not
+ * a warning, and never the words for how it was made inside the product. A
+ * server that sends none gets nothing said.
+ */
+export function Provenance({ question }) {
+  const text = question?.provenance?.text;
+  return typeof text === 'string' && text ? <p className="ln-prov">{text}</p> : null;
+}
+
 export default function Question({
   item, result, awaiting, sent, level, trail, auto, foot, onSubmit, onNext,
-  retry = null, triesLeft = 1, readAloud = false, timer = null, paused = false,
+  retry = null, triesLeft = 1, readAloud = false, timer = null, paused = false, sure = null, save = null,
 }) {
   const question = item?.question;
 
@@ -191,19 +204,8 @@ export default function Question({
                 : question.text}
             </h1>
           )}
-          {(readAloud || question.source === 'fallback') && (
-            <div className="cluster">
-              {readAloud && <ReadAloud question={question} />}
-              {/* Since Phase 2 a question the professor wrote is `fallback` too,
-                  and the phone is not sent `model`, so it cannot tell the two
-                  apart: say only what is true of both. */}
-              {question.source === 'fallback' && (
-                <Tip label="Your teacher wrote this question, or the offline template did. The language model did not.">
-                  <Chip>Not written by AI</Chip>
-                </Tip>
-              )}
-            </div>
-          )}
+          <Provenance question={question} />
+          {readAloud && <ReadAloud question={question} />}
         </div>
 
         {retry && !result && (
@@ -219,13 +221,32 @@ export default function Question({
           </div>
         )}
 
+        {/* Above the answer, because a single choice is sent on the tap that
+            makes it: the tap has to be reachable before that. Locked once the
+            answer is on its way. */}
+        {sure && (
+          <Sure
+            choices={sure.choices}
+            value={sure.value}
+            onChange={sure.onChange}
+            locked={Boolean(result) || awaiting || sent !== null}
+          />
+        )}
+
         <div className="ln-answer">
-          <Answer key={`ans:${question._id}`} question={question} result={result} busy={awaiting} sent={sent} onSubmit={onSubmit} />
+          {/* Held on this phone: the answer is given, so its Submit goes. */}
+          <Held.Provider value={save?.state === 'queued'}>
+            <Answer key={`ans:${question._id}`} question={question} result={result} busy={awaiting} sent={sent} onSubmit={onSubmit} />
+          </Held.Provider>
         </div>
       </article>
 
       <div className="ln-foot">
-        {!result && <p className="said">Chosen because you are working at {LABEL[level] ?? level}.</p>}
+        {/* Where this answer is: on this phone, sent, or marked. */}
+        {save && <SaveState state={save.state} note={save.note} live />}
+        {/* The server's own sentence for this phone when it sent one, which
+            says the level and why without naming a band. */}
+        {!result && <p className="said">{item.reason || `Chosen because you are working at ${LABEL[level] ?? level}.`}</p>}
         {!result && !retry && triesLeft > 1 && (
           <p className="t-small muted">You have {triesLeft} goes at this question.</p>
         )}
@@ -250,9 +271,9 @@ export default function Question({
           {result.provisional && (
             <p className="t-small dim" role="note">Your teacher may review this mark.</p>
           )}
-          {/* The product's own sentence about what this answer did to the
-              student's level. */}
-          {result.reason && <p className="said">{result.reason}</p>}
+          {/* What comes next and why, in the server's words: the levels of the
+              next questions, the answers that rests on, and its sentence. */}
+          <NextUp next={result.profile?.next} fallback={result.reason || ''} />
           <Button variant={marked ? 'ink' : 'primary'} size="xl" block busy={awaiting} onClick={() => onNext(true)}>
             Next question <Icon name="forward" />
           </Button>

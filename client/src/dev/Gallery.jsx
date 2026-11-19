@@ -15,6 +15,7 @@
  * optional line on what the entry shows.
  */
 
+import { Fragment } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 import { ROLE_LABEL } from '../lib/routes.js';
@@ -42,6 +43,8 @@ const AREAS = {
   outcomes: { title: 'Course outcomes', line: 'A class’s outcomes, what maps to them and what reaches none. Staff only.' },
   attain: { title: 'Attainment', line: 'Outcome and Bloom attainment, one student’s evidence, and the formula behind it. Staff only.' },
   register: { title: 'Marks register and roster import', line: 'Marks by room in roll order, and a roster from a CSV file. Staff only.' },
+  miscon: { title: 'Misconceptions', line: 'Which wrong options students chose, linked to the misunderstanding behind them. Counts only. Staff only.' },
+  ask: { title: 'Class questions and confidence', line: 'Put one question to the class, pause to discuss, re-vote. Counts only, no names. Staff only.' },
   auth: { title: 'Auth', line: 'Sign in, sign up and the profile.' },
 };
 
@@ -152,7 +155,8 @@ export default function Gallery() {
 
   return (
     <PreviewAccount.Provider value={entry.role ? PEOPLE[entry.role] : null}>
-      {entry.render()}
+      {/* Keyed, so moving between entries never carries one entry's state into the next. */}
+      <Fragment key={entry.id}>{entry.render()}</Fragment>
       <select
         aria-label="Gallery screen"
         value={entry.id}

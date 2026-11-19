@@ -171,9 +171,19 @@ const WAITING = {
   none: { joinedN: 0, present: 0, classSize: 25, summary: '0 / 0 present', canStart: false, reason: NO_PHONE },
   noClass: { joinedN: 4, present: null, classSize: null, summary: '4 joined', canStart: true },
   teacherLed: { joinedN: 0, present: 3, classSize: 25, summary: '0 / 3 present', canStart: true },
+  everyone: { joinedN: 12, present: 12, classSize: 25, summary: '12 / 12 present', canStart: true },
+  hall: { joinedN: 42, present: null, classSize: null, summary: '42 joined', canStart: true },
 };
 
-function LobbyDemo({ waiting, mode = 'mixed', canControl = true, refuse = null }) {
+// The grid's rows while the room waits: one per phone, the roster's name
+// beside the roll number in a class room. 21CS90 is a roll number not on the
+// roster, so it has no name.
+const named = (n) => [...NAMES.slice(0, n - 1).map((name, i) => ({ rollNo: roll(i), name: name.split(' ')[0], rosterName: name })),
+  { rollNo: '21CS90', name: 'Ravi', rosterName: null }];
+const rolls = (n) => Array.from({ length: n }, (_, i) => ({ rollNo: `PH${String(i + 1).padStart(3, '0')}`, name: '', rosterName: null }));
+const ROWS = { class: named(9), everyone: named(12), noClass: rolls(4), hall: rolls(42) };
+
+function LobbyDemo({ waiting, rows = null, mode = 'mixed', canControl = true, refuse = null }) {
   const [reply, setReply] = useState(null);
   const [start] = useState(() => async () => {
     await wait(600);
@@ -183,7 +193,7 @@ function LobbyDemo({ waiting, mode = 'mixed', canControl = true, refuse = null }
   return (
     <Frame sub="The waiting room sits at the top of the live view until the room starts.">
       {reply && <Note tone="ok" role="status">onStarted got <span className="mono">{JSON.stringify(reply)}</span>. In the console the lobby now leaves.</Note>}
-      <Lobby code={CODE} waiting={waiting} canControl={canControl} mode={mode} start={start} onStarted={setReply} />
+      <Lobby code={CODE} waiting={waiting} rows={rows} canControl={canControl} mode={mode} start={start} onStarted={setReply} />
     </Frame>
   );
 }
@@ -240,8 +250,20 @@ export default [
   {
     id: 'lobby-class',
     title: 'Lobby: a class room waiting',
-    note: '9 phones joined of the 12 students marked present. Start it: the stand-in answers like the server, and onStarted gets the reply.',
-    render: () => <LobbyDemo waiting={WAITING.class} />,
+    note: '9 phones joined of the 12 students marked present: their roster names (21CS90 is not on the roster, so its roll number), and "3 still joining". Start it: the stand-in answers like the server, and onStarted gets the reply.',
+    render: () => <LobbyDemo waiting={WAITING.class} rows={ROWS.class} />,
+  },
+  {
+    id: 'lobby-everyone',
+    title: 'Lobby: everyone present has joined',
+    note: '12 of 12: the line says so.',
+    render: () => <LobbyDemo waiting={WAITING.everyone} rows={ROWS.everyone} />,
+  },
+  {
+    id: 'lobby-hall',
+    title: 'Lobby: a lecture hall, no class',
+    note: '42 phones: roll numbers only (a typed name is never shown), the first 30, then how many more.',
+    render: () => <LobbyDemo waiting={WAITING.hall} rows={ROWS.hall} mode="devices" />,
   },
   {
     id: 'lobby-nobody',
@@ -252,8 +274,8 @@ export default [
   {
     id: 'lobby-no-class',
     title: 'Lobby: a room with no class',
-    note: 'The server’s line is "4 joined": with no class nobody is marked present.',
-    render: () => <LobbyDemo waiting={WAITING.noClass} mode="devices" />,
+    note: 'The server’s line is "4 joined": with no class nobody is marked present, so the phones show as roll numbers.',
+    render: () => <LobbyDemo waiting={WAITING.noClass} rows={ROWS.noClass} mode="devices" />,
   },
   {
     id: 'lobby-teacher-led',
@@ -265,13 +287,13 @@ export default [
     id: 'lobby-409',
     title: 'Lobby: the start is refused',
     note: 'Started meanwhile on another screen. Press Start: the 409 is shown as given.',
-    render: () => <LobbyDemo waiting={WAITING.class} refuse="That room has already started." />,
+    render: () => <LobbyDemo waiting={WAITING.class} rows={ROWS.class} refuse="That room has already started." />,
   },
   {
     id: 'lobby-read-only',
     title: 'Lobby: read only',
     note: 'A head of department watching a colleague’s room: no Start button.',
-    render: () => <LobbyDemo waiting={WAITING.class} canControl={false} />,
+    render: () => <LobbyDemo waiting={WAITING.class} rows={ROWS.class} canControl={false} />,
   },
   {
     id: 'lobby-reading',

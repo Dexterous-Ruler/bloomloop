@@ -7,6 +7,10 @@
  * body, as GET /api/session/:code/projector answers it, for a Student-devices
  * room (the key of a bank question cannot go up) and a Teacher-led one (it
  * can). Nothing here talks to the server; the controls do nothing.
+ *
+ * Phase 5: a class question on the wall (question.source 'class', docs/API.md
+ * "What the projector shows") through open, pause, re-vote and close, with
+ * counts off, held and up; a Teacher-led room's wall, which has no code.
  */
 
 import AccountShell from '../shell/AccountShell.jsx';
@@ -73,6 +77,73 @@ const TREE_URL = `data:image/svg+xml;utf8,${encodeURIComponent(TREE)}`;
 const LEVELS = (counts) => ['Remember', 'Understand', 'Apply', 'Analyse', 'Evaluate', 'Create']
   .map((label, i) => ({ level: label.toLowerCase(), label, answers: counts[i] }));
 
+// A question put to the whole class (source 'class'), in its four states.
+const CQ = {
+  source: 'class',
+  text: 'A video call drops a frame now and then but never stops to wait. Which transport protocol is it most likely using?',
+  kind: 'mcq',
+  options: OPTS('TCP', 'UDP', 'Either: the application chooses', 'Neither: IP carries it directly'),
+  stimulus: null,
+  revealed: false,
+  correct: null,
+  round: 1,
+  state: 'open',
+  voted: 0,
+  counts: null,
+};
+const VOTES = (...n) => n.map((votes, i) => ({ key: 'ABCD'[i], votes }));
+const BEFORE = { voted: 23, options: VOTES(9, 10, 3, 1), correct: null, confidence: { sure: 8, think_so: 9, guessing: 5, none: 1 } };
+const AFTER = { voted: 24, options: VOTES(4, 18, 2, 0), correct: null, confidence: { sure: 13, think_so: 8, guessing: 2, none: 1 } };
+const CHANGES = { both: 22, onlyBefore: 1, onlyAfter: 2, wrongToRight: 9, rightToWrong: 1, rightToRight: 8, wrongToSameWrong: 3, wrongToOtherWrong: 1 };
+const counts = (before, after = null, changes = null) => ({ minVotes: 5, before, after, changes });
+
+const CQ_STATE = {
+  open: { ...CQ, voted: 14 },
+  openCounts: { ...CQ, voted: 14, counts: counts(null) },
+  paused: { ...CQ, state: 'paused', voted: 23, counts: counts(BEFORE) },
+  pausedFew: { ...CQ, state: 'paused', voted: 4, counts: counts(null) },
+  revote: { ...CQ, state: 'revote', round: 2, voted: 17, counts: counts(BEFORE) },
+  closedHidden: { ...CQ, state: 'closed', round: 2, voted: 24, counts: counts(BEFORE, AFTER) },
+  revealed: {
+    ...CQ, state: 'closed', round: 2, voted: 24, revealed: true, correct: ['B'],
+    counts: counts({ ...BEFORE, correct: { students: 10, share: 0.4347 } }, { ...AFTER, correct: { students: 18, share: 0.75 } }, CHANGES),
+  },
+  revealedOff: { ...CQ, state: 'closed', round: 1, voted: 23, revealed: true, correct: ['B'], counts: null },
+  poll: {
+    ...CQ,
+    kind: 'poll',
+    text: 'For next week’s lab, which would help you more?',
+    options: OPTS('Building the network in a packet tracer', 'Reading live captures in Wireshark', 'Both, half the time each'),
+    state: 'closed',
+    round: 2,
+    voted: 21,
+    counts: counts(
+      { voted: 22, options: VOTES(11, 6, 5), correct: null, confidence: { sure: 10, think_so: 7, guessing: 3, none: 2 } },
+      { voted: 21, options: VOTES(8, 5, 8), correct: null, confidence: { sure: 12, think_so: 6, guessing: 1, none: 2 } },
+      { both: 20, onlyBefore: 2, onlyAfter: 1, kept: 15, changed: 5 },
+    ),
+  },
+  // The worst case for space: a passage, four long options, both rounds and the changes.
+  passage: {
+    ...CQ,
+    text: WITH_PASSAGE.text,
+    options: OPTS('The IP address of the sending host, with nothing else from the header', 'The port numbers in the segment header, read at the receiving host', 'The sequence number, which says where the segment sits in the stream', 'The checksum, which the receiver uses to find the socket and check the data'),
+    stimulus: { kind: 'passage', text: PASSAGE },
+    state: 'closed', round: 2, voted: 24, revealed: true, correct: ['B'],
+    counts: counts({ ...BEFORE, correct: { students: 10, share: 0.4347 } }, { ...AFTER, correct: { students: 18, share: 0.75 } }, CHANGES),
+  },
+  truefalse: {
+    ...CQ,
+    kind: 'truefalse',
+    text: 'UDP guarantees that segments arrive in the order they were sent.',
+    options: OPTS('True', 'False'),
+    state: 'revote',
+    round: 2,
+    voted: 6,
+    counts: counts({ voted: 19, options: VOTES(7, 12), correct: null, confidence: { sure: 6, think_so: 8, guessing: 4, none: 1 } }),
+  },
+};
+
 const STATE = {
   waiting: { ...BASE, status: 'waiting' },
   open: { ...BASE },
@@ -90,9 +161,15 @@ const STATE = {
   pickRoll: { ...BASE, question: MCQ, pick: { rollNo: 'SIM07' } },
   pickJoin: { ...BASE, pick: { rollNo: 'SIM12', firstName: 'Rohan' } },
   paused: { ...BASE, status: 'paused', question: MCQ },
+  ledIdle: { ...BASE, roomMode: 'teacher-led' },
+  ledQuestion: { ...BASE, roomMode: 'teacher-led', question: MCQ },
+  ledPick: { ...BASE, roomMode: 'teacher-led', pick: { rollNo: 'SIM12', firstName: 'Rohan' } },
+  cqPick: { ...BASE, roomMode: 'devices', question: CQ_STATE.revealed, pick: { rollNo: 'SIM07', firstName: 'Asha' } },
 };
 
-const RULE = 'The projector shows the question (its key only once you reveal it, and a bank question\'s key only in a Teacher-led room, where no phone can still be served it), a diagram, counts for the class (per level only once 5 students have answered), and the wheel\'s pick as a roll number and first name. Never a score, accuracy, band, observation or any other name. A projector link works for 12 hours from when it is made.';
+const ON = (q) => ({ ...BASE, roomMode: 'devices', question: q });
+
+const RULE = 'The projector shows the question (its key only once you reveal it, and a bank question\'s key only in a Teacher-led room, where no phone can still be served it), a diagram, counts for the class (per level only once 5 students have answered), and the wheel\'s pick as a roll number and first name. Never a score, accuracy, band, observation or any other name. A projector link works for 12 hours from when it is made. A class question shows how many have voted; its votes per option and confidence taps only when you choose to show counts, once a round has closed and 5 or more voted in it; and its key, share right and changes only once you reveal the key as it closes.';
 const KEY_409 = 'That key cannot go on the wall: this room\'s phones may still be served this question, and a phone that has not answered it yet would have been shown its answer. A bank question\'s key is revealed on the projector only in a Teacher-led room; nothing was changed.';
 
 const today = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
@@ -111,6 +188,12 @@ const BANK = [
   { id: 'q7', bloom: 'analyse', kind: 'multi', text: 'Which of these would make a TCP sender slow down? Choose all that apply.', stimulus: { kind: 'image', url: TREE_URL, alt: 'A tree diagram' } },
   { id: 'q8', bloom: 'evaluate', kind: 'order', text: 'Put the steps of closing a TCP connection in order.', stimulus: null },
   { id: 'q9', bloom: 'create', kind: 'open', text: 'Design a simple reliable protocol over UDP for a classroom quiz app, and say what it keeps from TCP.', stimulus: { kind: 'passage', text: PASSAGE } },
+];
+
+// The room's class questions as GET …/class-questions lists them (staff body, trimmed).
+const CLASS_QS = [
+  { id: 'cq1', seq: 1, state: 'closed', round: 2, revealed: true, question: { text: 'Which layer routes packets between networks?', kind: 'mcq', level: 'remember' } },
+  { id: 'cq2', seq: 2, state: 'paused', round: 1, revealed: false, question: { text: CQ.text, kind: 'mcq', level: 'understand' } },
 ];
 
 const TALLIES = [
@@ -142,7 +225,7 @@ function Notice({ kind, reason }) {
 function Console({ sub, ...props }) {
   return (
     <AccountShell current="console" crumb="Live · J5ENVQ" title={TITLE} sub={sub} width="wide">
-      <ProjectorConsole questions={BANK} tallies={TALLIES} canControl onPatch={() => {}} onOpen={() => {}} onRevoke={() => {}} onPicker={() => {}} onLevel={() => {}} {...props} />
+      <ProjectorConsole questions={BANK} tallies={TALLIES} classQs={CLASS_QS} canControl onPatch={() => {}} onOpen={() => {}} onRevoke={() => {}} onPicker={() => {}} onLevel={() => {}} {...props} />
     </AccountShell>
   );
 }
@@ -168,6 +251,21 @@ export default [
   wall('pick-roll', 'the pick, roll number alone', 'Names turned off: the roll number alone.', STATE.pickRoll),
   wall('pick-join', 'the pick, nothing else up', 'A draw while the way in is on the screen.', STATE.pickJoin),
   wall('paused', 'paused', 'The room is paused: the status says so.', STATE.paused),
+  wall('led-idle', 'Teacher-led room, nothing up', 'No phone joins a Teacher-led room: the wall shows its title, never a code or a QR.', STATE.ledIdle),
+  wall('led-question', 'Teacher-led room, a question', 'Something up: the bar carries no join code.', STATE.ledQuestion),
+  wall('led-pick', 'Teacher-led room, a pick', 'A draw with nothing else up: still no code.', STATE.ledPick),
+  wall('cq-open', 'class question, first vote, counts off', 'Round 1 open, showCounts off: how many have voted, and why there are no counts.', ON(CQ_STATE.open)),
+  wall('cq-open-counts', 'class question, first vote, counts on', 'Counts on, but the round is still open: the wall says they come when it closes.', ON(CQ_STATE.openCounts)),
+  wall('cq-paused', 'class question, paused, counts up', '23 voted and the vote is paused: votes per option and the taps, no key, no share right.', ON(CQ_STATE.paused)),
+  wall('cq-paused-few', 'class question, paused, too few', 'Four voted: the counts stay off and the wall says why.', ON(CQ_STATE.pausedFew)),
+  wall('cq-revote', 'class question, second vote open', 'The first vote’s counts stay up; the second vote’s wait for it to close.', ON(CQ_STATE.revote)),
+  wall('cq-closed', 'class question, closed without the key', 'Before and after, side by side. No key, no share right, no changes.', ON(CQ_STATE.closedHidden)),
+  wall('cq-revealed', 'class question, closed with the key', 'Revealed: the key, the share right before and after, and who changed their answer.', ON(CQ_STATE.revealed)),
+  wall('cq-revealed-off', 'class question, key revealed, counts off', 'Closed after one vote with the key revealed and counts off: the key alone.', ON(CQ_STATE.revealedOff)),
+  wall('cq-poll', 'class question, a poll, closed', 'A poll has no key: its changes are kept and changed, shown once the second vote closed.', ON(CQ_STATE.poll)),
+  wall('cq-passage', 'class question with a passage, everything up', 'The fullest screen: a passage, long options, both rounds and the changes. The type steps down until it fits the frame.', ON(CQ_STATE.passage)),
+  wall('cq-truefalse', 'class question, true or false, second vote', 'Two options, A True and B False.', ON(CQ_STATE.truefalse)),
+  wall('cq-pick', 'class question beside a pick', 'The wheel’s pick takes a column: the side and the bars give way.', STATE.cqPick),
   { id: 'wall-closed', title: 'Wall: link turned off', role: null, note: 'projector:closed: the wall stops and shows the reason.', render: () => <Notice kind="closed" reason="This projector link was turned off." /> },
   { id: 'wall-refused', title: 'Wall: link refused', role: null, note: 'projector:refused: the server’s one sentence for every link that does not work.', render: () => <Notice kind="refused" reason="That projector link does not work: it may have been turned off. Ask your professor for a new one." /> },
   { id: 'wall-nolink', title: 'Wall: opened with no link', role: null, note: '/wall with nothing after the #.', render: () => <Notice kind="nolink" /> },
@@ -207,6 +305,48 @@ export default [
     role: 'professor',
     note: 'Progress before 5 have answered, names off, no projector watching.',
     render: () => <Console roomMode="mixed" body={body({ ...STATE.held, pick: { rollNo: 'SIM12' } }, { pickId: 'p2', showNames: false }, { watching: 0, links: [] })} />,
+  },
+  {
+    id: 'beam-class',
+    title: 'Controls: a class question up',
+    role: 'professor',
+    note: 'Paused, counts on: what the wall shows of it, the counts switch, and where the key comes from instead of a reveal button.',
+    render: () => <Console roomMode="devices" picker="class" body={body(ON(CQ_STATE.paused), { question: { source: 'class', id: 'cq2' }, showCounts: true })} />,
+  },
+  {
+    id: 'beam-class-off',
+    title: 'Controls: a class question, counts off',
+    role: 'professor',
+    note: 'The default: showCounts off. The wall shows how many voted, and says counts are off.',
+    render: () => <Console roomMode="devices" picker="class" body={body(ON(CQ_STATE.open), { question: { source: 'class', id: 'cq2' } })} />,
+  },
+  {
+    id: 'beam-class-revealed',
+    title: 'Controls: a class question closed with its key',
+    role: 'professor',
+    note: 'Closed with the key revealed on the Class question space: key, share right and changes are up.',
+    render: () => <Console roomMode="mixed" picker="class" body={body(ON(CQ_STATE.revealed), { question: { source: 'class', id: 'cq1' }, showCounts: true })} />,
+  },
+  {
+    id: 'beam-class-none',
+    title: 'Controls: no class question yet',
+    role: 'professor',
+    note: 'The Class questions list, empty.',
+    render: () => <Console roomMode="devices" picker="class" classQs={[]} body={body(STATE.open, {})} />,
+  },
+  {
+    id: 'beam-class-readonly',
+    title: 'Controls: a class question, read only',
+    role: 'hod',
+    note: 'A head of department: what the wall shows of it, the switch shown but not usable, no take-down.',
+    render: () => <Console roomMode="devices" canControl={false} body={body(ON(CQ_STATE.paused), { question: { source: 'class', id: 'cq2' }, showCounts: true })} />,
+  },
+  {
+    id: 'beam-led',
+    title: 'Controls: Teacher-led room, nothing up',
+    role: 'professor',
+    note: 'The wall shows the title, no code; no class questions to choose from.',
+    render: () => <Console roomMode="teacher-led" body={body(STATE.ledIdle, {})} />,
   },
   {
     id: 'beam-readonly',

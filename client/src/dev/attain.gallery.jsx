@@ -86,7 +86,7 @@ const STRICT_CONFIG = { ...EXAMPLE_CONFIG, levels: [{ level: 1, minShare: 0.6 },
 const EXAMPLE_NAME = 'Example: 60% of marks; levels at 50 / 60 / 70% of students';
 const STRICT_NAME = 'Example: 60% of marks; levels at 60 / 70 / 85% of students';
 
-const methodologyOf = (head, c) => `${head} A student attains a course outcome when they score at least ${c.studentThreshold * 100}% of the marks on the questions mapped to it, counting ${c.attempts === 'best' ? 'only their best attempt at each question, across attempts and rooms' : 'final attempts only (an attempt followed by a retry is left out, and a question answered in two rooms counts in both)'}, from digital answers marked automatically and written answers a professor has reviewed. Written answers given only a provisional machine mark (a keyword match against the rubric, not AI) and not yet reviewed are shown but not counted. Students with fewer than ${c.minAnswers} such answers on an outcome are shown as not enough evidence, never as not attained. Each answer is worth one mark, scored from 0 to 1 as it was marked (a professor's review replaces the machine's mark) and weighted by its topic's weight in the outcome; a question mapped to an outcome directly weighs 1. ${c.roomWeights.length ? 'Room M4RE79 counts 2; every other room counts 1.' : 'Every room counts the same.'} The class's attainment level for an outcome comes from the share of the students counted who attained it: ${[...c.levels].reverse().map((l) => `level ${l.level} from ${l.minShare * 100}%`).join(', ')} and level 0 below ${c.levels[0].minShare * 100}%. The students counted are those on the class roster now; removed students and roll numbers not on the roster are listed apart and not counted. Bloom attainment applies the same rules to each Bloom level in place of each outcome, over every counted answer at that level whether or not it is mapped to an outcome (topic weights do not apply; room weights do). Because each student is served different questions, a student's share is of the marks on the questions they were actually given. Polls are not marked and are counted only as a number. Teacher observations, wheel picks and hand tallies are reported in their own section and never enter a mark or move a level. Rooms deleted from the live views are not counted; their evidence is kept in room archives. This is direct attainment from class evidence only. A college's final attainment may combine it with examinations or surveys by its own formula; this report does not.`;
+const methodologyOf = (head, c) => `${head} A student attains a course outcome when they score at least ${c.studentThreshold * 100}% of the marks on the questions mapped to it, counting ${c.attempts === 'best' ? 'only their best attempt at each question, across attempts and rooms' : 'final attempts only (an attempt followed by a retry is left out, and a question answered in two rooms counts in both)'}, from digital answers marked automatically and written answers a professor has reviewed. Written answers given only a provisional machine mark (a keyword match against the rubric, not AI) and not yet reviewed are shown but not counted. Students with fewer than ${c.minAnswers} such answers on an outcome are shown as not enough evidence, never as not attained. Each answer is worth one mark, scored from 0 to 1 as it was marked (a professor's review replaces the machine's mark) and weighted by its topic's weight in the outcome; a question mapped to an outcome directly weighs 1. ${c.roomWeights.length ? 'Room M4RE79 counts 2; every other room counts 1.' : 'Every room counts the same.'} The class's attainment level for an outcome comes from the share of the students counted who attained it: ${[...c.levels].reverse().map((l) => `level ${l.level} from ${l.minShare * 100}%`).join(', ')} and level 0 below ${c.levels[0].minShare * 100}%. The students counted are those on the class roster now; removed students and roll numbers not on the roster are listed apart and not counted. Bloom attainment applies the same rules to each Bloom level in place of each outcome, over every counted answer at that level whether or not it is mapped to an outcome (topic weights do not apply; room weights do). Because each student is served different questions, a student's share is of the marks on the questions they were actually given. Polls are not marked and are counted only as a number. Teacher observations, wheel picks and hand tallies are reported in their own section and never enter a mark or move a level. A question the professor put to the whole class counts its first vote as a digital answer; its re-vote after the class discussed it is shown under its own label and never counted. How sure a student said they were never changes a mark. Rooms deleted from the live views are not counted; their evidence is kept in room archives. This is direct attainment from class evidence only. A college's final attainment may combine it with examinations or surveys by its own formula; this report does not.`;
 
 const EXAMPLE_FORMULA = { source: 'example', version: 0, savedAt: null, savedBy: null, preset: { id: 'example-60-50-60-70', name: EXAMPLE_NAME }, config: EXAMPLE_CONFIG, roomWeights: [] };
 const SAVED_CONFIG = {
@@ -108,7 +108,7 @@ const FIELDS = {
   studentThreshold: 'A share from 0 to 1 (0.6 for 60%): a student attains an outcome when their marks on its questions reach this share of the marks possible.',
   minAnswers: 'A whole number from 1 to 100: below this many counted answers on an outcome, a student is "not enough evidence".',
   levels: '1 to 10 class levels: the class reaches a level when at least minShare of the students counted attained the outcome.',
-  evidence: 'Which evidence counts towards a mark. Teacher records never count (decision 3).',
+  evidence: 'Which evidence counts towards a mark: { digital, aiProvisional, humanReviewed }, each true or false, one at least true; aiProvisional only with humanReviewed, since a review replaces the machine’s mark. aiProvisional is the keyword marker’s provisional machine mark, not AI; the key keeps its stored name. Teacher records never count (decision 3), and neither does a re-vote after a class discussion, which every report shows under its own label.',
   attempts: '"final" or "best".',
   roomWeights: 'Up to 100 rooms of the class with a weight above 0 and at most 100.',
 };
@@ -116,11 +116,12 @@ const EVIDENCE_TYPES = [
   { id: 'digital', label: 'Digital answers', description: 'Objective answers given on a phone and marked by the server from the stored answer key.' },
   { id: 'aiProvisional', label: 'Provisional machine marks', description: 'Written answers marked by the keyword marker, which matches the rubric\'s words in the answer: a provisional machine mark, not AI and not a professor\'s judgement, until a professor reviews it.' },
   { id: 'humanReviewed', label: 'Reviewed by a professor', description: 'Written answers whose mark a professor confirmed or changed in the review queue.' },
+  { id: 'revote', label: 'Re-votes after discussion', description: 'The second vote on a question the professor put to the whole class, given after the class discussed it. Shown, and never counted towards a mark by any formula: it follows the discussion, so it is not the student’s own work. The first vote on such a question is a digital answer.' },
 ];
 const QUESTION_SOURCES = [
   { id: 'aiGenerated', label: 'AI-generated questions', description: 'Questions the language model wrote from the professor’s own material (question_source "llm"). A professor approved each before any room served it. This says where the question came from, not how the answer was marked.' },
-  { id: 'professorWritten', label: 'Professor-written questions', description: 'Questions a professor wrote in the question bank (question_source "teacher").' },
-  { id: 'offlineTemplate', label: 'Offline-template or professor-written questions', description: 'Questions no model wrote (question_source "fallback"): the offline template’s, and a professor’s own while they are stored the same way. An answer row cannot tell these two apart.' },
+  { id: 'professorWritten', label: 'Professor-written questions', description: 'Questions a professor wrote in the question bank (question_source "teacher", since 19 Nov 2026).' },
+  { id: 'offlineTemplate', label: 'Offline-template questions (and professor-written ones from before 19 Nov 2026)', description: 'Questions no model wrote (question_source "fallback"): the offline template’s, and a professor’s own written before 19 Nov 2026, which were stored the same way. An answer row cannot tell those two apart, so they were not relabelled.' },
 ];
 const PRIVACY = 'Attainment, marks and every report here are for staff only: never sent to a student\'s phone or the projector, or to any route a student can reach. Students are listed in roll-number order, never ranked by score.';
 const STATES = [{ id: 'attained', label: 'Attained' }, { id: 'not-attained', label: 'Not attained' }, { id: 'not-enough-evidence', label: 'Not enough evidence' }];
@@ -140,7 +141,9 @@ const configReply = (formula, methodology, canEdit = true) => ({
 
 /* ------------------------------------------------- figures, by the rules */
 
-const TYPE = ['digital', 'aiProvisional', 'humanReviewed'];
+const TYPE = ['digital', 'aiProvisional', 'humanReviewed', 'revote'];
+// A re-vote after a class discussion: shown in every breakdown, never counted.
+const counts = (cfg, t) => (t === 'revote' ? false : cfg.evidence[t]);
 const SRC = ['aiGenerated', 'professorWritten', 'offlineTemplate'];
 const r3 = (v) => Math.round(v * 1000) / 1000;
 const cut4 = (part, whole) => (whole > 0 ? Math.floor((part / whole) * 10000) / 10000 : null);
@@ -162,7 +165,7 @@ function draw(rand, { mean, w = 1, scale = 1, none = false }) {
   const add = (type, score, weight) => {
     const s = SRC[Math.floor(rand() * 3)];
     m[type].answers += 1; m[type].obtained += score * weight; m[type].possible += weight;
-    if (type === 'aiProvisional') m.src[s].notCounted += 1;
+    if (type === 'aiProvisional' || type === 'revote') m.src[s].notCounted += 1;
     else { m.src[s].answers += 1; m.src[s].obtained += score * weight; m.src[s].possible += weight; }
   };
   const n = Math.round((2 + rand() * 6) * scale);
@@ -170,6 +173,7 @@ function draw(rand, { mean, w = 1, scale = 1, none = false }) {
   if (rand() < 0.35) add('aiProvisional', [0, 0.5, 1][Math.floor(rand() * 3)], 1);
   if (rand() < 0.3) add('humanReviewed', [0.5, 1][Math.floor(rand() * 2)], 1);
   if (rand() < 0.15) m.ungraded.answers += 1;
+  if (rand() < 0.2) add('revote', rand() < mean ? 1 : 0, 1);
   return m;
 }
 
@@ -184,12 +188,12 @@ function sum(list) {
 }
 
 const marksView = (m, cfg) => ({
-  ...Object.fromEntries(TYPE.map((t) => [t, { answers: m[t].answers, obtained: r3(m[t].obtained), possible: r3(m[t].possible), counted: cfg.evidence[t] }])),
+  ...Object.fromEntries(TYPE.map((t) => [t, { answers: m[t].answers, obtained: r3(m[t].obtained), possible: r3(m[t].possible), counted: counts(cfg, t) }])),
   ungraded: { answers: m.ungraded.answers, counted: false },
   questionSources: Object.fromEntries(SRC.map((s) => [s, { answers: m.src[s].answers, obtained: r3(m.src[s].obtained), possible: r3(m.src[s].possible), notCounted: m.src[s].notCounted }])),
 });
 
-const countedOf = (m, cfg) => TYPE.filter((t) => cfg.evidence[t]).reduce((o, t) => ({
+const countedOf = (m, cfg) => TYPE.filter((t) => counts(cfg, t)).reduce((o, t) => ({
   answers: o.answers + m[t].answers, obtained: o.obtained + m[t].obtained, possible: o.possible + m[t].possible,
 }), { answers: 0, obtained: 0, possible: 0 });
 
@@ -231,18 +235,21 @@ function figure(name, rows, cfg) {
     out.summary = `No student on the roster has ${cfg.minAnswers} counted answers on ${name} yet, so it has no class level.`;
     return out;
   }
-  const on = TYPE.filter((t) => cfg.evidence[t] && marks[t].answers);
-  const words = { digital: 'digital', aiProvisional: 'provisional written', humanReviewed: 'reviewed written' };
+  const on = TYPE.filter((t) => counts(cfg, t) && marks[t].answers);
+  const words = { digital: 'digital', aiProvisional: 'provisional written', humanReviewed: 'reviewed written', revote: 're-vote' };
   const n = on.reduce((s, t) => s + marks[t].answers, 0);
   // The server's sentence, in its order: head, not enough evidence, what it
   // rests on, outside the share, then what is shown but not counted.
   const outN = out.outside.notEnoughEvidence;
-  const prov = cfg.evidence.aiProvisional ? 0 : marks.aiProvisional.answers + sum(short.map((x) => x.m)).aiProvisional.answers;
+  const shortM = sum(short.map((x) => x.m));
+  const off = TYPE.filter((t) => !counts(cfg, t) && (marks[t].answers || shortM[t].answers));
+  const prov = off.reduce((s, t) => s + marks[t].answers + shortM[t].answers, 0);
+  const offWords = off.map((t) => words[t]).join(' and ');
   out.summary = `${attained} of ${plural(counted, 'student')} counted attained ${name} (${pctWords(out.share)}): level ${level}.`
     + `${nee ? ` ${nee} on the roster ${nee === 1 ? 'has' : 'have'} not enough evidence (fewer than ${cfg.minAnswers} counted answers).` : ''}`
     + ` Rests on ${plural(n, 'counted answer')} from the ${plural(counted, 'student')} counted: ${on.map((t) => `${marks[t].answers} ${words[t]}`).join(' and ')}.`
     + `${outN.answers ? ` Outside the share: ${plural(outN.answers, 'counted answer')} from ${plural(outN.students, 'student')} with not enough evidence.` : ''}`
-    + `${prov ? ` ${plural(prov, 'provisional written answer')} ${prov === 1 ? 'is' : 'are'} shown but not counted.` : ''}`;
+    + `${prov ? ` ${plural(prov, `${offWords} answer`)} ${prov === 1 ? 'is' : 'are'} shown but not counted.` : ''}`;
   return out;
 }
 
@@ -310,8 +317,8 @@ function buildReport({ seed = 7, formula = EXAMPLE_FORMULA, methodology = EXAMPL
 }
 
 const DEFINITIONS = {
-  evidenceTypes: 'Every figure is split by evidence type (digital, aiProvisional, humanReviewed), each with its answers and marks and whether the formula counts it; polls (ungraded) are a count only. aiProvisional is a provisional machine mark: the keyword marker’s match of the rubric’s words, not AI, until a professor reviews it (the key keeps its stored name).',
-  questionSources: 'marks.questionSources splits the same counted marks by who wrote the question: aiGenerated (the language model, from the professor’s material, approved before use; question_source "llm"), professorWritten ("teacher") and offlineTemplate ("fallback": the offline template, and a professor’s own questions while they are stored the same way). The three add up to the counted types; notCounted is each one’s answers of a type the formula does not count. It moves no mark.',
+  evidenceTypes: 'Every figure is split by evidence type (digital, aiProvisional, humanReviewed, revote), each with its answers and marks and whether the formula counts it; polls (ungraded) are a count only. aiProvisional is a provisional machine mark: the keyword marker’s match of the rubric’s words, not AI, until a professor reviews it (the key keeps its stored name). revote is a class question’s second vote, after the class discussed it: shown, never counted.',
+  questionSources: 'marks.questionSources splits the same counted marks by who wrote the question: aiGenerated (the language model, from the professor’s material, approved before use; question_source "llm"), professorWritten ("teacher", a question a professor wrote in the bank since 19 Nov 2026) and offlineTemplate ("fallback": the offline template, and a professor’s own questions written before then, which were stored the same way and cannot be told apart with certainty). The three add up to the counted types; notCounted is each one’s answers of a type the formula does not count. It moves no mark.',
   classFigure: 'counted: students on the roster now who are attained or not attained; share: attained / counted; attainmentLevel: the formula’s levels applied to that share (null with nobody counted). Removed students and roll numbers not on the roster are in `outside`, never counted.',
   rooms: 'The rooms opened for this class that the caller may read, opened from `from` to `to` (India’s days) and among `rooms` when given; oldest first. Only rooms opened for this class are counted: a room opened without choosing it is not, whoever answered in it. Deleted rooms are not counted.',
   order: 'Students in roll-number order: the roster, then removed students with evidence, then roll numbers not on the roster.',
@@ -375,10 +382,16 @@ const STUDENT = {
     answer(6, { room: { code: 'M4RE79', title: ROOMS[1].title, startedAt: ROOMS[1].startedAt }, answeredAt: ROOMS[1].startedAt, level: 'evaluate', kind: 'open', question: { text: 'Judge whether a 64 KB receive window is enough on a 100 ms, 100 Mbit/s link.', bloom: 'evaluate', kind: 'open' }, response: 'Not enough: the bandwidth-delay product is about 1.25 MB, so a 64 KB window caps the rate near 5 Mbit/s.', score: 1, correct: true, evidenceType: 'humanReviewed', outcomes: [{ id: OUTCOMES[2].id, code: 'CO3', weight: 1 }], via: 'question' }),
     answer(7, { room: { code: 'JDMEE4', title: ROOMS[2].title, startedAt: ROOMS[2].startedAt }, answeredAt: ROOMS[2].startedAt, level: 'apply', question: { text: 'Which call opens a listening socket on port 8080?', bloom: 'apply', kind: 'mcq' }, score: 1, correct: true, evidenceType: 'digital', via: 'unmapped', outcomes: [], note: 'Counted. No course outcome is mapped to its topic ("Socket programming"). Given under roll number 21CS4, which this room’s attendance mark for the student was made under.', givenAs: '21CS4' }),
     answer(8, { room: { code: 'JDMEE4', title: ROOMS[2].title, startedAt: ROOMS[2].startedAt }, answeredAt: ROOMS[2].startedAt, level: 'remember', kind: 'poll', ungraded: true, question: { text: 'How confident are you with sliding windows?', bloom: 'remember', kind: 'poll' }, score: null, correct: null, evidenceType: 'ungraded', counts: false, note: 'A poll: not marked, counted only as a number.', outcomes: [] }),
+    // A question put to the whole class: the first vote is a digital answer; the re-vote after discussion is never counted.
+    answer(9, { room: { code: 'JDMEE4', title: ROOMS[2].title, startedAt: ROOMS[2].startedAt }, answeredAt: ROOMS[2].startedAt, classQuestion: { id: hex(0xd001), round: 1 }, level: 'understand', question: { text: 'A receiver’s window is full. What does the TCP sender do?', bloom: 'understand', kind: 'mcq' }, score: 0, correct: false, evidenceType: 'digital', outcomes: [{ id: OUTCOMES[2].id, code: 'CO3', weight: 1 }] }),
+    answer(10, { room: { code: 'JDMEE4', title: ROOMS[2].title, startedAt: ROOMS[2].startedAt }, answeredAt: ROOMS[2].startedAt, classQuestion: { id: hex(0xd001), round: 2 }, level: 'understand', question: { text: 'A receiver’s window is full. What does the TCP sender do?', bloom: 'understand', kind: 'mcq' }, score: 1, correct: true, evidenceType: 'revote', counts: false, note: 'Shown, not counted: a re-vote after the class discussed the question is never counted.', outcomes: [{ id: OUTCOMES[2].id, code: 'CO3', weight: 1 }] }),
+    // He answered this one alone first and was shown its answer, so his vote when it was put to the class is set aside.
+    answer(11, { room: { code: 'JDMEE4', title: ROOMS[2].title, startedAt: ROOMS[2].startedAt }, answeredAt: ROOMS[2].startedAt, level: 'remember', question: { text: 'Which field of the TCP header carries the receive window?', bloom: 'remember', kind: 'mcq' }, score: 1, correct: true, evidenceType: 'digital', outcomes: [{ id: OUTCOMES[2].id, code: 'CO3', weight: 1 }] }),
+    answer(12, { room: { code: 'JDMEE4', title: ROOMS[2].title, startedAt: ROOMS[2].startedAt }, answeredAt: ROOMS[2].startedAt, classQuestion: { id: hex(0xd002), round: 1 }, level: 'remember', question: { text: 'Which field of the TCP header carries the receive window?', bloom: 'remember', kind: 'mcq' }, score: 1, correct: true, evidenceType: 'digital', chosen: false, counts: false, note: 'Not counted: a class question vote from a student who had already answered this question on their own in this room, and was shown its answer then. Their own answer counts instead.', outcomes: [{ id: OUTCOMES[2].id, code: 'CO3', weight: 1 }] }),
   ],
   answerCounts: {
-    rows: 8, setAside: 1, chosen: 7, ungraded: 1, graded: 6, byType: { digital: 4, aiProvisional: 1, humanReviewed: 1 }, mapped: 5, excluded: 0, unmapped: 1,
-    bySource: { aiGenerated: 4, professorWritten: 1, offlineTemplate: 1 },
+    rows: 12, setAside: 2, chosen: 10, ungraded: 1, graded: 9, byType: { digital: 6, aiProvisional: 1, humanReviewed: 1, revote: 1 }, mapped: 8, excluded: 0, unmapped: 1,
+    bySource: { aiGenerated: 7, professorWritten: 1, offlineTemplate: 1 },
   },
   teacherRecords: {
     label: RECORDS.label,
@@ -523,7 +536,7 @@ export default [
   },
   {
     id: 'attain-rests-on', title: 'Attainment: what a figure rests on', role: 'professor',
-    note: 'Marks by evidence type, counted or shown, by question source, and the answers outside the share.',
+    note: 'Marks by evidence type, counted or shown (re-votes after discussion always listed, never counted), by question source, and the answers outside the share.',
     render: () => <Live key="attain-rests-on" openFirst />,
   },
   {
@@ -552,7 +565,7 @@ export default [
   },
   {
     id: 'attain-student', title: 'Attainment: one student’s report', role: 'professor',
-    note: 'Every answer behind each figure: counted, shown not counted, set aside, unmapped, a poll; teacher records apart.',
+    note: 'Every answer behind each figure: counted, shown not counted, set aside, unmapped, a poll, a class question’s first vote and its re-vote (never counted), a class vote set aside because he had answered alone first; teacher records apart.',
     render: () => <Live key="attain-student" openStudent />,
   },
   {

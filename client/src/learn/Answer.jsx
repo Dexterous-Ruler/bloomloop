@@ -17,14 +17,14 @@
  * be reset by hand.
  */
 
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useContext, useEffect, useRef, useState } from 'react';
 
 import { clearDraft, readDraft, saveDraft } from '../lib/draft.js';
 // One definition. The passage arrives with its markers still in it, so the
 // phone must split on the same token the server's validator counted.
 import { BLANK_MARK } from '../lib/kinds.js';
 import { Button, Icon, Note } from '../ui/index.jsx';
-import { Dock } from './parts.jsx';
+import { Dock, Held } from './parts.jsx';
 
 const KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
@@ -54,8 +54,10 @@ const moveAt = (list, from, to) => {
 /** Options short enough to sit two to a row on a wide screen. */
 const brief = (options) => options.length > 0 && options.every((o) => String(o).length <= 28);
 
-/** The one action, in the dock. */
+/** The one action, in the dock. Gone while the answer is held on this phone:
+    it has been given, and the page says where it is. */
 function Send({ label, disabled, busy, onClick }) {
+  if (useContext(Held)) return null;
   return (
     <Dock>
       <Button variant="primary" size="xl" block busy={busy} disabled={disabled} onClick={onClick}>{label}</Button>

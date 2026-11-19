@@ -12,8 +12,14 @@
  * with its `reason` when not): a Student-devices or Mixed room waits for one
  * phone, a Teacher-led room starts with none. Its 409s are shown as given.
  *
+ * Who has joined comes from the grid's rows (one per phone, so as many as
+ * `joinedN`): the roster's name in a class room, the roll number otherwise
+ * (a typed name is not shown: nobody checked it). The line under them is
+ * worked out from the server's counts alone.
+ *
  * @param code        the room code
  * @param waiting     teacher:grid's `waiting`: { joinedN, present, classSize, summary, canStart, reason? }
+ * @param rows        teacher:grid's rows (rollNo, rosterName in a class room); optional
  * @param canControl  from the room list row; false for a room this account may only read
  * @param mode        the room's settings.mode: devices | teacher-led | mixed
  * @param onStarted   (reply) => after the start answered { session, settings }
@@ -23,9 +29,42 @@
 import { useState } from 'react';
 
 import { api } from '../lib/api.js';
-import { Button, Icon, Note } from '../ui/index.jsx';
+import { Avatar, Button, Icon, Note } from '../ui/index.jsx';
+import { SplitCode } from './Wall.jsx';
 
-export default function Lobby({ code, waiting, canControl = false, mode = 'devices', onStarted, start = api.startSession }) {
+// The most faces drawn before the rest are counted: a lecture hall of phones
+// would otherwise push Start off the screen.
+const SHOWN = 30;
+
+/** Where the joining stands, from the server's counts. */
+function joinLine({ joinedN, present }, inClass) {
+  if (!joinedN) return 'Waiting for the first student…';
+  if (inClass && present > joinedN) return `${present - joinedN} still joining. Start any time; late joiners slot in.`;
+  if (inClass && present > 0) return 'Everyone present has joined.';
+  return 'Start any time; late joiners slot in.';
+}
+
+/** The phones in the room: a name in a class room, a roll number otherwise. */
+function Joined({ rows, inClass }) {
+  if (!rows?.length) return null;
+  return (
+    <ul className="lb-who" aria-label="Who has joined">
+      {rows.slice(0, SHOWN).map((r) => {
+        const name = inClass ? r.rosterName : null;
+        return (
+          <li key={r.rollNo} title={name ? `${name}, ${r.rollNo}` : undefined}>
+            {name
+              ? <><Avatar name={name} title={`${name}, ${r.rollNo}`} /><span className="clip">{name.split(/\s+/)[0]}</span></>
+              : <span className="lb-roll mono">{r.rollNo}</span>}
+          </li>
+        );
+      })}
+      {rows.length > SHOWN && <li className="lb-more">and {rows.length - SHOWN} more</li>}
+    </ul>
+  );
+}
+
+export default function Lobby({ code, waiting, rows = null, canControl = false, mode = 'devices', onStarted, start = api.startSession }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [started, setStarted] = useState(false);
@@ -62,7 +101,7 @@ export default function Lobby({ code, waiting, canControl = false, mode = 'devic
   let line;
   if (teacherLed) line = 'No phone joins a Teacher-led room, so you can start whenever you are ready.';
   else if (started) line = 'Started. Every phone that was waiting has been sent its first question.';
-  else line = 'Phones that join wait here. Nothing is served until you start, and then every waiting phone gets its first question at once.';
+  else line = joinLine(waiting, inClass);
 
   return (
     <section className="card lb" aria-label="Waiting room" data-started={started ? 'true' : undefined}>
@@ -82,10 +121,15 @@ export default function Lobby({ code, waiting, canControl = false, mode = 'devic
             </span>
           </div>
         )}
+        {!teacherLed && <span className="lb-noinstall"><Icon name="check" size={13} />Phone browsers, no installs</span>}
         {fill != null && !teacherLed && (
           <span className="lb-meter" aria-hidden="true"><i style={{ width: `${fill * 100}%` }} /></span>
         )}
-        <p className="lb-line" role={started ? 'status' : undefined}>{line}</p>
+        {!teacherLed && !started && <Joined rows={rows} inClass={inClass} />}
+        <p className="lb-line" role="status">{line}</p>
+        {!teacherLed && !started && (
+          <p className="lb-note">Nothing is served until you start, and then every waiting phone gets its first question at once.</p>
+        )}
       </div>
 
       <div className="lb-act">
@@ -107,7 +151,7 @@ export default function Lobby({ code, waiting, canControl = false, mode = 'devic
         ) : (
           <p className="lb-ro"><Icon name="lock" size={14} />Read only. Only the professor who opened this room can start it.</p>
         )}
-        <span className="lb-code">Room code <b className="mono">{code}</b></span>
+        <span className="lb-code">Room code <SplitCode code={code} className="mono" /></span>
       </div>
 
       {error && <Note tone="bad" role="alert" className="lb-err">{error}</Note>}

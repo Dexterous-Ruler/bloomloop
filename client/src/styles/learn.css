@@ -504,3 +504,92 @@ ul.ln-list { list-style: disc; }
 .ln-clock[data-up] { color: var(--warn); border-color: color-mix(in oklab, var(--warn) 40%, var(--line)); background: var(--warn-soft); }
 .ln-clock-up { flex-basis: 100%; margin: 0; font: 500 13px/18px var(--font); color: var(--text-2); }
 .ln-clock-up:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+/* ================================================================= Phase 5 */
+
+/* How sure: three quiet pills above the answer. Optional, and never coloured
+   as right or wrong: the chosen one takes the ink outline that means "the one
+   you picked" everywhere on the phone. */
+.ln-sure { display: flex; flex-direction: column; gap: 9px; padding-top: 14px; border-top: 1px solid var(--line); }
+.ln-sure-t { display: flex; flex-direction: column; gap: 1px; }
+.ln-sure-q { font: 600 13.5px/19px var(--font); color: var(--text); }
+.ln-sure-h { font: 400 12px/17px var(--font); color: var(--text-3); }
+.ln-sure-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.ln-sure-row button {
+  min-height: 40px; padding: 0 10px; border-radius: var(--r-full); cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line-2); color: var(--text); font: 600 13.5px/1.2 var(--font);
+  transition: border-color var(--t-1) var(--ease), box-shadow var(--t-1) var(--ease), background var(--t-1) var(--ease);
+}
+@media (hover: hover) { .ln-sure-row button:hover:not(:disabled) { border-color: var(--field-line); } }
+.ln-sure-row button[aria-pressed='true'] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.ln-sure-row button:disabled { cursor: default; }
+.ln-sure-row button:disabled:not([aria-pressed='true']) { color: var(--text-3); }
+
+/* What comes next: the levels, the answers it rests on, the server's reason. */
+.ln-next { display: flex; flex-direction: column; gap: 8px; }
+.ln-next-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ln-next-k { margin-right: 2px; font: 600 11px/14px var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
+.ln-next-n { margin-left: auto; font: 500 12px/16px var(--mono); color: var(--text-2); }
+.ln-dock .ln-next .said { font-size: 14px; }
+.ln-done .ln-done-why { margin-top: 18px; max-width: 62ch; font-size: 13.5px; color: var(--on-panel-2); border-left-color: var(--mint); }
+
+/* A class question: the student's own page is parked, hidden, behind it. */
+.ln-page[hidden] { display: none; }
+.ln-cq-brief { display: flex; flex-direction: column; gap: 10px; padding: 18px 18px 20px; }
+.ln-cq-say { max-width: 46ch; font: 600 17px/1.42 var(--font); letter-spacing: -0.01em; color: var(--on-panel); }
+.ln-cq-mine { font: 400 14px/1.5 var(--font); color: var(--on-panel-2); overflow-wrap: anywhere; }
+.ln-cq-mine b { font-weight: 700; color: var(--mint); }
+/* The vote said back. Ink, not green: a vote is never right or wrong here. */
+.ln-cq-sent { display: flex; align-items: center; gap: 14px; animation: pop var(--t-3) var(--ease); }
+.ln-cq-sent b { display: block; font: 700 16px/1.35 var(--font); color: var(--text); overflow-wrap: anywhere; }
+.ln-cq-sent .t-small { display: block; margin-top: 2px; color: var(--text-2); }
+.ln-cq-tick { width: 40px; height: 40px; flex: none; display: grid; place-items: center; border-radius: 12px; background: var(--ink); color: var(--on-ink); }
+
+@media (min-width: 760px) {
+  .ln-sure { flex-direction: row; align-items: center; justify-content: space-between; gap: 16px; }
+  .ln-sure-row { display: flex; }
+  .ln-sure-row button { padding: 0 18px; }
+  .ln-dock > .ln-next { width: auto; margin: 0 8px 8px; }
+  .ln-dock > .ln-cq-sent { padding: 8px 8px 4px; }
+  .ln-cq-brief { padding: 24px 28px; }
+  .ln-cq-say { font-size: 19px; }
+}
+
+/* ================================================================= Phase 7 */
+
+/* Offline: one calm line under the bar. Not red and not an alert: the phone
+   is doing its job. */
+.ln-off {
+  display: flex; align-items: center; gap: 8px; max-width: 760px; margin: 0 auto; padding: 7px 14px 9px;
+  font: 500 12.5px/1.4 var(--font); color: var(--side-text);
+}
+.ln-off i { width: 7px; height: 7px; flex: none; border-radius: var(--r-full); border: 1.5px solid var(--side-text); }
+
+/* Where an answer is: on this phone, sent, marked. Neutral throughout. */
+.ln-save { display: flex; align-items: flex-start; gap: 7px; font: 600 12.5px/18px var(--font); color: var(--text-2); }
+.ln-save > svg, .ln-save > .spinner { flex: none; margin-top: 2px; }
+.ln-save > .spinner { width: 13px; height: 13px; }
+.ln-save[data-state='marked'] > svg { color: var(--primary); }
+.ln-save-n { display: block; font-weight: 400; color: var(--text-3); }
+
+/* The outbox, listed. */
+.ln-kept { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 12px; background: var(--raised); border: 1px solid var(--line); }
+.ln-kept ul { display: flex; flex-direction: column; }
+.ln-kept li { display: flex; flex-direction: column; gap: 3px; padding: 8px 0; border-top: 1px solid var(--line); }
+.ln-kept li:first-child { border-top: 0; padding-top: 2px; }
+.ln-kept-t { font: 500 13.5px/1.4 var(--font); color: var(--text); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+/* ======================================================== Phase 5, part 2 */
+
+/* Who wrote the question, in the server's words: quiet, under the question. */
+.ln-prov { font: 400 12.5px/1.45 var(--font); color: var(--text-3); }
+
+/* The level rests on too few answers to be firm: said gently. */
+.ln-early { font: 400 12.5px/1.45 var(--font); color: var(--text-3); padding-left: 14px; }
+.ln-done .ln-early { margin-top: 6px; color: var(--on-panel-3); }
+
+/* Mastered levels, each with the server's sentence. No percentages. */
+.ln-mastered ul { display: flex; flex-direction: column; }
+.ln-mastered li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); font: 400 13.5px/1.5 var(--font); color: var(--text-2); }
+.ln-mastered li:first-child { border-top: 0; padding-top: 2px; }
+.ln-mastered .lv { margin-top: 1px; }

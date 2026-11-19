@@ -3,11 +3,13 @@
  *
  * The editor takes its server calls as `services`, so each entry hands it a
  * small stand-in that answers the way /api/bank and /api/media do (docs/API.md,
- * Phase 2): an edit keeps the status, an approval names the failed checks, a
- * plain rewrite of a question in use warns, Harder and Easier write a draft one
- * level over, and an upload is refused with the server's 400, 413 and 415
- * sentences. What the bank would be told afterwards appears on the page behind
- * the sheet. Nothing here talks to the server.
+ * Phase 2, and the owner's decisions of 19 Nov 2026): an edit keeps the
+ * status, an approval names the failed checks and the question it retired, a
+ * plain rewrite of a question in use leaves it serving and says so in `note`
+ * (with `replacesId` on the draft, and no `warnings`), Harder and Easier write
+ * a draft one level over, and an upload is refused with the server's 400, 413
+ * and 415 sentences. What the bank would be told afterwards appears on the
+ * page behind the sheet. Nothing here talks to the server.
  */
 
 import { useState } from 'react';
@@ -44,10 +46,62 @@ const BARS_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAAB4CAIAAABD
 const ok = (id, message) => ({ id, ok: true, message });
 const no = (id, message) => ({ id, ok: false, message });
 const STAMP = '2026-11-19T08:42:10.000Z';
-const base = (over) => ({
+
+/*
+ * `provenance` and `levelCheck` as the server reads them off a row
+ * (services/honesty.js): who wrote it, where it stands at the approval gate, a
+ * chip and a sentence; and whether its level is in doubt.
+ */
+const SOURCE_LABEL = { ai: 'AI-generated', professor: 'Professor-written', template: 'Offline template', 'professor-or-template': 'Professor-written or offline template' };
+const sourceOfRow = (q) => (q.source === 'teacher' ? 'professor' : q.source === 'fallback' ? (q.model == null ? 'professor-or-template' : 'template') : 'ai');
+const approvalOf = (q) => (q.status === 'draft' ? 'draft' : q.status === 'discarded' ? 'discarded' : q.approvedAt ? 'approved' : sourceOfRow(q) === 'professor' ? 'written' : 'unrecorded');
+const SOURCE_SENTENCE = {
+  ai: (q) => `Written by the language model${q.model ? ` (${q.model})` : ''} from the professor's material.`,
+  professor: () => 'Written by a professor.',
+  template: () => "Made by the offline template from the professor's material, without a language model.",
+  'professor-or-template': () => 'Written by a professor before 19 Nov 2026, or made by the offline template before models were recorded. No language model wrote it.',
+};
+const APPROVAL_SENTENCE = {
+  draft: 'A draft: no room serves it until a professor approves it.',
+  approved: 'Approved by a professor.',
+  written: 'In use since a professor wrote it.',
+  unrecorded: 'In use since before approvals were recorded.',
+  discarded: 'Not in use: rejected, retired or removed.',
+};
+function chipOfRow(source, approval) {
+  if (source === 'ai' && approval === 'draft') return 'AI draft';
+  if (approval === 'draft') return `${SOURCE_LABEL[source]} draft`;
+  if (approval === 'discarded') return `${SOURCE_LABEL[source]}, not in use`;
+  if (approval === 'approved') return `${SOURCE_LABEL[source]}, approved`;
+  if (approval === 'unrecorded') return `${SOURCE_LABEL[source]}, approval not recorded`;
+  return SOURCE_LABEL[source];
+}
+const LEVEL_UNCONFIRMED = 'The language model chose this level and no professor has approved the question yet. Model-written questions often miss the level they were asked for, so check that it really asks for this level.';
+export function honest(q) {
+  const source = sourceOfRow(q);
+  const approval = approvalOf(q);
+  const unsure = source === 'ai' && !q.approvedAt;
+  return {
+    ...q,
+    provenance: {
+      source, sourceLabel: SOURCE_LABEL[source], model: q.model ?? null, approval, approvedAt: q.approvedAt ?? null, approvedBy: null,
+      aiDraft: source === 'ai' && approval === 'draft', label: chipOfRow(source, approval),
+      sentence: `${SOURCE_SENTENCE[source](q)} ${APPROVAL_SENTENCE[approval]}`,
+    },
+    levelCheck: unsure
+      ? { uncertain: true, reasons: [{ id: 'model-level-unconfirmed', message: LEVEL_UNCONFIRMED }], sentence: `Level uncertain. ${LEVEL_UNCONFIRMED}` }
+      : { uncertain: false, reasons: [], sentence: null },
+  };
+}
+
+const base = (over) => honest({
   status: 'active', source: 'fallback', model: 'offline-template', sourceRef: null,
-  createdBy: null, approvedBy: null, approvedAt: STAMP, createdAt: STAMP, contentId: CONTENT_ID, ...over,
+  createdBy: null, approvedBy: null, approvedAt: STAMP, createdAt: STAMP, contentId: CONTENT_ID, misconceptions: [], ...over,
 });
+
+// The bank's `misconceptionLabels`, as GET /api/bank/:contentId sends it.
+const LABEL_NOTE = 'A misconception label changes no mark: editing one does not send an approved question back to draft, and approving a question does not confirm its labels.';
+export const LABEL_KINDS = { kinds: ['mcq', 'multi', 'truefalse'], maxLength: 120, note: LABEL_NOTE };
 
 const FLAGGED = base({
   _id: 'g-draft-flagged', status: 'draft', source: 'gemini', model: 'gemini-2.5-flash', approvedAt: null,
@@ -161,8 +215,9 @@ const IMAGE = base({
   ],
 });
 
+// A professor's own question: source 'teacher' since 19 Nov 2026.
 const OWN = base({
-  _id: 'g-own', source: 'fallback', model: null, topic: 'Congestion control', bloom: 'create', kind: 'open',
+  _id: 'g-own', source: 'teacher', model: null, topic: 'Congestion control', bloom: 'create', kind: 'open',
   text: 'Design a congestion control rule for a link that drops one packet in a hundred for reasons unrelated to congestion. Justify it.',
   rubric: ['treat loss without delay as noise', 'react to rising delay', 'justify with throughput'],
   checks: [
@@ -170,6 +225,63 @@ const OWN = base({
     ok('slide-only-reference', 'It can be answered without seeing the slide.'),
     ok('create-selected-response', 'The student writes the answer, so any level can be asked.'),
   ],
+});
+
+// A professor's own question from before 19 Nov 2026, stored as 'fallback'
+// like the template's: a regenerated draft of it is waiting.
+const OLDER = base({
+  _id: 'g-older', source: 'fallback', model: null, topic: 'User Datagram Protocol', bloom: 'remember', kind: 'mcq',
+  text: 'Which header field lets a receiver detect a corrupted UDP segment?',
+  options: ['Checksum', 'Length', 'Source port', 'Destination port'], answerIdx: 0,
+  checks: PASSED('mcq', 'remember'),
+});
+const REWRITE = base({
+  _id: 'g-rewrite-draft', status: 'draft', source: 'gemini', model: 'gemini-2.5-flash', approvedAt: null, replacesId: OLDER._id,
+  sourceRef: { kind: 'slides', slides: [3] }, topic: 'User Datagram Protocol', bloom: 'remember', kind: 'mcq',
+  text: 'A UDP receiver finds that a segment was damaged in transit. Which header field told it?',
+  options: ['Checksum', 'Length', 'Source port', 'Destination port'], answerIdx: 0,
+  checks: PASSED('mcq', 'remember'),
+});
+const REPLACES_NOTE = 'The question this replaces stays in rooms until you approve its replacement. Approving it takes the old '
+  + 'one out; rejecting it leaves the old one as it is.';
+
+// The same draft, rejected: rewriting it passes the link on (the Phase 5 review fixes).
+const REJECTED_REWRITE = honest({ ...REWRITE, _id: 'g-rejected-rewrite', status: 'discarded' });
+
+/*
+ * Misconception labels (Phase 5). A label sits on a wrong option's words; an
+ * 'ai' one the generator proposed reads as a draft until the professor
+ * confirms or rewrites it. The counts are a GET's `report` for this question.
+ */
+const lbl = (option, label, provenance = 'professor') => ({ option, label, provenance, addedAt: '2026-11-12T05:00:00.000Z', changedAt: '2026-11-12T05:00:00.000Z', by: null });
+const LABELLED = base({
+  _id: 'g-labelled', source: 'llm', model: 'gemini-2.5-flash', topic: 'Transmission Control Protocol', bloom: 'remember', kind: 'mcq',
+  sourceRef: { kind: 'slides', slides: [6] },
+  text: 'Which of these describes how TCP delivers data between two processes?',
+  options: ['Connectionless, with no handshake', 'Connection-oriented and reliable', 'Broadcast to every host on the network', 'Best effort, like IP'],
+  answerIdx: 1,
+  misconceptions: [
+    lbl('Connectionless, with no handshake', 'Thinks TCP is connectionless, like UDP', 'ai'),
+    lbl('Best effort, like IP', 'Takes the network layer’s best effort for the transport layer’s service'),
+  ],
+  checks: PASSED('mcq', 'remember'),
+});
+const LABELLED_REPORT = {
+  counted: { questions: 1, labels: 2, aiDrafts: 1, answers: 41 },
+  questions: [{
+    questionId: 'g-labelled', answers: 41, students: 38, otherWording: 3,
+    otherWordingNote: '3 of these students were given another wording of the options, so their answers match no label.',
+    options: [
+      { optionIdx: 0, students: 9, answers: 10, beforeLabel: 4, beforeChange: 0, sentence: '9 students chose the option linked to the misunderstanding "Thinks TCP is connectionless, like UDP". (an AI draft label, not yet confirmed by the professor)', note: 'Label added after 4 of these 10 answers.' },
+      { optionIdx: 3, students: 4, answers: 4, beforeLabel: 0, beforeChange: 0, sentence: '4 students chose the option linked to the misunderstanding "Takes the network layer’s best effort for the transport layer’s service".', note: null },
+    ],
+  }],
+};
+const TRUEFALSE = base({
+  _id: 'g-truefalse', source: 'teacher', model: null, topic: 'User Datagram Protocol', bloom: 'remember', kind: 'truefalse',
+  text: 'UDP retransmits a datagram that is lost on the way.', answerBool: false,
+  misconceptions: [lbl('True', 'Thinks every transport protocol recovers lost data')],
+  checks: PASSED('truefalse', 'remember'),
 });
 
 /* -------------------------------------------------------------- stand-in */
@@ -195,19 +307,108 @@ const asDataUrl = (file) => new Promise((resolve, reject) => {
   reader.readAsDataURL(file);
 });
 
-function standIn(question, { harder502 = false } = {}) {
+/* The label rules, as services/misconceptions.js applies them. */
+const key = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+const textsOf = (q) => (q.kind === 'truefalse' ? ['True', 'False'] : ['mcq', 'multi'].includes(q.kind) ? q.options ?? [] : null);
+const wrongOf = (q) => {
+  if (q.kind === 'truefalse') return [q.answerBool ? 1 : 0];
+  const right = q.kind === 'multi' ? q.answerIdxs ?? [] : [q.answerIdx];
+  return (q.options ?? []).map((_, i) => i).filter((i) => !right.includes(i));
+};
+const CONTACT = 'A misconception label names a misunderstanding, not a person, so it cannot hold an email address, a web address, a handle or a phone number.';
+const hasContact = (t) => /[^\s@]+@[^\s@]+\.[^\s@]+/.test(t) || /\bhttps?:\/\/|\bwww\.[^\s.]+\./i.test(t) || /(^|\s)@\w{2,}/.test(t)
+  || (t.match(/\+?\d[\d\s().-]*\d/g) ?? []).some((run) => run.replace(/\D/g, '').length >= 10);
+const REMOVED_ONE = 'One misconception label no longer applied and was removed: its option was reworded or taken away, or became a right answer. Add it again if it still fits.';
+
+function standIn(question, { harder502 = false, canEdit = true, report = null } = {}) {
   let q = question;
+  // The labels as GET and PATCH …/misconceptions answer them.
+  const body = () => {
+    const texts = textsOf(q) ?? [];
+    const wrong = wrongOf(q);
+    return {
+      question: { _id: q._id, text: q.text, kind: q.kind, bloom: q.bloom, topic: q.topic, status: q.status, options: texts },
+      labelled: Boolean(textsOf(q)),
+      wrongOptions: wrong,
+      misconceptions: (q.misconceptions ?? []).map((m) => ({
+        ...m, optionIdx: texts.findIndex((t) => key(t) === key(m.option)),
+        provenanceLabel: m.provenance === 'ai' ? 'AI draft' : "Professor's label", confirmed: m.provenance === 'professor',
+      })).filter((m) => m.optionIdx >= 0),
+      canEdit, maxLength: 120, note: LABEL_NOTE,
+    };
+  };
   return {
+    // The counts follow the labels as they stand: a cleared label has none, a confirmed one is no longer a draft.
+    async questionMisconceptions() {
+      await wait(400);
+      const now = body();
+      const held = new Map(now.misconceptions.map((m) => [m.optionIdx, m]));
+      const live = report && {
+        ...report,
+        questions: report.questions.map((x) => ({
+          ...x,
+          options: x.options.filter((o) => held.has(o.optionIdx)).map((o) => (held.get(o.optionIdx).provenance === 'ai' ? o
+            : { ...o, sentence: o.sentence.replace(' (an AI draft label, not yet confirmed by the professor)', '') })),
+        })),
+      };
+      return { ...now, rooms: [], report: live ?? { counted: { questions: 0, labels: 0, aiDrafts: 0, answers: 0 }, questions: [], top: [] } };
+    },
+    async setMisconceptions(id, changes) {
+      await wait(450);
+      if (!canEdit) throw fail('That chapter belongs to another teacher - you can read it but not change it.', 403);
+      const texts = textsOf(q);
+      const wrong = wrongOf(q);
+      const held = new Map((q.misconceptions ?? []).map((m) => [key(m.option), m]));
+      const changed = [];
+      for (const c of changes) {
+        const i = c.option;
+        const before = held.get(key(texts[i]));
+        if (!wrong.includes(i)) throw fail(`Option ${i + 1} ("${texts[i]}") is a right answer: a misconception label goes on a wrong option.`, 400);
+        if (c.confirm) {
+          if (!before) throw fail(`Option ${i + 1} has no label to confirm.`, 400);
+          if (before.provenance !== 'professor') { held.set(key(texts[i]), { ...before, provenance: 'professor' }); changed.push({ optionIdx: i, action: 'confirmed' }); }
+        } else if (c.label == null || c.label === '') {
+          if (before) { held.delete(key(texts[i])); changed.push({ optionIdx: i, action: 'cleared' }); }
+        } else {
+          const text = String(c.label).replace(/\s+/g, ' ').trim();
+          if (text.length > 120) throw fail(`Option ${i + 1}: A misconception label is at most 120 characters; this one is ${text.length}.`, 400);
+          if (hasContact(text)) throw fail(`Option ${i + 1}: ${CONTACT}`, 400);
+          if (before && before.label === text) {
+            if (before.provenance !== 'professor') { held.set(key(texts[i]), { ...before, provenance: 'professor' }); changed.push({ optionIdx: i, action: 'confirmed' }); }
+          } else {
+            held.set(key(texts[i]), lbl(texts[i], text));
+            changed.push({ optionIdx: i, action: before ? 'edited' : 'added' });
+          }
+        }
+      }
+      // A label changes no mark: the status is untouched.
+      q = { ...q, misconceptions: [...held.values()] };
+      return { ...body(), changed };
+    },
+    // An edit that rewords or removes a labelled option, or makes it right, takes its label off.
     async editQuestion(id, patch) {
       await wait(450);
       if (!String(patch.text ?? '').trim()) throw fail('missing text', 400);
-      q = { ...q, ...patch };
-      return { question: q };
+      const next = { ...q, ...patch };
+      const texts = textsOf(next) ?? [];
+      const wrong = wrongOf(next);
+      const fits = (m) => wrong.some((i) => key(texts[i]) === key(m.option));
+      const removed = (q.misconceptions ?? []).filter((m) => !fits(m)).map(({ option, label, provenance }) => ({ option, label, provenance }));
+      q = { ...next, misconceptions: (q.misconceptions ?? []).filter(fits) };
+      return {
+        question: q,
+        ...(removed.length ? {
+          misconceptionsRemoved: removed,
+          misconceptionsNote: removed.length === 1 ? REMOVED_ONE : `${removed.length} misconception labels no longer applied and were removed: their options were reworded or taken away, or became right answers. Add them again where they still fit.`,
+        } : {}),
+      };
     },
+    // Approving a regenerated draft retires the active question it replaces.
     async approveQuestion() {
       await wait(350);
+      const was = q.status;
       q = { ...q, status: 'active', approvedAt: new Date().toISOString() };
-      return { question: q, changed: true, failedChecks: failedOf(q) };
+      return { question: q, changed: true, failedChecks: failedOf(q), ...(was !== 'active' && q.replacesId ? { retired: q.replacesId } : {}) };
     },
     async rejectQuestion() {
       await wait(350);
@@ -226,17 +427,26 @@ function standIn(question, { harder502 = false } = {}) {
         if (harder502 && direction === 'harder') throw fail(`Could not write a ${LABEL[bloom]} question on this topic from the material.`, 502);
         return { question: { ...q, _id: 'g-shifted', status: 'draft', bloom }, direction, from: id };
       }
-      const warnings = q.status === 'active'
-        ? ['The question this replaces was in use, so it has left rooms now. Its replacement is a draft, and joins them when you approve it.']
-        : [];
-      return { question: { ...q, _id: 'g-rewrite', status: 'draft' }, ...(warnings.length ? { warnings } : {}) };
+      // An active question stays active; its draft names it. Anything else is discarded at once, with no link.
+      if (q.status === 'active') {
+        return { question: { ...q, _id: 'g-rewrite', status: 'draft', replacesId: id }, replaces: id, note: REPLACES_NOTE };
+      }
+      // A replacement draft never approved (a draft, or one rejected) passes its link on (the review fixes).
+      const link = q.replacesId && !q.approvedAt ? q.replacesId : null;
+      q = { ...q, status: 'discarded' };
+      return { question: { ...q, _id: 'g-rewrite', status: 'draft', replacesId: link }, ...(link ? { replaces: link, note: REPLACES_NOTE } : {}) };
     },
     async splitQuestion(id) {
       await wait(450);
       return { questions: [{ ...q, _id: 'g-a' }, { ...q, _id: 'g-b' }], discarded: id };
     },
     async discardQuestion() { await wait(350); q = { ...q, status: 'discarded' }; return { question: q }; },
-    async restoreQuestion() { await wait(350); q = { ...q, status: 'active' }; return { question: q }; },
+    async restoreQuestion() {
+      await wait(350);
+      const was = q.status;
+      q = { ...q, status: 'active' };
+      return { question: q, ...(was !== 'active' && q.replacesId ? { retired: q.replacesId } : {}) };
+    },
     async uploadMedia(file, contentId, alt) {
       await wait(600);
       if (file.size > MAX_BYTES) {
@@ -255,15 +465,17 @@ function standIn(question, { harder502 = false } = {}) {
 /* -------------------------------------------------------------- the page */
 
 /** The page behind the sheet: what the bank would say once the editor is done. */
-function Stage({ question, title, line, options }) {
+function Stage({ question, title, line, options, replaces = null, start = null }) {
   const [round, setRound] = useState(0);
   const [open, setOpen] = useState(true);
   const [told, setTold] = useState(null);
+  const [labelsSaid, setLabelsSaid] = useState(0);
   const [services, setServices] = useState(() => standIn(question, options));
 
   const again = () => {
     setServices(standIn(question, options));
     setTold(null);
+    setLabelsSaid(0);
     setRound((r) => r + 1);
     setOpen(true);
   };
@@ -275,8 +487,27 @@ function Stage({ question, title, line, options }) {
         <h1>{title}</h1>
         <p className="t-lead">{line}</p>
         {told
-          ? <Note tone={told.tone}><b>onDone</b> {told.note ?? 'was called with no sentence.'}</Note>
+          ? (
+            <Note tone={told.tone}>
+              <b>onDone</b> {told.note ?? 'was called with no sentence.'}
+              {told.retired && <> <b>retired</b> <span className="mono">{told.retired}</span>: the bank names it after the sentence.</>}
+              {told.removed && (
+                <>
+                  <div>{told.removed.note}</div>
+                  <ul className="tc-flagged">
+                    {told.removed.items.map((r) => (
+                      <li key={r.option}>
+                        <span className="tc-ref">{r.id}</span>
+                        <span className="tc-flagged-txt"><span>{r.label}</span><span className="t-small dim">Was on “{r.option}”</span></span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </Note>
+          )
           : <p className="t-meta">The sentence the bank would show after an action appears here.</p>}
+        {labelsSaid > 0 && <p className="t-meta">onLabels called {labelsSaid === 1 ? 'once' : `${labelsSaid} times`}: the bank reads itself again, and the sheet stays open.</p>}
         {!open && <div><Button icon="edit" onClick={again}>Open the editor again</Button></div>}
       </div>
       {open && (
@@ -285,7 +516,11 @@ function Stage({ question, title, line, options }) {
           question={question}
           contentId={CONTENT_ID}
           kinds={KINDS}
+          labelKinds={LABEL_KINDS}
+          replaces={replaces}
+          start={start}
           services={services}
+          onLabels={() => setLabelsSaid((n) => n + 1)}
           onClose={() => setOpen(false)}
           onDone={(info) => { setTold(info ?? {}); setOpen(false); }}
         />
@@ -328,6 +563,13 @@ export default [
     role: 'professor',
     note: 'An empty sheet. Pick a level and its interactions appear; it is added as approved.',
     render: () => <Stage question={null} title="Write your own" line="The sheet opens empty. The level picked decides the interaction, and the question goes straight into the bank as approved." />,
+  },
+  {
+    id: 'author-write-filter',
+    title: 'Authoring: write your own, from a filter',
+    role: 'professor',
+    note: 'The bank was filtered to Apply and the topic “Port numbers”, so the sheet starts there.',
+    render: () => <Stage question={null} start={{ bloom: 'apply', topic: 'Port numbers' }} title="Write your own, from a filter" line="Write your own takes the level and topic of the filters in force: here Apply and “Port numbers”, with Apply’s first interaction filled in." />,
   },
   {
     id: 'author-draft',
@@ -389,8 +631,84 @@ export default [
     id: 'author-own',
     title: 'Authoring: your own question at Create',
     role: 'professor',
-    note: 'No source label, and Harder is not on offer at the top of the ladder.',
-    render: () => <Stage question={OWN} title="Your own question at Create" line="A question a professor wrote has no model, so no source is named. Create is the top level, so Harder says why it is off." />,
+    note: 'Labelled professor-written (source "teacher"), and Harder is not on offer at the top of the ladder.',
+    render: () => <Stage question={OWN} title="Your own question at Create" line="A question a professor wrote is stored as hers and labelled so. Create is the top level, so Harder says why it is off." />,
+  },
+  {
+    id: 'author-rewrite-active',
+    title: 'Authoring: rewrite a question in use',
+    role: 'professor',
+    note: 'An older question of the professor’s, labelled with the template. Rewrite leaves it serving and passes on the server’s note.',
+    render: () => (
+      <Stage
+        question={OLDER}
+        title="Rewrite a question in use"
+        line="Stored as 'fallback' before 19 Nov 2026, so the label names both the template and the professor. Rewrite it: the reply's note says it stays in rooms until the rewrite is approved."
+      />
+    ),
+  },
+  {
+    id: 'author-replaces',
+    title: 'Authoring: a draft that replaces a question',
+    role: 'professor',
+    note: 'A regenerated draft with replacesId: "Replaces:" names the old question; Save and approve answers with retired.',
+    render: () => (
+      <Stage
+        question={REWRITE}
+        replaces={{ old: OLDER, name: 'Q07' }}
+        title="A draft that replaces a question"
+        line="The question it replaces keeps serving until this draft is approved. Save and approve: the reply names the question it retired."
+      />
+    ),
+  },
+  {
+    id: 'author-rewrite-rejected',
+    title: 'Authoring: rewrite a rejected replacement',
+    role: 'professor',
+    note: 'A rejected draft that replaced a question: its rewrite still replaces it, and the reply says so (replaces, note).',
+    render: () => (
+      <Stage
+        question={REJECTED_REWRITE}
+        replaces={{ old: OLDER, name: 'Q07' }}
+        title="Rewrite a rejected replacement"
+        line="Rewrite it: the new draft carries the same link, so approving it still retires Q07, and the server's note says so."
+      />
+    ),
+  },
+  {
+    id: 'author-labels',
+    title: 'Authoring: misconception labels',
+    role: 'professor',
+    note: 'A box beside each wrong option, never the key: an AI draft label to confirm, a professor’s label, counts from the chapter’s rooms. Try an email address or 121 characters for the server’s refusal.',
+    render: () => (
+      <Stage
+        question={LABELLED}
+        options={{ report: LABELLED_REPORT }}
+        title="Misconception labels"
+        line="Each label saves on its own and changes no status. Confirm the AI draft on A, edit D, add one on C, or clear one; the key (B) takes none."
+      />
+    ),
+  },
+  {
+    id: 'author-labels-tf',
+    title: 'Authoring: a label on a true or false question',
+    role: 'professor',
+    note: 'Only the wrong answer takes a label: here "True".',
+    render: () => <Stage question={TRUEFALSE} title="A label on a true or false question" line="The statement is false, so only True can carry a misconception." />,
+  },
+  {
+    id: 'author-labels-hod',
+    title: 'Authoring: labels, read only',
+    role: 'hod',
+    note: 'canEdit false: the labels and counts are read, with no box.',
+    render: () => <Stage question={LABELLED} options={{ report: LABELLED_REPORT, canEdit: false }} title="Labels, read only" line="A head of department reads the labels and their counts; every write is the professor’s." />,
+  },
+  {
+    id: 'author-labels-removed',
+    title: 'Authoring: an edit that removes a label',
+    role: 'professor',
+    note: 'Reword option D and save: the reply names the label it took off, so it can be added again.',
+    render: () => <Stage question={LABELLED} options={{ report: LABELLED_REPORT }} title="An edit that removes a label" line="Reword option D (“Best effort, like IP”) in the answer fields, then Save changes. Its label no longer fits and comes back in the reply." />,
   },
   {
     id: 'author-keys',

@@ -9,10 +9,21 @@
  * The flag is a reason to look, never a verdict: it says what the numbers show
  * and points at the key, and the teacher decides.
  *
+ * Phase 5 adds what each figure rests on (docs/API.md "Phase 5: honest
+ * indicators"): `basis.sentence` beside the difficulty, so a band is never
+ * shown as firm on too few answers; who wrote the question
+ * (`provenance.label`); an uncertain level (`levelCheck`); answers given in
+ * another language (`languages.note`, and `languages.warning.text` when two
+ * languages' shares right are far apart); and, under each wrong option that
+ * has one, its misconception label ("Phase 5: misconception labels"), marked
+ * "AI draft" until the professor confirms it. Staff only, like the rest.
+ *
  *   useBankStats(contentId, version)  ->  { data, error, loading, byId, reload }
  *   <ItemFigures item />                one quiet line for a question row
+ *   <ItemMeta item />                   level, topic, kind, who wrote it, an uncertain level
  *   <ItemDetail item onCheckKey />      the figures in full, and what was chosen
- *   <ItemList items thresholds onCheckKey />   rows that open into ItemDetail
+ *   <ItemList items thresholds onCheckKey translation? />   rows that open into ItemDetail
+ *   <TranslationLine translation />     the report's `translation`, only when a question has a warning
  *   <StatsView contentId questions? onCheckKey />   the bank's "How it went"
  */
 
@@ -56,6 +67,16 @@ const PART = {
 
 const flagsOf = (item) => list(item?.flags);
 const attemptsOf = (item) => num(item?.attempts) ?? 0;
+/** The band only when the answers behind it are enough: never a firm band on a provisional count. */
+const bandOf = (item) => (item?.band && item?.basis?.provisional !== true ? item.band : null);
+/** A label the model proposed that no professor has confirmed yet. */
+const isDraftLabel = (m) => m?.provenance === 'ai' && m?.confirmed !== true;
+const warningOf = (item) => item?.languages?.warning ?? null;
+
+/** The quiet mark on a label the model proposed and no professor has confirmed. */
+export function DraftTag({ children = 'AI draft', title, className = '' }) {
+  return <span className={`it-draft ${className}`} title={title}>{children}</span>;
+}
 
 /* ---------------------------------------------------------------- the read */
 
@@ -96,17 +117,58 @@ export function ItemFigures({ item, className = '' }) {
   const attempts = attemptsOf(item);
   if (!item || attempts === 0) return null;
   const flags = flagsOf(item);
+  const band = bandOf(item);
+  const warning = warningOf(item);
   return (
     <span className={`it-figs ${className}`}>
       <span><b className="mono">{attempts}</b> {plural(attempts, 'answer')}</span>
       <span><b className="mono">{share(item.proportionCorrect)}</b> correct</span>
-      <span>{item.band ? <>{(BAND[item.band] ?? item.band).toLowerCase()} for this class</> : 'too few answers for a band'}</span>
+      <span title={item.basis?.sentence || undefined}>
+        {band ? <>{(BAND[band] ?? band).toLowerCase()} for this class</> : 'too few answers for a band'}
+      </span>
       {flags.length > 0 && (
         <Chip tone="warn" icon="flag" title={flags.map((f) => f.message).join(' ')}>
           Worth a look
           <span className="sr-only">: {flags.map((f) => f.message).join(' ')}</span>
         </Chip>
       )}
+      {warning?.text && (
+        <Chip tone="warn" icon="alert" title={warning.text}>
+          Check the translation
+          <span className="sr-only">: {warning.text}</span>
+        </Chip>
+      )}
+    </span>
+  );
+}
+
+/**
+ * The row's quiet first line: the level (with an uncertain mark when the
+ * server says so), topic, kind, who wrote it and, when not simply approved,
+ * the bank's status. `provenance.sentence` and `levelCheck.sentence` are on
+ * hover here and in full in ItemDetail.
+ */
+export function ItemMeta({ item, className = '' }) {
+  if (!item) return null;
+  const prov = item.provenance;
+  const check = item.levelCheck;
+  return (
+    <span className={`it-item-meta ${className}`}>
+      <Level level={item.bloom} />
+      {check?.uncertain && (
+        <span className="it-unsure" title={check.sentence || undefined}>
+          <Icon name="help" size={12} />Level uncertain
+        </span>
+      )}
+      {item.topic && <span className="it-topic clip">{item.topic}</span>}
+      <i className="it-dot" aria-hidden="true" />
+      <span>{KIND_LABEL[item.kind] ?? item.kind}</span>
+      {prov?.label && (
+        prov.aiDraft
+          ? <DraftTag title={prov.sentence || undefined}>{prov.label}</DraftTag>
+          : <><i className="it-dot" aria-hidden="true" /><span className="it-prov" title={prov.sentence || undefined}>{prov.label}</span></>
+      )}
+      <StatusTag status={item.status} />
     </span>
   );
 }
@@ -160,8 +222,11 @@ function Spread({ item }) {
                 {opts.map((o) => {
                   const count = num(o.count) ?? 0;
                   const of = answers > 0 ? count / answers : 0;
+                  // A wrong option's misconception label (Phase 5), never on the key.
+                  const mc = !o.key && o.misconception?.label ? o.misconception : null;
+                  const draft = isDraftLabel(mc);
                   return (
-                    <li key={o.index} className="it-opt" data-key={o.key ? 'true' : undefined}>
+                    <li key={o.index} className="it-opt" data-key={o.key ? 'true' : undefined} data-mc={mc ? 'true' : undefined}>
                       <span className="it-opt-t">
                         <span className="clip" title={o.text}>{o.text || `Option ${Number(o.index) + 1}`}</span>
                         {o.key && <span className="it-key"><Icon name="check" size={12} />key</span>}
@@ -171,6 +236,13 @@ function Spread({ item }) {
                         <span className="mono">{answers > 0 ? share(of) : '—'}</span>
                       </span>
                       <span className="it-bar" aria-hidden="true"><i style={{ width: `${Math.min(100, of * 100)}%` }} /></span>
+                      {mc && (
+                        <span className="it-mc" data-draft={draft ? 'true' : undefined}>
+                          <span className="it-mc-k">Misconception<span className="sr-only">: </span></span>
+                          <span className="it-mc-l">{mc.label}</span>
+                          {draft && <DraftTag>{mc.provenanceLabel || 'AI draft'}</DraftTag>}
+                        </span>
+                      )}
                     </li>
                   );
                 })}
@@ -200,17 +272,39 @@ export function ItemDetail({ item, onCheckKey, thresholds }) {
   const meanScore = num(item.meanScore);
   const needs = num(thresholds?.minAnswersForBand);
   const gone = item.status === 'deleted';
+  const band = bandOf(item);
+  const basis = item.basis?.sentence || '';
+  const warning = warningOf(item);
+  const unsure = item.levelCheck?.uncertain ? item.levelCheck.sentence : '';
+
+  // Who wrote it, and answers in another language: quiet lines at the foot.
+  const about = (item.provenance?.sentence || item.languages?.note) && (
+    <ul className="it-about">
+      {item.provenance?.sentence && (
+        <li><Icon name="edit" size={14} /><span>{item.provenance.sentence}</span></li>
+      )}
+      {item.languages?.note && <li><Icon name="info" size={14} /><span>{item.languages.note}</span></li>}
+    </ul>
+  );
+  const levelLine = unsure && (
+    <p className="it-level-check"><Icon name="help" size={15} /><span>{unsure}</span></p>
+  );
 
   if (attempts === 0) {
     return (
       <div className="it-detail">
         <p className="it-none">Nobody has answered this question yet, so there is nothing to count.</p>
+        {levelLine}
+        {about}
       </div>
     );
   }
 
   return (
     <div className="it-detail">
+      {warning?.text && (
+        <Note tone="warn" icon="alert" role="note">{warning.text}</Note>
+      )}
       {flags.map((f) => (
         <div key={f.id} className="it-flag" role="note">
           <Icon name="flag" />
@@ -224,17 +318,20 @@ export function ItemDetail({ item, onCheckKey, thresholds }) {
         </div>
       ))}
 
+      {levelLine}
+
       <dl className="it-nums">
         <div><dt>Answers</dt><dd className="mono">{attempts}</dd></div>
         <div><dt>Correct</dt><dd className="mono">{num(item.correct) ?? '—'}</dd></div>
         <div><dt>Share correct</dt><dd className="mono">{share(item.proportionCorrect)}</dd></div>
         {meanScore !== null && <div><dt>Mean score</dt><dd className="mono">{share(meanScore)}</dd></div>}
-        <div>
+        <div className="it-band">
           <dt>Band</dt>
           <dd>
-            {item.band ? BAND[item.band] ?? item.band : 'None yet'}
-            <small>{item.band ? 'for this class' : needs !== null ? `needs ${needs} answers` : 'too few answers'}</small>
+            {band ? BAND[band] ?? band : 'None yet'}
+            {band ? <small>for this class</small> : !basis && <small>{needs !== null ? `needs ${needs} answers` : 'too few answers'}</small>}
           </dd>
+          {basis && <dd className="it-basis">{basis}</dd>}
         </div>
         <div>
           <dt>Point-biserial</dt>
@@ -259,6 +356,7 @@ export function ItemDetail({ item, onCheckKey, thresholds }) {
       )}
 
       <Spread item={item} />
+      {about}
     </div>
   );
 }
@@ -272,10 +370,34 @@ export function StatusTag({ status }) {
 }
 
 /**
+ * The report's `translation`, said only when it matters: when at least one
+ * question has a gap between languages worth a warning. Quiet (nothing drawn)
+ * while every answer is in one language.
+ */
+export function TranslationLine({ translation, className = '' }) {
+  const n = num(translation?.warnings) ?? 0;
+  if (!n) return null;
+  const gap = num(translation.gapAbovePoints);
+  return (
+    <p className={`it-trans ${className}`} role="note">
+      <Icon name="alert" size={15} />
+      <span>
+        <b>
+          {n} {plural(n, 'question has', 'questions have')} a gap between languages
+          {gap !== null ? ` above ${gap} points` : ''}.
+        </b>{' '}
+        {translation.note}
+      </span>
+    </p>
+  );
+}
+
+/**
  * Rows that open into ItemDetail, in the order given (the server sends flagged
  * first). Questions nobody has answered are folded away at the end.
+ * `translation` (the report's, optional) draws TranslationLine above the rows.
  */
-export function ItemList({ items, thresholds, onCheckKey, className = '' }) {
+export function ItemList({ items, thresholds, onCheckKey, translation, className = '' }) {
   const [open, setOpen] = useState(() => new Set());
   const [showIdle, setShowIdle] = useState(false);
   const base = useId();
@@ -291,13 +413,7 @@ export function ItemList({ items, thresholds, onCheckKey, className = '' }) {
       <li key={item.questionId} className="it-item" data-flag={flagsOf(item).length ? 'true' : undefined} data-open={isOpen ? 'true' : undefined}>
         <button type="button" className="it-item-main" aria-expanded={isOpen} aria-controls={panel} onClick={() => toggle(item.questionId)}>
           <span className="it-item-body">
-            <span className="it-item-meta">
-              <Level level={item.bloom} />
-              {item.topic && <span className="it-topic clip">{item.topic}</span>}
-              <i className="it-dot" aria-hidden="true" />
-              <span>{KIND_LABEL[item.kind] ?? item.kind}</span>
-              <StatusTag status={item.status} />
-            </span>
+            <ItemMeta item={item} />
             <span className="it-item-text">{item.text || 'Question text not stored'}</span>
             {attemptsOf(item) > 0 ? <ItemFigures item={item} /> : <span className="it-figs"><span>Not answered yet</span></span>}
           </span>
@@ -310,6 +426,7 @@ export function ItemList({ items, thresholds, onCheckKey, className = '' }) {
 
   return (
     <div className={`it-list ${className}`}>
+      <TranslationLine translation={translation} className="it-trans-list" />
       <ul className="it-items">{answered.map(row)}</ul>
       {idle.length > 0 && (
         <div className="it-idle">
@@ -367,7 +484,10 @@ export function StatsView({ contentId, questions, onCheckKey, stats, version }) 
   const bank = useMemo(() => new Map(list(questions).map((q) => [q._id, q])), [questions]);
   const items = useMemo(() => list(data?.items).map((i) => {
     const q = bank.get(i.questionId);
-    return q ? { ...i, text: q.text ?? i.text, bloom: q.bloom ?? i.bloom, topic: q.topic ?? i.topic, status: q.status ?? i.status } : i;
+    return q ? {
+      ...i, text: q.text ?? i.text, bloom: q.bloom ?? i.bloom, topic: q.topic ?? i.topic, status: q.status ?? i.status,
+      provenance: q.provenance ?? i.provenance, levelCheck: q.levelCheck ?? i.levelCheck,
+    } : i;
   }), [data, bank]);
 
   if (!data) {
@@ -445,7 +565,7 @@ export function StatsView({ contentId, questions, onCheckKey, stats, version }) 
       <Thresholds thresholds={data.thresholds} className="it-pad-x" />
       {error && <p className="it-stale">Could not read the figures again just now ({error}). These were read earlier.</p>}
 
-      <ItemList items={items} thresholds={data.thresholds} onCheckKey={onCheckKey} />
+      <ItemList items={items} thresholds={data.thresholds} onCheckKey={onCheckKey} translation={data.translation} />
     </section>
   );
 }

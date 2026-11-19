@@ -13,6 +13,10 @@
  *
  * Staff only. The counts are counted apart from everything else and are never
  * put beside accuracy.
+ *
+ * In a class room the room's attendance is read beside it (read only: marks
+ * are made in Attendance), so each row says whether the student is here. An
+ * absent student's row is dimmed and says so in its name for a screen reader.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -29,6 +33,25 @@ const dayLabel = (day) => {
 };
 
 export const keyOf = (s) => (s.studentId ? `s:${s.studentId}` : `r:${s.rollNo}`);
+
+/** The attendance read's four states, in its own words. */
+const ATTENDED = { present: 'Present', late: 'Late', absent: 'Absent', unmarked: 'Unmarked' };
+
+/**
+ * Each student's mark from the attendance read, by roster id (any case) and
+ * by roll number. Null when there is nothing to show: no read, or nobody
+ * marked yet (a column of "Unmarked" says nothing a header line does not).
+ */
+function attendanceBy(attendance) {
+  const all = [...(attendance?.students ?? []), ...(attendance?.removed ?? [])];
+  if (!all.some((s) => s.status && s.status !== 'unmarked')) return null;
+  const by = new Map();
+  for (const s of all) {
+    if (s.studentId) by.set(`s:${String(s.studentId).toLowerCase()}`, s.status);
+    if (s.rollNo) by.set(`r:${s.rollNo}`, s.status);
+  }
+  return (student) => by.get(`s:${String(student.studentId ?? '').toLowerCase()}`) ?? by.get(`r:${student.rollNo}`) ?? null;
+}
 
 /* ------------------------------------------------------------- one row */
 
@@ -94,25 +117,33 @@ function NotePanel({ student, kinds, code, canControl, state, onNote, onClose })
   );
 }
 
-function Row({ student, index, kinds, code, canControl, state, open, onToggleOpen, onMark, onNote, onKeys }) {
+function Row({ student, index, kinds, code, canControl, state, open, onToggleOpen, onMark, onNote, onKeys, att }) {
   const cur = student.current;
   const inactive = student.active === false;
   const elsewhere = cur?.room && cur.room !== code;
   const name = student.name || student.rollNo;
+  const here = att ? `, ${ATTENDED[att]?.toLowerCase() ?? att}` : '';
 
   return (
-    <li className="rc-ob" data-row={index} data-open={open ? 'true' : undefined} data-inactive={inactive ? 'true' : undefined}>
+    <li
+      className="rc-ob"
+      data-row={index}
+      data-open={open ? 'true' : undefined}
+      data-inactive={inactive ? 'true' : undefined}
+      data-absent={att === 'absent' ? 'true' : undefined}
+    >
       <span className="rc-ob-roll mono">{student.rollNo}</span>
       <span className="rc-ob-who">
         <span className="clip">{student.name || <span className="muted">No name</span>}</span>
         {inactive && <Chip className="rc-mini chip-line">Removed</Chip>}
         {elsewhere && <span className="t-meta">set in <span className="mono">{cur.room}</span></span>}
         {cur?.note && !open && <span className="rc-ob-peek clip">{cur.note}</span>}
+        {att && <span className="rc-ob-att" data-status={att}><i aria-hidden="true" />{ATTENDED[att] ?? att}</span>}
       </span>
 
       {canControl && !inactive ? (
         // Never disabled while a mark is saving: a disabled button drops the keyboard's focus.
-        <div className="rc-marks" role="group" aria-label={`Mark for ${name}`} onKeyDown={(e) => onKeys(e, student, index, state?.busy)}>
+        <div className="rc-marks" role="group" aria-label={`Mark for ${name}${here}`} onKeyDown={(e) => onKeys(e, student, index, state?.busy)}>
           {kinds.map((k, i) => (
             <button
               key={k.id}
@@ -137,7 +168,7 @@ function Row({ student, index, kinds, code, canControl, state, open, onToggleOpe
         type="button"
         className="rc-ob-notebtn"
         aria-expanded={open}
-        aria-label={`${cur?.note ? 'Note' : 'Add a note'} for ${name}${student.history?.length ? `, and today’s log` : ''}`}
+        aria-label={`${cur?.note ? 'Note' : 'Add a note'} for ${name}${here}${student.history?.length ? `, and today’s log` : ''}`}
         onClick={onToggleOpen}
         disabled={!canControl && !cur?.note && !student.history?.length}
       >
@@ -175,7 +206,7 @@ function ObserveSkeleton() {
 }
 
 /** The roster with its marks, from the observations read. Pure, for the gallery. */
-export function ObserveView({ data, load, code, canControl, rowState = {}, onMark, onNote, onRetry, initialOpen = null }) {
+export function ObserveView({ data, load, code, canControl, rowState = {}, onMark, onNote, onRetry, initialOpen = null, attendance = null }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [open, setOpen] = useState(initialOpen);
@@ -184,6 +215,7 @@ export function ObserveView({ data, load, code, canControl, rowState = {}, onMar
   const kinds = data?.kinds ?? [];
   const students = data?.students ?? [];
   const counts = data?.counts ?? {};
+  const attOf = useMemo(() => attendanceBy(attendance), [attendance]);
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -235,6 +267,14 @@ export function ObserveView({ data, load, code, canControl, rowState = {}, onMar
               {data.class ? `${data.class.courseName} ${data.class.section}` : 'The phones that joined this room'}.
               {' '}One mark per student for the day{data.class ? ', shared by every room of the class today' : ''}.
             </p>
+            {attendance && (
+              <p className="rc-ob-attline">
+                <Icon name="attendance" size={14} />
+                {attendance.error
+                  ? <span>Attendance could not be read: {attendance.error}</span>
+                  : <span>Attendance: {attendance.summary}.{attOf ? '' : ' Nobody is marked yet.'}</span>}
+              </p>
+            )}
           </div>
           <dl className="rc-ob-figs" aria-label="Counted for today">
             <div><dt>Observed</dt><dd><b className="mono">{counts.observed ?? 0}</b> of {active}</dd></div>
@@ -279,6 +319,7 @@ export function ObserveView({ data, load, code, canControl, rowState = {}, onMar
                     onMark={onMark}
                     onNote={onNote}
                     onKeys={onKeys}
+                    att={attOf?.(s) ?? null}
                   />
                 ))}
               </ul>
@@ -293,10 +334,11 @@ export function ObserveView({ data, load, code, canControl, rowState = {}, onMar
 
 /* ------------------------------------------------------------- the screen */
 
-export default function Observe({ code, canControl, signal }) {
+export default function Observe({ code, canControl, signal, classRoom }) {
   const [data, setData] = useState(null);
   const [load, setLoad] = useState({ status: 'loading', error: '' });
   const [rowState, setRowState] = useState({});
+  const [attendance, setAttendance] = useState(null);
   const inflight = useRef(0);
 
   const read = useCallback(async () => {
@@ -308,7 +350,19 @@ export default function Observe({ code, canControl, signal }) {
     }
   }, [code]);
 
+  // Attendance, read only and beside the roster. A room opened for no class
+  // has none (the read is a 409), so it is not asked.
+  const readAttendance = useCallback(async () => {
+    if (!classRoom) return;
+    try {
+      setAttendance(await api.attendance(code));
+    } catch (err) {
+      setAttendance({ error: err.message });
+    }
+  }, [code, classRoom]);
+
   useEffect(() => { read(); }, [read, signal]);
+  useEffect(() => { readAttendance(); }, [readAttendance, signal]);
 
   // The counts are the server's. Read them again once no mark is on its way,
   // so the read includes every one of them.
@@ -357,6 +411,7 @@ export default function Observe({ code, canControl, signal }) {
       onMark={(s, kind) => send(s, kind, kind ? s.current?.note ?? '' : undefined)}
       onNote={(s, note) => send(s, s.current?.kind, note)}
       onRetry={read}
+      attendance={attendance}
     />
   );
 }

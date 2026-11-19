@@ -282,13 +282,19 @@ export default [
   {
     id: 'room-mixed-lobby',
     title: 'Room set-up: a class, Mixed, with a waiting room',
-    note: 'SY-CS A chosen, Mixed, a waiting room, levels fixed at Apply, 12 questions each and 60 seconds a question. Open it to see what is sent and the reply.',
+    note: 'SY-CS A chosen, Mixed, a waiting room, levels fixed at Apply, 12 questions each and 60 seconds a question, so "About 12 minutes for each student", said as an estimate. Open it to see what is sent and the reply.',
     render: () => (
       <Demo
         bank={BANKS.whole}
         initialRun={{ classId: CLASSES[0].id, mode: 'mixed', lobby: true, adapt: false, startLevel: 'apply', cap: '12', timer: '60' }}
       />
     ),
+  },
+  {
+    id: 'room-estimate-long',
+    title: 'Room set-up: a long room',
+    note: '40 questions at 2 minutes each: the estimate in hours and minutes. Clear either field and it goes.',
+    render: () => <Demo bank={BANKS.whole} initialRun={{ cap: '40', timer: '120' }} />,
   },
   {
     id: 'room-teacher-led-no-class',

@@ -1,10 +1,13 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+import joinWorker from './sw/plugin.js';
+
 const API = 'http://localhost:5050';
 
 export default defineConfig({
-  plugins: [react()],
+  // joinWorker: the student phone's service worker, /sw.js (build only).
+  plugins: [react(), joinWorker()],
   server: {
     host: true, // phones on the hotspot need this in dev mode
     port: 5173,

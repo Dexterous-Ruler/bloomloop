@@ -19,6 +19,7 @@ import * as RDialog from '@radix-ui/react-dialog';
 import { useEnter } from '../lib/motion.js';
 import { useTheme } from '../lib/theme.js';
 import { Avatar, Icon, Mark, Menu, Tip } from '../ui/index.jsx';
+import { Toaster } from '../ui/toast.jsx';
 
 // Re-exported so screens that import it from here keep working.
 export { default as ThemeToggle } from './ThemeToggle.jsx';
@@ -105,7 +106,8 @@ function RailNav({ items, current, onNav, groups }) {
                   >
                     <Icon name={it.locked ? 'lock' : it.icon} size={15} />
                     <span className="lab">{it.label}</span>
-                    {it.badge != null && it.badge !== '' && (
+                    {/* A badge points somewhere else; on its own page it has nothing to point at. */}
+                    {it.badge != null && it.badge !== '' && current !== it.id && (
                       <span className="rail-badge" data-tone={it.tone}>{it.badge}</span>
                     )}
                   </button>
@@ -328,6 +330,7 @@ export default function AppShell({
       </div>
 
       <Palette open={palette} onOpenChange={setPalette} nav={nav} groups={groups} onNav={navTo} extra={commands} />
+      <Toaster />
     </div>
   );
 }

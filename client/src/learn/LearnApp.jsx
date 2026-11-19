@@ -16,13 +16,15 @@ import '@fontsource/atkinson-hyperlegible/400.css';
 import '@fontsource/atkinson-hyperlegible/700.css';
 import { clearDraftsFor, setDraftScope } from '../lib/draft.js';
 import { useEnter } from '../lib/motion.js';
-import { connect, EV, stillTrying } from '../lib/socket.js';
+import { dropConfirmed, keep, listFor, scopeOf } from '../lib/outbox.js';
+import { connect, EV, stillTrying, tryNow } from '../lib/socket.js';
 import { Button, Dialog, Ladder, Mark, Note } from '../ui/index.jsx';
+import ClassVote from './ClassVote.jsx';
 import Finish from './Finish.jsx';
 import Join from './Join.jsx';
 import LevelMove from './LevelMove.jsx';
 import Question from './Question.jsx';
-import { Climb, Conn, Dock, DockSlot, Hold } from './parts.jsx';
+import { Climb, Conn, Dock, DockSlot, Hold, Kept, Offline } from './parts.jsx';
 
 const STORE_KEY = 'bloomloop:student';
 
@@ -52,6 +54,61 @@ function newAnswerId() {
   crypto.getRandomValues(bytes);
   return `a${[...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
+
+/**
+ * The signed-in student's access token, when this browser holds one, so the
+ * server can put this room's answers into their own history (decision 7, 19
+ * Nov 2026). Read straight from where the account pages' sign-in keeps its
+ * session - `sb-<project>-auth-token`, JSON with `access_token`, or under
+ * `currentSession` in older versions - so /join never loads the account code.
+ * Never kept, logged or shown: it rides in the join and nowhere else. The
+ * server decides whether it links; '' sends nothing.
+ */
+function accountToken() {
+  let ls;
+  try { ls = window.localStorage; } catch { return ''; }
+  try {
+    for (let i = 0; i < ls.length; i += 1) {
+      const k = ls.key(i);
+      if (!k || !k.startsWith('sb-') || !k.endsWith('-auth-token')) continue;
+      try {
+        const v = JSON.parse(ls.getItem(k) ?? 'null');
+        const t = v?.access_token ?? v?.currentSession?.access_token;
+        if (typeof t === 'string' && t.trim()) return t.trim();
+      } catch {
+        /* not JSON: not a session */
+      }
+    }
+  } catch {
+    /* storage refused mid-read */
+  }
+  return '';
+}
+
+/** What a join says: who, and the sign-in when there is one. Built per join, so a fresh sign-in counts on the next reconnect. */
+const joinPayload = (creds) => {
+  const token = accountToken();
+  return token ? { ...creds, token } : creds;
+};
+
+/* The outbox's rules for the server's replies (Phase 7). A save that failed is
+   worth sending again, a few times, spaced out; a socket that lost its student
+   rejoins first and tries once more. Everything else the server says about an
+   answer is final. */
+const SAVE_FAILED = ['That answer did not save. Tap Next question to carry on.', 'That vote did not save. Vote again.'];
+const REJOIN_FIRST = ['Your row is gone - rejoin with your roll number.', 'Join a session before answering.', 'Join a session before voting.'];
+// Refusals of the room itself: it is gone, so what it confirmed can go too.
+const ROOM_GONE = ['That session has already been closed.', 'No session with that code - check the code on the board.'];
+// A reply slower than this waits for the next connection rather than be
+// matched, late, to the item sent after it.
+const REPLY_MS = 12000;
+// The phone's own sentences for an item the server will never take.
+const NOT_TAKEN = {
+  closed: 'The room closed before this reached your teacher.',
+  moved: 'This question was taken off your list before your answer arrived, so it was not marked.',
+  full: 'The room took no more answers from you, so this one was not marked.',
+  stuck: 'This could not be sent. Tell your teacher if it matters.',
+};
 
 /** Every key present, so nothing has to tell "off" from "older server". */
 const NO_SUPPORTS = { readAloud: false, dyslexiaFont: false, largerText: false, highContrast: false, extraTime: false, noTimer: false };
@@ -231,6 +288,29 @@ export default function LearnApp() {
   // fraction of a bank they will never fully see.
   const [trail, setTrail] = useState([]);
 
+  // Phase 5's confidence tap: the server's three choices, and this question's
+  // tap (null for none). Sent with the answer; it changes no mark.
+  const [taps, setTaps] = useState([]);
+  const [sure, setSure] = useState(null);
+  // Decision 7: whether this room's answers go into the signed-in student's
+  // history, and the server's one sentence when a sign-in was sent and could
+  // not link. The sentence is shown as it comes, until the student hides it.
+  const [linked, setLinked] = useState(false);
+  const [linkNote, setLinkNote] = useState('');
+  const [linkHidden, setLinkHidden] = useState(false);
+
+  /* A class question (Phase 5). `klass` is { q, end }: the class question as
+     the server last sent it, and `class:closed` once it ends with its key
+     revealed, until the student goes back. While it is set, the student's own
+     screen is parked behind it, mounted and untouched. `votes` is this phone's
+     own vote in force per round, for the class question it last saw. */
+  const [klass, setKlass] = useState(null);
+  const [votes, setVotes] = useState({ id: '', rounds: {} });
+  // The server's sentence for a vote it kept and did not count.
+  const [voteNote, setVoteNote] = useState('');
+  // Closed without the key: the server's sentence, on the student's own screen.
+  const [klassNote, setKlassNote] = useState('');
+
   // 'off' | 'on' | 'left'. 'left' is the calm notice after focus mode ended. A
   // state and not a toast, because a student who was mid-thought when the
   // phone dropped out of full screen should still find it there.
@@ -257,12 +337,6 @@ export default function LearnApp() {
   // Whether the question on screen has been scored yet. Read on resume, where
   // state from the render that submitted is not in scope.
   const resultRef = useRef(null);
-  // The one submission made and not yet scored, as { questionId, response }. A
-  // tap in the two seconds the wifi is down is still the student's answer, and
-  // dropping it is the one thing this exists to stop. Never more than one: the
-  // student cannot be on two questions at once, so a queue would only ever
-  // hold stale taps.
-  const pendingRef = useRef(null);
   // The id of the question on screen, so a re-serve of the same item can be
   // told apart from a new one.
   const shownIdRef = useRef('');
@@ -291,6 +365,176 @@ export default function LearnApp() {
   const reloadSentRef = useRef(false);
   // The question a signal happened during, if there is one.
   const signalQidRef = useRef('');
+
+  // The class question on screen, for handlers that outlive the render.
+  const klassRef = useRef(null);
+  useEffect(() => { klassRef.current = klass; }, [klass]);
+  // Set by a join: the next class:question is the one sent with it, whose
+  // `mine` is the server's word on this phone's vote. Every other one sends
+  // `mine: null`, meaning "keep your own".
+  const joinClassRef = useRef(false);
+  // A class question on screen when the phone got back in. The join re-sends
+  // it if it is still running; if it ended meanwhile nothing comes, and this
+  // takes it down.
+  const klassCheckRef = useRef(0);
+
+  /* ---------------------------------------------------------------- outbox
+     (Phase 7) Every answer and vote is written to this phone first and sent
+     second, and is "sent" only when the server's reply to it has come back.
+     A tap made while the wifi is down is still the student's answer, and so is
+     one made just before a reload: both are on disk, under their answerId.
+
+     server:result names no answerId, so a reply is matched to its item by
+     order. The server answers one socket's answers in the order they arrive,
+     and only one item is ever out at a time, so the reply that comes back is
+     the reply to the item in flight. A resend of an answer the server already
+     holds is answered from the stored row and never counted twice. */
+  const [box, setBox] = useState([]);
+  const boxRef = useRef([]);
+  const scopeRef = useRef('');
+  const loadingRef = useRef(Promise.resolve());
+  // The item out now: { id, kind, questionId, timer }. Shown as "sending".
+  const flightRef = useRef(null);
+  const [flying, setFlying] = useState('');
+  // Replies are ours to match only once the rejoin has been answered: the
+  // join's own question (or pause, or wait) comes first.
+  const readyRef = useRef(false);
+  const afterJoinRef = useRef(false);
+  const readyTimerRef = useRef(0);
+  // Paused or waiting: the room takes no answers, so none are sent.
+  const roomHoldRef = useRef(false);
+  // Not again on this connection: timed out, or out of goes.
+  const skipRef = useRef(new Set());
+  const triesRef = useRef(new Map());
+  const rejoinedRef = useRef(new Set());
+  const restUntilRef = useRef(0);
+  const seqRef = useRef(0);
+  // Items that waited (offline, a reload, a lost reply) and have since been
+  // settled: still shown, so the student sees them go through.
+  const [recent, setRecent] = useState([]);
+
+  function write(item) {
+    boxRef.current = boxRef.current.filter((i) => i.answerId !== item.answerId).concat(item).sort((a, b) => a.seq - b.seq);
+    setBox(boxRef.current);
+    return keep(item);
+  }
+
+  // This room and roll number's outbox, read from disk. Anything written in
+  // this tab before the read finished is kept over the disk's copy.
+  function loadBox(code, rollNo) {
+    const scope = scopeOf(code, rollNo);
+    if (!code || !rollNo || scope === scopeRef.current) return loadingRef.current;
+    scopeRef.current = scope;
+    boxRef.current = [];
+    setBox([]);
+    loadingRef.current = listFor(scope).then((rows) => {
+      if (scopeRef.current !== scope) return;
+      const all = new Map(rows.map((r) => [r.answerId, r.status === 'queued' ? { ...r, waited: true } : r]));
+      boxRef.current.forEach((i) => all.set(i.answerId, i));
+      boxRef.current = [...all.values()].sort((a, b) => a.seq - b.seq);
+      setBox(boxRef.current);
+    });
+    return loadingRef.current;
+  }
+
+  function release() {
+    const f = flightRef.current;
+    if (!f) return null;
+    window.clearTimeout(f.timer);
+    flightRef.current = null;
+    setFlying('');
+    return f;
+  }
+
+  function settle(id, patch) {
+    if (flightRef.current?.id === id) release();
+    const was = boxRef.current.find((i) => i.answerId === id);
+    if (was) {
+      write({ ...was, ...patch });
+      if (was.waited) setRecent((r) => (r.includes(id) ? r : [...r, id]));
+    }
+    window.setTimeout(pump, 0);
+  }
+
+  function pump() {
+    if (flightRef.current || !readyRef.current || roomHoldRef.current || Date.now() < restUntilRef.current) return;
+    const socket = socketRef.current;
+    if (!socket?.connected) return;
+    const next = boxRef.current.find((i) => i.status === 'queued' && !skipRef.current.has(i.answerId));
+    if (!next) return;
+    const timer = window.setTimeout(() => timedOut(next.answerId), REPLY_MS);
+    flightRef.current = { id: next.answerId, kind: next.kind, questionId: next.questionId ?? '', timer };
+    setFlying(next.answerId);
+    socket.emit(next.kind === 'vote' ? EV.studentVote : EV.studentAnswer, next.payload);
+  }
+
+  // No reply at all: left for the next connection. Twice, and it is kept and
+  // shown as not sent, so one bad item can never hold up the rest for good.
+  function timedOut(id) {
+    if (flightRef.current?.id !== id) return;
+    release();
+    skipRef.current.add(id);
+    const was = boxRef.current.find((i) => i.answerId === id);
+    if (was) {
+      const timeouts = (was.timeouts || 0) + 1;
+      write({ ...was, waited: true, timeouts, ...(timeouts >= 2 ? { status: 'refused', note: NOT_TAKEN.stuck } : {}) });
+    }
+    pump();
+  }
+
+  // A save that failed: again after 1, 2 and 4 seconds (jittered), then left
+  // for the next connection.
+  function again(id) {
+    release();
+    const n = (triesRef.current.get(id) || 0) + 1;
+    triesRef.current.set(id, n);
+    if (n > 3) {
+      skipRef.current.add(id);
+      pump();
+      return;
+    }
+    const wait = 1000 * 2 ** (n - 1) * (0.5 + Math.random());
+    restUntilRef.current = Date.now() + wait;
+    window.setTimeout(pump, wait + 20);
+  }
+
+  // The join has been answered: replies from here on are to what we send.
+  function markReady() {
+    window.clearTimeout(readyTimerRef.current);
+    afterJoinRef.current = false;
+    readyRef.current = true;
+    loadingRef.current.then(pump);
+  }
+
+  // Into the outbox, on disk, and only then out.
+  function enqueue(kind, payload, extra) {
+    const c = credsRef.current;
+    if (!c) return;
+    seqRef.current = (seqRef.current + 1) % 1000;
+    const item = {
+      answerId: payload.answerId,
+      scope: scopeOf(c.code, c.rollNo),
+      code: c.code,
+      rollNo: c.rollNo,
+      kind,
+      seq: Date.now() * 1000 + seqRef.current,
+      at: new Date().toISOString(),
+      payload,
+      status: 'queued',
+      note: '',
+      timeouts: 0,
+      waited: !socketRef.current?.connected,
+      ...extra,
+    };
+    write(item).then(pump);
+  }
+
+  // The room is gone: what it confirmed goes from this phone. Unsent stays.
+  function roomGone() {
+    dropConfirmed(scopeRef.current);
+    boxRef.current = boxRef.current.filter((i) => i.status !== 'sent' && i.status !== 'marked');
+    setBox(boxRef.current);
+  }
 
   const requestNext = useCallback((force = false) => {
     if (awaitingRef.current && !force) return;
@@ -329,11 +573,20 @@ export default function LearnApp() {
         // in once already: a student who filled the form while the socket was
         // still opening is arriving, not returning.
         if (acceptedRef.current) silentRef.current = true;
-        socket.emit(EV.studentJoin, credsRef.current);
+        socket.emit(EV.studentJoin, joinPayload(credsRef.current));
       }
     };
 
     const onDown = () => {
+      // Whatever was out has no reply coming: it waits, on disk, for the
+      // rejoin, which is when the outbox goes again.
+      const f = release();
+      if (f) {
+        const was = boxRef.current.find((i) => i.answerId === f.id);
+        if (was) write({ ...was, waited: true });
+      }
+      readyRef.current = false;
+      afterJoinRef.current = false;
       // Down is not the same as given up, and the phone must not say the
       // second while the first is true. `stillTrying` is false only when
       // socket.io has genuinely stopped - which, with infinite attempts, means
@@ -363,6 +616,34 @@ export default function LearnApp() {
       setLed(null);
       setSession(p.session || null);
       setSupports({ ...NO_SUPPORTS, ...(p.supports || {}) });
+      setTaps(Array.isArray(p.confidence)
+        ? p.confidence.filter((c) => c && typeof c.id === 'string' && typeof c.label === 'string')
+        : []);
+      setLinked(p.linked === true);
+      setLinkNote(typeof p.linkNote === 'string' ? p.linkNote : '');
+      // The outbox goes again once the join's own reply is in (the question,
+      // a pause, a wait), and at the latest after three seconds.
+      release();
+      readyRef.current = false;
+      afterJoinRef.current = true;
+      roomHoldRef.current = false;
+      skipRef.current = new Set();
+      triesRef.current = new Map();
+      restUntilRef.current = 0;
+      loadBox(credsRef.current?.code || p.session?.code, credsRef.current?.rollNo || p.profile?.rollNo);
+      window.clearTimeout(readyTimerRef.current);
+      readyTimerRef.current = window.setTimeout(markReady, 3000);
+      // The class question this phone was showing, if any, is re-sent after
+      // this when it is still running. Given a few seconds, then taken down.
+      joinClassRef.current = true;
+      window.clearTimeout(klassCheckRef.current);
+      const showing = klassRef.current;
+      if (showing && !showing.end) {
+        const stale = String(showing.q.id);
+        klassCheckRef.current = window.setTimeout(() => {
+          setKlass((k) => (k && !k.end && String(k.q.id) === stale ? null : k));
+        }, 4000);
+      }
       // Drafts are kept per student per room from here on.
       setDraftScope(p.session?.code || credsRef.current?.code, credsRef.current?.rollNo || p.profile?.rollNo);
       if (p.profile) {
@@ -373,13 +654,35 @@ export default function LearnApp() {
     };
 
     const onRejected = (p = {}) => {
+      // A refusal of the item in flight, not of the student: the outbox keeps
+      // it and the phone stays in the room.
+      const f = flightRef.current;
+      const reason = String(p.reason ?? '');
+      if (f && SAVE_FAILED.includes(reason)) {
+        again(f.id);
+        return;
+      }
+      if (f && REJOIN_FIRST.includes(reason) && credsRef.current) {
+        release();
+        if (rejoinedRef.current.has(f.id)) {
+          skipRef.current.add(f.id);
+          pump();
+          return;
+        }
+        rejoinedRef.current.add(f.id);
+        readyRef.current = false;
+        socket.emit(EV.studentJoin, joinPayload(credsRef.current));
+        return;
+      }
+      release();
+      readyRef.current = false;
+      if (ROOM_GONE.includes(reason)) roomGone();
       setJoining(false);
       const tried = credsRef.current;
       // Stop the reconnect handler re-sending a credential the server already
       // refused, or a wrong code loops forever.
       credsRef.current = null;
-      // Whatever was being held for this student is void along with them.
-      pendingRef.current = null;
+      setKlass(null);
       // A refusal that arrives before this phone has ever been let in is a
       // refusal of the identity itself - a closed room, a deleted room, a roll
       // number the server will not take - and it will fail identically on every
@@ -399,27 +702,32 @@ export default function LearnApp() {
 
     const onQuestion = (p = {}) => {
       const id = p.question?._id ? String(p.question._id) : '';
-      const held = pendingRef.current;
+      // The join's own question opens the outbox. Any other question while an
+      // answer is out is the server moving the phone on in place of marking
+      // it: the question was put to the class, or taken out of the room.
+      const f = flightRef.current;
+      if (afterJoinRef.current) window.setTimeout(markReady, 0);
+      else if (f?.kind === 'answer') settle(f.id, { status: 'refused', note: NOT_TAKEN.moved });
+      roomHoldRef.current = false;
+      window.setTimeout(pump, 0);
+
       // The server pins the question it last served and clears that pin the
       // moment it scores an answer for it. So being handed the SAME question
-      // back is the server saying it never received the answer this phone is
-      // holding - send it again. Sending it any earlier breaks it:
-      // `student:answer` is refused until the server has bound this socket to
-      // a student, and a question arriving is proof that it has.
+      // back while the outbox holds an answer to it is the server saying it
+      // never received that answer (case A): the question is shown as answered
+      // and on its way, and the outbox sends it.
       //
       // Any other question means the pin is gone: the answer did land and only
-      // its result was lost, or the teacher discarded the item. Either way,
-      // holding on to it would score a question the student has left.
-      const resend = Boolean(held && id && held.questionId === id);
-      if (resend) socket.emit(EV.studentAnswer, held);
-      else pendingRef.current = null;
+      // its result was lost (case B), or the teacher discarded the item. The
+      // outbox still sends it, and its reply is routed to it, never onto the
+      // question now on screen.
+      const held = id ? boxRef.current.find((i) => i.kind === 'answer' && i.questionId === id && i.status === 'queued') : null;
 
       // Answer locks itself on a result, on `busy` and on a held submission.
-      // `busy` says the true thing for the one round trip a resend takes: this
-      // answer is going in. Otherwise the latch comes off, because a question
-      // arriving is the end of any wait for one.
-      awaitingRef.current = resend;
-      setAwaiting(resend);
+      // `busy` says the true thing while a held answer goes in. Otherwise the
+      // latch comes off, because a question arriving is the end of any wait.
+      awaitingRef.current = Boolean(held);
+      setAwaiting(Boolean(held));
 
       resultRef.current = null;
       setResult(null);
@@ -428,7 +736,7 @@ export default function LearnApp() {
       // Keep the submitted latch while a resend is in flight: the student
       // already chose this answer, and re-opening the options would invite
       // them to answer a question that is being scored as they look at it.
-      setPicked(resend ? held.response : null);
+      setPicked(held ? held.payload.response : null);
       // A question being served is the room running, whatever this phone last
       // heard.
       setPaused(false);
@@ -464,16 +772,35 @@ export default function LearnApp() {
       if (p.question?.bloom && id !== shownIdRef.current) {
         setTrail((t) => [...t, p.question.bloom].slice(-9));
       }
+      // A new question starts with no tap. The same one served again keeps it,
+      // as it keeps everything else the student did on it.
+      if (held) setSure(held.payload.confidence ?? null);
+      else if (id !== shownIdRef.current) setSure(null);
       shownIdRef.current = id;
       setPhase('question');
     };
 
     const onResult = (p = {}) => {
+      // Whose result: the answer in flight, or (a reply the outbox gave up
+      // waiting for) the held answer to the question on screen. A graded mark
+      // is "Marked"; one a professor may review, a poll, or a retry is "Sent".
+      const f = flightRef.current?.kind === 'answer' ? flightRef.current : null;
+      const held = f ? null : boxRef.current.find((i) => i.kind === 'answer' && i.status === 'queued' && i.questionId === shownIdRef.current);
+      const target = f ? { id: f.id, questionId: f.questionId } : held ? { id: held.answerId, questionId: held.questionId } : null;
+      if (target) {
+        settle(target.id, { status: p.retry || p.provisional || p.ungraded ? 'sent' : 'marked' });
+        // Case B: an earlier question's result, for the outbox and not for the
+        // question on screen.
+        if (target.questionId && target.questionId !== shownIdRef.current) {
+          if (p.profile) setProfile(p.profile);
+          levelRef.current = p.workingLevel || levelRef.current;
+          return;
+        }
+      }
       // The result is the server's acknowledgement of the submission, including
       // the one it replies to a resend with. Nothing is owed after this, so the
-      // hold comes off and so does the wait a resend put on - nothing else is
-      // coming to take it off, and left on it would refuse the next question.
-      pendingRef.current = null;
+      // wait a resend put on comes off - nothing else is coming to take it off,
+      // and left on it would refuse the next question.
       awaitingRef.current = false;
       setAwaiting(false);
       if (p.retry) {
@@ -494,8 +821,11 @@ export default function LearnApp() {
     };
 
     const onExhausted = (p = {}) => {
+      // To an answer, the room's cap: that answer is not taken, ever.
+      const f = flightRef.current;
+      if (afterJoinRef.current) window.setTimeout(markReady, 0);
+      else if (f?.kind === 'answer') settle(f.id, { status: 'refused', note: p.reason || NOT_TAKEN.full });
       if (p.profile) setProfile(p.profile);
-      pendingRef.current = null;
       // Set when the student reached the room's questions-per-student cap.
       setEndReason(p.reason || '');
       setEnding('exhausted');
@@ -505,6 +835,8 @@ export default function LearnApp() {
     // The room has not started: answered in place of a question, again to any
     // `student:next` sent meanwhile. Nothing is owed, so no latch stays on.
     const onWaiting = (p = {}) => {
+      joinClassRef.current = false;
+      holdRoom();
       awaitingRef.current = false;
       setAwaiting(false);
       setWaiting(p.message || 'You are in. Your professor will start the questions soon. Keep this page open.');
@@ -514,12 +846,33 @@ export default function LearnApp() {
     const onTeacherLed = (p = {}) => {
       setJoining(false);
       setRejected('');
-      pendingRef.current = null;
+      setKlass(null);
       setLed({ title: p.title || '', message: p.message || '' });
       setEnding('teacher-led');
       setPhase('done');
     };
-    const onClosed = () => { pendingRef.current = null; setEnding('closed'); setPhase('done'); };
+    // Closing the room closes its class question too, unrevealed. To an
+    // answer or vote in flight it is final: kept and shown, never sent again.
+    const onClosed = () => {
+      const f = flightRef.current;
+      if (f) settle(f.id, { status: 'refused', note: NOT_TAKEN.closed });
+      roomGone();
+      setKlass(null);
+      setEnding('closed');
+      setPhase('done');
+    };
+
+    // Paused or waiting, whether as the join's reply, a reply to an answer or
+    // the room stopping: nothing is refused, and nothing goes until it runs.
+    // A vote out when the room stops keeps waiting for its own reply: the
+    // server answers it (class:vote) whatever the order, and its earlier vote
+    // stays in force. An answer out is answered by the pause itself, so it
+    // waits on this phone for the room to carry on.
+    const holdRoom = () => {
+      if (flightRef.current?.kind !== 'vote') release();
+      roomHoldRef.current = true;
+      if (afterJoinRef.current) markReady();
+    };
 
     const onPaused = () => {
       // A room that stops mid-ask answers `paused` where a question would have
@@ -530,10 +883,15 @@ export default function LearnApp() {
       awaitingRef.current = false;
       setAwaiting(false);
       setPaused(true);
+      // A paused room sends no class question with a join; the resume does.
+      joinClassRef.current = false;
+      holdRoom();
     };
 
     const onResumed = () => {
       setPaused(false);
+      roomHoldRef.current = false;
+      window.setTimeout(pump, 0);
       // An answer tapped just as the room stopped never reached the scorer: the
       // server replied `paused` in place of the result. `picked` is the latch
       // that stops a double tap scoring twice, and with no result behind it
@@ -541,14 +899,78 @@ export default function LearnApp() {
       // they can read and cannot answer. Their working out is untouched either
       // way, since it lives in Answer and that never unmounted.
       //
-      // The held submission goes with it. The two are the same fact - "this
-      // student has answered and is waiting" - and giving the answer back to
-      // them while still holding a copy means a later reconnect would submit
-      // the old tap over whatever they chose the second time.
-      if (!resultRef.current) {
-        pendingRef.current = null;
-        setPicked(null);
+      // Unless the outbox still holds it: then it is the student's answer,
+      // waiting, and it goes now that the room runs again.
+      const held = boxRef.current.some((i) => i.kind === 'answer' && i.status === 'queued' && i.questionId === shownIdRef.current);
+      if (!resultRef.current && !held) setPicked(null);
+    };
+
+    /* The class question, as it stands: at the start, the pause and the
+       re-vote, after a join or reconnect, and on a resume. The student's own
+       screen is parked behind it. */
+    const onClassQuestion = (p = {}) => {
+      const id = p.id ? String(p.id) : '';
+      if (!id || !p.question) return;
+      window.clearTimeout(klassCheckRef.current);
+      const fromJoin = joinClassRef.current;
+      joinClassRef.current = false;
+      const round = Number(p.round) || 1;
+      setKlassNote('');
+      setVoteNote('');
+      setKlass({ q: p, end: null });
+      setVotes((v) => {
+        const base = v.id === id ? v : { id, rounds: {} };
+        // With a join, `mine` is the server's word on the vote in force,
+        // including that there is none. Otherwise null means "keep your own".
+        if (p.mine) {
+          const was = base.rounds[round];
+          const same = was && JSON.stringify(was.response) === JSON.stringify(p.mine.response ?? null)
+            && (was.confidence ?? null) === (p.mine.confidence ?? null);
+          if (same) return base;
+          return { ...base, rounds: { ...base.rounds, [round]: { response: p.mine.response ?? null, confidence: p.mine.confidence ?? null, message: '' } } };
+        }
+        if (fromJoin && base.rounds[round]) {
+          const rounds = { ...base.rounds };
+          delete rounds[round];
+          return { ...base, rounds };
+        }
+        return base;
+      });
+    };
+
+    // This phone's own vote, back: what it sent, never whether it was right.
+    const onClassVote = (p = {}) => {
+      // The vote in flight is confirmed either way. One the server kept and did
+      // not count keeps its sentence.
+      const f = flightRef.current;
+      if (f?.kind === 'vote') settle(f.id, { status: 'sent', counted: p.counted !== false, note: p.counted === false ? (p.message || '') : '' });
+      if (p.counted === false) {
+        // Kept and not counted: the vote in force is unchanged.
+        setVoteNote(p.message || '');
+        return;
       }
+      setVoteNote('');
+      const id = p.id ? String(p.id) : '';
+      const round = Number(p.round) || 0;
+      setVotes((v) => (v.id === id && round
+        ? { ...v, rounds: { ...v.rounds, [round]: { response: p.mine?.response ?? null, confidence: p.mine?.confidence ?? null, message: p.message || '' } } }
+        : v));
+    };
+
+    /* It ended. With the key revealed, the answer is shown until the student
+       goes back; without, straight back, with the server's sentence on their
+       own screen. A `server:question` that follows replaces the parked one. */
+    const onClassClosed = (p = {}) => {
+      window.clearTimeout(klassCheckRef.current);
+      setVoteNote('');
+      const showing = klassRef.current;
+      const ours = showing && (!p.id || String(showing.q.id) === String(p.id));
+      if (p.revealed && ours) {
+        setKlass({ ...showing, end: p });
+        return;
+      }
+      setKlass(null);
+      if (ours) setKlassNote(p.message || '');
     };
 
     socket.on('connect', onConnect);
@@ -564,8 +986,19 @@ export default function LearnApp() {
     socket.on(EV.resumed, onResumed);
     socket.on(EV.waiting, onWaiting);
     socket.on(EV.teacherLed, onTeacherLed);
+    socket.on(EV.classQuestion, onClassQuestion);
+    socket.on(EV.classVote, onClassVote);
+    socket.on(EV.classClosed, onClassClosed);
+
+    // The wifi is back: try now, not at the end of the current wait.
+    const onOnline = () => tryNow(socket);
+    window.addEventListener('online', onOnline);
 
     return () => {
+      window.removeEventListener('online', onOnline);
+      window.clearTimeout(klassCheckRef.current);
+      window.clearTimeout(readyTimerRef.current);
+      release();
       socket.off('connect', onConnect);
       socket.off('disconnect', onDown);
       socket.off('connect_error', onDown);
@@ -579,9 +1012,16 @@ export default function LearnApp() {
       socket.off(EV.resumed, onResumed);
       socket.off(EV.waiting, onWaiting);
       socket.off(EV.teacherLed, onTeacherLed);
+      socket.off(EV.classQuestion, onClassQuestion);
+      socket.off(EV.classVote, onClassVote);
+      socket.off(EV.classClosed, onClassClosed);
       socket.disconnect();
     };
   }, []);
+
+  // A class question is on screen, and the student's own screen is parked
+  // behind it. Never over the join form, and never once the room is over.
+  const parked = Boolean(klass) && phase !== 'join' && phase !== 'resume' && ending !== 'closed' && ending !== 'teacher-led';
 
   /* Both timers below stand down while the room is paused: a stopped room
      answers `paused` to every ask, so left running they would poll it every
@@ -594,20 +1034,21 @@ export default function LearnApp() {
   // point of the product and the student taps through it themselves.
   // `noTimer` turns it off: the next question comes when the student taps.
   // `extraTime` gives the result four times as long on screen.
+  // Both also stand down behind a class question, and run again after it.
   useEffect(() => {
-    if (paused || !result || result.levelChanged || supports.noTimer) return undefined;
+    if (paused || parked || !result || result.levelChanged || supports.noTimer) return undefined;
     const t = setTimeout(() => requestNext(false), supports.extraTime ? 10000 : 2500);
     return () => clearTimeout(t);
-  }, [paused, result, requestNext, supports.noTimer, supports.extraTime]);
+  }, [paused, parked, result, requestNext, supports.noTimer, supports.extraTime]);
 
   // Safety net: if the accept lands but no item follows, ask for one and do
   // not leave a phone on a skeleton.
   // Not while the room waits: the professor's start sends the question.
   useEffect(() => {
-    if (paused || waiting || phase !== 'question' || item || awaiting) return undefined;
+    if (paused || parked || waiting || phase !== 'question' || item || awaiting) return undefined;
     const t = setTimeout(() => requestNext(false), 1500);
     return () => clearTimeout(t);
-  }, [paused, waiting, phase, item, awaiting, requestNext]);
+  }, [paused, parked, waiting, phase, item, awaiting, requestNext]);
 
   /* ---------------------------------------------------------------- signals */
 
@@ -616,9 +1057,11 @@ export default function LearnApp() {
      after the room has ended: "this happened during question 7" has to mean
      the student was looking at question 7 when it happened. An empty string
      means no question, and the payload then leaves the field out entirely. */
+  // A parked question is not on screen, so a signal during a class question
+  // names none.
   useEffect(() => {
-    signalQidRef.current = phase === 'question' && item?.question?._id ? String(item.question._id) : '';
-  }, [phase, item]);
+    signalQidRef.current = phase === 'question' && !parked && item?.question?._id ? String(item.question._id) : '';
+  }, [phase, item, parked]);
 
   /**
    * Tell the server what the browser just observed about itself.
@@ -864,7 +1307,7 @@ export default function LearnApp() {
     setRefusedResume('');
     setJoining(true);
     const s = socketRef.current;
-    if (s?.connected) s.emit(EV.studentJoin, creds);
+    if (s?.connected) s.emit(EV.studentJoin, joinPayload(creds));
   }, []);
 
   /* Drop this phone's claim to be this student.
@@ -911,8 +1354,15 @@ export default function LearnApp() {
     acceptedRef.current = false;
     resultRef.current = null;
     awaitingRef.current = false;
-    pendingRef.current = null;
     shownIdRef.current = '';
+    // The outbox stays on disk under this student's roll number: nothing
+    // unsent is ever thrown away, and it goes when they join again.
+    release();
+    readyRef.current = false;
+    scopeRef.current = '';
+    boxRef.current = [];
+    setBox([]);
+    setRecent([]);
     setLeaving(false);
     setJoining(false);
     setAwaiting(false);
@@ -929,6 +1379,18 @@ export default function LearnApp() {
     setTrail([]);
     setPaused(false);
     setEnding('');
+    // The taps, the link and any class question were this student's.
+    setTaps([]);
+    setSure(null);
+    setLinked(false);
+    setLinkNote('');
+    setLinkHidden(false);
+    window.clearTimeout(klassCheckRef.current);
+    joinClassRef.current = false;
+    setKlass(null);
+    setVotes({ id: '', rounds: {} });
+    setVoteNote('');
+    setKlassNote('');
     setPhase('join');
     // As far as the server is concerned this socket is still in the room: its
     // presence entry keeps the old roll number lit in the teacher's grid, and
@@ -952,23 +1414,38 @@ export default function LearnApp() {
     // when the student has clearly moved on, not on a timer that might beat
     // them to it.
     setTold(true);
-    // One key per attempt, kept on the held copy so every resend of this
-    // attempt carries the same key and can never count twice.
-    const answer = { questionId: String(item.question._id), response, answerId: newAnswerId() };
+    setKlassNote('');
+    setRecent([]);
+    // One key per attempt, kept with the outbox's copy so every resend of this
+    // attempt carries the same key and can never count twice. The tap goes
+    // with it when there is one, and only then.
+    const answer = { questionId: String(item.question._id), response, answerId: newAnswerId(), ...(sure ? { confidence: sure } : {}) };
     setRetry(null);
-    // Held before it is sent, and held until a result comes back for it. The
-    // tap that lands in the second the wifi drops is the one a student would
-    // never forgive us for losing, and the one they are least likely to notice
-    // going: the phone locks the options either way. Re-sending it later is
-    // safe because the server's double-tap guard answers a submission it has
-    // already scored with the score it recorded.
-    pendingRef.current = answer;
-    const socket = socketRef.current;
-    // Only sent over a live socket. Left to socket.io's own buffer this would
-    // be flushed ahead of the rejoin on the next connect and refused for
-    // arriving before it - the rejoin is what re-serves the question this
-    // answer belongs to, and that is where it gets sent instead.
-    if (socket?.connected) socket.emit(EV.studentAnswer, answer);
+    // On this phone before it is sent, and kept until a reply comes back for
+    // it. The tap that lands in the second the wifi drops is the one a student
+    // would never forgive us for losing. Re-sending it later is safe because
+    // the server answers a submission it already holds with the score it
+    // recorded. Only ever sent over a live socket, after the rejoin.
+    enqueue('answer', answer, { questionId: answer.questionId, label: String(item.question.text ?? '').slice(0, 140) });
+  };
+
+  /* A vote in the class question's open round. A fresh key for every vote: a
+     changed vote is a new vote, and the server keeps the one it replaces.
+     Only over a live socket; the rejoin says which vote is in force. */
+  const vote = (response, confidence) => {
+    const q = klass?.q;
+    if (!q?.voting || klass.end) return;
+    setVoteNote('');
+    const round = Number(q.round) || 1;
+    const picks = Array.isArray(response) ? response : [typeof response === 'boolean' ? (response ? 0 : 1) : response];
+    const letters = picks.map((i) => q.options?.[i]?.key).filter(Boolean).join(', ');
+    enqueue('vote', {
+      classQuestionId: String(q.id),
+      round,
+      response,
+      ...(confidence ? { confidence } : {}),
+      answerId: newAnswerId(),
+    }, { classQuestionId: String(q.id), round, label: `Class question: your vote ${letters}` });
   };
 
   // Only reachable from the `lost` panel, where socket.io has stopped of its
@@ -996,6 +1473,11 @@ export default function LearnApp() {
   const arrival = `${view}:${view === 'question' ? item?.question?._id ?? '' : ''}`;
   useEnter(page, arrival);
 
+  // The class question's own page, with its own arrival: each round and the
+  // close come in as new, while the parked page keeps its place.
+  const classPage = useRef(null);
+  useEnter(classPage, parked ? `${klass.q.id}:${klass.q.round}:${klass.q.state}:${klass.end ? 'end' : ''}` : '');
+
   // The page ends above the dock however tall the dock is: a button alone, or
   // a verdict and the server's sentence over it.
   useEffect(() => {
@@ -1006,6 +1488,42 @@ export default function LearnApp() {
     measure();
     return () => ro.disconnect();
   }, [dock]);
+
+  // The browser's own word on the network, and a first connection that has
+  // been trying for a while (a reload with the server out of reach): either
+  // way this phone is working offline, and says so in one calm line.
+  const [netOnline, setNetOnline] = useState(() => navigator.onLine !== false);
+  useEffect(() => {
+    const on = () => setNetOnline(true);
+    const off = () => setNetOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+    };
+  }, []);
+  const [stalled, setStalled] = useState(false);
+  useEffect(() => {
+    setStalled(false);
+    if (status !== 'connecting') return undefined;
+    const t = setTimeout(() => setStalled(true), 4000);
+    return () => clearTimeout(t);
+  }, [status]);
+
+  // A phone picking itself back up shows its outbox before the server answers:
+  // after a reload with no network, that is all there is to show.
+  useEffect(() => {
+    if (boot.resume) loadBox(boot.resume.code, boot.resume.rollNo);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The phone's service worker (Phase 7): production builds only, and only
+  // from here, so no staff screen ever has one. It keeps /join openable with
+  // no network; it never holds an answer or anything from /api.
+  useEffect(() => {
+    if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.register('/sw.js', { scope: '/join', updateViaCache: 'none' }).catch(() => {});
+  }, []);
 
   if (phase === 'join') {
     return (
@@ -1037,19 +1555,10 @@ export default function LearnApp() {
   /* What the session is waiting on, if anything. Each of these covers the page
      and leaves it mounted: Answer holds a half-built answer in its own state,
      so swapping the question out would hand back a blank one afterwards. */
+  /* Offline is not one of them (Phase 7): the student keeps working, every
+     answer goes into the outbox, and one line under the bar says so. */
   let hold = null;
-  if (phase !== 'done' && status === 'offline') {
-    // A submission that has not been scored is the one thing a student would
-    // be right to worry about here, so it is the one thing this answers.
-    const inFlight = picked !== null && !result;
-    hold = (
-      <Hold title="Reconnecting">
-        {inFlight
-          ? 'Your answer is held on this phone and goes in the moment you are back. You do not have to tap it again. Everything before it is saved.'
-          : 'Every answer you have given is saved. You will come back in on your own. There is nothing to tap.'}
-      </Hold>
-    );
-  } else if (phase !== 'done' && status === 'lost') {
+  if (phase !== 'done' && status === 'lost') {
     // The socket has stopped trying, which with infinite attempts means the
     // server refused it. The one connection state that is a real error, so the
     // one that gets a button.
@@ -1059,8 +1568,8 @@ export default function LearnApp() {
         title="The connection stopped"
         action={<Button variant="primary" size="lg" icon="refresh" onClick={retryConnection}>Try again</Button>}
       >
-        Nothing you have done is lost: every answer is on the server, and so is the question you are on. Try again,
-        and if it will not come back, tell your teacher the room dropped you.
+        Nothing you have done is lost: your answers are on the server or kept on this phone, and the server holds the
+        question you are on. Try again, and if it will not come back, tell your teacher the room dropped you.
       </Hold>
     );
   } else if (waiting && phase === 'question' && !item?.question) {
@@ -1083,6 +1592,19 @@ export default function LearnApp() {
      here gets red, an alert icon or a raised voice: leaving a page is not an
      error and must not be dressed as one. It sits on the two screens where a
      student is working and nowhere else. */
+  const offline = status !== 'online' && status !== 'lost' && (status === 'offline' || stalled || !netOnline);
+
+  /* The outbox, as the student sees it. The question on screen carries its own
+     answer's state under it; everything else on this phone is listed: what is
+     waiting, what was refused, and what went through after waiting. */
+  const shownId = item?.question?._id ? String(item.question._id) : '';
+  const own = shownId ? box.filter((i) => i.kind === 'answer' && i.questionId === shownId).pop() : null;
+  const ownState = own && (own.status === 'queued' ? (flying === own.answerId ? 'sending' : 'queued') : own.status);
+  const others = box.filter((i) => i !== own && (i.status === 'queued' || recent.includes(i.answerId)));
+  const unsent = box.filter((i) => i.status === 'queued' || i.status === 'refused' || recent.includes(i.answerId));
+  const voteKept = klass && box.filter((i) => i.kind === 'vote' && i.status === 'queued'
+    && i.classQuestionId === String(klass.q.id) && i.round === (Number(klass.q.round) || 1)).pop();
+
   const focusLine = (() => {
     if (focusMode === 'left') return null; // said in the notice at the top
     if (focusMode === 'on') {
@@ -1122,11 +1644,11 @@ export default function LearnApp() {
   );
 
   return (
-    <DockSlot.Provider value={dock}>
+    <DockSlot.Provider value={parked ? null : dock}>
       <div
         className="learn"
         ref={root}
-        data-view={view}
+        data-view={parked ? 'class' : view}
         data-dyslexia={supports.dyslexiaFont ? 'true' : undefined}
         data-large={supports.largerText ? 'true' : undefined}
         data-contrast={supports.highContrast ? 'true' : undefined}
@@ -1147,15 +1669,23 @@ export default function LearnApp() {
               <Button variant="ghost" size="sm" onClick={() => setLeaving(true)}>Not me</Button>
             )}
           </div>
+          {offline && <Offline />}
         </header>
 
         {/* Where this student is working, across the top of every question. */}
-        {view === 'question' && <Climb level={level} />}
+        {/* Not over a class question: that one is not at this student's level
+            and moves nothing on the climb. */}
+        {view === 'question' && !parked && <Climb level={level} />}
 
+        {/* Parked behind a class question: still mounted, so a half-built
+            answer, the clock and the draft stay exactly where they were, but
+            hidden, and its dock content goes nowhere (the slot above is null
+            while parked). */}
         <main
           className="ln-page"
           ref={page}
           data-view={view}
+          hidden={parked}
           inert={hold ? '' : undefined}
           /* One listener here and not one per field: paste bubbles, so this
              catches every kind that has a box to type in. It catches nothing on
@@ -1177,11 +1707,12 @@ export default function LearnApp() {
                   <span className="eyebrow">Picking you back up</span>
                   <h1 className="ln-text">You are already in room <span className="mono">{code}</span>.</h1>
                   <p className="t-lead">
-                    You are in as <span className="mono">{rollNo}</span>. Your level, your answers and the question you
-                    were on are held by the server, not by this phone, so closing the tab changed nothing. This is the
-                    session you left, not a new one.
+                    You are in as <span className="mono">{rollNo}</span>. Your level and the question you were on are
+                    held by the server, and any answer not yet sent is kept on this phone, so closing the tab lost
+                    nothing. This is the session you left, not a new one.
                   </p>
                 </div>
+                <Kept items={unsent} flying={flying} />
                 {/* Acts at once, unlike the one in the bar: there is nothing on
                     this screen to lose, and making somebody confirm that they
                     are not the person named above is a gate with nothing behind
@@ -1192,7 +1723,8 @@ export default function LearnApp() {
               </>
             )}
 
-            {view === 'done' && <Finish profile={profile} ending={ending} reason={endReason} led={led} onLeave={leave} />}
+            {view === 'done' && <Finish profile={profile} ending={ending} reason={endReason} led={led} linked={linked} onLeave={leave} />}
+            {view === 'done' && <Kept items={unsent} flying={flying} />}
 
             {view === 'move' && (
               <>
@@ -1204,8 +1736,20 @@ export default function LearnApp() {
 
             {view === 'question' && (
               <>
-                {(!told || focusLeft || (item?.resumed && !result)) && (
+                {(!told || focusLeft || (item?.resumed && !result) || (linkNote && !linkHidden) || klassNote) && (
                   <div className="ln-notes">
+                    {/* A sign-in was sent and could not be linked: the server's
+                        one sentence, which never says which check failed. */}
+                    {linkNote && !linkHidden && (
+                      <Note icon="info" role="status">
+                        {linkNote}
+                        <span className="cluster cluster-4 ln-note-acts">
+                          <button type="button" className="ln-quiet" onClick={() => setLinkHidden(true)}>Hide this</button>
+                        </span>
+                      </Note>
+                    )}
+                    {/* The class question closed without its answer shown. */}
+                    {klassNote && <Note icon="users" role="status">{klassNote}</Note>}
                     {/* Told once, plainly, at the start: information and not a
                         warning, in the block the product uses for everything
                         else it tells a student. It is here at all because
@@ -1230,6 +1774,7 @@ export default function LearnApp() {
                     )}
                   </div>
                 )}
+                <Kept items={others} flying={flying} />
                 <Question
                   item={item}
                   result={result}
@@ -1243,7 +1788,10 @@ export default function LearnApp() {
                   readAloud={supports.readAloud}
                   // A support for more time, or none, is not shown a clock.
                   timer={supports.noTimer || supports.extraTime ? null : item?.timePerQuestion}
-                  paused={paused}
+                  // The clock stops while the question is parked.
+                  paused={paused || parked}
+                  sure={taps.length ? { choices: taps, value: sure, onChange: setSure } : null}
+                  save={own ? { state: ownState, note: own.note } : null}
                   foot={focusLine}
                   onSubmit={submit}
                   onNext={requestNext}
@@ -1252,6 +1800,29 @@ export default function LearnApp() {
             )}
           </Fragment>
         </main>
+
+        {parked && (
+          <main className="ln-page" ref={classPage} data-view="class" inert={hold ? '' : undefined}>
+            {focusLeft}
+            {/* The one screen that may use the dock while parked. */}
+            <DockSlot.Provider value={dock}>
+              <ClassVote
+                // A new round is a new vote: the draft starts again.
+                key={`${klass.q.id}:${klass.q.round}`}
+                q={klass.q}
+                end={klass.end}
+                mine={votes.id === String(klass.q.id) ? votes.rounds[Number(klass.q.round) || 1] ?? null : null}
+                first={votes.id === String(klass.q.id) && Number(klass.q.round) === 2 ? votes.rounds[1] ?? null : null}
+                kept={voteKept ? { response: voteKept.payload.response, confidence: voteKept.payload.confidence ?? null, state: flying === voteKept.answerId ? 'sending' : 'queued', paused: paused && status === 'online' } : null}
+                note={voteNote}
+                choices={Array.isArray(klass.q.confidence) && klass.q.confidence.length ? klass.q.confidence : taps}
+                foot={focusLine}
+                onVote={vote}
+                onBack={() => setKlass(null)}
+              />
+            </DockSlot.Provider>
+          </main>
+        )}
 
         {hold}
 

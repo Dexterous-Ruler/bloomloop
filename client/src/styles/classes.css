@@ -87,7 +87,23 @@
 .cl-st { min-height: 50px; padding: 6px 12px; border-top: 1px solid var(--line); border-radius: 0; transition: background var(--t-1) var(--ease); }
 .cl-st:hover { background: var(--hover); }
 .cl-st-roll { font: 600 13px/1.2 var(--mono); letter-spacing: 0.03em; color: var(--text); overflow-wrap: anywhere; }
+.cl-st-who { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.cl-st-who > .cl-st-name { min-width: 0; max-width: 100%; }
 .cl-st-name { font: 500 13.5px/1.35 var(--font); color: var(--text); }
+
+/* The owner's under-18 mark (decision 8): a quiet outlined tag beside the
+   name, and one note above the roster on what it does. Staff only. */
+.cl-u18 { flex: none; height: 22px; padding: 0 8px; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--text-2); }
+.cl-u18 svg { width: 12px; height: 12px; color: var(--text-3); }
+.cl-u18-say { display: flex; align-items: flex-start; gap: 12px; margin: 0 22px 14px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--raised); }
+.cl-u18-ic { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 8px; background: var(--primary-soft); color: var(--primary); }
+.cl-u18-text { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cl-u18-text p { max-width: 86ch; font: 400 12.5px/1.55 var(--font); color: var(--text-2); }
+.cl-u18-text b { font-weight: 600; color: var(--text); }
+.cl-u18-text .cl-u18-note { padding-left: 10px; border-left: 2px solid var(--line-2); color: var(--text-3); }
+.cl-preview-who { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.ri-row-body > .cl-u18 { align-self: center; }
+@media (max-width: 520px) { .cl-u18-say { margin: 0 12px 12px; } }
 .cl-st-when { font: 400 12px/1.3 var(--font); color: var(--text-3); white-space: nowrap; }
 .cl-st-acts { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
 .cl-st[aria-busy='true'] > :not(.cl-st-acts) { opacity: 0.55; }
@@ -219,6 +235,11 @@
 .cl-room-fig > b { font: 600 14px/1.15 var(--font); letter-spacing: -0.01em; color: var(--text); white-space: nowrap; }
 .cl-room-fig > small { font: 400 11.5px/1.35 var(--font); color: var(--text-3); }
 .cl-room-go { color: var(--text-3); }
+/* Where a deleted room went (decision 9): one quiet line under the list. */
+.cl-rooms-foot { display: flex; align-items: flex-start; gap: 8px; margin: 0 22px; padding: 12px 0 18px; border-top: 1px solid var(--line); font: 400 12.5px/1.5 var(--font); color: var(--text-3); }
+.cl-rooms-foot svg { flex: none; margin-top: 2px; }
+.cl-rooms-foot a { color: var(--primary); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+@container (max-width: 520px) { .cl-rooms-foot { margin: 0 16px; } }
 @container (max-width: 760px) {
   .cl-rooms-top { display: none; }
   .cl-room { grid-template-columns: repeat(3, minmax(0, 1fr)) 30px; grid-template-areas: 'who who who go' 'a b c c'; gap: 10px 14px; align-items: start; }
@@ -234,6 +255,60 @@
 @container (max-width: 460px) {
   .cl-room { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 30px; grid-template-areas: 'who who go' 'a b b' 'c c c'; }
 }
+
+/* The two charts over the rooms (A2): the trend wider, the attendance beside it. */
+.cl-charts { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 1080px) { .cl-charts { grid-template-columns: minmax(0, 1fr); } }
+.cl-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font: 500 12px/1.3 var(--font); color: var(--text-2); }
+.cl-legend > span { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.cl-key { display: inline-block; width: 18px; height: 0; border-top: 2.5px solid var(--primary); }
+.cl-key.is-part { border-top: 2px dashed var(--text-2); }
+.cl-chart-foot { padding: 0 22px 18px; }
+
+/* The trend: a plot box with the lines in SVG (stretched, strokes kept thin)
+   and the points, values and dates as HTML, so text stays its own size. */
+.cl-trend { display: grid; grid-template-columns: 34px minmax(0, 1fr); grid-template-rows: 200px auto; padding: 8px 22px 16px 12px; }
+.cl-trend-y { position: relative; }
+.cl-trend-y span { position: absolute; right: 8px; translate: 0 -50%; font: 500 10.5px/1 var(--mono); color: var(--text-3); }
+.cl-trend-plot { position: relative; min-width: 0; }
+.cl-trend-plot svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.cl-trend-grid { stroke: var(--line); stroke-width: 1; }
+.cl-trend-line { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.cl-trend-line.is-acc { stroke: var(--primary); stroke-width: 2.2; }
+.cl-trend-line.is-part { stroke: var(--text-2); stroke-width: 1.6; stroke-dasharray: 5 4; }
+.cl-pt { position: absolute; width: 9px; height: 9px; translate: -50% -50%; background: var(--surface); }
+.cl-pt.is-acc { border-radius: 50%; border: 2px solid var(--primary); }
+.cl-pt.is-part { border-radius: 2px; border: 1.75px solid var(--text-2); width: 8px; height: 8px; }
+.cl-pt-v { position: absolute; translate: -50% 0; font: 600 11px/1 var(--mono); white-space: nowrap; pointer-events: none; }
+.cl-pt-v.is-acc { color: var(--primary); }
+.cl-pt-v.is-part { color: var(--text-2); font-weight: 500; }
+.cl-pt-v[data-at='above'] { margin-top: -20px; }
+.cl-pt-v[data-at='below'] { margin-top: 9px; }
+.cl-trend-x { grid-column: 2; position: relative; height: 34px; margin-top: 6px; }
+.cl-trend-x span { position: absolute; top: 0; translate: -50% 0; display: flex; flex-direction: column; align-items: center; gap: 3px; white-space: nowrap; }
+.cl-trend-x b { font: 600 11px/1 var(--font); color: var(--text-2); }
+.cl-trend-x small { font: 500 10px/1 var(--mono); letter-spacing: 0.03em; color: var(--text-3); }
+
+/* The attendance: one stacked bar a room, its parts in words beneath. */
+.cl-pres-legend { padding: 0 22px 10px; }
+.cl-seg-key { display: inline-block; width: 11px; height: 11px; border-radius: 3px; }
+.cl-pres { display: flex; flex-direction: column; padding: 0 22px 16px; }
+.cl-pres-row { display: grid; grid-template-columns: 74px minmax(0, 1fr); align-items: center; gap: 4px 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.cl-pres-who { display: flex; flex-direction: column; gap: 3px; grid-row: span 2; }
+.cl-pres-who b { font: 600 12.5px/1 var(--mono); letter-spacing: 0.05em; color: var(--text); }
+.cl-pres-who small { font: 400 11.5px/1.2 var(--font); color: var(--text-3); }
+.cl-pres-bar { display: block; height: 18px; }
+.cl-pres-fill { display: flex; height: 100%; gap: 2px; }
+.cl-pres-fill > i { display: grid; place-items: center; min-width: 0; overflow: hidden; border-radius: 4px; font: 600 10.5px/1 var(--mono); font-style: normal; }
+.cl-pres-words { font: 400 12px/1.4 var(--font); color: var(--text-2); }
+/* The parts, each its own fill and edge so none depends on colour alone; the
+   count inside clips where a part is too narrow, and the words say it anyway. */
+:is(.cl-pres-fill > i, .cl-seg-key)[data-seg='answered'] { background: var(--primary); color: var(--on-primary); }
+:is(.cl-pres-fill > i, .cl-seg-key):is([data-seg='silent'], [data-seg='present']) { background: var(--primary-soft); box-shadow: inset 0 0 0 1.5px var(--primary); color: var(--text); }
+/* Present in a Teacher-led room: the same fill, a dashed edge, since nobody was asked on a phone. */
+:is(.cl-pres-fill > i, .cl-seg-key)[data-seg='present'] { box-shadow: none; outline: 1.5px dashed var(--primary); outline-offset: -1.5px; }
+:is(.cl-pres-fill > i, .cl-seg-key)[data-seg='absent'] { background: var(--sunk); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text-2); }
+:is(.cl-pres-fill > i, .cl-seg-key)[data-seg='unmarked'] { background: repeating-linear-gradient(135deg, var(--line-2) 0 1.5px, transparent 1.5px 6px); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); }
 
 .cl-pair-cards { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
 @media (max-width: 1080px) { .cl-pair-cards { grid-template-columns: minmax(0, 1fr); } }
@@ -265,6 +340,8 @@
 .cl-bar-track { grid-column: 1 / -1; height: 6px; border-radius: var(--r-full); background: var(--sunk); overflow: hidden; }
 .cl-bar-track > i { display: block; height: 100%; border-radius: inherit; background: var(--primary); transform-origin: left; animation: grow-x 0.9s var(--ease) both; }
 .cl-bar[data-empty='true'] .cl-bar-name { color: var(--text-3); }
+/* The server's count sentence under a bar (Phase 5). */
+.cl-bar-basis { grid-column: 1 / -1; margin-top: -2px; font: 400 11.5px/1.35 var(--font); color: var(--text-3); }
 .cl-bar[data-empty='true'] .cl-bar-fig b { color: var(--text-4); }
 
 /* The hardest questions. */
@@ -277,10 +354,15 @@
 .cl-q-fig { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: right; }
 .cl-q-fig b { font: 600 18px/1 var(--font); letter-spacing: -0.02em; color: var(--text); }
 .cl-q-fig small { font: 400 11.5px/1.35 var(--font); color: var(--text-3); }
+.cl-q-fig small.cl-q-basis { max-width: 160px; }
+/* An uncertain level, and the server's sentences under a question (Phase 5). */
+.cl-q-unsure { height: 22px; color: var(--text-2); }
+.cl-q-note { font: 400 12px/1.5 var(--font); color: var(--text-3); max-width: 72ch; }
 .cl-hard-foot { padding: 4px 22px 20px; }
 @container (max-width: 520px) {
   .cl-q { grid-template-columns: minmax(0, 1fr); gap: 8px; }
-  .cl-q-fig { flex-direction: row; align-items: baseline; gap: 8px; text-align: left; }
+  .cl-q-fig { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; text-align: left; }
+  .cl-q-fig small.cl-q-basis { max-width: none; }
 }
 
 .cl-foot-privacy { display: flex; align-items: flex-start; gap: 8px; font: 400 12.5px/1.5 var(--font); color: var(--text-3); max-width: 80ch; }

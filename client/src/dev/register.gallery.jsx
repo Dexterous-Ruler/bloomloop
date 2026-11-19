@@ -31,30 +31,33 @@ const ROOMS = [
   { roomId: hex(4), code: 'JDMEE4', title: 'Transmission Control Protocol', day: '2026-11-17', startedAt: '2026-11-17T04:30:00.000Z', status: 'open', weight: 1 },
 ];
 
-const TYPES = ['digital', 'aiProvisional', 'humanReviewed'];
+const TYPES = ['digital', 'aiProvisional', 'humanReviewed', 'revote'];
 const SOURCES = ['aiGenerated', 'professorWritten', 'offlineTemplate'];
+// The formula's evidence. A re-vote after discussion is never in it: no formula counts one.
 const COUNTS = { digital: true, aiProvisional: false, humanReviewed: true };
 const mk = (o = 0, p = 0) => ({ answers: p, obtained: o, possible: p });
 const add = (a, b) => ({ answers: a.answers + b.answers, obtained: Math.round((a.obtained + b.obtained) * 1000) / 1000, possible: a.possible + b.possible });
 
 /**
  * A cell from its parts: { att, joined, d: [obtained, possible], w: provisional,
- * r: reviewed, polls, src }. Who wrote the questions, as the server splits it:
- * the digital answers come from `src` (AI-generated unless the room served the
- * offline template), the written ones from the professor; a provisional mark is
- * the professor-written source's `notCounted`.
+ * r: reviewed, v: re-votes after discussion, polls, src }. Who wrote the
+ * questions, as the server splits it: the digital answers and re-votes come
+ * from `src` (AI-generated unless the room served the offline template), the
+ * written ones from the professor; a provisional mark is the professor-written
+ * source's `notCounted`, a re-vote its own source's.
  */
-function cell(code, { att = 'unmarked', joined = false, d, w, r, polls = 0, src = 'aiGenerated' } = {}) {
+function cell(code, { att = 'unmarked', joined = false, d, w, r, v, polls = 0, src = 'aiGenerated' } = {}) {
   const marks = {
     digital: { ...mk(...(d ?? [])), counted: true },
     aiProvisional: { ...mk(...(w ?? [])), counted: false },
     humanReviewed: { ...mk(...(r ?? [])), counted: true },
+    revote: { ...mk(...(v ?? [])), counted: false },
     ungraded: { answers: polls, counted: false },
   };
   marks.questionSources = Object.fromEntries(SOURCES.map((id) => [id, { ...mk(), notCounted: 0 }]));
-  marks.questionSources[src] = { ...mk(...(d ?? [])), notCounted: 0 };
+  marks.questionSources[src] = { ...mk(...(d ?? [])), notCounted: marks.revote.answers };
   marks.questionSources.professorWritten = { ...add(marks.questionSources.professorWritten, mk(...(r ?? []))), notCounted: marks.aiProvisional.answers };
-  return { code, attendance: att, joined, answered: Boolean(d || w || r || polls), marks, counted: countedOf(marks) };
+  return { code, attendance: att, joined, answered: Boolean(d || w || r || v || polls), marks, counted: countedOf(marks) };
 }
 function countedOf(marks) {
   let c = mk();
@@ -63,7 +66,7 @@ function countedOf(marks) {
 }
 function totalOf(cells, roster) {
   const marks = {};
-  for (const t of TYPES) marks[t] = { ...cells.reduce((a, x) => add(a, x.marks[t]), mk()), counted: COUNTS[t] };
+  for (const t of TYPES) marks[t] = { ...cells.reduce((a, x) => add(a, x.marks[t]), mk()), counted: Boolean(COUNTS[t]) };
   marks.ungraded = { answers: cells.reduce((n, x) => n + x.marks.ungraded.answers, 0), counted: false };
   marks.questionSources = Object.fromEntries(SOURCES.map((id) => [id, {
     ...cells.reduce((a, x) => add(a, x.marks.questionSources[id]), mk()),
@@ -93,10 +96,11 @@ const NOTES = {
   '21CS31': '21CS31 is not on the class roster, so its answers in JDMEE4 are listed apart and counted in no class figure. The attendance marks in K7W4BM and M4RE79 were made under it for Diya Kapoor (now 21CS11); answers under it are theirs only in a room whose mark carries it.',
 };
 const STUDENTS = [
-  student(1, '21CS01', 'Aarav Shah', [P([7, 10]), P([5, 8]), TL('present'), P([6, 9])]),
-  student(2, '21CS02', 'Aditi Rao', [P([9, 10]), P([6, 8], { w: [1, 2] }), TL('present'), P([7, 9], { r: [0.5, 1] })]),
-  student(3, '21CS03', 'Ananya Iyer', [P([4, 10]), { att: 'absent' }, TL('absent'), P([5, 9])]),
-  student(4, '21CS04', 'Arjun Patil', [{ att: 'late', joined: true, d: [6, 9] }, P([3, 8]), TL('late'), P([4, 9])]),
+  // JDMEE4 put two questions to the whole class: each first vote is in `d`, each re-vote after discussion in `v`.
+  student(1, '21CS01', 'Aarav Shah', [P([7, 10]), P([5, 8]), TL('present'), P([6, 9], { v: [2, 2] })]),
+  student(2, '21CS02', 'Aditi Rao', [P([9, 10]), P([6, 8], { w: [1, 2] }), TL('present'), P([7, 9], { r: [0.5, 1], v: [1, 2] })]),
+  student(3, '21CS03', 'Ananya Iyer', [P([4, 10]), { att: 'absent' }, TL('absent'), P([5, 9], { v: [2, 2] })]),
+  student(4, '21CS04', 'Arjun Patil', [{ att: 'late', joined: true, d: [6, 9] }, P([3, 8]), TL('late'), P([4, 9], { v: [1, 2] })]),
   student(5, '21CS05', 'Ishaan Kulkarni', [P([8, 10]), P([7, 8]), TL('present'), { att: 'present', joined: true }]),
   student(6, '21CS06', 'Kavya Nair', [P([5, 10], { polls: 2 }), P([4, 8], { polls: 1 }), TL('present'), P([6, 9], { w: [2, 3] })]),
   student(7, '21CS07', 'मीरा जोशी', [{ att: 'absent' }, { att: 'absent' }, TL('absent'), { att: 'absent' }]),
@@ -111,7 +115,7 @@ const STUDENTS = [
   student(0, 'VISIT9', 'Visitor', [{}, { joined: true, d: [4, 8] }, {}, {}], 'not-on-roster', { note: NOTES.VISIT9 }),
 ];
 
-const METHODOLOGY = 'No formula has been saved for this class, so this report uses "Example: 60% of marks; levels at 50 / 60 / 70% of students", which ships with BloomLoop as an example to start from, not as an institutional standard. Each cell is the marks a student obtained of the marks possible in one room: every question answered is one mark, scored from 0 to 1 as it was marked (a professor\'s review replaces the machine\'s mark), counting final attempts only (an attempt followed by a retry is left out). Counted: digital answers marked automatically and written answers a professor has reviewed. Written answers given only a provisional machine mark (a keyword match against the rubric, not AI) and not yet reviewed are shown apart and not counted. Polls are counted only as a number. A student who answered nothing in a room has no marks there, not a zero: the attendance mark says whether they were present. A room\'s answers are its students\' by that room\'s attendance marks: an answer given under the roll number a student\'s mark there was made under is theirs, so correcting a roll number on the roster keeps their earlier answers theirs; any other answer is matched to the roster by its roll number as it stands now. Only rooms opened for this class are counted: a room opened without choosing this class is not in this report, whoever answered in it. Course outcomes, thresholds and room weights do not apply here; the attainment report applies them. Teacher records are not marks and are not in this register.';
+const METHODOLOGY = 'No formula has been saved for this class, so this report uses "Example: 60% of marks; levels at 50 / 60 / 70% of students", which ships with BloomLoop as an example to start from, not as an institutional standard. Each cell is the marks a student obtained of the marks possible in one room: every question answered is one mark, scored from 0 to 1 as it was marked (a professor\'s review replaces the machine\'s mark), counting final attempts only (an attempt followed by a retry is left out). Counted: digital answers marked automatically and written answers a professor has reviewed. Written answers given only a provisional machine mark (a keyword match against the rubric, not AI) and not yet reviewed are shown apart and not counted. Polls are counted only as a number. A question the professor put to the whole class counts its first vote as a digital answer; its re-vote after the class discussed it is shown under its own label and never counted. How sure a student said they were never changes a mark. A student who answered nothing in a room has no marks there, not a zero: the attendance mark says whether they were present. A room\'s answers are its students\' by that room\'s attendance marks: an answer given under the roll number a student\'s mark there was made under is theirs, so correcting a roll number on the roster keeps their earlier answers theirs; any other answer is matched to the roster by its roll number as it stands now. Only rooms opened for this class are counted: a room opened without choosing this class is not in this report, whoever answered in it. Course outcomes, thresholds and room weights do not apply here; the attainment report applies them. Teacher records are not marks and are not in this register.';
 
 const REGISTER = {
   class: CLASS,
@@ -132,6 +136,7 @@ const REGISTER = {
     { id: 'digital', label: 'Digital answers', description: 'Objective answers given on a phone and marked by the server from the stored answer key.' },
     { id: 'aiProvisional', label: 'Provisional machine marks', description: 'Written answers marked by the keyword marker, which matches the rubric\'s words in the answer: a provisional machine mark, not AI and not a professor\'s judgement, until a professor reviews it.' },
     { id: 'humanReviewed', label: 'Reviewed by a professor', description: 'Written answers whose mark a professor confirmed or changed in the review queue.' },
+    { id: 'revote', label: 'Re-votes after discussion', description: 'The second vote on a question the professor put to the whole class, given after the class discussed it. Shown, and never counted towards a mark by any formula: it follows the discussion, so it is not the student\'s own work. The first vote on such a question is a digital answer.' },
   ],
   answers: { rows: 318, setAside: 4, chosen: 314 },
   students: STUDENTS,
@@ -141,8 +146,8 @@ const REGISTER = {
   ],
   questionSources: [
     { id: 'aiGenerated', label: 'AI-generated questions', description: 'Questions the language model wrote from the professor\'s own material (question_source "llm"). A professor approved each before any room served it. This says where the question came from, not how the answer was marked.' },
-    { id: 'professorWritten', label: 'Professor-written questions', description: 'Questions a professor wrote in the question bank (question_source "teacher").' },
-    { id: 'offlineTemplate', label: 'Offline-template or professor-written questions', description: 'Questions no model wrote (question_source "fallback"): the offline template\'s, and a professor\'s own while they are stored the same way. An answer row cannot tell these two apart.' },
+    { id: 'professorWritten', label: 'Professor-written questions', description: 'Questions a professor wrote in the question bank (question_source "teacher", since 19 Nov 2026).' },
+    { id: 'offlineTemplate', label: 'Offline-template questions (and professor-written ones from before 19 Nov 2026)', description: 'Questions no model wrote (question_source "fallback"): the offline template\'s, and a professor\'s own written before 19 Nov 2026, which were stored the same way. An answer row cannot tell those two apart, so they were not relabelled.' },
   ],
   definitions: {
     cell: 'counted: the marks the formula counts, obtained of possible, and their share; marks: every evidence type, counted or not, and polls as a number. One question is one mark. answered: whether the student gave any answer in that room; attendance: present, late, absent or unmarked for a roster student, null off the roster; joined: a phone joined with that roll number.',
@@ -150,7 +155,7 @@ const REGISTER = {
     order: 'Students in roll-number order: the roster, then removed students with evidence, then roll numbers not on the roster.',
     rooms: 'The rooms opened for this class that the caller may read, opened from `from` to `to` (India\'s days) and among `rooms` when given; oldest first. Only rooms opened for this class are counted: a room opened without choosing it is not, whoever answered in it. Deleted rooms are not counted.',
     rolls: 'A room\'s answers are filed under the roster student whose attendance mark in that room was made under the roll number they were given under (0021), so a corrected roll number keeps them; otherwise under the roll number as the roster holds it now. rollNotes (and `note` on each row off the roster) says, for every roll number not on the roster, that its answers are apart and uncounted, and which roster student any room\'s mark was made under it for.',
-    questionSources: 'marks.questionSources splits the same counted marks by who wrote the question: aiGenerated (the language model, from the professor\'s material, approved before use; question_source "llm"), professorWritten ("teacher") and offlineTemplate ("fallback": the offline template, and a professor\'s own questions while they are stored the same way). The three add up to the counted types; notCounted is each one\'s answers of a type the formula does not count. It moves no mark.',
+    questionSources: 'marks.questionSources splits the same counted marks by who wrote the question: aiGenerated (the language model, from the professor\'s material, approved before use; question_source "llm"), professorWritten ("teacher", a question a professor wrote in the bank since 19 Nov 2026) and offlineTemplate ("fallback": the offline template, and a professor\'s own questions written before then, which were stored the same way and cannot be told apart with certainty). The three add up to the counted types; notCounted is each one\'s answers of a type the formula does not count. It moves no mark.',
   },
   privacy: 'Attainment, marks and every report here are for staff only: never sent to a student\'s phone or the projector, or to any route a student can reach. Students are listed in roll-number order, never ranked by score.',
 };
@@ -273,12 +278,12 @@ function LiveImport({ start }) {
 export default [
   {
     id: 'register', title: 'Marks register', role: 'professor',
-    note: 'Students by four rooms in roll order: present, late, absent and unmarked, no answers, provisional marks not counted, polls, a corrected roll number kept in one row, a removed student and two roll numbers off the roster.',
+    note: 'Students by four rooms in roll order: present, late, absent and unmarked, no answers, provisional marks not counted, re-votes after discussion never counted, polls, a corrected roll number kept in one row, a removed student and two roll numbers off the roster.',
     render: () => <LiveRegister data={REGISTER} />,
   },
   {
     id: 'register-sources', title: 'Marks register: by who wrote the question', role: 'professor',
-    note: 'The same marks, each split by who wrote the question: AI-generated, professor-written or the offline template, with provisional marks as not counted.',
+    note: 'The same marks, each split by who wrote the question: AI-generated, professor-written, or the offline template (with professor-written ones from before 19 Nov 2026), with provisional marks and re-votes as not counted.',
     render: () => <LiveRegister data={REGISTER} splitBy="source" />,
   },
   {

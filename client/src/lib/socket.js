@@ -57,6 +57,19 @@ export function connect() {
  */
 export const stillTrying = (socket) => Boolean(socket?.active);
 
+/**
+ * Try now, not at the end of the current backoff wait. For the browser's
+ * 'online' event: the wifi is back, and a phone that waits out a ten-second
+ * delay it chose while the network was dead looks broken to the student.
+ * A socket that is connected, or already opening, is left alone; otherwise the
+ * pending wait is dropped and one attempt starts at once. If it fails, the
+ * normal jittered backoff takes over from its first step.
+ */
+export function tryNow(socket) {
+  if (!socket || socket.connected || socket.io?._readyState === 'opening') return;
+  socket.disconnect().connect();
+}
+
 export const EV = {
   studentJoin: 'student:join',
   studentAnswer: 'student:answer',
@@ -88,4 +101,12 @@ export const EV = {
   // `teacherLed` in place of `accepted`, and sends nothing after it.
   waiting: 'server:waiting',
   teacherLed: 'session:teacher-led',
+  // Phase 5. A class question: the phone parks its own question, votes in
+  // the round that is open, and goes back when it closes. `classVote` echoes
+  // the phone's own vote and never says right or wrong.
+  studentVote: 'student:vote',
+  classQuestion: 'class:question',
+  classVote: 'class:vote',
+  classClosed: 'class:closed',
+  teacherClassQuestion: 'teacher:class-question',
 };

@@ -34,6 +34,9 @@ export default function useRoomFeed(code) {
   const [rows, setRows] = useState([]);
   const [room, setRoom] = useState(NO_ROOM);
   const [insights, setInsights] = useState(null);
+  // Phase 5: the latest `teacher:class-question` body (counts only), pushed
+  // after every change of state and at most once a second after votes.
+  const [classQuestion, setClassQuestion] = useState(null);
   const [wire, setWire] = useState({ live: false, everLive: false, downSince: null, rejoined: false, stopped: false });
   const [wireError, setWireError] = useState('');
   const [error, setError] = useState('');
@@ -73,6 +76,7 @@ export default function useRoomFeed(code) {
       if (!p || (p.room?.code && p.room.code !== code)) return;
       setInsights(p);
     };
+    const onClassQuestion = (p) => { if (p?.id) setClassQuestion(p); };
     const onRefused = (p) => setError(p?.reason || 'The server would not hand over this room.');
     const onStatus = (p) => {
       if (!p || (p.code && p.code !== code)) return;
@@ -86,6 +90,7 @@ export default function useRoomFeed(code) {
     socket.on(EV.rejected, onRefused);
     socket.on('teacher:status', onStatus);
     socket.on('teacher:insights', onInsights);
+    socket.on(EV.teacherClassQuestion, onClassQuestion);
     return () => {
       socket.off('connect', onConnect);
       socket.off('disconnect', drop);
@@ -94,6 +99,7 @@ export default function useRoomFeed(code) {
       socket.off(EV.rejected, onRefused);
       socket.off('teacher:status', onStatus);
       socket.off('teacher:insights', onInsights);
+      socket.off(EV.teacherClassQuestion, onClassQuestion);
       socket.close();
     };
   }, [code]);
@@ -137,5 +143,5 @@ export default function useRoomFeed(code) {
     socketRef.current?.connect();
   };
 
-  return { rows, room, insights, setInsights, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus };
+  return { rows, room, insights, setInsights, classQuestion, setClassQuestion, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus };
 }

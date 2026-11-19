@@ -22,6 +22,11 @@
  * Nothing here edits a result. The only things a student can do are ask the
  * server again, join a room, and link or unlink their own Google account.
  *
+ * Since decision 7 (19 Nov 2026) only rooms joined while signed in on the
+ * phone count here, and the server says so in `note`, shown with the brief.
+ * No band is drawn: a band is a staff label, and `banded` is not sent to a
+ * student.
+ *
  * Me fetches. MeView draws, and is what the dev gallery renders with sample data.
  */
 
@@ -41,6 +46,16 @@ import {
 } from './insightParts.jsx';
 
 /* ------------------------------------------------------------------ pieces */
+
+/*
+ * How a level moves, as the engine moves it (decision 2, 19 Nov 2026): up at
+ * 70% or more of the last five answers at the level, once there are at least
+ * three; back down when most are wrong. Mastering a level is another bar, the
+ * room's goal, 80% unless the professor set it higher.
+ */
+const MOVES = 'Your next questions move up a level when 70% or more of your last five answers at it are right, '
+  + 'once you have at least three there. When most are wrong, they step back down.';
+const MASTERY = 'Mastering a level is a separate bar: your room’s goal, 80% unless your professor set it higher.';
 
 const JoinLink = () => (
   <Link className="btn btn-primary" to="/join"><Icon name="room" />Join a room</Link>
@@ -223,11 +238,14 @@ function Path({ sessions, open, onOpen }) {
               onClick={() => onOpen(on ? null : s.code)}
             >
               <span className="in-stop-date">{day(s.startedAt) || 'No date'}</span>
-              <span className="in-stop-dot" aria-hidden="true">{levelN(s.workingLevel) || ''}</span>
+              <span className="in-stop-dot" aria-hidden="true">{levelN(s.workingLevel) || '—'}</span>
               <span className="in-stop-title clip" title={s.title || undefined}>{s.title || 'Untitled session'}</span>
               <span className="in-stop-meta">
-                {s.workingLevel ? <Level level={s.workingLevel} /> : <span className="t-meta">No level</span>}
-                {s.banded && <span className="sr-only">, support band</span>}
+                {/* Null when answers that were not this student's helped set the
+                    room's level (the decision 7 fix): a dash, never a level. */}
+                {s.workingLevel
+                  ? <Level level={s.workingLevel} />
+                  : <span className="t-meta">—<span className="sr-only"> no level shown for this room</span></span>}
               </span>
               <span className="in-stop-fig">{s.correct ?? 0}/{s.answered ?? 0} right</span>
             </button>
@@ -341,13 +359,20 @@ function Results({ dash, google, evidence }) {
   const top = highest(bloom);
   const accSeries = oldest.map((s) => s.accuracy).filter((v) => v != null);
 
+  // No band, on purpose: labels are staff-only (the owner's decision (a), 19
+  // Nov 2026), and the server no longer sends `banded` to a student.
+  // `workingLevel` is null when answers that were not this student's helped
+  // set the latest room's level (the decision 7 fix): no level is named then,
+  // and the server's note under the ladder says why.
   const sentence = !started
-    ? 'You have not sat a session yet. Your first room sets where you start.'
-    : dash.banded
-      ? `You are working at ${LABEL[level] ?? level}, in the support band.`
-      : `You are working at ${LABEL[level] ?? level}.`;
+    ? 'No session on your record yet. Your first room sets where you start.'
+    : level
+      ? `You are working at ${LABEL[level] ?? level}.`
+      : 'No level to show for your latest room.';
   const ended = last
-    ? `Your last session${last.title ? `, ${last.title},` : ''} ended there with ${last.correct ?? 0} of ${plural(last.answered ?? 0, 'answer')} right.`
+    ? level
+      ? `Your last session${last.title ? `, ${last.title},` : ''} ended there with ${last.correct ?? 0} of ${plural(last.answered ?? 0, 'answer')} right.`
+      : `Your last session${last.title ? `, ${last.title}` : ''}: ${last.correct ?? 0} of ${plural(last.answered ?? 0, 'answer')} right.`
     : '';
 
   return (
@@ -362,23 +387,16 @@ function Results({ dash, google, evidence }) {
           {started ? (
             <div className="brief">
               <b>Last</b><span>{ended}</span>
-              {dash.banded && (
-                <>
-                  <b>Band</b>
-                  <span>
-                    Under 40% in that session, so questions stay at Remember and Understand until it
-                    lifts. A shorter ladder for now, not a lower mark, and only your professor sees it.
-                  </span>
-                </>
-              )}
             </div>
           ) : (
             <p className="in-brief-sub">
-              Every question is tagged to one of six levels. A few right and the next ones step up, a
-              few wrong and they step back down. It runs per student: you are never compared with the class.
+              Every question is tagged to one of six levels. {MOVES} It runs per student: you are never
+              compared with the class.
             </p>
           )}
           <BigLadder level={level} />
+          {/* Decision 7: why a room they sat may be missing. The server's sentence. */}
+          {dash.note && <p className="in-brief-note"><Icon name="login" size={14} />{dash.note}</p>}
         </div>
 
         {started ? (
@@ -409,7 +427,7 @@ function Results({ dash, google, evidence }) {
         ) : (
           <div className="in-first">
             <div className="brief">
-              <b>Join</b><span>Type the code on the board, with your roll number <span className="mono">{dash.rollNo}</span>.</span>
+              <b>Join</b><span>Sign in on your phone, then type the code on the board with your roll number <span className="mono">{dash.rollNo}</span>.</span>
               <b>Answer</b><span>Each question is picked for the level you have reached.</span>
               <b>Here</b><span>Your path and your six levels fill in from what you answer.</span>
             </div>
@@ -440,9 +458,9 @@ function Results({ dash, google, evidence }) {
             <div className="in-path-empty-text">
               <h3>No sessions yet</h3>
               <p>
-                Your professor puts a six-character code on the board at the start of class. Enter it
-                with your roll number <span className="mono">{dash.rollNo}</span>, and what you answer
-                shows up here.
+                Your professor puts a six-character code on the board at the start of class. Sign in on
+                your phone, enter it with your roll number <span className="mono">{dash.rollNo}</span>,
+                and what you answer shows up here.
               </p>
             </div>
           </div>
@@ -462,6 +480,7 @@ function Results({ dash, google, evidence }) {
               ? <>The figure beside each bar is right answers of those asked. Faded means fewer than three: too few to judge.{earlier ? <> The <span className="in-tick-key" aria-hidden="true" /> mark is where it stood before your latest session.</> : ''}</>
               : 'One bar per level. Each fills in as you answer questions at that level.'}
           </p>
+          <p className="hint">{started ? `${MOVES} ${MASTERY}` : MASTERY}</p>
         </section>
         {google}
       </div>
@@ -568,6 +587,7 @@ export function MeView({
             <p className="in-brief-line">No roll number on your account yet.</p>
             <p className="in-brief-sub">{dash.reason}</p>
             <BigLadder level={null} />
+            {dash.note && <p className="in-brief-note"><Icon name="login" size={14} />{dash.note}</p>}
           </div>
           <div className="in-first">
             <div className="brief">

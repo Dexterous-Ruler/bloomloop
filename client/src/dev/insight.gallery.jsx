@@ -18,9 +18,8 @@
 
 import { Fragment, useState } from 'react';
 
-import { AnalyticsView } from '../account/Analytics.jsx';
 import { MeView } from '../account/Me.jsx';
-import { arrange } from '../account/insightData.js';
+import { AnalyticsView, arrangeFor } from '../account/Analytics.jsx';
 import { LEVELS } from '../lib/bloom.js';
 
 /* ------------------------------------------------------------- the answers */
@@ -107,6 +106,23 @@ const report = (sat) => LEVELS.map((level) => {
   const seen = sum(sat.map((s) => s.levels[level].seen));
   const correct = sum(sat.map((s) => s.levels[level].correct));
   return { level, seen, correct, accuracy: seen ? correct / seen : null };
+});
+
+/*
+ * `levelBands` beside `bloom` on a staff read (Phase 5 follow-ups; levelBandsOf in
+ * services/classAnalytics.js). Never on a student's own read.
+ */
+const levelBandsOf = (rep) => [
+  ['lower', 'Remember and Understand', ['remember', 'understand']],
+  ['middle', 'Apply and Analyse', ['apply', 'analyse']],
+  ['higher', 'Evaluate and Create', ['evaluate', 'create']],
+].map(([id, label, levels]) => {
+  const answers = sum(rep.filter((r) => levels.includes(r.level)).map((r) => r.seen));
+  const correct = sum(rep.filter((r) => levels.includes(r.level)).map((r) => r.correct));
+  return {
+    id, label, levels, answers, correct, accuracy: answers ? correct / answers : null,
+    sentence: answers ? `Based on ${answers.toLocaleString()} graded answer${answers === 1 ? '' : 's'}.` : 'No graded answers yet.',
+  };
 });
 
 function extremes(rep) {
@@ -205,6 +221,7 @@ function studentRecord(subject, sat) {
       accuracy: mean(timeline.filter((s) => s.accuracy !== null).map((s) => s.accuracy)),
     },
     bloom: rep,
+    levelBands: levelBandsOf(rep),
     ...extremes(rep),
     topics: topicsFrom(topicLevels),
     topicLevels,
@@ -227,7 +244,8 @@ function professorRecord(subject, rooms, klass) {
         accuracy: answered ? correct / answered : null,
       };
     })
-    .sort((a, b) => (b.accuracy ?? -1) - (a.accuracy ?? -1));
+    // Roll order, as the server lists them since the Phase 5 follow-ups.
+    .sort((a, b) => String(a.rollNo).localeCompare(String(b.rollNo), undefined, { numeric: true }));
   const rep = report(all);
 
   return {
@@ -240,6 +258,7 @@ function professorRecord(subject, rooms, klass) {
       accuracy: mean(students.filter((s) => s.answered > 0).map((s) => s.correct / s.answered)),
     },
     bloom: rep,
+    levelBands: levelBandsOf(rep),
     ...extremes(rep),
     topics: topicsOf(all),
     timeline: rooms.map((room) => {
@@ -249,6 +268,9 @@ function professorRecord(subject, rooms, klass) {
         joined: here.length,
         banded: here.filter((s) => s.banded).length,
         accuracy: mean(here.filter((s) => s.seen).map(accuracyOf)),
+        // What the accuracy rests on (Phase 5): graded answers, and the students who gave one.
+        answers: sum(here.map((s) => s.seen)),
+        students: here.filter((s) => s.seen).length,
       };
     }),
     students,
@@ -262,9 +284,42 @@ const overviewRow = (subject, record) => ({
   best: record.best?.level ?? null,
   weakest: record.weakest?.level ?? null,
   confident: record.confident,
+  levelBands: record.levelBands,
 });
 
-/** GET /api/dashboard for a student. */
+/*
+ * Said with a student's own history since decision 7 (19 Nov 2026), word for
+ * word as the server sends it since the Phase 5 review fixes (SIGNED_IN_ONLY
+ * in services/analytics.js).
+ */
+const SIGNED_IN_ONLY = 'Only rooms you joined while signed in on your phone appear here, and in them only the '
+  + 'answers that phone sent. A roll number typed without signing in is not proof that it was you, so those answers, and '
+  + 'a room level they helped set, stay with your professor.';
+
+/*
+ * The decision 7 fix: when answers that were not the student's own helped set
+ * a linked room's level, that room's workingLevel is null, and so is the
+ * top-level workingLevel / currentLevel read from it. Here the latest room.
+ */
+const latestShared = (dash) => ({
+  ...dash,
+  workingLevel: null,
+  sessions: dash.sessions.map((s, i) => (i === 0 ? { ...s, workingLevel: null } : s)),
+});
+const latestSharedRecord = (record) => ({
+  ...record,
+  currentLevel: null,
+  timeline: record.timeline.map((s, i) => (i === record.timeline.length - 1 ? { ...s, workingLevel: null } : s)),
+});
+
+/** A student reading their own record: no band (a staff label), and the note. */
+const selfView = ({ levelBands, ...record }) => ({
+  ...record,
+  timeline: record.timeline.map(({ banded, ...row }) => row),
+  note: SIGNED_IN_ONLY,
+});
+
+/** GET /api/dashboard for a student: no `banded`, top level or per room, and the note. */
 function dashboardOf(who, sat) {
   const scored = sat.filter((s) => s.seen);
   const latest = sat[sat.length - 1];
@@ -280,14 +335,14 @@ function dashboardOf(who, sat) {
       accuracy: mean(scored.map(accuracyOf)),
     },
     workingLevel: latest?.workingLevel ?? null,
-    banded: Boolean(latest?.banded),
     bloom: report(sat),
     sessions: sat.map((s) => ({
       code: s.room.code, title: s.room.title, status: s.room.status, startedAt: s.room.startedAt,
       answered: s.seen, correct: s.correct, accuracy: accuracyOf(s),
-      workingLevel: s.workingLevel, banded: s.banded,
+      workingLevel: s.workingLevel,
       history: s.history.slice(-40),
     })).reverse(),
+    note: SIGNED_IN_ONLY,
   };
 }
 
@@ -535,14 +590,29 @@ const WHO = { department: 'Computer Science', professor: { code: ARJUN.code, ful
 const STUDENT_OVERVIEW = {
   role: 'student',
   subjects: [{ id: ISHA.id, kind: 'student', name: ISHA.name, code: ISHA.code, rollNo: ISHA.rollNo, active: true }],
-  detail: STUDENT_RECORDS[ISHA.id],
+  detail: selfView(STUDENT_RECORDS[ISHA.id]),
+};
+// Farhan's own record: a hard last session, and no band on it for him to read.
+const FARHAN_OVERVIEW = {
+  role: 'student',
+  subjects: [{ id: FARHAN.id, kind: 'student', name: FARHAN.name, code: FARHAN.code, rollNo: FARHAN.rollNo, active: true }],
+  detail: selfView(STUDENT_RECORDS[FARHAN.id]),
+};
+// Her latest room also took answers typed under her roll number by another phone.
+const SHARED_OVERVIEW = { ...STUDENT_OVERVIEW, detail: latestSharedRecord(STUDENT_OVERVIEW.detail) };
+// Signed in, but no room yet joined while signed in: nothing counts, and the note says why.
+const STUDENT_NEW_OVERVIEW = {
+  ...STUDENT_OVERVIEW,
+  detail: selfView(studentRecord({ ...STUDENT_OVERVIEW.subjects[0] }, [])),
 };
 
 const NO_ROLL = { id: ISHA.id, kind: 'student', name: ISHA.name, code: ISHA.code, rollNo: null, active: true };
-const NO_ROLL_OVERVIEW = { role: 'student', subjects: [NO_ROLL], detail: studentRecord(NO_ROLL, []) };
+// The server answers an account with no roll number before it adds the note.
+const NO_ROLL_OVERVIEW = { role: 'student', subjects: [NO_ROLL], detail: (({ levelBands, ...own }) => own)(studentRecord(NO_ROLL, [])) };
 
 const DASH = dashboardOf({ ...WHO, rollNo: ISHA.rollNo }, ISHA.sat);
 const DASH_BAND = dashboardOf({ ...WHO, rollNo: FARHAN.rollNo }, FARHAN.sat);
+const DASH_SHARED = latestShared(DASH);
 
 /* Their evidence: GET /api/analytics/:id's topicLevels, and the answer pages. */
 const ISHA_TOPICS = { data: STUDENT_RECORDS[ISHA.id].topicLevels };
@@ -639,7 +709,7 @@ function MeDemo({ dash, link: first = LINK, loading = false, error = '', topics 
    it is a record that did not load, or with `pending` one still on its way. */
 function AnalyticsDemo({ role, overview = null, records = {}, open = '', error = '', pending = false }) {
   const [picked, setPicked] = useState(open);
-  const { subjects, sel } = arrange(overview, picked);
+  const { subjects, sel } = arrangeFor(overview?.role ?? role, overview, picked);
   const mine = overview?.role === 'student';
   const full = mine ? overview.detail : (sel && records[sel.id]) || null;
   return (
@@ -662,11 +732,15 @@ function AnalyticsDemo({ role, overview = null, records = {}, open = '', error =
 const SCREENS = [
   { id: 'me', title: 'Me: eight sessions', role: 'student', note: 'A student with eight sessions: the brief, the path, the six levels, their answers with their professor’s notes, and the topic grid.', el: <MeDemo dash={DASH} topics={ISHA_TOPICS} answers={answersFrom(ISHA_ANSWERS)} /> },
   { id: 'me-new', title: 'Me: brand-new student', role: 'student', note: 'No sessions yet: the designed first-time page.', el: <MeDemo dash={DASH_NEW} /> },
-  { id: 'me-band', title: 'Me: support band, Google linked', role: 'student', note: 'Under 40% last session, so the support band is explained.', el: <MeDemo dash={DASH_BAND} link={LINKED} topics={FARHAN_TOPICS} answers={answersFrom(FARHAN_ANSWERS)} /> },
+  { id: 'me-band', title: 'Me: a hard last session, Google linked', role: 'student', note: 'Under 40% last session. No band and no "support band" wording: a band is a staff label, and the server no longer sends one to a student. The note says only rooms joined while signed in appear.', el: <MeDemo dash={DASH_BAND} link={LINKED} topics={FARHAN_TOPICS} answers={answersFrom(FARHAN_ANSWERS)} /> },
   { id: 'me-no-roll', title: 'Me: no roll number', role: 'student', note: 'The server cannot match this account to any session.', el: <MeDemo dash={DASH_NO_ROLL} /> },
-  { id: 'analytics-hod', title: 'Analytics: head of department', role: 'hod', note: 'The department brief, the professors and one professor in full.', el: <AnalyticsDemo overview={HOD_OVERVIEW} records={PROFESSOR_RECORDS} open={ARJUN.id} /> },
+  { id: 'analytics-hod', title: 'Analytics: head of department', role: 'hod', note: 'The department brief, the professors and one professor in full: their classes by level open on the three bands (decision 6), six levels one press away; each room’s accuracy with the answers and students it rests on.', el: <AnalyticsDemo overview={HOD_OVERVIEW} records={PROFESSOR_RECORDS} open={ARJUN.id} /> },
   { id: 'analytics-professor', title: 'Analytics: professor', role: 'professor', note: 'The class brief, thirty students and one student in full.', el: <AnalyticsDemo overview={PROFESSOR_OVERVIEW} records={STUDENT_RECORDS} open={ISHA.id} /> },
-  { id: 'analytics-student', title: 'Analytics: student', role: 'student', note: 'A student’s own strengths and gaps.', el: <AnalyticsDemo overview={STUDENT_OVERVIEW} /> },
+  { id: 'analytics-student', title: 'Analytics: student', role: 'student', note: 'A student’s own strengths and gaps, with the server’s note: only rooms joined while signed in appear.', el: <AnalyticsDemo overview={STUDENT_OVERVIEW} /> },
+  { id: 'analytics-student-hard', title: 'Analytics: student after a hard session', role: 'student', note: 'The same student page for a sitting under 40%: no support band on their own sessions. The professor’s view of the same student keeps it.', el: <AnalyticsDemo overview={FARHAN_OVERVIEW} /> },
+  { id: 'me-shared-room', title: 'Me: a room level set with answers not hers', role: 'student', note: 'The decision 7 fix: another phone typed her roll number in her latest room, so that room’s level and her working level come back null. A dash, never a level; the note says why.', el: <MeDemo dash={DASH_SHARED} topics={ISHA_TOPICS} answers={answersFrom(ISHA_ANSWERS)} /> },
+  { id: 'analytics-student-shared-room', title: 'Analytics: student, latest room level not shown', role: 'student', note: 'currentLevel and the latest room’s workingLevel are null: a dash in the tile and the session list, and that room is left out of the level line.', el: <AnalyticsDemo overview={SHARED_OVERVIEW} /> },
+  { id: 'analytics-student-new', title: 'Analytics: student, nothing signed in yet', role: 'student', note: 'No room joined while signed in, so nothing counts yet; the note says why.', el: <AnalyticsDemo overview={STUDENT_NEW_OVERVIEW} /> },
 
   // The states nobody sees until something is missing or broken.
   { id: 'me-loading', title: 'Me: first read', role: 'student', note: 'The shaped skeleton before the first answer.', el: <MeDemo dash={null} loading link={null} /> },

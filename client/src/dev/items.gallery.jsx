@@ -7,14 +7,21 @@
  * figures agree with each other (correct / attempts, the band against the
  * thresholds, the counts against the answers). Nothing here talks to the
  * server.
+ *
+ * Phase 5 fields ("Phase 5: honest indicators" and "misconception labels"):
+ * each item's `provenance`, `levelCheck`, `basis` and `languages`, each wrong
+ * option's `misconception`, and the report's `translation`, worded as the
+ * server words them (services/honesty.js, services/misconceptions.js). Every
+ * answer is in English today, so the language warning is drawn from a fixture
+ * with Hindi answers, as server/scripts/honesty.mjs makes them.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
-import { KIND_LABEL } from '../lib/kinds.js';
+import { api } from '../lib/api.js';
 import AccountShell from '../shell/AccountShell.jsx';
-import { ItemDetail, ItemFigures, StatsView, StatusTag } from '../teach/ItemStats.jsx';
-import { Level, Note } from '../ui/index.jsx';
+import { ItemDetail, ItemFigures, ItemList, ItemMeta, StatsView, Thresholds } from '../teach/ItemStats.jsx';
+import { Note } from '../ui/index.jsx';
 
 /* ------------------------------------------------------------------ sample */
 
@@ -29,7 +36,76 @@ const WRONG_KEY = {
 const opts = (rows) => rows.map(([text, count, key], index) => ({ index, text, count, key: Boolean(key) }));
 const one = (options, unanswered = 0, label = null) => ({ label, select: 'one', unanswered, options: opts(options) });
 
-const ITEM = {
+/* Phase 5, as services/honesty.js words it. */
+const MODEL = 'gemini-2.5-flash';
+const PROV = {
+  template: {
+    source: 'template', sourceLabel: 'Offline template', model: 'offline-template', approval: 'approved', approvedAt: '2026-11-11T08:40:00.000Z', approvedBy: null, aiDraft: false,
+    label: 'Offline template, approved',
+    sentence: "Made by the offline template from the professor's material, without a language model. Approved by a professor.",
+  },
+  ai: {
+    source: 'ai', sourceLabel: 'AI-generated', model: MODEL, approval: 'approved', approvedAt: '2026-11-11T08:42:00.000Z', approvedBy: null, aiDraft: false,
+    label: 'AI-generated, approved',
+    sentence: `Written by the language model (${MODEL}) from the professor's material. Approved by a professor.`,
+  },
+  aiUnrecorded: {
+    source: 'ai', sourceLabel: 'AI-generated', model: MODEL, approval: 'unrecorded', approvedAt: null, approvedBy: null, aiDraft: false,
+    label: 'AI-generated, approval not recorded',
+    sentence: `Written by the language model (${MODEL}) from the professor's material. In use since before approvals were recorded.`,
+  },
+  aiGone: {
+    source: 'ai', sourceLabel: 'AI-generated', model: MODEL, approval: 'discarded', approvedAt: null, approvedBy: null, aiDraft: false,
+    label: 'AI-generated, not in use',
+    sentence: `Written by the language model (${MODEL}) from the professor's material. Not in use: rejected, retired or removed.`,
+  },
+  professor: {
+    source: 'professor', sourceLabel: 'Professor-written', model: null, approval: 'written', approvedAt: null, approvedBy: null, aiDraft: false,
+    label: 'Professor-written',
+    sentence: 'Written by a professor. In use since a professor wrote it.',
+  },
+  professorGone: {
+    source: 'professor', sourceLabel: 'Professor-written', model: null, approval: 'discarded', approvedAt: null, approvedBy: null, aiDraft: false,
+    label: 'Professor-written, not in use',
+    sentence: 'Written by a professor. Not in use: rejected, retired or removed.',
+  },
+};
+const CERTAIN = { uncertain: false, reasons: [], sentence: null };
+const UNCONFIRMED = 'The language model chose this level and no professor has approved the question yet. Model-written questions often miss the level they were asked for, so check that it really asks for this level.';
+const NOT_FOR_UNDERSTAND = 'A "Choose all that apply" question is not one of the kinds that ask for Understand ("Match the pairs", "Sort into groups"), so it may not ask for that level at all. Retag it, or change its kind.';
+const unsure = (...messages) => ({
+  uncertain: true,
+  reasons: messages.map((message) => ({ id: message === UNCONFIRMED ? 'model-level-unconfirmed' : 'kind-does-not-fit-level', message })),
+  sentence: `Level uncertain. ${messages.join(' ')}`,
+});
+const basisOf = (n) => ({
+  answers: n,
+  provisional: n < THRESHOLDS.minAnswersForBand,
+  sentence: !n ? 'No answers yet.'
+    : n < THRESHOLDS.minAnswersForBand ? `Based on ${n} ${n === 1 ? 'answer' : 'answers'}: too few for a difficulty band (${THRESHOLDS.minAnswersForBand} needed).`
+      : `Based on ${n} answers.`,
+});
+const english = (answers, correct) => ({
+  original: 'en', originalName: 'English',
+  languages: answers ? [{ language: 'en', name: 'English', answers, correct, share: correct / answers, original: true }] : [],
+  otherThanOriginal: 0, note: null, warning: null,
+});
+const TRANSLATION_NOTE = "Translation can change how hard a question is: a word with no exact match, a longer sentence or a changed example can make one language's version harder than another's. A gap between languages is a reason to check the translation before reading it as a gap in understanding.";
+const translation = (warnings) => ({ original: 'en', minAnswersPerLanguage: 5, gapAbovePoints: 20, warnings, note: TRANSLATION_NOTE });
+const label = (text, provenance = 'professor') => ({
+  label: text, provenance, provenanceLabel: provenance === 'ai' ? 'AI draft' : "Professor's label", confirmed: provenance === 'professor',
+});
+/** Puts misconception labels on a one-row spread: { optionIndex: label(...) }; every other option null. */
+const labelled = (distribution, byIndex) => ({
+  ...distribution,
+  rows: distribution.rows.map((r) => ({ ...r, options: r.options.map((o) => ({ ...o, misconception: byIndex[o.index] ?? null })) })),
+});
+/** The Phase 5 fields an item carries, from its own figures. */
+const honest = (item, provenance = PROV.template, levelCheck = CERTAIN) => ({
+  ...item, provenance, levelCheck: item.status === 'deleted' ? null : levelCheck, basis: basisOf(item.attempts), languages: english(item.attempts, item.correct),
+});
+
+const BASE = {
   wrongKey: {
     questionId: '1f0c7a2e9b4d3c5a6e8f0b11', text: 'Which protocol is connectionless?', kind: 'mcq', bloom: 'remember',
     topic: 'Transport', status: 'active',
@@ -159,10 +235,83 @@ const ITEM = {
   },
 };
 
+const ITEM = {
+  wrongKey: honest(BASE.wrongKey),
+  wrongKeyTf: honest(BASE.wrongKeyTf, PROV.ai),
+  few: honest({
+    ...BASE.few,
+    distribution: labelled(BASE.few.distribution, {
+      1: label('Thinks the length field is what shows a segment was damaged'),
+      2: label('Confuses the port fields with error detection', 'ai'),
+    }),
+  }, PROV.professor),
+  sameMark: honest({
+    ...BASE.sameMark,
+    distribution: labelled(BASE.sameMark.distribution, { 1: label('Thinks UDP opens a connection first, as TCP does') }),
+  }),
+  typed: honest(BASE.typed),
+  deleted: honest(BASE.deleted, PROV.aiGone),
+  sort: honest(BASE.sort),
+  multi: honest({
+    ...BASE.multi,
+    distribution: labelled(BASE.multi.distribution, {
+      3: label('Thinks TCP keeps the sender’s message boundaries'),
+      4: label('Takes reliable delivery to mean delivery on time', 'ai'),
+    }),
+  }, PROV.aiUnrecorded, unsure(UNCONFIRMED, NOT_FOR_UNDERSTAND)),
+  match: honest(BASE.match, PROV.professor),
+  discarded: honest(BASE.discarded, PROV.professorGone),
+  open: honest(BASE.open, PROV.ai),
+  idleRank: honest(BASE.idleRank),
+  idleCloze: honest(BASE.idleCloze),
+  // Phase 5 only: a question with misconception labels, one of them the model's draft.
+  labels: honest({
+    questionId: 'e0be6b8c3d5f7a9bc2d4e6ee', text: 'Which transport protocol does a DNS query use by default?', kind: 'mcq', bloom: 'remember',
+    topic: 'Application protocols', status: 'active',
+    attempts: 26, correct: 13, proportionCorrect: 0.5, meanScore: null, band: 'medium',
+    pointBiserial: 0.3127, pointBiserialN: 26, pointBiserialNote: null, flags: [],
+    distribution: labelled({ answers: 26, otherVersions: 0, rows: [one([['TCP', 9], ['UDP', 13, true], ['QUIC', 3], ['SCTP', 1]])] }, {
+      0: label('Thinks every application protocol runs over TCP'),
+      2: label('Takes QUIC for the default because it is the newest', 'ai'),
+    }),
+    versions: 1,
+  }, PROV.ai),
+  // Phase 5 only: answers in English and Hindi, far enough apart for a warning.
+  translated: {
+    ...honest({
+      questionId: 'f1cf7c9d4e6a8bacd3e5f7ff', text: 'A receiver advertises a 10 KB window and 4 KB is unacknowledged. How much more may the sender send now?', kind: 'mcq', bloom: 'apply',
+      topic: 'Flow control', status: 'active',
+      attempts: 15, correct: 10, proportionCorrect: 10 / 15, meanScore: null, band: 'medium',
+      pointBiserial: 0.2618, pointBiserialN: 15, pointBiserialNote: null, flags: [],
+      distribution: labelled({ answers: 15, otherVersions: 0, rows: [one([['4 KB', 2], ['6 KB', 10, true], ['10 KB', 2], ['14 KB', 1]])] }, {
+        2: label('Forgets to take away the bytes still unacknowledged'),
+      }),
+      versions: 1,
+    }),
+    languages: {
+      original: 'en', originalName: 'English',
+      languages: [
+        { language: 'en', name: 'English', answers: 10, correct: 8, share: 0.8, original: true },
+        { language: 'hi', name: 'Hindi', answers: 5, correct: 2, share: 0.4, original: false },
+      ],
+      otherThanOriginal: 5,
+      note: '5 of 15 answers were given in a language other than the question\'s own (English).',
+      warning: {
+        languages: ['en', 'hi'],
+        higher: { language: 'en', name: 'English', answers: 10, correct: 8 },
+        lower: { language: 'hi', name: 'Hindi', answers: 5, correct: 2 },
+        gap: 0.4,
+        text: 'Answers in Hindi were right 2 of 5 times (40%), against 8 of 10 (80%) in English: a gap of 40 points, above the 20-point threshold. Translation can change how hard a question is, so check the Hindi version before reading this as a gap in understanding.',
+      },
+    },
+  },
+};
+
 const ITEMS = [
   ITEM.wrongKey, ITEM.wrongKeyTf,
-  ITEM.few, ITEM.sameMark, ITEM.typed, ITEM.deleted, ITEM.idleCloze,
+  ITEM.labels, ITEM.few, ITEM.sameMark, ITEM.typed, ITEM.deleted, ITEM.idleCloze,
   ITEM.sort, ITEM.multi, ITEM.match, ITEM.discarded,
+  ITEM.translated,
   ITEM.idleRank, ITEM.open,
 ];
 
@@ -177,6 +326,7 @@ const REPORT = {
   counted: { answers: ITEMS.reduce((n, i) => n + i.attempts, 0), students: 26 },
   thresholds: THRESHOLDS,
   items: ITEMS,
+  translation: translation(ITEMS.filter((i) => i.languages?.warning).length),
 };
 
 const EMPTY = {
@@ -185,6 +335,7 @@ const EMPTY = {
   counted: { answers: 0, students: 0 },
   thresholds: THRESHOLDS,
   items: [],
+  translation: translation(0),
 };
 
 /* ------------------------------------------------------------------ frames */
@@ -205,13 +356,7 @@ function Specimen({ item, sub }) {
       <div className="stack stack-3" style={{ maxWidth: 880 }}>
         <section className="card" style={{ display: 'flex', flexDirection: 'column', gap: 18, padding: '20px clamp(16px, 4vw, 24px) 24px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 16, borderBottom: '1px solid var(--line)' }}>
-            <span className="it-item-meta">
-              <Level level={item.bloom} />
-              <span className="it-topic clip">{item.topic}</span>
-              <i className="it-dot" aria-hidden="true" />
-              <span>{KIND_LABEL[item.kind] ?? item.kind}</span>
-              <StatusTag status={item.status} />
-            </span>
+            <ItemMeta item={item} />
             <span className="it-item-text" style={{ display: 'block' }}>{item.text}</span>
             <ItemFigures item={item} />
           </div>
@@ -235,6 +380,46 @@ function Tab({ data, loading = false, error = '' }) {
   );
 }
 
+/* ------------------------------------------------------- live only */
+
+/**
+ * Not sample data: a real room's /items (?room=CODE, XF5RYZ by default) drawn
+ * as Live draws it, and the chapter's bank /stats (?content=ID) as the bank's
+ * tab draws it.
+ */
+function LiveItems() {
+  const q = new URLSearchParams(window.location.search);
+  const code = (q.get('room') || 'XF5RYZ').toUpperCase();
+  const contentId = q.get('content') || '19e67b96eeb974ed731a5ed3';
+  const [room, setRoom] = useState({ data: null, error: '' });
+  useEffect(() => {
+    let alive = true;
+    api.roomItems(code).then(
+      (data) => { if (alive) setRoom({ data, error: '' }); },
+      (err) => { if (alive) setRoom({ data: null, error: err.message }); },
+    );
+    return () => { alive = false; };
+  }, [code]);
+  return (
+    <Frame title="Live only" sub="A real room’s questions and the chapter’s bank figures, read from the local server.">
+      <div className="stack stack-3">
+        <p className="t-meta">Live only: room <span className="mono">{code}</span> and chapter <span className="mono">{contentId}</span> on :5050. Use ?room=CODE and ?content=ID for others.</p>
+        <section className="card it-view" aria-label={`Questions in room ${code}`}>
+          <div className="it-view-head"><div className="sec"><h2>Questions in room {code}</h2><p>As the live console lists them.</p></div></div>
+          {room.error && <div className="it-pad"><Note tone="bad">{room.error}</Note></div>}
+          {room.data && (
+            <>
+              <ItemList items={room.data.items} thresholds={room.data.thresholds} translation={room.data.translation} />
+              <Thresholds thresholds={room.data.thresholds} className="it-pad-x" />
+            </>
+          )}
+        </section>
+        <StatsView contentId={contentId} />
+      </div>
+    </Frame>
+  );
+}
+
 /* ------------------------------------------------------------------ entries */
 
 export default [
@@ -242,7 +427,7 @@ export default [
     id: 'items-tab',
     title: 'How it went, two rooms on one chapter',
     role: 'professor',
-    note: 'The bank’s tab: 13 questions, two flagged first, one deleted, one discarded, two nobody has answered.',
+    note: 'The bank’s tab: 15 questions, two flagged first, one deleted, one discarded, two nobody has answered; who wrote each, one uncertain level, and one gap between languages, said above the rows.',
     render: () => <Tab data={REPORT} />,
   },
   {
@@ -263,8 +448,22 @@ export default [
     id: 'items-multi',
     title: 'Choose all that apply, edited while in use',
     role: 'professor',
-    note: 'Ticks add up to more than the answers; four answers were given to an earlier version and are left out.',
+    note: 'Ticks add up to more than the answers; four answers were given to an earlier version and are left out. An AI question with no recorded approval: its level is marked uncertain, for two reasons.',
     render: () => <Specimen item={ITEM.multi} sub="A choose-all question, edited while a room was using it." />,
+  },
+  {
+    id: 'items-labels',
+    title: 'Misconception labels under the wrong options',
+    role: 'professor',
+    note: 'Each labelled wrong option names the misunderstanding behind it; the model’s unconfirmed label is marked AI draft. Never on the key.',
+    render: () => <Specimen item={ITEM.labels} sub="A choose-one question with two labelled wrong options." />,
+  },
+  {
+    id: 'items-translation',
+    title: 'A gap between languages',
+    role: 'professor',
+    note: 'Fixture: answers in English and Hindi 40 points apart, so the server’s warning shows, with the count of answers in another language at the foot. Quiet while every answer is in one language.',
+    render: () => <Specimen item={ITEM.translated} sub="A question answered in two languages." />,
   },
   {
     id: 'items-typed',
@@ -277,7 +476,7 @@ export default [
     id: 'items-few',
     title: 'Too few answers for a band',
     role: 'professor',
-    note: 'Three answers: no band, and no point-biserial.',
+    note: 'Three answers: no band and the server’s sentence on what one needs, no point-biserial. One label is an AI draft.',
     render: () => <Specimen item={ITEM.few} sub="A question only three students reached." />,
   },
   {
@@ -300,5 +499,12 @@ export default [
     role: 'professor',
     note: 'The read has not answered, so the skeleton stays.',
     render: () => <Tab data={null} loading />,
+  },
+  {
+    id: 'items-live',
+    title: 'Live only: a real room and its chapter on the local server',
+    role: 'professor',
+    note: 'Not sample data. GET /api/session/?room/items as the live console lists it, and GET /api/bank/?content/stats as the bank’s tab. Development only.',
+    render: () => <LiveItems key="items-live" />,
   },
 ];

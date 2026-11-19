@@ -123,7 +123,7 @@ export function SignInView({ configured, email, password, busy, error, onEmail, 
     <AuthFrame
       label="Sign in"
       title={<>Every student climbs at their <em>own</em> level.</>}
-      line="A few right and the next question steps up. A few wrong and it steps back down. Your class is read one student at a time."
+      line="70% right over the last five answers at a level, and the next question steps up. Mostly wrong, and it steps back. Your class is read one student at a time."
       foot={<>Have an invite code? <Link className="link" to="/signup">Create your account</Link></>}
     >
       <form className="gate-card au-card" onSubmit={(e) => { e.preventDefault(); if (ready) onSubmit(); }}>

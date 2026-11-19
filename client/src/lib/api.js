@@ -405,6 +405,40 @@ export const api = {
   revokeProjectorLink: (code, linkId) =>
     req(`/session/${encodeURIComponent(code)}/projector/links/${encodeURIComponent(linkId)}`, { method: 'DELETE' }),
 
+  // -- Phase 5 ---------------------------------------------------------------
+  // Class questions (pause, discuss, re-vote) and confidence taps. Staff only.
+  // Every body is counts: no roll number or name. Writes are the room owner's
+  // (an HOD reads and gets 403). `teacher:class-question` pushes the same body.
+
+  // { room, kinds, running, classQuestions: [...], confidenceChoices, note }
+  classQuestions: (code) => req(`/session/${encodeURIComponent(code)}/class-questions`),
+  classQuestion: (code, id) =>
+    req(`/session/${encodeURIComponent(code)}/class-questions/${encodeURIComponent(id)}`),
+  // An approved mcq, truefalse, poll or multi question of the room. 201.
+  askClass: (code, questionId) => json('POST')(`/session/${encodeURIComponent(code)}/class-questions`, { questionId }),
+  pauseClassQuestion: (code, id) =>
+    json('POST')(`/session/${encodeURIComponent(code)}/class-questions/${encodeURIComponent(id)}/pause`),
+  revoteClassQuestion: (code, id) =>
+    json('POST')(`/session/${encodeURIComponent(code)}/class-questions/${encodeURIComponent(id)}/revote`),
+  // reveal: true shows the key (never on a poll).
+  closeClassQuestion: (code, id, reveal = false) =>
+    json('POST')(`/session/${encodeURIComponent(code)}/class-questions/${encodeURIComponent(id)}/close`, { reveal }),
+  // The room's confidence taps, by tap and by right and wrong. Counts only.
+  roomConfidence: (code) => req(`/session/${encodeURIComponent(code)}/confidence`),
+
+  // Misconception labels on wrong options (mcq, multi, truefalse). Staff only;
+  // never sent to a phone or the projector. Counts only, never names.
+  // A question's labels, which options take one, canEdit, and its counts.
+  questionMisconceptions: (id) => req(`/bank/question/${encodeURIComponent(id)}/misconceptions`),
+  // changes: [{ option, label } | { option, label: null } | { option, confirm: true }],
+  // option = the option's index as the question stands. All or nothing; the
+  // question's status is untouched (no re-approval).
+  setMisconceptions: (id, changes) =>
+    json('PATCH')(`/bank/question/${encodeURIComponent(id)}/misconceptions`, { misconceptions: changes }),
+  roomMisconceptions: (code) => req(`/session/${encodeURIComponent(code)}/misconceptions`),
+  // params: { from, to, rooms } as the attainment reports (windowParams).
+  classMisconceptions: (id, params = {}) => req(`/classes/${encodeURIComponent(id)}/misconceptions${query(params)}`),
+
   // -- Phase 4 ---------------------------------------------------------------
   // Course outcomes, attainment, the marks register and their files. Staff
   // only: nothing here is called from /join, the projector or the wall. Writes

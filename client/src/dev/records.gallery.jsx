@@ -16,11 +16,12 @@
 import { useState } from 'react';
 
 import AccountShell from '../shell/AccountShell.jsx';
+import { toast } from '../ui/toast.jsx';
 import { ActivitiesView } from '../teach/Activities.jsx';
 import { ObserveView, keyOf } from '../teach/Observe.jsx';
 import { RecordsLayout } from '../teach/Records.jsx';
 import { TallyView } from '../teach/Tally.jsx';
-import { WheelView, ringOf } from '../teach/Wheel.jsx';
+import { THINK_SECONDS, WheelView, ringOf, useThinkTime } from '../teach/Wheel.jsx';
 
 /* ------------------------------------------------------------------ sample */
 
@@ -121,8 +122,15 @@ const ROUND2 = [
 ];
 const LATER = [...ROUND1, ...ROUND2];
 
-/** A wheel that moves: the sample server draws, the ring walks to its pick. */
-function WheelDemo({ initial, canControl = true, closed = false, classRoom = true, error: firstError = '', outcome: firstOutcome = {} }) {
+/**
+ * A wheel that moves: the sample server draws, the ring walks to its pick.
+ * Think time counts down for real; `frozenThink` holds it still for a picture
+ * (Skip and Cancel still work).
+ */
+function WheelDemo({
+  initial, canControl = true, closed = false, classRoom = true, error: firstError = '', outcome: firstOutcome = {},
+  prefs: firstPrefs = { think: false, names: true }, thinkQ: firstQ = null, frozenThink = null,
+}) {
   const [wheel, setWheel] = useState(initial);
   const [spin, setSpin] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
@@ -130,21 +138,26 @@ function WheelDemo({ initial, canControl = true, closed = false, classRoom = tru
   const [outcome, setOutcome] = useState(firstOutcome);
   const [markAbsent, setMarkAbsent] = useState(true);
   const [settings, setSettings] = useState({ round: initial.round.number, presentOnly: initial.round.presentOnly, noRepeat: initial.round.noRepeat, present: PRESENT });
+  const [prefs, setPrefs] = useState(firstPrefs);
+  const [thinkQ, setThinkQ] = useState(firstQ);
+  const [frozen, setFrozen] = useState(frozenThink);
+  const think = useThinkTime(() => draw(thinkQ));
 
   const rebuild = (next, picks) => wheelBody({ present: next.present, round: next.round, presentOnly: next.presentOnly, noRepeat: next.noRepeat, picks, status: initial.room.status });
 
-  function draw() {
+  function draw(questionId = null) {
     if (!wheel.pool.left) { setError(wheel.pool.empty); return; }
     const pool = wheel.pool.onWheel;
     const buf = new Uint32Array(1);
     crypto.getRandomValues(buf);
     const chosen = pool[buf[0] % pool.length];
     const thisRound = wheel.picks.filter((p) => p.round === settings.round);
-    const pick = mkPick({ id: `d${Date.now()}`, round: settings.round, order: thisRound.length + 1, roll: chosen.rollNo, poolSize: pool.length, when: new Date().toISOString() });
+    const pick = mkPick({ id: `d${Date.now()}`, round: settings.round, order: thisRound.length + 1, roll: chosen.rollNo, poolSize: pool.length, questionId, when: new Date().toISOString() });
     setSpin({ ring: ringOf(wheel), pick });
     setWheel(rebuild(settings, [...wheel.picks, pick]));
     setSelectedId(pick.id);
     setError('');
+    if (questionId) setThinkQ(null);
   }
   function setting(key, value) {
     const next = { ...settings, [key]: value };
@@ -191,7 +204,14 @@ function WheelDemo({ initial, canControl = true, closed = false, classRoom = tru
       onLanded={() => setSpin(null)}
       selectedId={selectedId}
       onSelect={setSelectedId}
-      onDraw={draw}
+      onDraw={() => (prefs.think ? think.start() : draw())}
+      prefs={prefs}
+      onPref={(key, value) => setPrefs((p) => ({ ...p, [key]: value }))}
+      think={frozen ?? (think.left != null ? { left: think.left, of: THINK_SECONDS } : null)}
+      thinkQ={thinkQ}
+      onThinkQ={setThinkQ}
+      onSkip={frozen ? () => { setFrozen(null); draw(thinkQ); } : think.skip}
+      onCancel={frozen ? () => setFrozen(null) : think.cancel}
       onRound={newRound}
       onSetting={setting}
       onPick={pick}
@@ -322,7 +342,26 @@ function obsBody({ roster = ROSTER, marks = MARKS, klass = true, removed = [] } 
   };
 }
 
-function ObserveDemo({ data: first, canControl = true, rowState: firstRows = {}, initialOpen = null }) {
+/** The attendance read for the same roster: four absent, one late, one not marked. */
+const OFF_TODAY = { '23CS04': 'absent', '23CS12': 'absent', '23CS20': 'absent', '23CS33': 'absent', '23CS09': 'late', '23CS38': 'unmarked' };
+function attBody({ roster = ROSTER, unmarked = false } = {}) {
+  const students = roster.map((s) => {
+    const status = unmarked ? 'unmarked' : OFF_TODAY[s.rollNo] ?? 'present';
+    return {
+      studentId: s.studentId, rollNo: s.rollNo, name: s.name, status,
+      source: status === 'unmarked' ? null : 'teacher', markedAt: status === 'unmarked' ? null : at(10, 1), markedBy: null, joined: false,
+    };
+  });
+  const n = (k) => students.filter((s) => s.status === k).length;
+  const counts = { present: n('present'), late: n('late'), absent: n('absent'), unmarked: n('unmarked'), classSize: students.length, joined: 0, notOnRoster: 0 };
+  return {
+    room: ROOM, class: { id: ROOM.classId, courseName: 'Computer Networks', section: 'CS-A', termLabel: 'Odd term 2026' },
+    students, removed: [], notOnRoster: [], counts, summary: `${counts.present + counts.late} / ${counts.classSize} present`,
+    caveat: '"Joined" means a phone joined this room with that roll number. A room has no sign-in, so a typed roll number is not proof of who was holding the phone.',
+  };
+}
+
+function ObserveDemo({ data: first, canControl = true, rowState: firstRows = {}, initialOpen = null, attendance = null }) {
   const [data, setData] = useState(first);
   const [rowState, setRowState] = useState(firstRows);
   function send(s, kind, note) {
@@ -348,6 +387,7 @@ function ObserveDemo({ data: first, canControl = true, rowState: firstRows = {},
       onMark={(s, kind) => send(s, kind, kind ? s.current?.note ?? '' : undefined)}
       onNote={(s, note) => send(s, s.current?.kind, note)}
       initialOpen={initialOpen}
+      attendance={attendance}
     />
   );
 }
@@ -382,8 +422,15 @@ const ACTS = [
 const ACT_BODY = { room: ROOM, kinds: ACT_KINDS, results: RESULTS, activities: ACTS, privacy: PRIVACY };
 const TALLY_LIST = { status: 'ready', list: TALLIES, error: '' };
 
-function ActivitiesDemo({ data: first, canControl = true, initialDraft = null, initialEdit = null, error = { for: '', message: '' } }) {
+function ActivitiesDemo({ data: first, canControl = true, initialDraft = null, initialEdit = null, error = { for: '', message: '' }, closed = false }) {
   const [data, setData] = useState(first);
+  const [busy, setBusy] = useState('');
+  // Stands in for PATCH /projector: a moment, then the toast the page shows
+  // when it has no projector space to open.
+  const project = (id) => {
+    setBusy(`project:${id}`);
+    setTimeout(() => { setBusy(''); toast('The question is on the projector.'); }, 600);
+  };
   const create = (body) => {
     const g = (body.groups ?? []).map((x) => [x.label, x.gotIt]);
     setData((d) => ({ ...d, activities: [...d.activities, mkAct({ id: `a${Date.now()}`, seq: d.activities.length + 1, kind: body.kind, outcome: body.outcome, groups: g, tallyId: body.tallyId ?? null, when: new Date().toISOString() })] }));
@@ -405,12 +452,15 @@ function ActivitiesDemo({ data: first, canControl = true, initialDraft = null, i
       load={{ status: 'ready' }}
       canControl={canControl}
       tallies={TALLY_LIST}
+      busy={busy}
       error={error}
       onCreate={create}
       onUpdate={update}
       onNeedTallies={() => {}}
       initialDraft={initialDraft}
       initialEdit={initialEdit}
+      closed={closed}
+      onProjectTally={project}
     />
   );
 }
@@ -420,7 +470,7 @@ function ActivitiesDemo({ data: first, canControl = true, initialDraft = null, i
 const DEFAULTS = {
   wheel: (canControl) => <WheelDemo initial={wheelBody({ round: 2, picks: LATER })} canControl={canControl} />,
   tally: (canControl) => <TallyDemo data={TALLY_BODY} canControl={canControl} />,
-  observe: (canControl) => <ObserveDemo data={obsBody()} canControl={canControl} />,
+  observe: (canControl) => <ObserveDemo data={obsBody()} canControl={canControl} attendance={attBody()} />,
   activities: (canControl) => <ActivitiesDemo data={ACT_BODY} canControl={canControl} />,
 };
 
@@ -460,6 +510,39 @@ export default [
     render: () => <Sample tab="wheel"><WheelDemo initial={wheelBody({ round: 2, picks: LATER })} /></Sample>,
   },
   {
+    id: 'records-wheel-think',
+    title: 'Wheel, think time running',
+    role: 'professor',
+    note: 'Think time on, a bank question chosen: seven seconds left, the arc emptying. Skip to draw draws now; Cancel stops with no draw. Nothing goes on the wall.',
+    render: () => (
+      <Sample tab="wheel">
+        <WheelDemo initial={wheelBody({ round: 2, picks: LATER })} prefs={{ think: true, names: true }} thinkQ="q03" frozenThink={{ left: 7, of: THINK_SECONDS }} />
+      </Sample>
+    ),
+  },
+  {
+    id: 'records-wheel-think-ready',
+    title: 'Wheel, think time on',
+    role: 'professor',
+    note: 'Draw runs the ten seconds first, then draws; the chosen question is saved on the new pick. Try it.',
+    render: () => (
+      <Sample tab="wheel">
+        <WheelDemo initial={wheelBody({ round: 2, picks: LATER })} prefs={{ think: true, names: true }} thinkQ="q05" />
+      </Sample>
+    ),
+  },
+  {
+    id: 'records-wheel-names-off',
+    title: 'Wheel, names off',
+    role: 'professor',
+    note: 'For a laptop the class can see: roll numbers only on the ring, the pick, the log and who is on the wheel. This screen only.',
+    render: () => (
+      <Sample tab="wheel">
+        <WheelDemo initial={wheelBody({ round: 2, picks: LATER })} prefs={{ think: false, names: false }} />
+      </Sample>
+    ),
+  },
+  {
     id: 'records-wheel-absent',
     title: 'Wheel, a pick marked absent',
     role: 'professor',
@@ -481,7 +564,7 @@ export default [
     id: 'records-wheel-409',
     title: 'Wheel, everyone has had a turn',
     role: 'professor',
-    note: 'The draw came back 409 with the reason; New round or turning off no repeats fills it again.',
+    note: 'The draw came back 409 with the reason, and Start new round sits with it. Turning off no repeats also fills the wheel again.',
     render: () => {
       const picks = PRESENT.map((s, i) => mkPick({ id: `f${i}`, round: 1, order: i + 1, roll: s.rollNo, poolSize: PRESENT.length - i, status: i % 4 ? 'answered' : 'passed', when: at(10, 2 + i) }));
       return <Sample tab="wheel"><WheelDemo initial={wheelBody({ picks })} error={EMPTY_REASON.done} /></Sample>;
@@ -552,8 +635,15 @@ export default [
     id: 'records-observe',
     title: 'Observations, a class of 40',
     role: 'professor',
-    note: 'Thirteen marked; one set in another room of the class today; one with a note and its log open.',
-    render: () => <Sample tab="observe"><ObserveDemo data={obsBody()} initialOpen={`s:${who('23CS13').studentId}`} /></Sample>,
+    note: 'Thirteen marked; one set in another room of the class today; one with a note and its log open. Attendance beside each row: four absent (dimmed), one late, one not marked.',
+    render: () => <Sample tab="observe"><ObserveDemo data={obsBody()} attendance={attBody()} initialOpen={`s:${who('23CS13').studentId}`} /></Sample>,
+  },
+  {
+    id: 'records-observe-noattendance',
+    title: 'Observations, attendance not taken',
+    role: 'professor',
+    note: 'Nobody is marked in this room yet: one line in the head, no column of Unmarked.',
+    render: () => <Sample tab="observe"><ObserveDemo data={obsBody()} attendance={attBody({ unmarked: true })} /></Sample>,
   },
   {
     id: 'records-observe-refused',
@@ -565,6 +655,7 @@ export default [
         <ObserveDemo
           data={obsBody()}
           initialOpen={`s:${who('23CS15').studentId}`}
+          attendance={attBody()}
           rowState={{ [`s:${who('23CS15').studentId}`]: { busy: false, error: 'note holds an email address or a phone number; teacher records keep neither.' } }}
         />
       </Sample>
@@ -581,7 +672,7 @@ export default [
     id: 'records-observe-hod',
     title: 'Observations, read only',
     role: 'hod',
-    render: () => <Sample tab="observe" canControl={false}><ObserveDemo data={obsBody({ removed: [ROSTER[39]] })} canControl={false} /></Sample>,
+    render: () => <Sample tab="observe" canControl={false}><ObserveDemo data={obsBody({ roster: ROSTER.slice(0, 39), removed: [ROSTER[39]] })} canControl={false} attendance={attBody()} /></Sample>,
   },
   {
     id: 'records-observe-loading',
@@ -593,7 +684,7 @@ export default [
     id: 'records-activities',
     title: 'Activities, four recorded',
     role: 'professor',
-    note: 'A quick check linked to its tally, a group challenge by bench, one with no outcome yet; a group challenge being recorded.',
+    note: 'A quick check linked to its tally, with Project to class (here a toast; in Live it opens the projector); a group challenge by bench; one with no outcome yet; a group challenge being recorded.',
     render: () => <Sample tab="activities"><ActivitiesDemo data={ACT_BODY} initialDraft="group" /></Sample>,
   },
   {
@@ -602,6 +693,13 @@ export default [
     role: 'professor',
     note: 'Its groups and outcome change; its kind stays what was run.',
     render: () => <Sample tab="activities"><ActivitiesDemo data={ACT_BODY} initialEdit="a3" /></Sample>,
+  },
+  {
+    id: 'records-activities-project-refused',
+    title: 'Activities, projecting refused',
+    role: 'professor',
+    note: 'The room was closed elsewhere: the server’s sentence under the quick check. On a closed room the action is not offered at all.',
+    render: () => <Sample tab="activities"><ActivitiesDemo data={ACT_BODY} error={{ for: 'project:a1', message: 'That room is closed, so it has no projector.' }} /></Sample>,
   },
   {
     id: 'records-activities-empty',

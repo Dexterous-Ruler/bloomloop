@@ -132,10 +132,82 @@
 .au-act-row b { display: block; font: 600 13.5px/1.35 var(--font); color: var(--text); }
 .au-act-row p { margin-top: 2px; font: 400 12.5px/1.45 var(--font); color: var(--text-3); }
 .au-act-row .btn { flex: none; min-width: 92px; }
-.au-confirm {
-  display: flex; flex-direction: column; gap: 10px; padding: 12px 14px;
-  border-radius: 10px; background: var(--warn-soft); font: 400 13px/1.5 var(--font); color: var(--text);
+
+/* ------------------------------------------- a draft that replaces a question */
+
+/* "Replaces: Q07 <its text>", on a bank row and in the editor: one quiet
+   line ruled on the left, the old text clipped to a line. */
+.au-replaces {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0; max-width: 90ch;
+  padding-left: 10px; border-left: 2px solid var(--line-2);
+  font: 400 12.5px/1.45 var(--font); color: var(--text-3);
 }
+.au-replaces-k { display: inline-flex; align-items: center; gap: 5px; flex: none; font-weight: 600; color: var(--text-2); }
+.au-replaces-k svg { flex: none; color: var(--text-3); }
+.au-replaces .tc-ref { flex: none; }
+.au-replaces-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+.au-replaces-off { flex: none; font-style: italic; }
+.au-replaces-box { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 6px; }
+.au-replaces-box p { font: 400 12.5px/1.45 var(--font); color: var(--text-3); }
+
+/* ----------------------------------- provenance, an uncertain level (Phase 5) */
+
+/* "Level uncertain" beside a Bloom tag: dashed, so it reads as a question
+   mark on the tag rather than a second state. */
+.au-unsure {
+  display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px;
+  border: 1px dashed var(--warn); border-radius: var(--r-full);
+  font: 600 11px/1 var(--font); color: var(--text-2); white-space: nowrap;
+}
+.au-unsure svg { flex: none; color: var(--warn); }
+.au-unsure-line {
+  display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 10px;
+  background: var(--warn-soft); font: 400 13px/1.5 var(--font); color: var(--text);
+}
+.au-unsure-line svg { flex: none; margin-top: 3px; color: var(--warn); }
+.au-prov { margin-bottom: 6px; font: 400 12.5px/1.5 var(--font); color: var(--text-3); }
+
+/* The detail under an opened bank row: provenance, the level's reason, labels. */
+.au-facts {
+  display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; padding-bottom: 12px;
+  border-bottom: 1px solid var(--line); font: 400 12.5px/1.5 var(--font); color: var(--text-2);
+}
+.au-facts-unsure { display: flex; align-items: flex-start; gap: 6px; }
+.au-facts-unsure svg { flex: none; margin-top: 3px; color: var(--warn); }
+.au-facts-mc { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.au-facts-mc ul { display: flex; flex-direction: column; gap: 4px; }
+.au-facts-mc li { display: grid; grid-template-columns: minmax(18px, auto) minmax(0, 1fr) auto; align-items: baseline; gap: 10px; }
+.au-facts-opt { font: 600 11.5px/1.4 var(--mono); color: var(--text-3); }
+.au-facts-lbl { color: var(--text); overflow-wrap: anywhere; }
+.au-facts-mc small { font: 500 11.5px/1.4 var(--font); color: var(--text-3); white-space: nowrap; }
+.au-facts-mc small[data-ai] { font-style: italic; }
+
+/* ------------------------------------ misconception labels, in the editor */
+
+.au-mc-list { display: flex; flex-direction: column; }
+.au-mc { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; min-width: 0; }
+.au-mc + .au-mc { border-top: 1px solid var(--line); }
+.au-mc:first-child { padding-top: 4px; }
+.au-mc-opt { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+/* No radio here, so the letter needs no room for one. */
+.au-mc-opt .tc-ed-mark { min-width: 14px; font-weight: 600; color: var(--text-2); }
+.au-mc-otext { font: 400 13px/1.5 var(--font); color: var(--text-2); overflow-wrap: anywhere; }
+.au-mc-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.au-mc-row .btn { flex: none; }
+/* An AI draft label reads as a draft until it is confirmed or rewritten. */
+.au-mc[data-ai] .input { border-style: dashed; }
+.au-mc-read { font: 500 13.5px/1.5 var(--font); color: var(--text); overflow-wrap: anywhere; }
+.au-mc-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font: 400 12px/1.5 var(--font); color: var(--text-3); }
+.au-mc-prov {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border: 1px solid var(--line-2);
+  border-radius: var(--r-full); font: 600 11px/1 var(--font); color: var(--text-2); white-space: nowrap;
+}
+.au-mc-prov[data-ai] { border-style: dashed; border-color: var(--warn); }
+.au-mc-said { display: flex; align-items: flex-start; gap: 6px; font: 500 12.5px/1.45 var(--font); color: var(--text-3); }
+.au-mc-said svg { flex: none; margin-top: 2px; color: var(--ok); }
+.au-mc-said[data-tone='bad'] { color: var(--bad); }
+.au-mc-said[data-tone='bad'] svg { color: var(--bad); }
+.au-mc-gone { font: 400 12.5px/1.5 var(--font); color: var(--text-3); }
 
 /* ------------------------------------------------------------ answer keys */
 
@@ -173,6 +245,10 @@
   .au-tcell { margin-left: 0; }
   .au-act-row { align-items: flex-start; flex-direction: column; gap: 8px; }
   .au-act-row .btn { min-width: 0; }
+  .au-mc-row { flex-wrap: wrap; }
+  .au-mc-row .input { flex: 1 1 100%; }
+  .au-facts-mc li { grid-template-columns: minmax(18px, auto) minmax(0, 1fr); }
+  .au-facts-mc small { grid-column: 2; }
 }
 
 /* ------------------------------------------------- the gallery page, dev only */

@@ -17,9 +17,10 @@ import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
 import { KIND_LABEL } from '../lib/kinds.js';
 import { Button, Chip, Dialog, Empty, Icon, Level, Menu, Note, Num, Panel, Section, Segmented, Tip } from '../ui/index.jsx';
+import { toast } from '../ui/toast.jsx';
 import { LevelSpread } from '../ui/viz.jsx';
 import AnswerKey from './AnswerKey.jsx';
-import Editor from './Editor.jsx';
+import Editor, { Replaces, removedLabels } from './Editor.jsx';
 import { ItemDetail, ItemFigures, StatsView, useBankStats } from './ItemStats.jsx';
 import Planner, { mmss, startTotal } from './Planner.jsx';
 
@@ -45,14 +46,148 @@ const andList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join('
 export const failedChecks = (q) => (Array.isArray(q?.checks) ? q.checks.filter((c) => c && c.ok === false) : []);
 
 /**
- * Where a question came from, said honestly. `model` is what tells: a
- * professor's own question is stored with source 'fallback' too, so the
- * source field alone would call it a template.
+ * Where a question came from, said honestly. Since 19 Nov 2026 a professor's
+ * own question is stored as 'teacher'. Before then it was stored as
+ * 'fallback', like the offline template's text: the template stamps its
+ * `model`, so 'fallback' with no model is either, and is labelled as both.
  */
 export function sourceLabel(q) {
+  if (q?.source === 'teacher') return 'Professor-written';
   if (q?.model === 'offline-template') return 'Offline template';
   if (q?.model) return 'AI written';
+  if (q?.source === 'fallback') return 'Template or professor-written';
   return null;
+}
+
+/** What the chip's label leaves out, for its title. */
+const SOURCE_TITLE = {
+  'Template or professor-written': 'The offline template’s questions, and professor-written ones from before 19 Nov 2026, were stored the same way.',
+};
+
+/**
+ * The chip on a question: the server's `provenance` (who wrote it and where it
+ * stands at the approval gate: "AI draft", "Offline template, approved", ...)
+ * with its sentence; the labels above only for a reply that carries none.
+ */
+export function chipOf(q) {
+  if (q?.provenance?.label) return { text: q.provenance.label, title: q.provenance.sentence ?? undefined };
+  const text = sourceLabel(q);
+  return text ? { text, title: q?.model ?? SOURCE_TITLE[text] } : null;
+}
+
+const textKey = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+const LETTERS = 'ABCDEFGHIJ';
+
+/** A label's option as the bank shows it: its letter on a choice question, "True" or "False" on a true/false. */
+function optionMark(q, option) {
+  if ((q?.kind ?? 'mcq') === 'truefalse') return option;
+  const i = (q?.options ?? []).findIndex((o) => textKey(o) === textKey(option));
+  return i >= 0 ? LETTERS[i] : option;
+}
+
+/**
+ * The detail under an opened question: who wrote it and where it stands at the
+ * approval gate, why its level is uncertain, and its misconception labels
+ * (read here; written in the editor).
+ */
+function QuestionFacts({ q }) {
+  const labels = Array.isArray(q.misconceptions) ? q.misconceptions : [];
+  const unsure = q.levelCheck?.uncertain ? q.levelCheck.sentence : null;
+  if (!q.provenance?.sentence && !unsure && !labels.length) return null;
+  return (
+    <div className="au-facts">
+      {q.provenance?.sentence && <p>{q.provenance.sentence}</p>}
+      {unsure && <p className="au-facts-unsure"><Icon name="help" size={13} />{unsure}</p>}
+      {labels.length > 0 && (
+        <div className="au-facts-mc">
+          <span className="t-label">Misconceptions on wrong options</span>
+          <ul>
+            {labels.map((l) => (
+              <li key={l.option}>
+                <span className="au-facts-opt">{optionMark(q, l.option)}</span>
+                <span className="au-facts-lbl">{l.label}</span>
+                <small data-ai={l.provenance === 'ai' ? 'true' : undefined}>{l.provenance === 'ai' ? 'AI draft' : 'Professor’s label'}</small>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The labels an edit or a retag took off: the server's note, then each label
+ * with the option it was on, and a way back into the question to add it again.
+ */
+function RemovedList({ removed, refOf, onOpen }) {
+  if (!removed?.items?.length) return null;
+  return (
+    <>
+      {removed.note && <div>{removed.note}</div>}
+      <ul className="tc-flagged">
+        {removed.items.map((r, i) => (
+          // eslint-disable-next-line react/no-array-index-key
+          <li key={`${r.id}-${i}`}>
+            <span className="tc-ref">{refOf.get(r.id) ?? '—'}</span>
+            <span className="tc-flagged-txt">
+              <span>{r.label}</span>
+              <span className="t-small dim">Was on “{r.option}”{r.provenance === 'ai' ? ', as an AI draft label' : ''}</span>
+            </span>
+            {refOf.has(r.id) && <Button size="sm" variant="ghost" icon="edit" onClick={() => onOpen(r.id)}>Open</Button>}
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+/**
+ * The bank's review state by level, from the bank read: approved (solid) and
+ * waiting for review (hatched), one column a level, on the room panel. Each
+ * column is named by its level's number, and the whole is read out as a
+ * sentence. Counts only.
+ */
+function ReviewState({ approved, waiting }) {
+  const total = LEVELS.reduce((n, l) => n + approved[l] + waiting[l], 0);
+  if (!total) return null;
+  const done = LEVELS.reduce((n, l) => n + approved[l], 0);
+  const most = Math.max(1, ...LEVELS.map((l) => approved[l] + waiting[l]));
+  const said = LEVELS.map((l) => `${LABEL[l]} ${approved[l]} approved${waiting[l] ? `, ${waiting[l]} waiting` : ''}`).join('; ');
+  return (
+    <div className="tc-review">
+      <div className="tc-review-head">
+        <span>Reviewed</span>
+        <b>{done} of {total}</b>
+      </div>
+      <div className="tc-review-cols" role="img" aria-label={`${done} of ${total} questions reviewed. ${said}.`}>
+        {LEVELS.map((l, i) => (
+          <span key={l} className="tc-review-col" title={`${LABEL[l]}: ${approved[l]} approved, ${waiting[l]} waiting`}>
+            <span className="tc-review-bar">
+              {waiting[l] > 0 && <i data-wait="true" style={{ height: `${(waiting[l] / most) * 100}%` }} />}
+              {approved[l] > 0 && <i style={{ height: `${(approved[l] / most) * 100}%` }} />}
+            </span>
+            <small>{i + 1}</small>
+          </span>
+        ))}
+      </div>
+      <div className="tc-review-key" aria-hidden="true">
+        <span><i />Approved</span>
+        <span><i data-wait="true" />Waiting for review</span>
+      </div>
+    </div>
+  );
+}
+
+/** "Level uncertain" beside a Bloom tag, when the server says so; its sentence on hover and in the detail. */
+function Unsure({ check }) {
+  if (!check?.uncertain) return null;
+  return (
+    <span className="au-unsure" title={check.sentence ?? undefined}>
+      <Icon name="help" size={12} />
+      Level uncertain
+    </span>
+  );
 }
 
 /** "Slides 3, 4" for a question read from a deck, or null. */
@@ -91,6 +226,8 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
   const [working, setWorking] = useState('');
   const [planning, setPlanning] = useState(false);
   const [plan, setPlan] = useState(null);
+  // The thin levels a one-press plan was weighted to, said above the planner.
+  const [planFor, setPlanFor] = useState(null);
   // '' closed, 'new' writing one from scratch, or the id being edited. The
   // live class can ask for one straight from a "check the key" flag.
   const [editing, setEditing] = useState(() => (String(focus ?? '').startsWith('edit:') ? focus.slice(5) : ''));
@@ -103,7 +240,6 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
   const [bulk, setBulk] = useState(null);
   const [retagTo, setRetagTo] = useState('');
   const [askAll, setAskAll] = useState(false);
-  const [askRewrite, setAskRewrite] = useState(null);
   // A run the server held back for being large, waiting on a yes.
   const [held, setHeld] = useState(null);
   const [draft, setDraft] = useState(() => ({
@@ -191,7 +327,10 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
         tone: 'ok',
         text: `${many(res.generated ?? 0, 'draft')} written${flagged > 0 ? `, ${flagged} flagged by a rule check` : ''}. Review them before they reach a room: nothing here is served until you approve it.`,
       });
+      setPlanFor(null);
       show('drafts');
+      // The planner closes as the run lands: say so where it is seen.
+      toast(`${many(res.generated ?? 0, 'draft')} added. Review them before they reach a room.`);
     } catch (err) {
       // 409 is either a large run waiting on a yes, or a replacing run while a
       // room on this chapter is running. Only the first can be confirmed.
@@ -226,7 +365,9 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
     try {
       const res = await fn([...picked]);
       await refresh();
-      setBulk({ what, changed: res.changed ?? (res.question ? 1 : 0), refused: res.refused ?? [], level: res.level ?? '' });
+      // `retired`: a restore approves a regenerated draft, so what it replaced leaves rooms.
+      // `removed`: a retag that changes the kind takes off the labels no option fits now.
+      setBulk({ what, changed: res.changed ?? (res.question ? 1 : 0), refused: res.refused ?? [], level: res.level ?? '', retired: res.retired ?? [], removed: removedLabels(res) });
       // Whatever was refused stays ticked, so it can be opened and fixed.
       const refusedIds = new Set((res.refused ?? []).map((r) => String(r.id)));
       setPicked((prev) => new Set([...prev].filter((id) => refusedIds.has(String(id)))));
@@ -239,13 +380,28 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
 
   const refOf = new Map(questions.map((q, i) => [q._id, `Q${String(i + 1).padStart(2, '0')}`]));
   const ref = (id) => refOf.get(id) ?? 'This question';
+  const byId = new Map(questions.map((q) => [q._id, q]));
+
+  // An approval of a regenerated draft retires the question it replaced
+  // (`retired`: one id, or a list from approve-all and bulk restore).
+  const retiredSaid = (retired) => {
+    const ids = (Array.isArray(retired) ? retired : retired ? [retired] : []).map(String);
+    if (!ids.length) return '';
+    const one = ids.length === 1;
+    const named = ids.map((id) => refOf.get(id)).filter(Boolean);
+    const who = named.length === ids.length
+      ? `${andList(named)}, which ${one ? 'it replaces' : 'they replace'},`
+      : one ? 'The question it replaces' : `The ${ids.length} questions they replace`;
+    return ` ${who} ${one ? 'has' : 'have'} left rooms and ${one ? 'is' : 'are'} set aside.`;
+  };
 
   // Approving says what it let through, so a flag is never approved unseen.
   const approvedSaid = (q) => (res) => {
     const failed = res?.failedChecks ?? [];
+    const retired = retiredSaid(res?.retired);
     return failed.length === 0
-      ? { tone: 'ok', text: `${ref(q._id)} approved. Rooms on this chapter can serve it now.` }
-      : { text: `${ref(q._id)} approved with ${many(failed.length, 'failed check')}: ${failed.map((c) => c.message).join(' ')}` };
+      ? { tone: 'ok', text: `${ref(q._id)} approved. Rooms on this chapter can serve it now.${retired}` }
+      : { text: `${ref(q._id)} approved with ${many(failed.length, 'failed check')}: ${failed.map((c) => c.message).join(' ')}${retired}` };
   };
 
   async function approveAll() {
@@ -273,7 +429,7 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
       const left = flaggedDrafts.length;
       setSaid({
         tone: 'ok',
-        text: `${many(res.changed ?? ids.length)} approved. The ${left} flagged ${left === 1 ? 'draft waits' : 'drafts wait'} here for you to fix or approve one by one.`,
+        text: `${many(res.changed ?? ids.length)} approved.${retiredSaid(res.retired)} The ${left} flagged ${left === 1 ? 'draft waits' : 'drafts wait'} here for you to fix or approve one by one.`,
       });
     } catch (err) {
       setError(err.message);
@@ -291,10 +447,12 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
     }));
   }
 
+  // An active question goes on serving until its rewrite is approved; the
+  // reply's `note` says so, word for word.
   function rewrite(q) {
-    setAskRewrite(null);
     act(q._id, 'regen', () => api.regenerateQuestion(q._id), (res) => ({
-      text: res?.warnings?.[0] ?? `${ref(q._id)} was rewritten. The new version is a draft waiting for your approval.`,
+      tone: 'ok',
+      text: `The rewrite of ${ref(q._id)} is a draft waiting for your approval.${res?.note ? ` ${res.note}` : ''}`,
       toDrafts: true,
     }));
   }
@@ -343,7 +501,13 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
         {(approved.length + drafts.length > 0 || error || blocked || selected.length === 0) && (
           <div className="stack stack-2">
             {approved.length + drafts.length > 0 && (
-              <div><Button variant="ghost" icon="back" onClick={() => setPlanning(false)}>Back to the questions</Button></div>
+              <div><Button variant="ghost" icon="back" onClick={() => { setPlanning(false); setPlanFor(null); }}>Back to the questions</Button></div>
+            )}
+            {planFor && (
+              <Note icon="plan">
+                Weighted to the thin levels only: {andList(planFor.map((l) => LABEL[l]))}. The run adds drafts to the bank, and
+                none reaches a room until you approve it. Change anything below before you write.
+              </Note>
             )}
             {error && <Note tone="bad">{error}</Note>}
             {blocked && (
@@ -409,6 +573,25 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
           ? `Every level holds at least ${Math.min(...LEVELS.map((l) => bankDist[l]))} approved questions, so a student can climb all six without running dry.`
           : `Thin at ${andList(thin.map((l) => `${LABEL[l]} (${bankDist[l]})`))}. Students who reach ${thin.length === 1 ? 'that level' : 'those levels'} have the least to answer there; approve or write more there.`;
 
+  // One press for the thin levels: the planner opens adding to the bank,
+  // weighted to the levels named thin above and to nothing else, about four
+  // drafts a level. Everything it writes is a draft that waits for approval.
+  const draftThin = () => {
+    setDraft((d) => ({
+      ...d,
+      mode: 'append',
+      preset: 'custom',
+      mix: Object.fromEntries(LEVELS.map((l) => [l, thin.includes(l) ? 1 : 0])),
+      total: thin.length * 4,
+    }));
+    setHeld(null); setBlocked(null);
+    setPlanFor(thin);
+    setPlanning(true);
+  };
+
+  // The review state by level, from the bank read: approved and waiting.
+  const draftDist = LEVELS.reduce((a, l) => ({ ...a, [l]: drafts.filter((q) => q.bloom === l).length }), {});
+
   const bulkSaid = !bulk ? '' : bulk.changed === 0 ? 'Nothing changed'
     : bulk.what === 'merge' ? 'Two questions merged into one. Both originals are set aside'
       : bulk.what === 'bloom' ? `${many(bulk.changed)} moved${bulk.level ? ` to ${bulk.level}` : ''}`
@@ -447,6 +630,12 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
             ))}
           </div>
           <p className="said">{coverSaid}</p>
+          {view === 'bank' && approved.length > 0 && thin.length > 0 && (
+            <div className="tc-thin">
+              <Button size="sm" icon="write" onClick={draftThin}>Draft for {thin.length === 1 ? 'this level' : 'these levels'}</Button>
+              <span>Opens the planner weighted to {andList(thin.map((l) => LABEL[l]))} only. What it writes waits for your approval.</span>
+            </div>
+          )}
         </section>
 
         <Panel className="tc-forroom" aria-label="For the room">
@@ -460,6 +649,7 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
             <span><b>{bankTopics.length}</b> topic{bankTopics.length === 1 ? '' : 's'}</span>
             {tookSecs != null && <span>written in <b className="mono">{mmss(tookSecs)}</b></span>}
           </p>
+          <ReviewState approved={bankDist} waiting={draftDist} />
           {drafts.length > 0 && (
             <p className="tc-forroom-wait">
               <Icon name="clock" size={14} />
@@ -469,7 +659,7 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
           )}
           <div className="cluster">
             <Button variant="accent" onClick={onNext}>Set up the room<Icon name="forward" /></Button>
-            <Button icon="plan" onClick={() => setPlanning(true)}>Plan another run</Button>
+            <Button icon="plan" onClick={() => { setPlanFor(null); setPlanning(true); }}>Plan another run</Button>
           </div>
         </Panel>
       </div>
@@ -478,16 +668,18 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
         <div className="stack stack-2">
           {error && <Note tone="bad">{error}</Note>}
           {said && !outcome && (
-            <Note tone={said.tone} icon={said.tone === 'ok' ? 'ok' : 'alert'}>
+            <Note tone={said.removed ? undefined : said.tone} icon={said.tone === 'ok' && !said.removed ? 'ok' : 'alert'}>
               {said.text}
               {said.toDrafts && view !== 'drafts' && drafts.length > 0 && (
                 <> <button type="button" className="link" onClick={() => show('drafts')}>Show the drafts</button></>
               )}
+              <RemovedList removed={said.removed} refOf={refOf} onOpen={setEditing} />
             </Note>
           )}
           {outcome && (
             <Note tone={outcome.flagged?.length ? undefined : 'ok'} icon={outcome.flagged?.length ? 'alert' : 'ok'}>
               <b>{many(outcome.approved)} approved. The bank now holds {outcome.bankCount}.</b>
+              {outcome.retired?.length > 0 && <div>{retiredSaid(outcome.retired).trim()}</div>}
               {outcome.flagged?.length > 0 && (
                 <>
                   <div>{outcome.flagged.length === 1 ? 'One of them' : `${outcome.flagged.length} of them`} failed a rule check. They are in rooms now; read them again when you can.</div>
@@ -517,8 +709,10 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
             </Note>
           )}
           {bulk && (
-            <Note tone={bulk.refused.length ? undefined : 'ok'} icon="alert">
+            <Note tone={bulk.refused.length || bulk.removed ? undefined : 'ok'} icon="alert">
               <b>{bulkSaid}{bulk.changed > 0 && bulk.refused.length > 0 && `, ${bulk.refused.length} refused`}</b>
+              {bulk.retired?.length > 0 && <div>{retiredSaid(bulk.retired).trim()}</div>}
+              <RemovedList removed={bulk.removed} refOf={refOf} onOpen={setEditing} />
               {bulk.refused.map((r) => <div key={r.id}>{r.reason}</div>)}
               {bulk.refused.length > 0 && picked.size > 0 && <div>Still ticked below, so you can open {picked.size === 1 ? 'it' : 'them'} and fix {picked.size === 1 ? 'it' : 'them'}.</div>}
             </Note>
@@ -535,11 +729,15 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
           </label>
         )}
         <span className="push cluster">
-          <Tip label="Write a question yourself. It goes straight into the bank, approved.">
+          <Tip
+            label={`Write a question yourself. It goes straight into the bank, approved.${filter !== 'all' || onTopic
+              ? ` It starts at ${[filter !== 'all' ? LABEL[filter] : '', onTopic ? `“${onTopic}”` : ''].filter(Boolean).join(', on ')}, the filter in force.`
+              : ''}`}
+          >
             <Button icon="edit" onClick={() => setEditing('new')}>Write your own</Button>
           </Tip>
           <Tip label="Plan a run that adds drafts to this bank">
-            <Button icon="plus" onClick={() => { setDraft((d) => ({ ...d, mode: 'append' })); setPlanning(true); }}>Add questions</Button>
+            <Button icon="plus" onClick={() => { setDraft((d) => ({ ...d, mode: 'append' })); setPlanFor(null); setPlanning(true); }}>Add questions</Button>
           </Tip>
         </span>
       </div>
@@ -626,6 +824,8 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
               const source = sourceLabel(q);
               const slides = slidesLabel(q);
               const poll = kind === 'poll';
+              const labels = Array.isArray(q.misconceptions) ? q.misconceptions : [];
+              const aiLabels = labels.filter((l) => l?.provenance === 'ai').length;
               return (
                 <li
                   key={q._id}
@@ -646,19 +846,27 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
                   >
                     <span className="tc-q-meta">
                       <Level level={q.bloom} />
+                      <Unsure check={q.levelCheck} />
                       {q.topic && <span className="tc-q-topic">{q.topic}</span>}
                       <span className="tc-ref">{refOf.get(q._id)}</span>
                       <i className="dot" aria-hidden="true" />
                       <span>{KIND_LABEL[kind] ?? kind}</span>
                       {slides && <span className="tc-q-slides">{slides}</span>}
-                      {isDraft
+                      {q.provenance?.label ? (
+                        <>
+                          <Chip className="chip-line" title={q.provenance.sentence ?? undefined}>{q.provenance.label}</Chip>
+                          {isRejectedDraft(q) && <Chip className="chip-line">Rejected draft</Chip>}
+                        </>
+                      ) : isDraft
                         ? <Chip className="chip-line" title={q.model ?? undefined}>{q.model === 'offline-template' ? 'Offline template' : q.model ? 'AI draft' : 'Draft'} · review</Chip>
                         : off
                           ? <Chip className="chip-line">{isRejectedDraft(q) ? 'Rejected draft' : 'Set aside'}</Chip>
-                          : source && <Chip className="chip-line" title={q.model ?? undefined}>{source}</Chip>}
+                          : source && <Chip className="chip-line" title={q.model ?? SOURCE_TITLE[source]}>{source}</Chip>}
+                      {aiLabels > 0 && <Chip className="chip-line" title="A misconception label the generator proposed: it reads as a draft until you confirm or rewrite it.">{aiLabels === 1 ? '1 AI draft label' : `${aiLabels} AI draft labels`}</Chip>}
                       {failed.length > 0 && <Chip tone="warn" icon="alert">{failed.length === 1 ? '1 flag' : `${failed.length} flags`}</Chip>}
                     </span>
                     <span className="tc-q-text">{q.text}</span>
+                    {q.replacesId && (isDraft || isRejectedDraft(q)) && <Replaces old={byId.get(q.replacesId)} name={refOf.get(q.replacesId)} />}
                     {!isDraft && <ItemFigures item={stats.byId.get(q._id)} />}
                     {failed.length > 0 && (isDraft || isOpen) && (
                       <span className="tc-q-flags">
@@ -676,7 +884,15 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
                     ) : (
                       <span className="tc-q-tools">
                         {off ? (
-                          <Button size="sm" icon={isRejectedDraft(q) ? 'check' : 'undo'} busy={working === `${q._id}:restore`} disabled={rowBusy} onClick={() => act(q._id, 'restore', () => api.restoreQuestion(q._id))}>
+                          <Button
+                            size="sm"
+                            icon={isRejectedDraft(q) ? 'check' : 'undo'}
+                            busy={working === `${q._id}:restore`}
+                            disabled={rowBusy}
+                            onClick={() => act(q._id, 'restore', () => api.restoreQuestion(q._id), (res) => (res?.retired
+                              ? { tone: 'ok', text: `${ref(q._id)} ${isRejectedDraft(q) ? 'approved' : 'restored'}.${retiredSaid(res.retired)}` }
+                              : null))}
+                          >
                             {isRejectedDraft(q) ? 'Approve' : 'Restore'}
                           </Button>
                         ) : (
@@ -687,7 +903,7 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
                               items={[
                                 { id: 'harder', label: q.bloom === 'create' ? 'Harder: already at Create' : 'Write a harder version', icon: 'up', disabled: poll || q.bloom === 'create', onSelect: () => variant(q, 'harder') },
                                 { id: 'easier', label: q.bloom === 'remember' ? 'Easier: already at Remember' : 'Write an easier version', icon: 'down', disabled: poll || q.bloom === 'remember', onSelect: () => variant(q, 'easier') },
-                                { id: 'regen', label: 'Rewrite it', icon: 'refresh', onSelect: () => setAskRewrite(q) },
+                                { id: 'regen', label: 'Rewrite it', icon: 'refresh', onSelect: () => rewrite(q) },
                                 'sep',
                                 { id: 'discard', label: 'Set aside', icon: 'trash', danger: true, onSelect: () => act(q._id, 'discard', () => api.discardQuestion(q._id)) },
                               ]}
@@ -700,6 +916,7 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
                   </span>
                   {isOpen && (
                     <div className="tc-q-key">
+                      <QuestionFacts q={q} />
                       <AnswerKey q={q} />
                       {(stats.byId.get(q._id)?.attempts ?? 0) > 0 && (
                         <ItemDetail item={stats.byId.get(q._id)} thresholds={stats.data?.thresholds} onCheckKey={(id) => setEditing(id)} />
@@ -720,12 +937,24 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
           question={open ?? null}
           contentId={content.contentId}
           kinds={bank?.kinds}
+          labelKinds={bank?.misconceptionLabels}
+          replaces={open?.replacesId ? { old: byId.get(open.replacesId), name: refOf.get(open.replacesId) } : null}
+          // A question written here starts at the level and topic of the filters in force.
+          start={editing === 'new' ? { bloom: filter !== 'all' ? filter : null, topic: onTopic || '' } : null}
           onClose={() => setEditing('')}
+          // A label is saved on its own and changes no status: the bank reads
+          // itself again, and the sheet stays open.
+          onLabels={() => { refresh().catch(() => {}); }}
           onDone={async (info) => {
             await refresh();
             setStatsVersion((v) => v + 1);
             setEditing('');
-            if (info?.note) setSaid({ tone: info.tone, text: info.note, toDrafts: /draft/i.test(info.note) });
+            if (info?.note) {
+              setSaid({ tone: info.tone, text: `${info.note}${retiredSaid(info.retired)}`, toDrafts: /draft/i.test(info.note), removed: info.removed ?? null });
+              // The sheet closes as it finishes, and the note sits above the
+              // list, maybe out of view: its first sentence as a toast too.
+              toast(/^[^.]*\./.exec(info.note)?.[0] ?? info.note);
+            }
           }}
         />
       )}
@@ -760,24 +989,6 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
           </ul>
           {flaggedDrafts.length > 6 && <p className="t-small dim">And {flaggedDrafts.length - 6} more, each marked in the list.</p>}
         </div>
-      </Dialog>
-
-      <Dialog
-        open={Boolean(askRewrite)}
-        onOpenChange={(v) => { if (!v) setAskRewrite(null); }}
-        title={`Rewrite ${askRewrite ? refOf.get(askRewrite._id) : ''}?`}
-        description="The rewrite arrives as a draft, at the same level."
-        footer={(
-          <>
-            <Button variant="ghost" onClick={() => setAskRewrite(null)}>Cancel</Button>
-            <Button variant="primary" icon="refresh" onClick={() => rewrite(askRewrite)}>Rewrite it</Button>
-          </>
-        )}
-      >
-        <p>
-          This question is approved and in use, so it leaves rooms now and is set aside. Its replacement joins rooms when you
-          approve it. To keep this one and add another beside it, ask for a harder or easier version instead.
-        </p>
       </Dialog>
     </>
   );

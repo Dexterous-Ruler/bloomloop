@@ -28,7 +28,7 @@ import { api } from '../lib/api.js';
 import { Button, Chip, Dialog, Field, Icon, Note, Segmented } from '../ui/index.jsx';
 import { dateOf, dayOf } from './dashParts.jsx';
 import {
-  Definitions, TYPES, list, mk, num, plural, pctRule, typesFrom,
+  COUNTABLE, Definitions, list, mk, num, plural, pctRule, typesFrom,
 } from './StudentAttainment.jsx';
 
 const ATTEMPTS = {
@@ -78,8 +78,9 @@ export function FormulaFacts({ config, roomWeights, evidenceTypes }) {
   const c = config ?? {};
   const ev = c.evidence ?? {};
   const types = typesFrom(evidenceTypes);
-  const on = types.filter((t) => ev[t.id]);
-  const off = types.filter((t) => ev[t.id] === false);
+  const on = types.filter((t) => !t.never && ev[t.id]);
+  const off = types.filter((t) => !t.never && ev[t.id] === false);
+  const never = types.filter((t) => t.never);
   const weights = list(roomWeights ?? c.roomWeights);
   return (
     <dl className="atn-facts">
@@ -88,6 +89,7 @@ export function FormulaFacts({ config, roomWeights, evidenceTypes }) {
       <div><dt>Class levels</dt><dd>{levelsLine(c.levels)}</dd></div>
       <div><dt>Counted</dt><dd>{on.length ? on.map((t) => t.label).join(', ') : 'Nothing'}</dd></div>
       <div><dt>Shown, not counted</dt><dd>{off.length ? off.map((t) => t.label).join(', ') : 'Nothing'}; polls are a count only</dd></div>
+      {never.map((t) => <div key={t.id}><dt>{t.label}</dt><dd>Never counted, by any formula: shown under their own label</dd></div>)}
       <div><dt>Teacher records</dt><dd>Never counted: they have their own section</dd></div>
       <div><dt>Attempts</dt><dd>{ATTEMPTS[c.attempts] ?? c.attempts ?? '—'}</dd></div>
       <div>
@@ -172,7 +174,7 @@ export function FormulaPart({
             <ul className="atn-types">
               {typesFrom(evidenceTypes).map((t) => (
                 <li key={t.id}>
-                  <b>{t.label}</b>
+                  <b>{t.label}{t.never && <small className="atn-never">Never counted</small>}</b>
                   <span>{t.description}</span>
                 </li>
               ))}
@@ -238,7 +240,7 @@ export function bodyOf(start, draft, baseConfig) {
   if (next.minAnswers !== base.minAnswers) changed.minAnswers = next.minAnswers;
   if (!sameJson(next.levels, list(base.levels).map((l) => ({ level: l.level, minShare: l.minShare })))) changed.levels = next.levels;
   const ev = {};
-  for (const t of TYPES) if (Boolean(next.evidence[t.id]) !== Boolean(base.evidence?.[t.id])) ev[t.id] = next.evidence[t.id];
+  for (const t of COUNTABLE) if (Boolean(next.evidence[t.id]) !== Boolean(base.evidence?.[t.id])) ev[t.id] = next.evidence[t.id];
   if (Object.keys(ev).length) changed.evidence = ev;
   if (next.attempts !== base.attempts) changed.attempts = next.attempts;
   if (weightKey(draft.roomWeights.filter((w) => w.roomId || w.code)) !== weightKey(base.roomWeights)) changed.roomWeights = next.roomWeights;
@@ -307,7 +309,9 @@ export function FormulaEditor({
   const nothing = !body.preset && !body.config;
   const fields = presets?.fields ?? current?.fields ?? {};
   const has = (k) => !Object.keys(fields).length || k in fields;
-  const types = typesFrom(presets?.evidenceTypes);
+  // Only the countable types get a switch: a re-vote after discussion is never counted (a save naming it is a 400).
+  const types = typesFrom(presets?.evidenceTypes).filter((t) => !t.never);
+  const never = typesFrom(presets?.evidenceTypes).filter((t) => t.never);
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const choose = (id) => {
     setFrom(id);
@@ -457,7 +461,10 @@ export function FormulaEditor({
                 </li>
               ))}
             </ul>
-            <p className="said atn-fixed">Teacher records (observations, wheel picks, hand tallies, activities) never count towards a mark. They are reported in their own section.</p>
+            <p className="said atn-fixed">
+              {never.map((t) => `${t.label} never count towards a mark, under any formula: every report shows them under their own label. `).join('')}
+              Teacher records (observations, wheel picks, hand tallies, activities) never count towards a mark. They are reported in their own section.
+            </p>
           </fieldset>
         )}
 

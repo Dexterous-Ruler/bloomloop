@@ -79,8 +79,10 @@ function Brief({ r, busy }) {
   const outcomes = list(r.outcomes);
   const ev = r.formula?.config?.evidence ?? {};
   const types = typesFrom(r.evidenceTypes);
-  const on = types.filter((t) => ev[t.id]);
-  const off = types.filter((t) => ev[t.id] === false);
+  const on = types.filter((t) => !t.never && ev[t.id]);
+  const off = types.filter((t) => !t.never && ev[t.id] === false);
+  // A re-vote after discussion: always shown, under any formula never counted.
+  const never = types.filter((t) => t.never);
   const sources = bySourceLine(a.bySource, r.questionSources);
   const students = list(r.students);
   const roster = students.filter((s) => s.status === 'active').length;
@@ -103,7 +105,15 @@ function Brief({ r, busy }) {
             {f?.source === 'example' ? `“${formulaName(f)}”, version 0: an example, since no formula has been saved` : `${formulaName(f)}${f?.savedAt ? `, saved ${dateOf(f.savedAt)}` : ''}`}
           </span>
           <b>Counted</b><span>{on.length ? on.map((t) => t.label).join(', ') : 'Nothing'}</span>
-          <b>Shown</b><span>{[...off.map((t) => `${t.label}, not counted`), 'polls as a count', 'teacher records apart'].join('; ')}</span>
+          <b>Shown</b>
+          <span>
+            {[
+              ...off.map((t) => `${t.label}, not counted`),
+              ...never.map((t) => `${t.label}: ${(num(a.byType?.[t.id]) ?? 0).toLocaleString()}, never counted`),
+              'polls as a count',
+              'teacher records apart',
+            ].join('; ')}
+          </span>
           {sources && <><b>Written by</b><span>{sources}</span></>}
           <b>Left out</b><span>Deleted rooms and rooms not opened for this class</span>
         </div>

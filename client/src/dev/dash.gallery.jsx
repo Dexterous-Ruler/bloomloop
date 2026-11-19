@@ -50,6 +50,26 @@ const report = (seen, acc) => LEVELS.map((level, i) => {
   return { level, seen: seen[i], correct, accuracy: seen[i] ? correct / seen[i] : null };
 });
 
+/*
+ * `levelBands` beside `bloom`, as GET /api/dashboard and a staff
+ * GET /api/analytics send them since the Phase 5 follow-ups (levelBandsOf in
+ * services/classAnalytics.js): each band's answers and right answers summed
+ * from its two levels, with its count sentence.
+ */
+const levelBandsOf = (bloom) => [
+  ['lower', 'Remember and Understand', ['remember', 'understand']],
+  ['middle', 'Apply and Analyse', ['apply', 'analyse']],
+  ['higher', 'Evaluate and Create', ['evaluate', 'create']],
+].map(([id, label, levels]) => {
+  const rows = bloom.filter((b) => levels.includes(b.level));
+  const answers = rows.reduce((n, b) => n + b.seen, 0);
+  const correct = rows.reduce((n, b) => n + b.correct, 0);
+  return {
+    id, label, levels, answers, correct, accuracy: answers ? correct / answers : null,
+    sentence: answers ? `Based on ${answers.toLocaleString()} graded answer${answers === 1 ? '' : 's'}.` : 'No graded answers yet.',
+  };
+});
+
 /** Best and weakest level, skipping anything with fewer than three answers. */
 function extremes(bloom) {
   const solid = bloom.filter((b) => b.seen >= 3 && b.accuracy !== null);
@@ -104,6 +124,9 @@ function roomsOf(p, index) {
     const live = first && index === 0;
     const startedAt = first ? p.lastSessionAt : daysAgo(i * 5 + index + 2, Math.floor(r() * 6));
     const joined = Math.round(p.students * (0.55 + r() * 0.4));
+    // What the accuracy rests on (Phase 5): the students with a graded answer
+    // (a joiner or two answered nothing) and their graded answers.
+    const students = Math.max(0, joined - (i % 3 === 0 ? 1 : 0));
     return {
       code: draw(r, ROOM_ALPHABET, 6),
       title: CHAPTERS[(index * 3 + i) % CHAPTERS.length],
@@ -114,6 +137,8 @@ function roomsOf(p, index) {
       joined,
       banded: Math.round(joined * clamp(0.62 - p.accuracy + r() * 0.1, 0, 0.4)),
       accuracy: clamp(p.accuracy + (r() - 0.5) * 0.16, 0.2, 0.95),
+      answers: students * (live ? 6 : 12 + ((i + index) % 5)),
+      students,
     };
   });
 }
@@ -124,13 +149,15 @@ const HOD = {
   role: 'hod',
   department: DEPARTMENT,
   counts: { professors: 8, students: 412, contents: 21, questions: 1486, sessions: 57, answered: 18240, banded: 96, accuracy: 0.612 },
-  professors: PROFESSORS,
+  // Each professor's row carries the graded answers behind its accuracy (Phase 5).
+  professors: PROFESSORS.map((p, i) => ({ ...p, answers: STAFF_ROOMS[i].reduce((n, r) => n + r.answers, 0) })),
   bloom: report([4380, 4120, 3890, 2760, 1840, 1250], [0.79, 0.72, 0.62, 0.51, 0.44, 0.38]),
   // Newest first, and short: the department's last twelve.
   recentSessions: STAFF_ROOMS.flat()
     .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)))
     .slice(0, 12),
 };
+HOD.levelBands = levelBandsOf(HOD.bloom);
 
 const HOD_EMPTY = {
   role: 'hod',
@@ -140,6 +167,7 @@ const HOD_EMPTY = {
   bloom: report([0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0]),
   recentSessions: [],
 };
+HOD_EMPTY.levelBands = levelBandsOf(HOD_EMPTY.bloom);
 
 /** GET /api/analytics/:id for one professor. */
 function professorDetail(p, index) {
@@ -157,6 +185,7 @@ function professorDetail(p, index) {
     subject: { id: p.id, name: p.fullName, code: p.code, active: p.active },
     counts: { sessions: p.sessions, students: p.sessions ? seats : 0, answered, accuracy: p.accuracy },
     bloom,
+    levelBands: levelBandsOf(bloom),
     ...extremes(bloom),
     topics: p.sessions ? [
       { topic: 'Flow control', seen: 212, correct: 151, accuracy: 151 / 212 },
@@ -164,13 +193,14 @@ function professorDetail(p, index) {
       { topic: 'Three-way handshake', seen: 164, correct: 131, accuracy: 131 / 164 },
     ] : [],
     // Oldest first, as the service sorts it.
-    timeline: [...STAFF_ROOMS[index]].reverse().map(({ code, title, status, startedAt, joined, banded, accuracy }) => ({
-      code, title, status, startedAt, joined, banded, accuracy,
+    timeline: [...STAFF_ROOMS[index]].reverse().map(({ code, title, status, startedAt, joined, banded, accuracy, answers, students }) => ({
+      code, title, status, startedAt, joined, banded, accuracy, answers, students,
     })),
+    // In roll order, as the server lists them since the Phase 5 follow-ups.
     students: p.sessions ? [
+      { rollNo: '23CS009', name: 'Esha Gokhale', sessions: 6, answered: 79, correct: 30, lastLevel: 'understand', accuracy: 30 / 79 },
       { rollNo: '23CS014', name: 'Kavya Iyer', sessions: 6, answered: 84, correct: 71, lastLevel: 'evaluate', accuracy: 71 / 84 },
       { rollNo: '23CS021', name: 'Pranav Gaikwad', sessions: 5, answered: 70, correct: 44, lastLevel: 'apply', accuracy: 44 / 70 },
-      { rollNo: '23CS009', name: 'Esha Gokhale', sessions: 6, answered: 79, correct: 30, lastLevel: 'understand', accuracy: 30 / 79 },
     ] : [],
   };
 }
@@ -254,7 +284,7 @@ const MY_ROOMS = [
   ['Unit III: Transport layer', 'closed', daysAgo(16, 3), 25, 2, 0.61],
   ['Process scheduling', 'closed', daysAgo(22, 6), 27, 1, 0.67],
   ['Normalisation and keys', 'closed', daysAgo(30, 2), 27, 1, 0.7],
-].map(([title, status, startedAt, joined, banded, accuracy]) => ({
+].map(([title, status, startedAt, joined, banded, accuracy], i) => ({
   code: draw(gen, ROOM_ALPHABET, 6),
   title,
   status,
@@ -264,6 +294,9 @@ const MY_ROOMS = [
   joined,
   banded,
   accuracy,
+  // What the accuracy rests on (Phase 5): graded answers, and the students who gave one.
+  answers: (joined - 1) * (status === 'closed' ? 14 + (i % 3) : 5),
+  students: joined - 1,
 }));
 
 const CLASS = [
@@ -298,6 +331,11 @@ const PROFESSOR = {
   bloom: report([1310, 1180, 1040, 760, 510, 320], [0.81, 0.74, 0.63, 0.52, 0.41, 0.36]),
   recentSessions: MY_ROOMS,
 };
+PROFESSOR.levelBands = levelBandsOf(PROFESSOR.bloom);
+
+// The dashboard as an older server sent it, with no `levelBands`: the only
+// read on which the screens still pair the six levels themselves.
+const PROFESSOR_NO_BANDS = { ...PROFESSOR, levelBands: undefined };
 
 const PROFESSOR_EMPTY = {
   role: 'professor',
@@ -308,6 +346,7 @@ const PROFESSOR_EMPTY = {
   bloom: report([0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0]),
   recentSessions: [],
 };
+PROFESSOR_EMPTY.levelBands = levelBandsOf(PROFESSOR_EMPTY.bloom);
 
 /* The topics each chapter's rooms were written from. */
 const ROOM_TOPICS = {
@@ -663,9 +702,10 @@ function OverviewLoading() {
 /* ------------------------------------------------------------------ entries */
 
 export default [
-  { id: 'dash-department', title: 'Department', role: 'hod', render: () => <DepartmentDemo data={HOD} pending={PENDING} /> },
+  { id: 'dash-department', title: 'Department', role: 'hod', note: 'The level map and a professor’s classes open on the three level bands the server sends (decision 6), each with its count sentence; Six levels is one press away. Every room’s accuracy carries the answers and students behind it, each professor’s the answers.', render: () => <DepartmentDemo data={HOD} pending={PENDING} /> },
   { id: 'dash-department-empty', title: 'Department, no professors yet', role: 'hod', render: () => <DepartmentDemo data={HOD_EMPTY} /> },
-  { id: 'dash-overview', title: 'Overview', role: 'professor', render: () => <OverviewDemo data={PROFESSOR} /> },
+  { id: 'dash-overview', title: 'Overview', role: 'professor', note: 'All your classes reads in the server’s three level bands first (decision 6), each with its count sentence; one student’s levels stay six. Students in roll order. Each room’s accuracy carries the answers and students behind it.', render: () => <OverviewDemo data={PROFESSOR} /> },
+  { id: 'dash-overview-no-bands', title: 'Overview, a read without levelBands', role: 'professor', note: 'Only if GET /api/dashboard carried no levelBands (an older server): All your classes pairs the six levels itself, without a count sentence.', render: () => <OverviewDemo data={PROFESSOR_NO_BANDS} /> },
   { id: 'dash-overview-empty', title: 'Overview, nothing yet', role: 'professor', render: () => <OverviewDemo data={PROFESSOR_EMPTY} classroom="off" /> },
   { id: 'dash-overview-loading', title: 'Overview, first read', role: 'professor', render: () => <OverviewLoading /> },
   { id: 'dash-department-loading', title: 'Department, first read', role: 'hod', render: () => <DepartmentView loading data={null} /> },

@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { LABEL, LEVELS } from '../lib/bloom.js';
-import { Button, Chip } from '../ui/index.jsx';
+import { Button, Chip, Segmented } from '../ui/index.jsx';
 
 /* ------------------------------------------------------------ formatting */
 
@@ -106,6 +106,31 @@ export function dayParts(iso) {
 export const seriesOf = (rooms, key) =>
   [...(rooms ?? [])].reverse().map((r) => r?.[key]).filter((v) => v != null && Number.isFinite(Number(v))).map(Number);
 
+/**
+ * What a room's accuracy rests on (Phase 5, the count behind every estimate):
+ * " from 150 answers by 15 students". A row with `answers` and no `students`
+ * (an HOD's professor rows) says the answers only. Empty when the server sent
+ * no count, or the count is nought and the accuracy is already a dash.
+ */
+export function restsOn(row) {
+  const answers = Number(row?.answers);
+  if (!Number.isFinite(answers) || answers <= 0) return '';
+  return ` from ${plural(answers, 'answer')}${Number.isFinite(row?.students) ? ` by ${plural(row.students, 'student')}` : ''}`;
+}
+
+/**
+ * Staff lists of students read in roll order, numerically ('2' before '10'),
+ * as the server lists them since the Phase 5 follow-ups; never by score unless
+ * someone asks for it. A student with no roll number comes last, by name.
+ */
+export function byRoll(a, b) {
+  const ra = String(a?.rollNo ?? '').trim();
+  const rb = String(b?.rollNo ?? '').trim();
+  if (ra && rb) return ra.localeCompare(rb, undefined, { numeric: true, sensitivity: 'base' });
+  if (ra || rb) return ra ? -1 : 1;
+  return String(a?.fullName ?? a?.name ?? '').localeCompare(String(b?.fullName ?? b?.name ?? ''));
+}
+
 /* ----------------------------------------------------------------- levels */
 
 /** The server's per-level report, as a map by level. */
@@ -170,6 +195,92 @@ export function LevelRows({ bloom, current, label = 'Accuracy by level' }) {
       })}
     </ul>
   );
+}
+
+/* ------------------------------------------------------------ level bands */
+
+/**
+ * Decision 6 (19 Nov 2026): a class summary reads in three level bands first,
+ * with the six levels one press away; one student's detail stays six. The
+ * bands are the server's (LEVEL_BANDS in server/src/services/classAnalytics.js),
+ * named as it names them. GET /api/classes/:id/analytics sends them ready
+ * made; GET /api/dashboard and GET /api/analytics send the six levels only, so
+ * a summary drawn from those adds each pair's answers here. Nothing else is
+ * worked out: every count is the server's.
+ */
+export const LEVEL_BANDS = [
+  { id: 'lower', label: 'Remember and Understand', levels: ['remember', 'understand'] },
+  { id: 'middle', label: 'Apply and Analyse', levels: ['apply', 'analyse'] },
+  { id: 'higher', label: 'Evaluate and Create', levels: ['evaluate', 'create'] },
+];
+
+/**
+ * The three bands: { id, label, levels, seen, correct, sentence? }. The
+ * server's own `levelBands` as sent since the Phase 5 follow-ups ({ id, label,
+ * levels, answers, correct, accuracy, sentence }; `answers` is read as `seen`).
+ * Only when a read carries no `levelBands` at all are the six levels added up
+ * in pairs here, without a sentence.
+ */
+export function bandsOf(bloom, sent) {
+  if (Array.isArray(sent)) {
+    return sent.map((b) => ({ ...b, seen: b.answers ?? 0, correct: b.correct ?? 0 }));
+  }
+  const map = byLevel(bloom);
+  return LEVEL_BANDS.map((b) => ({
+    ...b,
+    seen: b.levels.reduce((n, l) => n + (map[l]?.seen ?? 0), 0),
+    correct: b.levels.reduce((n, l) => n + (map[l]?.correct ?? 0), 0),
+  }));
+}
+
+/** The switch between the two readings of the same answers. */
+export function LevelReading({ value, onChange }) {
+  return (
+    <Segmented
+      label="Read the levels by"
+      value={value}
+      onChange={onChange}
+      options={[{ id: 'bands', label: 'Three bands' }, { id: 'levels', label: 'Six levels' }]}
+    />
+  );
+}
+
+/**
+ * The three bands as three bars: the band named with its two level numbers,
+ * how well and on how much. One green for every band, so a bar reads as "how
+ * well" and never as one level's colour.
+ */
+export function BandRows({ bloom, bands, label = 'Accuracy by level band' }) {
+  return (
+    <ul className="ac-bandrows" aria-label={label}>
+      {bandsOf(bloom, bands).map((b) => {
+        const pct = b.seen ? Math.round((b.correct / b.seen) * 100) : null;
+        return (
+          <li key={b.id} className="ac-bandrow" data-empty={b.seen ? undefined : 'true'}>
+            <span className="ac-bandrow-name">
+              <span className="ac-bandrow-ns" aria-hidden="true">
+                {b.levels.map((l) => <i key={l} className="ac-lvrow-n" data-level={l}>{LEVELS.indexOf(l) + 1}</i>)}
+              </span>
+              {b.label}
+            </span>
+            <span className="ac-lvrow-pct">{pct == null ? '—' : `${pct}%`}</span>
+            <span className="ac-lvrow-ct">{b.seen ? `${b.correct}/${b.seen}` : 'none'}</span>
+            <span className="ac-lvrow-bar ac-bandrow-bar" aria-hidden="true"><i style={{ width: `${pct == null ? 0 : Math.max(pct, 3)}%` }} /></span>
+            {/* The server's count sentence, when the band is the server's. */}
+            {b.sentence && <span className="ac-bandrow-basis">{b.sentence}</span>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * A class summary's level figures: three bands, or the six levels, as `by`
+ * says. `bands` is the server's `levelBands` when the read carried them.
+ */
+export function LevelSummary({ bloom, bands, by, current }) {
+  return by === 'levels' ? <LevelRows bloom={bloom} current={current} /> : <BandRows bloom={bloom} bands={bands} />;
 }
 
 /**

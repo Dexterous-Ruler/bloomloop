@@ -157,7 +157,9 @@ export default function TeachApp() {
             : `The server answered: ${room.message}.`,
         };
       } else if (room?.session) {
-        reopened = { code: room.session.code, bankCount: room.bankCount, title: room.content?.title || room.session.title };
+        // `settings` travels too, so a Teacher-led room reopened from a link
+        // is still known to take no answers (no code on the projector).
+        reopened = { code: room.session.code, bankCount: room.bankCount, title: room.content?.title || room.session.title, settings: room.session.settings };
         setSession(reopened);
         setClosed(room.session.status === 'closed');
       }
@@ -295,9 +297,25 @@ export default function TeachApp() {
     else setView(id);
   };
 
+  // F3: a part of the live room, straight from the palette. Live reads the
+  // space and the records tab from the address (`?space=`, `?tab=`), so this
+  // writes them there and opens Live; a reload keeps them.
+  const openLive = (space, tab) => {
+    const next = new URLSearchParams(window.location.search);
+    next.set('space', space);
+    if (tab) next.set('tab', tab); else next.delete('tab');
+    navigate({ search: `?${next.toString()}` }, { replace: true });
+    setView('live');
+  };
+
   const commands = [
-    roomOpen && { id: 'projector', label: `Open the projector for ${session.code}`, icon: 'projector', onSelect: () => setView('session') },
+    roomOpen && session?.settings?.mode !== 'teacher-led' && { id: 'projector', label: `Open the projector for ${session.code}`, icon: 'projector', onSelect: () => setView('session') },
     session && view !== 'live' && { id: 'watch', label: `Watch room ${session.code}`, icon: 'live', onSelect: () => setView('live') },
+    session && { id: 'live-wheel', label: 'Spin the wheel', icon: 'draw', onSelect: () => openLive('room', 'wheel') },
+    // A room known to have no class has no attendance; Live falls back if the room turns out to have none.
+    session && session.classId !== null && { id: 'live-attendance', label: 'Attendance', icon: 'attendance', onSelect: () => openLive('attendance') },
+    session && { id: 'live-observe', label: 'Observations', icon: 'note', onSelect: () => openLive('room', 'observe') },
+    session && { id: 'live-tally', label: 'Raised hands', icon: 'hand', onSelect: () => openLive('room', 'tally') },
     !account && { id: 'all-rooms', label: 'See all rooms', icon: 'rooms', onSelect: () => navigate('/rooms') },
   ].filter(Boolean);
 

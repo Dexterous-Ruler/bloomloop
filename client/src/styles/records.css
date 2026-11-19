@@ -33,10 +33,25 @@
 .rc-wheel { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
 .rc-wheel-main { min-width: 0; }
 
-.rc-stage-body { display: grid; grid-template-columns: 240px minmax(0, 1fr); align-items: center; gap: 32px; padding: 22px 26px 24px; }
+.rc-stage-body { display: grid; grid-template-columns: 240px minmax(0, 1fr); align-items: start; gap: 32px; padding: 22px 26px 24px; }
 .rc-stage-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .rc-draw { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
-.rc-draw > .btn { min-width: 148px; }
+.rc-draw-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rc-draw-row > .btn-lg { min-width: 148px; }
+
+/* Think time: the question everyone is thinking about, above Skip to draw. */
+.rc-think { align-self: stretch; display: flex; flex-direction: column; gap: 8px; padding-bottom: 4px; }
+.rc-think-q {
+  display: flex; align-items: flex-start; gap: 10px;
+  font: 600 15px/1.45 var(--font); letter-spacing: -0.006em; color: var(--text); text-wrap: pretty; overflow-wrap: anywhere;
+}
+.rc-think-q > .lv { flex: none; margin-top: 2px; }
+.rc-think-line { font: 400 13px/1.5 var(--font); color: var(--text-3); text-wrap: pretty; }
+.rc-think-pick { display: flex; flex-direction: column; gap: 6px; padding: 2px 0 4px; }
+.rc-think-pick > .rc-qpick { max-width: none; }
+
+/* The wheel's empty reason, with the fix beside it when there is one. */
+.rc-empty > .grow { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 
 /* The ring: one tick per student on the wheel. Ticks are grey; the lit one is
    green; one who has had a turn this round is faint. */
@@ -55,6 +70,9 @@
 .rc-ring:not([data-spinning]) .rc-ring-mid { animation: rc-land 320ms var(--ease) both; }
 .rc-ring-roll { font: 600 28px/1.05 var(--mono); letter-spacing: 0.01em; color: var(--text); overflow-wrap: anywhere; }
 .rc-ring-roll.is-walking { color: var(--text-3); }
+.rc-ring-count { font-size: 44px; line-height: 1; font-variant-numeric: tabular-nums; }
+/* Think time's arc, outside the ticks: full at the start, empty at the draw. */
+.rc-ring-think { fill: none; stroke: var(--primary); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
 .rc-ring-name { font: 600 14px/1.3 var(--font); color: var(--text-2); }
 .rc-ring-sub { font: 400 12px/1.4 var(--font); color: var(--text-3); }
 .rc-ring-skel { width: 220px; height: 220px; margin: 10px; border-radius: 50%; }
@@ -216,6 +234,20 @@
 .rc-ob-who > .clip:first-child { flex: 0 1 auto; min-width: 8ch; }
 .rc-ob-peek { flex: 1 1 0; max-width: 28ch; font: 400 12px/1.3 var(--font); color: var(--text-3); }
 .rc-ob[data-inactive] .rc-ob-roll, .rc-ob[data-inactive] .rc-ob-who { color: var(--text-3); }
+
+/* Attendance beside each row, read only, in the attendance screen's shapes:
+   a filled dot is present, half is late, a ring is absent, dashed is unmarked.
+   An absent student's roll number and name are dimmed. */
+.rc-ob-attline { display: flex; align-items: center; gap: 7px; margin-top: 6px; font: 400 12.5px/1.45 var(--font); color: var(--text-2); }
+.rc-ob-attline > svg { flex: none; color: var(--text-3); }
+.rc-ob-att { flex: none; margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font: 500 12px/1.2 var(--font); color: var(--text-3); white-space: nowrap; }
+.rc-ob-att > i { width: 8px; height: 8px; flex: none; border-radius: 50%; }
+.rc-ob-att[data-status='present'] > i { background: var(--primary); }
+.rc-ob-att[data-status='late'] > i { background: linear-gradient(90deg, var(--warn-fill) 50%, transparent 50%); box-shadow: inset 0 0 0 1.5px var(--warn-fill); }
+.rc-ob-att[data-status='absent'] { font-weight: 600; color: var(--text-2); }
+.rc-ob-att[data-status='absent'] > i { box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.rc-ob-att[data-status='unmarked'] > i { border: 1.5px dashed var(--text-4); }
+.rc-ob[data-absent] .rc-ob-roll, .rc-ob[data-absent] .rc-ob-who > .clip:first-child { color: var(--text-3); }
 .rc-mini { height: 20px; padding: 0 7px; font-size: 10.5px; flex: none; }
 
 .rc-marks { grid-area: marks; display: flex; flex-wrap: wrap; gap: 4px; }
@@ -288,6 +320,8 @@
 .rc-act-link { display: flex; align-items: center; gap: 8px; min-width: 0; font: 500 12.5px/1.4 var(--font); color: var(--text-2); }
 .rc-act-link > svg { flex: none; color: var(--text-3); }
 .rc-act-link > .t-meta { flex: none; }
+.rc-act-linkrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; }
+.rc-act-linkrow > .rc-act-link { flex: 1 1 220px; }
 .rc-act-groups { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
 .rc-act-groups > ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0 16px; }
 .rc-act-groups li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 6px 0; border-bottom: 1px dashed var(--line); font: 500 12.5px/1.35 var(--font); color: var(--text); }
@@ -321,6 +355,7 @@
   .rc-ob-who { flex-wrap: wrap; row-gap: 2px; }
   .rc-ob-who > .clip:first-child { flex: 1 1 100%; }
   .rc-ob-peek { display: none; }
+  .rc-ob-att { margin-left: 0; }
   .rc-keys { display: none; }
   .rc-marks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rc-mk { white-space: normal; text-align: center; padding: 5px 8px; }

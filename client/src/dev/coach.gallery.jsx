@@ -8,12 +8,20 @@
  * three orders the same way, so every figure agrees with the others. Acting on
  * or dismissing a card changes the sample only.
  *
- * The two "live" entries mount the real components on a real room on :5050
- * (with the socket feed), so they need the local server and the teacher key.
+ * Phase 5, honest indicators: every student carries `bandBasis` and
+ * `levelBasis`, every KPI its `sentence`, every card its `basis`, and the card
+ * `serving.basis`, `serving.moves`, `mastery` and `languages`, in the server's
+ * own words (services/mastery.js levelEvidence and masteryBasis,
+ * services/honesty.js basedOn and studentLanguages). Below three answers a
+ * level and a band are provisional, as the server says.
+ *
+ * The "Live only" entry mounts the real components on a real room on :5050
+ * (with the socket feed), so it needs the local server and the teacher key.
  */
 
 import { useState } from 'react';
 
+import { LABEL } from '../lib/bloom.js';
 import AccountShell from '../shell/AccountShell.jsx';
 import Insights, { InsightsView } from '../teach/Insights.jsx';
 import StudentCard, { StudentCardView } from '../teach/StudentCard.jsx';
@@ -58,12 +66,29 @@ const bandReason = ({ correct, answers, band }) => {
 const at = (min) => new Date(Date.UTC(2026, 10, 19, 4, 30 + min, 0)).toISOString();
 
 /** [roll, roster name, typed name, correct, answers, working level, present, answered] */
+const answersWord = (n) => `${n} ${n === 1 ? 'answer' : 'answers'}`;
+
+/** What a working level rests on, in the server's words (services/mastery.js levelEvidence). */
+function levelBasis(answers, workingLevel, band) {
+  const here = LABEL[workingLevel];
+  if (band === 'needs-support') return { answers, provisional: false, sentence: `Based on ${answersWord(answers)} overall.` };
+  if (!answers) return { answers: 0, provisional: true, sentence: `No graded answers yet: ${here} is the room's start level, not an estimate.` };
+  if (answers < THRESHOLDS.minAnswers) {
+    return { answers, provisional: true, sentence: `Provisional: ${answersWord(answers)} at ${here} so far, and the ladder needs 3 before it can move a student.` };
+  }
+  const n = Math.min(5, answers);
+  return { answers: n, provisional: false, sentence: `Based on the last ${answersWord(n)} at ${here}.` };
+}
+
 function student([rollNo, rosterName, typed, correct, answers, workingLevel, present = true, answered = answers]) {
   const band = bandFor(correct, answers);
+  const reason = bandReason({ correct, answers, band });
   return {
     rollNo, name: typed ?? rosterName, rosterName, present, workingLevel, answers, correct,
     accuracy: answers ? correct / answers : null, band, bandLabel: bandLabel(band),
-    reason: bandReason({ correct, answers, band }), answered,
+    reason, answered,
+    bandBasis: { answers, provisional: answers < THRESHOLDS.minAnswers, sentence: reason },
+    levelBasis: levelBasis(answers, workingLevel, band),
   };
 }
 
@@ -90,7 +115,7 @@ function room({ code, mode = 'mixed', status = 'open', students, cards, kpis, se
     bands: BANDS,
     students,
     counts: countsOf(students),
-    sort: { keys: SORT_KEYS, orders: orders(students) },
+    sort: { keys: SORT_KEYS, orders: orders(students), default: 'roll' },
     cards,
     ...(cardsNote ? { cardsNote } : {}),
     kpis,
@@ -150,11 +175,18 @@ const FULL_SERIES = {
 };
 
 const FULL_KPIS = {
-  accuracy: { label: 'Class accuracy', value: FULL_ACC, answers: FULL_ANSWERS, students: graded.length, start: { value: 0.62, at: at(0), answers: 3, students: 2 }, change: FULL_ACC - 0.62 },
-  support: { label: 'Needs support', value: FULL_SUPPORT, banded: FULL_BANDED, start: { value: 1, at: at(2), students: 3 }, change: FULL_SUPPORT - 1 },
+  accuracy: {
+    label: 'Class accuracy', value: FULL_ACC, answers: FULL_ANSWERS, students: graded.length, start: { value: 0.62, at: at(0), answers: 3, students: 2 }, change: FULL_ACC - 0.62,
+    sentence: `Based on ${FULL_ANSWERS} graded answers from ${graded.length} students.`,
+  },
+  support: {
+    label: 'Needs support', value: FULL_SUPPORT, banded: FULL_BANDED, start: { value: 1, at: at(2), students: 3 }, change: FULL_SUPPORT - 1,
+    sentence: `Based on ${FULL_BANDED} students with at least 3 graded answers each.`,
+  },
   participation: {
     label: 'Participation', value: answeredPresent / present.length, answered: answeredPresent, present: present.length,
     start: { value: 0.22, at: at(0), present: 18 }, change: answeredPresent / present.length - 0.22,
+    sentence: `Based on ${present.length} present students.`,
   },
 };
 
@@ -164,6 +196,7 @@ const FOCUS = {
   evidence: EV_FOCUS,
   action: { label: 'Ask Apply', do: 'ask', level: 'apply' },
   figures: { level: 'apply', students: 11, answers: 38, correct: 21 }, dismissed: false, lastAction: null,
+  basis: { students: graded.length, answers: 38, sentence: `Based on ${graded.length} students with a graded answer, and 38 Apply answers in this room.` },
 };
 const SUPPORT = {
   kind: 'support', title: 'Support', flagId: 'support:fe76c26d8957b79f',
@@ -172,6 +205,7 @@ const SUPPORT = {
   action: { label: 'Show them', do: 'sort', sort: 'lowest' },
   figures: { now: FULL_SUPPORT, start: 1, change: FULL_SUPPORT - 1, banded: FULL_BANDED },
   dismissed: false, lastAction: { action: 'acted', note: '', actedAt: at(14), actedBy: null },
+  basis: { students: FULL_BANDED, sentence: `Based on ${FULL_BANDED} students with at least 3 graded answers each.` },
 };
 const SILENT = present.length - answeredPresent;
 const PARTICIPATION = {
@@ -180,6 +214,7 @@ const PARTICIPATION = {
   evidence: `${present.length} present · room 7QF2MD`,
   action: { label: 'Spin the wheel', do: 'wheel' },
   figures: { present: present.length, answered: answeredPresent, notAnswered: SILENT }, dismissed: false, lastAction: null,
+  basis: { students: present.length, sentence: `Based on ${present.length} present students.` },
 };
 
 const RECORDS = {
@@ -223,24 +258,27 @@ const EARLY = room({
       text: '4 students are working at Remember, the most at any level. 3 of the 5 Remember answers in this room were right.',
       evidence: EV_FOCUS, action: { label: 'Ask Remember', do: 'ask', level: 'remember' },
       figures: { level: 'remember', students: 4, answers: 5, correct: 3 }, dismissed: false, lastAction: null,
+      basis: { students: 5, answers: 5, sentence: 'Based on 5 students with a graded answer, and 5 Remember answers in this room.' },
     },
     {
       kind: 'support', title: 'Support', flagId: 'support:none', evidence: EV_SUPPORT,
       action: { label: 'Show them', do: 'sort', sort: 'lowest' },
       text: 'Nobody has 3 graded answers yet, so nobody is placed in a band.',
       figures: { now: null, start: null, change: null, banded: 0 }, dismissed: false, lastAction: null,
+      basis: { students: 0, sentence: 'Nobody has 3 graded answers yet.' },
     },
     {
       kind: 'participation', title: 'Participation', flagId: 'participation:22ca3414bed3af0f',
       text: '4 present students have not answered yet in this room.', evidence: '9 present · room 4RVP6E',
       action: { label: 'Spin the wheel', do: 'wheel' },
       figures: { present: 9, answered: 5, notAnswered: 4 }, dismissed: false, lastAction: null,
+      basis: { students: 9, sentence: 'Based on 9 present students.' },
     },
   ],
   kpis: {
-    accuracy: { label: 'Class accuracy', value: 0.6, answers: 7, students: 5, start: { value: 1, at: at(1), answers: 1, students: 1 }, change: -0.4 },
-    support: { label: 'Needs support', value: null, banded: 0, start: null, change: null },
-    participation: { label: 'Participation', value: 5 / 9, answered: 5, present: 9, start: { value: 0, at: at(0), present: 9 }, change: 5 / 9 },
+    accuracy: { label: 'Class accuracy', value: 0.6, answers: 7, students: 5, start: { value: 1, at: at(1), answers: 1, students: 1 }, change: -0.4, sentence: 'Based on 7 graded answers from 5 students.' },
+    support: { label: 'Needs support', value: null, banded: 0, start: null, change: null, sentence: 'Nobody has 3 graded answers yet.' },
+    participation: { label: 'Participation', value: 5 / 9, answered: 5, present: 9, start: { value: 0, at: at(0), present: 9 }, change: 5 / 9, sentence: 'Based on 9 present students.' },
   },
   series: { since: at(0), interval: 'minute', points: [
     { at: at(0), accuracy: null, support: null, participation: 0 },
@@ -280,16 +318,40 @@ const ANSWERS = Q.map(([text, level, correct], i) => ({
   answerId: `a${i}`, level, kind: i === 3 ? 'open' : 'mcq', topic: i < 2 ? 'Reliable transfer' : 'Transmission Control Protocol',
   question: { text, bloom: level }, response: 0, correct, score: i === 3 ? 0.5 : correct ? 1 : 0, ungraded: false,
   review: { status: i === 3 ? 'provisional' : 'auto', note: '', reviewedAt: null }, attempt: 1, final: true, answeredAt: at(22 - i * 3),
+  language: 'en',
 }));
+
+/** Every move the ladder made for 21CS07, newest first (services/mastery.js levelMoves). */
+const move = (min, rule, from, to, share, answers, reason) => ({ at: at(min), questionId: `q${min}`, rule, from, to, window: 5, share, answers, reason });
+const MOVES = [
+  move(19, 'demote', 'analyse', 'apply', 0.3333, 3, '33% at Analyse over the last 3 - demoted to Apply.'),
+  move(15, 'promote', 'apply', 'analyse', 0.8, 5, '80% at Apply over the last 5 - promoted to Analyse.'),
+  move(11, 'demote', 'analyse', 'apply', 0, 3, '0% at Analyse over the last 3 - demoted to Apply.'),
+  move(8, 'promote', 'apply', 'analyse', 1, 3, '100% at Apply over the last 3 - promoted to Analyse.'),
+  move(5, 'promote', 'understand', 'apply', 1, 3, '100% at Understand over the last 3 - promoted to Apply.'),
+  move(2, 'promote', 'remember', 'understand', 1, 3, '100% at Remember over the last 3 - promoted to Understand.'),
+];
+const ENGLISH_ONLY = {
+  original: 'en', originalName: 'English',
+  languages: [{ language: 'en', name: 'English', answers: 13, original: true }], otherThanOriginal: 0, note: null,
+};
 
 const CARD = {
   room: FULL.room,
   student: { rollNo: '21CS07', name: 'Bilal Khan', display: 'Bilal Khan', studentId: '5206aa', onRoster: true, joined: true, attendance: 'present' },
-  band: { id: 'developing', label: 'Developing', accuracy: 6 / 13, answers: 13, correct: 6, reason: '6 of 13 graded answers right (46%): Developing.' },
+  band: { id: 'developing', label: 'Developing', accuracy: 6 / 13, answers: 13, correct: 6, reason: '6 of 13 graded answers right (46%): Developing.', provisional: false },
   serving: {
     level: 'apply', label: 'Apply', reason: '60% at Apply over the last 5 - holding at Apply.',
     eligible: ['remember', 'understand', 'apply', 'analyse'], ceiling: false, adapt: true,
+    basis: { answers: 5, provisional: false, sentence: 'Based on the last 5 answers at Apply.' },
+    moves: MOVES,
   },
+  mastery: [
+    { level: 'remember', answers: 3, correct: 3, mastered: true, provisional: false, sentence: '3 of 3 right at Remember: at or above this room\'s goal, so Remember counts as mastered.' },
+    { level: 'understand', answers: 5, correct: 2, mastered: false, provisional: false, sentence: '2 of 5 right at Understand: not yet at this room\'s goal. 1 earlier answer at Understand set aside.' },
+    { level: 'apply', answers: 5, correct: 1, mastered: false, provisional: false, sentence: '1 of 5 right at Apply: not yet at this room\'s goal.' },
+  ],
+  languages: ENGLISH_ONLY,
   levels: [
     { level: 'remember', label: 'Remember', answers: 3, correct: 3, accuracy: 1, withdrawn: 0, class: { answers: 41, correct: 31, accuracy: 31 / 41 } },
     { level: 'understand', label: 'Understand', answers: 5, correct: 2, accuracy: 0.4, withdrawn: 1, class: { answers: 96, correct: 49, accuracy: 49 / 96 } },
@@ -326,8 +388,10 @@ const CARD = {
 const NO_PHONE = {
   room: LED.room,
   student: { rollNo: 'SIM04', name: 'Arjun Patil', display: 'Arjun Patil', studentId: '059a61', onRoster: true, joined: false, attendance: 'unmarked' },
-  band: { id: null, label: null, accuracy: null, answers: 0, correct: 0, reason: 'No graded answers yet.' },
+  band: { id: null, label: null, accuracy: null, answers: 0, correct: 0, reason: 'No graded answers yet.', provisional: true },
   serving: null,
+  mastery: [],
+  languages: { ...ENGLISH_ONLY, languages: [], note: null },
   levels: CARD.levels.map((l) => ({ ...l, answers: 0, correct: 0, accuracy: null, withdrawn: 0, class: { answers: 0, correct: 0, accuracy: null } })),
   lastAnswers: { items: [], limit: 10, final: true },
   nextSet: null,
@@ -340,12 +404,42 @@ const NO_PHONE = {
 function cardFor(data, roll) {
   const s = data.students.find((x) => x.rollNo === roll);
   if (!s) return CARD;
+  const early = s.answers < THRESHOLDS.minAnswers;
   return {
     ...CARD,
     student: { ...CARD.student, rollNo: s.rollNo, name: s.rosterName ?? s.name, display: s.rosterName ?? s.name, attendance: s.present ? 'present' : 'unmarked' },
-    band: { id: s.band, label: s.bandLabel, accuracy: s.accuracy, answers: s.answers, correct: s.correct, reason: s.reason },
+    band: { id: s.band, label: s.bandLabel, accuracy: s.accuracy, answers: s.answers, correct: s.correct, reason: s.reason, provisional: early },
+    serving: {
+      ...CARD.serving, level: s.workingLevel, label: LABEL[s.workingLevel], basis: s.levelBasis,
+      ...(early ? { reason: null, moves: [] } : {}),
+    },
+    ...(early ? {
+      mastery: s.answers ? [{
+        level: s.workingLevel, answers: s.answers, correct: s.correct, mastered: false, provisional: true,
+        sentence: `${answersWord(s.answers)} at ${LABEL[s.workingLevel]} so far: 3 are needed before ${LABEL[s.workingLevel]} can count as mastered.`,
+      }] : [],
+      lastAnswers: { ...CARD.lastAnswers, items: CARD.lastAnswers.items.slice(0, s.answers) },
+      levels: CARD.levels.map((l) => {
+        const mine = l.level === s.workingLevel ? s.answers : 0;
+        const right = l.level === s.workingLevel ? s.correct : 0;
+        return { ...l, answers: mine, correct: right, accuracy: mine ? right / mine : null, withdrawn: 0 };
+      }),
+    } : {}),
   };
 }
+
+/** The same card once a second language exists: the server's note, and a tag on each answer given in Hindi. */
+const HINDI = new Set(['a1', 'a4']);
+const CARD_LANGUAGES = {
+  ...CARD,
+  lastAnswers: { ...CARD.lastAnswers, items: CARD.lastAnswers.items.map((a) => (HINDI.has(a.answerId) ? { ...a, language: 'hi' } : a)) },
+  languages: {
+    original: 'en', originalName: 'English',
+    languages: [{ language: 'en', name: 'English', answers: 11, original: true }, { language: 'hi', name: 'Hindi', answers: 2, original: false }],
+    otherThanOriginal: 2,
+    note: '2 of this student\'s 13 answers were in Hindi, not the question\'s own English. Translation can change how hard a question is.',
+  },
+};
 
 /* ------------------------------------------------------------ frames */
 
@@ -364,9 +458,9 @@ function Frame({ code, children }) {
 }
 
 /** A sample room that answers act and dismiss by changing itself. */
-function Sample({ start, canControl = true, openRoll = null }) {
+function Sample({ start, canControl = true, openRoll = null, card = null }) {
   const [data, setData] = useState(start);
-  const [sort, setSort] = useState('band');
+  const [sort, setSort] = useState(null);
   const [roll, setRoll] = useState(openRoll);
   const [said, setSaid] = useState('');
 
@@ -381,7 +475,7 @@ function Sample({ start, canControl = true, openRoll = null }) {
     <Frame code={data.room.code}>
       <InsightsView data={data} canControl={canControl} sort={sort} onSort={setSort} onAction={onAction} onOpenStudent={setRoll} />
       {said && <p className="t-meta" role="status" style={{ marginTop: 12 }}>Gallery only: {said}</p>}
-      {roll && <StudentCardView card={cardFor(data, roll)} roll={roll} onClose={() => setRoll(null)} />}
+      {roll && <StudentCardView card={card && roll === openRoll ? card : cardFor(data, roll)} roll={roll} onClose={() => setRoll(null)} />}
     </Frame>
   );
 }
@@ -389,7 +483,7 @@ function Sample({ start, canControl = true, openRoll = null }) {
 /** The real components on a real room: the socket's pushes, the real card. */
 function LiveRoom({ code }) {
   const feed = useRoomFeed(code);
-  const [sort, setSort] = useState('band');
+  const [sort, setSort] = useState(null);
   const [roll, setRoll] = useState(null);
   const [said, setSaid] = useState('');
   return (
@@ -410,76 +504,76 @@ export default [
     title: 'Live insights: a Mixed room mid-lesson',
     role: 'professor',
     note: 'Bands, the three cards (act or dismiss them), KPI tiles with their trend, teacher records. Open a student for their card.',
-    render: () => <Sample start={FULL} />,
+    render: () => <Sample key="coach-full" start={FULL} />,
   },
   {
     id: 'coach-early',
     title: 'Live insights: an early room',
     role: 'professor',
-    note: 'A few answers in: nobody has three graded answers, so nobody has a band yet.',
-    render: () => <Sample start={EARLY} />,
+    note: 'A few answers in: nobody has three graded answers, so no band, and every level is provisional, lighter and named so. Each tile and card says what it rests on.',
+    render: () => <Sample key="coach-early" start={EARLY} />,
   },
   {
     id: 'coach-dismissed',
     title: 'Live insights: dismissed cards',
     role: 'professor',
     note: 'Two cards dismissed, one with a note. They stay, quieter; acting on one ends the dismissal.',
-    render: () => <Sample start={DISMISSED} />,
+    render: () => <Sample key="coach-dismissed" start={DISMISSED} />,
   },
   {
     id: 'coach-teacher-led',
     title: 'Live insights: a Teacher-led room',
     role: 'professor',
     note: 'No phones, so no bands, cards or tiles: the server’s note and the teacher records.',
-    render: () => <Sample start={LED} />,
+    render: () => <Sample key="coach-teacher-led" start={LED} />,
   },
   {
     id: 'coach-readonly',
     title: 'Live insights: read only',
     role: 'hod',
     note: 'A head of department reading a professor’s room: no act or dismiss.',
-    render: () => <Sample start={DISMISSED} canControl={false} />,
+    render: () => <Sample key="coach-readonly" start={DISMISSED} canControl={false} />,
   },
   {
     id: 'coach-loading',
     title: 'Live insights: reading',
     role: 'professor',
     note: 'The first read, before the room’s body arrives.',
-    render: () => <Frame code="7QF2MD"><InsightsView data={null} /></Frame>,
+    render: () => <Frame key="coach-loading" code="7QF2MD"><InsightsView data={null} /></Frame>,
   },
   {
     id: 'coach-card',
     title: 'Student card',
     role: 'professor',
     note: 'One student: band, the level served, each level against the class, last answers, the planned next set, teacher records.',
-    render: () => <Sample start={FULL} openRoll="21CS07" />,
+    render: () => <Sample key="coach-card" start={FULL} openRoll="21CS07" />,
+  },
+  {
+    id: 'coach-card-early',
+    title: 'Student card: an early, provisional student',
+    role: 'professor',
+    note: 'Two answers in: no band, the level served is provisional with the sentence beside it, no level change yet, mastery not yet possible.',
+    render: () => <Sample key="coach-card-early" start={EARLY} openRoll="SIM01" />,
+  },
+  {
+    id: 'coach-card-languages',
+    title: 'Student card: answers in a second language',
+    role: 'professor',
+    note: 'Quiet until a second language exists: then the server’s note under Last answers and a small tag on each answer given in Hindi.',
+    render: () => <Sample key="coach-card-languages" start={FULL} openRoll="21CS07" card={CARD_LANGUAGES} />,
   },
   {
     id: 'coach-card-no-phone',
     title: 'Student card: on the roster, no phone',
     role: 'professor',
     note: 'A roster student in a Teacher-led room: no band, nothing served, nothing planned.',
-    render: () => <Frame code="J5ENVQ"><StudentCardView card={NO_PHONE} roll="SIM04" onClose={() => {}} /></Frame>,
+    render: () => <Frame key="coach-card-no-phone" code="J5ENVQ"><StudentCardView card={NO_PHONE} roll="SIM04" onClose={() => {}} /></Frame>,
   },
   {
-    id: 'coach-live-2V8N5W',
-    title: 'Live insights: real room 2V8N5W',
+    id: 'coach-live',
+    title: 'Live only: insights on a real room',
     role: 'professor',
-    note: 'The real component on the local server’s Student devices room (needs :5050 and the teacher key).',
-    render: () => <LiveRoom code="2V8N5W" />,
-  },
-  {
-    id: 'coach-live-4RVP6E',
-    title: 'Live insights: real room 4RVP6E',
-    role: 'professor',
-    note: 'The real component on the local server’s Mixed room with a waiting room.',
-    render: () => <LiveRoom code="4RVP6E" />,
-  },
-  {
-    id: 'coach-live-TN5V6Z',
-    title: 'Live insights: real room TN5V6Z (test)',
-    role: 'professor',
-    note: 'A Mixed class room opened for these tests, with simulated phones. Safe to act on and dismiss.',
-    render: () => <LiveRoom code="TN5V6Z" />,
+    note: 'Not sample data. The real component on ?room=CODE of the local server (default MP9BRS), with the socket’s pushes. Needs :5050 and the teacher key.',
+    render: () => <LiveRoom key="coach-live" code={(new URLSearchParams(window.location.search).get('room') || 'MP9BRS').toUpperCase()} />,
   },
 ];

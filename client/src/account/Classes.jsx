@@ -22,7 +22,7 @@
  * dev/classes.gallery.jsx draw every state from sample data.
  */
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { api } from '../lib/api.js';
@@ -37,12 +37,13 @@ import Attainment from './Attainment.jsx';
 import { dateOf, dayOf, plural, roomLink, stampOf, timeOf } from './dashParts.jsx';
 import Outcomes from './Outcomes.jsx';
 import Register from './Register.jsx';
+import { ClassMisconceptions } from '../teach/Misconceptions.jsx';
 import RosterImport from './RosterImport.jsx';
 
 /* Phase 4 views beside the roster: the class's course outcomes, its
    attainment report (with the formula behind it) and the marks register.
    Staff only, like the rest of this page. */
-const VIEWS = ['roster', 'rooms', 'outcomes', 'attainment', 'register'];
+const VIEWS = ['roster', 'rooms', 'outcomes', 'attainment', 'register', 'misconceptions'];
 
 /* ----------------------------------------------------------------- helpers */
 
@@ -81,6 +82,11 @@ export function masked(text) {
     .replace(/\+?\d[\d\s().-]*\d/g, (m) => ((m.match(/\d/g) ?? []).length >= 6 ? '[number hidden]' : m));
 }
 
+/* The headings the server reads as the owner's under-18 mark (decision 8),
+   compared as it compares them: any case, with . _ and - read as spaces. */
+const UNDER_18_HEADS = new Set(['under 18', 'under18', 'minor', 'below 18']);
+const headKey = (cell) => String(cell).toLowerCase().replace(/[._-]/g, ' ').replace(/\s+/g, ' ').trim();
+
 /**
  * Pasted lines as roster rows: the roll number, then the name. A line with a
  * tab is split on tabs (columns copied from a spreadsheet), any other on
@@ -88,22 +94,47 @@ export function masked(text) {
  * typed. Columns after the name are never sent, and never shown: they are
  * only counted, so the preview can say they were left out.
  *
- * @returns { rows: [{ line, roll, name }], heading, extra }
- *   heading  the first line reads like a heading ("Roll number, Name")
- *   extra    how many lines had something after the name
+ * One exception, the owner's under-18 mark (decision 8): when the first line
+ * is a heading that names an Under 18 column (or under18, minor, below 18),
+ * that column's cell is sent with each row, as typed. The server reads it as
+ * yes or no and refuses a row that says anything else, with a reason.
+ *
+ * @returns { rows: [{ line, roll, name, under18? }], heading, extra, under18Column }
+ *   heading        the first line reads like a heading ("Roll number, Name")
+ *   extra          how many lines had something after the name, the mark aside
+ *   under18Column  the heading of the column read as the mark, or null
  */
 export function readPaste(text) {
-  const rows = [];
-  let extra = 0;
+  const lines = [];
   String(text ?? '').split(/\r?\n/).forEach((raw, i) => {
     if (!raw.trim()) return;
-    const cells = (raw.includes('\t') ? raw.split('\t') : raw.split(',')).map((c) => c.trim());
-    if (cells.slice(2).some(Boolean)) extra += 1;
-    rows.push({ line: i + 1, roll: cells[0] ?? '', name: cells[1] ?? '' });
+    lines.push({ line: i + 1, cells: (raw.includes('\t') ? raw.split('\t') : raw.split(',')).map((c) => c.trim()) });
   });
-  const first = rows[0];
-  const heading = Boolean(first) && /^roll/i.test(first.roll) && /^(student'?s?\s+)?name/i.test(first.name);
-  return { rows, heading, extra };
+  const first = lines[0];
+  const heading = Boolean(first) && /^roll/i.test(first.cells[0] ?? '') && /^(student'?s?\s+)?name/i.test(first.cells[1] ?? '');
+  const markAt = heading ? first.cells.findIndex((c, k) => k >= 2 && UNDER_18_HEADS.has(headKey(c))) : -1;
+  let extra = 0;
+  const rows = lines.map(({ line, cells }) => {
+    if (cells.some((c, k) => k >= 2 && k !== markAt && c)) extra += 1;
+    return { line, roll: cells[0] ?? '', name: cells[1] ?? '', ...(markAt >= 0 ? { under18: cells[markAt] ?? '' } : {}) };
+  });
+  return { rows, heading, extra, under18Column: markAt >= 0 ? first.cells[markAt] : null };
+}
+
+/**
+ * How a pasted mark will read, for the preview only: the server decides. The
+ * cell itself is never shown back (a date of birth typed there stays unshown).
+ */
+function markOf(cell) {
+  const w = String(cell ?? '').trim().toLowerCase();
+  if (['yes', 'y', 'true', '1'].includes(w)) return 'yes';
+  if (['', 'no', 'n', 'false', '0'].includes(w)) return 'no';
+  return 'unclear';
+}
+
+/** The under-18 mark beside a name. Staff only, like the roster it sits on. */
+function Under18() {
+  return <Chip tone="line" icon="shield" className="cl-u18">Under 18</Chip>;
 }
 
 /* --------------------------------------------------------------- skeletons */
@@ -395,6 +426,11 @@ function PasteResult({ reply, rows }) {
       </div>
 
       {reply?.note && <Note icon="shield">{reply.note}</Note>}
+      {reply?.under18Note && (
+        <Note icon="shield">
+          <b>{plural(added.filter((s) => s.under18).length, 'student')} added marked under 18.</b> {reply.under18Note}
+        </Note>
+      )}
       {ignored.length > 0 && (
         <div className="cl-ignored">
           <span className="t-meta">Fields dropped, not stored:</span>
@@ -429,7 +465,7 @@ function PasteResult({ reply, rows }) {
           {showAdded && (
             <ul className="cl-preview-list">
               {added.map((s) => (
-                <li key={s.id}><span className="mono">{s.rollNo}</span><span>{s.name}</span></li>
+                <li key={s.id}><span className="mono">{s.rollNo}</span><span className="cl-preview-who">{s.name}{s.under18 && <Under18 />}</span></li>
               ))}
             </ul>
           )}
@@ -474,7 +510,7 @@ function PasteDialog({ open, onOpenChange, onSend, start }) {
     setBusy(true);
     setError('');
     try {
-      const res = await onSend(rows.map((r) => ({ roll: r.roll, name: r.name })));
+      const res = await onSend(rows.map((r) => ({ roll: r.roll, name: r.name, ...(r.under18 !== undefined ? { under18: r.under18 } : {}) })));
       setSentRows(rows);
       setReply(res);
     } catch (err) {
@@ -516,7 +552,7 @@ function PasteDialog({ open, onOpenChange, onSend, start }) {
             <Field
               label="Roll number, name"
               htmlFor={`${uid}-paste`}
-              hint="Copy two columns from a spreadsheet, or type them. Only a roll number and a name are kept: no phone number, email or date of birth."
+              hint="Copy two columns from a spreadsheet, or type them. Only a roll number and a name are kept: no phone number, email or date of birth. To mark students under 18, start with a heading line that has an Under 18 column, yes or no."
             >
               <textarea
                 id={`${uid}-paste`}
@@ -546,18 +582,30 @@ function PasteDialog({ open, onOpenChange, onSend, start }) {
               <p className="cl-preview-empty">The lines you paste appear here as roll number and name, exactly as they will be sent.</p>
             ) : (
               <ul className="cl-preview-list">
-                {rows.map((r) => (
-                  <li key={r.line}>
-                    <span className="cl-preview-n">{r.line}</span>
-                    <span className="mono">{r.roll || <i className="cl-missing">no roll number</i>}</span>
-                    <span>{r.name ? masked(r.name) : <i className="cl-missing">no name</i>}</span>
-                  </li>
-                ))}
+                {rows.map((r) => {
+                  const mark = r.under18 === undefined ? null : markOf(r.under18);
+                  return (
+                    <li key={r.line}>
+                      <span className="cl-preview-n">{r.line}</span>
+                      <span className="mono">{r.roll || <i className="cl-missing">no roll number</i>}</span>
+                      <span className="cl-preview-who">
+                        {r.name ? masked(r.name) : <i className="cl-missing">no name</i>}
+                        {mark === 'yes' && <Under18 />}
+                        {mark === 'unclear' && <i className="cl-missing">under 18 is not yes or no</i>}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
+            )}
+            {read.under18Column && (
+              <p className="cl-preview-note">
+                The “{read.under18Column}” column is read as the under-18 mark, yes or no, and sent with each line.
+              </p>
             )}
             {read.extra > 0 && (
               <p className="cl-preview-note">
-                {plural(read.extra, 'line')} had more after the name. Only the roll number and the name are sent.
+                {plural(read.extra, 'line')} had more after the name. Only the roll number{read.under18Column ? ', the name and the under-18 mark are' : ' and the name are'} sent.
               </p>
             )}
             <p className="cl-preview-note">The server stores roll numbers upper case. 03 and 3 are two different students.</p>
@@ -683,7 +731,7 @@ export function ObservationsSheet({ obs, onClose, onRetry }) {
 
 /* ================================================================ the roster */
 
-function StudentRow({ s, canEdit, busy, editing, onEdit, onCancel, onSave, onRemove, onObs }) {
+function StudentRow({ s, canEdit, busy, editing, onEdit, onCancel, onSave, onRemove, onMark, onObs }) {
   const [draft, setDraft] = useState({ rollNo: s.rollNo, name: s.name });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -744,7 +792,10 @@ function StudentRow({ s, canEdit, busy, editing, onEdit, onCancel, onSave, onRem
   return (
     <li className="cl-st" aria-busy={working || undefined}>
       <span className="cl-st-roll">{s.rollNo}</span>
-      <span className="cl-st-name clip" title={s.name}>{s.name}</span>
+      <span className="cl-st-who">
+        <span className="cl-st-name clip" title={s.name}>{s.name}</span>
+        {s.under18 && <Under18 />}
+      </span>
       <span className="cl-st-when">Added {dayOf(s.addedAt) || '—'}</span>
       <span className="cl-st-acts">
         <Tip label="Observations across days">
@@ -754,6 +805,13 @@ function StudentRow({ s, canEdit, busy, editing, onEdit, onCancel, onSave, onRem
           <Menu
             items={[
               { id: 'edit', label: 'Edit the name or roll number', icon: 'edit', onSelect: () => setTimeout(() => onEdit(s), 0) },
+              onMark && {
+                id: 'under18',
+                label: s.under18 ? 'Remove the under-18 mark' : 'Mark as under 18',
+                icon: 'shield',
+                onSelect: () => onMark(s, !s.under18),
+              },
+              onMark && { heading: 'Under 18: no integrity signals are recorded or shown for them.' },
               'sep',
               { id: 'remove', label: 'Remove from the roster', icon: 'minus', onSelect: () => onRemove(s) },
               { heading: 'Nothing they did is deleted, and they can be put back.' },
@@ -766,11 +824,35 @@ function StudentRow({ s, canEdit, busy, editing, onEdit, onCancel, onSave, onRem
   );
 }
 
-function Roster({ data, canEdit, busy, onSave, onRemove, onRestore, onObs, onPaste, onImport }) {
+/**
+ * The owner's under-18 mark, said once above the roster (decision 8): how many
+ * are marked and what the mark does. The server's own note (a working default
+ * a lawyer must confirm) comes with every reply that sets the mark, and is
+ * shown in place of this screen's sentence whenever one has arrived.
+ */
+function Under18Say({ count, note, canEdit }) {
+  return (
+    <div className="cl-u18-say" role="note">
+      <span className="cl-u18-ic" aria-hidden="true"><Icon name="shield" size={15} /></span>
+      <div className="cl-u18-text">
+        <p>
+          <b>{count ? `${plural(count, 'student')} marked under 18.` : 'Nobody is marked under 18.'}</b>
+          {!note && ' Integrity signals are not recorded or shown for a student marked under 18, in any room opened for this class.'}
+          {' '}Only staff see the mark.
+          {canEdit && ' Mark or unmark a student from their row’s menu.'}
+        </p>
+        {note && <p className="cl-u18-note">{note}</p>}
+      </div>
+    </div>
+  );
+}
+
+function Roster({ data, canEdit, busy, onSave, onRemove, onRestore, onMark, under18Note, onObs, onPaste, onImport }) {
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState(null);
   const students = list(data?.students);
   const removed = list(data?.removed);
+  const minors = [...students, ...removed].filter((s) => s.under18).length;
   const needle = q.trim().toLowerCase();
   const shown = needle
     ? students.filter((s) => `${s.rollNo} ${s.name}`.toLowerCase().includes(needle))
@@ -817,6 +899,7 @@ function Roster({ data, canEdit, busy, onSave, onRemove, onRestore, onObs, onPas
           </div>
         ) : (
           <>
+            {(minors > 0 || under18Note) && <Under18Say count={minors} note={under18Note} canEdit={canEdit} />}
             <div className="cl-roll-top" aria-hidden="true">
               <span>Roll number</span><span>Name</span>
             </div>
@@ -835,6 +918,7 @@ function Roster({ data, canEdit, busy, onSave, onRemove, onRestore, onObs, onPas
                     onCancel={() => setEditing(null)}
                     onSave={onSave}
                     onRemove={onRemove}
+                    onMark={onMark}
                     onObs={onObs}
                   />
                 ))}
@@ -857,7 +941,10 @@ function Roster({ data, canEdit, busy, onSave, onRemove, onRestore, onObs, onPas
             {removed.map((s) => (
               <li key={s.id} className="cl-st" aria-busy={busy?.id === s.id || undefined}>
                 <span className="cl-st-roll">{s.rollNo}</span>
-                <span className="cl-st-name clip" title={s.name}>{s.name}</span>
+                <span className="cl-st-who">
+                  <span className="cl-st-name clip" title={s.name}>{s.name}</span>
+                  {s.under18 && <Under18 />}
+                </span>
                 <span className="cl-st-when">Removed {dayOf(s.removedAt) || '—'}</span>
                 <span className="cl-st-acts">
                   <Tip label="Observations across days">
@@ -1014,9 +1101,10 @@ function RoomsTable({ a }) {
                   <span className="ac-rate-n">{pct(acc.value)}</span>
                 </span>
                 <small>
+                  {/* The server's count sentence (Phase 5) when it sends one. */}
                   {num(acc.value) !== null
-                    ? `${plural(acc.answers, 'answer')}, ${plural(acc.students, 'student')}`
-                    : teacherLed ? 'Teacher-led: no phone answers' : 'No graded answers'}
+                    ? acc.sentence || `${plural(acc.answers, 'answer')}, ${plural(acc.students, 'student')}`
+                    : teacherLed ? 'Teacher-led: no phone answers' : acc.sentence || 'No graded answers'}
                 </small>
               </span>
               <span className="cl-room-fig" data-label="Took part">
@@ -1033,6 +1121,172 @@ function RoomsTable({ a }) {
               <Link className="btn btn-ghost btn-sm btn-icon cl-room-go" to={roomLink(r.code, 'live')} aria-label={`Open room ${r.code} in the console`}>
                 <Icon name="chevronRight" />
               </Link>
+            </li>
+          );
+        })}
+      </ol>
+      {/* Decision 9 and Phase 3 question (b): a deleted room leaves this list,
+          and what it recorded is kept in its archive. */}
+      <p className="cl-rooms-foot">
+        <Icon name="history" size={14} />
+        <span>
+          A deleted room leaves this list and these figures. Its answers, attendance and records stay in its archive,
+          listed under Deleted rooms on <Link to="/rooms">Rooms</Link>.
+        </span>
+      </p>
+    </section>
+  );
+}
+
+/* ------------------------------------------------- the two charts (A2) */
+
+/* Where a figure sits in a plot, in percent of its box: rooms spread across,
+   0 to 100% up the side, with room above and below for the printed values. */
+const xAt = (i, n) => (n === 1 ? 50 : 7 + (i * 86) / (n - 1));
+const yAt = (v) => 10 + (1 - v) * 80;
+
+/** One line through the rooms that have a figure, broken where a room has none. */
+function linePath(values, n) {
+  const runs = [];
+  let run = [];
+  values.forEach((v, i) => {
+    if (v === null) { if (run.length) runs.push(run); run = []; return; }
+    run.push(`${xAt(i, n).toFixed(2)},${yAt(v).toFixed(2)}`);
+  });
+  if (run.length) runs.push(run);
+  return runs.filter((r) => r.length > 1).map((r) => `M${r.join(' L')}`).join(' ');
+}
+
+/**
+ * Class accuracy and participation room by room, oldest first (the audit's
+ * A2): two lines with each value printed on its point and each room's date
+ * under the axis. Accuracy is solid with round points, took part dashed with
+ * square points, so the two are told apart by more than colour. A room with
+ * no figure (no graded answer yet, or Teacher-led) leaves a gap, never a nought.
+ */
+function RoomTrend({ rooms }) {
+  const n = rooms.length;
+  const acc = rooms.map((r) => num(r.accuracy?.value));
+  const part = rooms.map((r) => num(r.participation?.value));
+  const said = rooms.map((r, i) => {
+    const p = r.participation ?? {};
+    return `${r.code}, ${dayOf(r.startedAt) || 'no date'}: class accuracy ${pct(acc[i])}${r.accuracy?.sentence ? ` (${r.accuracy.sentence})` : ''}; `
+      + `took part ${part[i] === null ? '—' : `${pct(part[i])}, ${p.answered} of ${p.present} present answered`}`;
+  }).join('. ');
+  const value = (kind, v, i, above) => (
+    <Fragment key={`${kind}-${rooms[i].code}`}>
+      <i className={`cl-pt is-${kind}`} style={{ left: `${xAt(i, n)}%`, top: `${yAt(v)}%` }} />
+      <b className={`cl-pt-v is-${kind}`} data-at={above ? 'above' : 'below'} style={{ left: `${xAt(i, n)}%`, top: `${yAt(v)}%` }}>{pct(v)}</b>
+    </Fragment>
+  );
+  return (
+    <section className="card ac-card cl-chart" aria-labelledby="cl-trend-h">
+      <div className="ac-head">
+        <div className="sec">
+          <h2 id="cl-trend-h">Accuracy and participation</h2>
+          <p>Each room, oldest first, in percent. Took part is the share of present students who answered.</p>
+        </div>
+        <div className="cl-legend" aria-hidden="true">
+          <span><i className="cl-key is-acc" />Class accuracy</span>
+          <span><i className="cl-key is-part" />Took part</span>
+        </div>
+      </div>
+      <div className="cl-trend" role="img" aria-label={said}>
+        <div className="cl-trend-y" aria-hidden="true">
+          {[1, 0.5, 0].map((v) => <span key={v} style={{ top: `${yAt(v)}%` }}>{Math.round(v * 100)}%</span>)}
+        </div>
+        <div className="cl-trend-plot" aria-hidden="true">
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" focusable="false">
+            {[0, 0.25, 0.5, 0.75, 1].map((v) => (
+              <line key={v} x1="0" x2="100" y1={yAt(v)} y2={yAt(v)} className="cl-trend-grid" vectorEffect="non-scaling-stroke" />
+            ))}
+            <path d={linePath(part, n)} className="cl-trend-line is-part" vectorEffect="non-scaling-stroke" />
+            <path d={linePath(acc, n)} className="cl-trend-line is-acc" vectorEffect="non-scaling-stroke" />
+          </svg>
+          {/* The higher of the two figures prints above its point, the lower below, so they never sit on each other. */}
+          {rooms.map((r, i) => (
+            <Fragment key={r.code}>
+              {part[i] !== null && value('part', part[i], i, acc[i] === null || part[i] > acc[i])}
+              {acc[i] !== null && value('acc', acc[i], i, part[i] === null || acc[i] >= part[i])}
+            </Fragment>
+          ))}
+        </div>
+        <div className="cl-trend-x" aria-hidden="true">
+          {rooms.map((r, i) => (
+            <span key={r.code} style={{ left: `${xAt(i, n)}%` }}>
+              <b>{dayOf(r.startedAt) || '—'}</b>
+              <small>{r.code}</small>
+            </span>
+          ))}
+        </div>
+      </div>
+      {acc.some((v) => v === null) && (
+        <p className="t-meta cl-chart-foot">A room without a point had no graded answer: a Teacher-led room, or one not yet answered.</p>
+      )}
+    </section>
+  );
+}
+
+/** A room's people against the roster, as the API counts them, each part with its words. */
+function presenceOf(r) {
+  const att = r.attendance;
+  const p = r.participation ?? {};
+  if (!att) return null;
+  const parts = r.mode === 'teacher-led'
+    ? [{ id: 'present', n: att.present ?? 0, word: 'present, Teacher-led (no phone answers)' }]
+    : [
+      { id: 'answered', n: p.answered ?? 0, word: 'answered' },
+      { id: 'silent', n: p.notAnswered ?? 0, word: 'present without an answer' },
+    ];
+  parts.push({ id: 'absent', n: att.absent ?? 0, word: 'absent' }, { id: 'unmarked', n: att.unmarked ?? 0, word: 'not marked' });
+  return { parts, size: att.classSize ?? parts.reduce((t, s) => t + s.n, 0) };
+}
+
+const PRESENCE_KEYS = [
+  ['answered', 'Answered'], ['silent', 'Present, no answer'], ['present', 'Present, Teacher-led'],
+  ['absent', 'Absent'], ['unmarked', 'Not marked'],
+];
+
+/**
+ * Who answered, who was present without an answer, and who was absent, room
+ * by room against the roster (A2): one stacked bar a room, each part also
+ * said in words beneath it. Students not marked either way are shown as such.
+ */
+function RoomPresence({ rooms }) {
+  const rows = rooms.map((r) => ({ r, pr: presenceOf(r) })).filter((x) => x.pr);
+  if (!rows.length) return null;
+  const widest = Math.max(1, ...rows.map((x) => x.pr.size));
+  const used = new Set(rows.flatMap((x) => x.pr.parts.filter((s) => s.n > 0).map((s) => s.id)));
+  return (
+    <section className="card ac-card cl-chart" aria-labelledby="cl-pres-h">
+      <div className="ac-head">
+        <div className="sec">
+          <h2 id="cl-pres-h">Attendance and participation</h2>
+          <p>Students in each room against the roster, oldest first.</p>
+        </div>
+      </div>
+      <div className="cl-legend cl-pres-legend" aria-hidden="true">
+        {PRESENCE_KEYS.filter(([id]) => used.has(id)).map(([id, word]) => <span key={id}><i className="cl-seg-key" data-seg={id} />{word}</span>)}
+      </div>
+      <ol className="cl-pres">
+        {rows.map(({ r, pr }) => {
+          const shown = pr.parts.filter((s) => s.n > 0);
+          return (
+            <li key={r.code} className="cl-pres-row">
+              <span className="cl-pres-who">
+                <b>{r.code}</b>
+                <small>{dayOf(r.startedAt) || 'No date'}</small>
+              </span>
+              <span className="cl-pres-bar" aria-hidden="true">
+                <span className="cl-pres-fill" style={{ width: `${(pr.size / widest) * 100}%` }}>
+                  {shown.map((s) => <i key={s.id} data-seg={s.id} style={{ flexGrow: s.n }}>{s.n}</i>)}
+                </span>
+              </span>
+              <span className="cl-pres-words">
+                {shown.length
+                  ? `${shown.map((s) => `${s.n} ${s.word}`).join(' · ')}, of ${pr.size} on the roster`
+                  : 'Nobody on the roster'}
+              </span>
             </li>
           );
         })}
@@ -1085,15 +1339,19 @@ function Spread({ h }) {
           <p className="cl-none">No student has three graded answers in these rooms yet, so there is nothing to spread.</p>
         )}
         <p className="t-meta">
-          {plural(h?.students ?? 0, 'student')} over {plural(h?.answers ?? 0, 'graded answer')}.
-          {h?.notEnough ? ` ${plural(h.notEnough, 'student')} with fewer than three answers ${h.notEnough === 1 ? 'is' : 'are'} left out.` : ''}
+          {h?.sentence || (
+            <>
+              {plural(h?.students ?? 0, 'student')} over {plural(h?.answers ?? 0, 'graded answer')}.
+              {h?.notEnough ? ` ${plural(h.notEnough, 'student')} with fewer than three answers ${h.notEnough === 1 ? 'is' : 'are'} left out.` : ''}
+            </>
+          )}
         </p>
       </div>
     </section>
   );
 }
 
-/** One bar: what it is, how well, and on how many answers. */
+/** One bar: what it is, how well, and on how many answers, with the server's count sentence (Phase 5) beneath. */
 function Bar({ name, mark, row }) {
   const answers = row?.answers ?? 0;
   const p = answers ? Math.round(((row?.correct ?? 0) / answers) * 100) : null;
@@ -1105,6 +1363,7 @@ function Bar({ name, mark, row }) {
         <small>{answers ? `${row.correct} of ${answers} right` : 'no answers'}</small>
       </span>
       <span className="cl-bar-track" aria-hidden="true"><i style={{ width: `${p === null ? 0 : Math.max(p, 2)}%` }} /></span>
+      {row?.sentence && <small className="cl-bar-basis">{row.sentence}</small>}
     </li>
   );
 }
@@ -1178,24 +1437,46 @@ function Hardest({ hd }) {
         <p className="cl-none">No question has {hd?.minAttempts ?? 5} answers in these rooms yet.</p>
       ) : (
         <ol className="cl-hard">
-          {items.map((it) => (
-            <li key={it.questionId} className="cl-q">
-              <div className="cl-q-main">
-                <p className="cl-q-t">{it.text}</p>
-                <span className="cl-q-meta">
-                  <Level level={it.bloom} />
-                  {it.topic && <span>{it.topic}</span>}
-                  {it.kind && <span>{KIND_LABEL[it.kind] ?? it.kind}</span>}
-                  {it.status && it.status !== 'active' && <span className="ac-set">{BANK_STATUS[it.status] ?? it.status}</span>}
-                  {list(it.flags).length > 0 && <Chip tone="warn" icon="flag">Flagged</Chip>}
+          {items.map((it) => {
+            // Phase 5, honest indicators: who wrote it, whether its level is
+            // uncertain, the count behind the figure, and a language gap when
+            // a second language exists. Each is the server's own words.
+            const uncertain = it.levelCheck?.uncertain === true;
+            return (
+              <li key={it.questionId} className="cl-q">
+                <div className="cl-q-main">
+                  <p className="cl-q-t">{it.text}</p>
+                  <span className="cl-q-meta">
+                    <Level level={it.bloom} />
+                    {uncertain && <Chip tone="line" icon="help" className="cl-q-unsure">Level uncertain</Chip>}
+                    {it.topic && <span>{it.topic}</span>}
+                    {it.kind && <span>{KIND_LABEL[it.kind] ?? it.kind}</span>}
+                    {it.provenance?.label && (
+                      <span className="ac-set" title={it.provenance.sentence || undefined}>
+                        {it.provenance.label}
+                      </span>
+                    )}
+                    {it.status && it.status !== 'active' && <span className="ac-set">{BANK_STATUS[it.status] ?? it.status}</span>}
+                    {list(it.flags).length > 0 && <Chip tone="warn" icon="flag">Flagged</Chip>}
+                  </span>
+                  {uncertain && it.levelCheck.sentence && <p className="cl-q-note">{it.levelCheck.sentence}</p>}
+                  {it.languages?.warning?.text && <Note tone="warn" icon="alert">{it.languages.warning.text}</Note>}
+                  {!it.languages?.warning && it.languages?.note && <p className="cl-q-note">{it.languages.note}</p>}
+                </div>
+                <span className="cl-q-fig">
+                  <b>{pct(it.proportionCorrect)}</b>
+                  {it.basis?.sentence ? (
+                    <>
+                      <small>{it.correct} right</small>
+                      <small className="cl-q-basis">{it.basis.sentence}</small>
+                    </>
+                  ) : (
+                    <small>{it.correct} of {plural(it.attempts, 'answer')} right</small>
+                  )}
                 </span>
-              </div>
-              <span className="cl-q-fig">
-                <b>{pct(it.proportionCorrect)}</b>
-                <small>{it.correct} of {plural(it.attempts, 'answer')} right</small>
-              </span>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ol>
       )}
       <p className="t-meta cl-hard-foot">
@@ -1233,6 +1514,10 @@ export function ClassAnalytics({ analytics, onLast, onRetry, firstReading }) {
       <Brief a={a} last={last} onLast={onLast} busy={analytics.loading} />
       {hasRooms && (
         <>
+          <div className="cl-charts">
+            <RoomTrend rooms={list(a.rooms)} />
+            <RoomPresence rooms={list(a.rooms)} />
+          </div>
           <RoomsTable a={a} />
           <div className="cl-pair-cards">
             <Spread h={a.histogram} />
@@ -1258,6 +1543,8 @@ export function ClassAnalytics({ analytics, onLast, onRetry, firstReading }) {
  * @param notice      { message, student? }: what the last action did; with a
  *                    student, the removal it can undo
  * @param onSaveStudent (student, patch) => Promise; throws the server's sentence
+ * @param onMarkUnder18 (student, under18) => sets or clears the owner's mark (decision 8)
+ * @param under18Note  the server's sentence that comes with the mark, once a reply has carried it
  * @param onAddStudents (students) => Promise<reply>; throws the server's sentence
  * @param onEditClass   (patch) => Promise; throws the server's sentence
  * @param obs         { student, data, loading, error } or null
@@ -1269,7 +1556,7 @@ export function ClassView({
   loading, error, notFound, locked, data, reading, onReload,
   classId, view = 'roster', onView, onImported,
   busy, notice, actionError, onDismiss,
-  onSaveStudent, onRemove, onRestore, onAddStudents, onEditClass,
+  onSaveStudent, onRemove, onRestore, onMarkUnder18, under18Note, onAddStudents, onEditClass,
   obs, onOpenObs, onCloseObs, onRetryObs,
   analytics, onLast, onRetryAnalytics,
   startPaste, firstReading,
@@ -1336,6 +1623,7 @@ export function ClassView({
               { id: 'outcomes', label: 'Outcomes' },
               { id: 'attainment', label: 'Attainment' },
               { id: 'register', label: 'Marks register' },
+              { id: 'misconceptions', label: 'Misconceptions' },
             ] : []),
           ]}
         />
@@ -1352,6 +1640,8 @@ export function ClassView({
         <Attainment classId={classId} />
       ) : view === 'register' && classId ? (
         <Register classId={classId} />
+      ) : view === 'misconceptions' && classId ? (
+        <ClassMisconceptions classId={classId} />
       ) : (
         <>
           {(notice || actionError) && (
@@ -1379,6 +1669,8 @@ export function ClassView({
             onSave={onSaveStudent}
             onRemove={(s) => { onDismiss?.(); onRemove(s); }}
             onRestore={(s) => { onDismiss?.(); onRestore(s); }}
+            onMark={onMarkUnder18 ? (s, value) => { onDismiss?.(); onMarkUnder18(s, value); } : undefined}
+            under18Note={under18Note}
             onObs={onOpenObs}
             onPaste={() => { onDismiss?.(); setPasting(true); }}
             onImport={classId ? () => { onDismiss?.(); setImporting(true); } : undefined}
@@ -1411,6 +1703,7 @@ function ClassList() {
   const { account, loading: accountLoading } = useViewer();
   const student = account?.role === 'student';
   const [raw, setRaw] = useState(null);
+  const [canCreate, setCanCreate] = useState(false);
   const [error, setError] = useState('');
   const [locked, setLocked] = useState(false);
   const [reading, setReading] = useState(false);
@@ -1420,6 +1713,9 @@ function ClassList() {
     try {
       const res = await api.listClasses();
       setRaw(list(res?.classes));
+      // The server says whether this viewer may create a class, by the rule
+      // POST /api/classes enforces (a head of department may not).
+      setCanCreate(res?.canCreate === true);
       setError('');
       setLocked(false);
     } catch (err) {
@@ -1452,9 +1748,7 @@ function ClassList() {
       classes={classes}
       reading={reading}
       onReload={load}
-      // A head of department reads classes and may create none (403). There is
-      // no per-viewer flag for creating, so this one control follows the role.
-      canCreate={account?.role !== 'hod'}
+      canCreate={canCreate}
       onCreate={async (body) => {
         const res = await api.createClass(body);
         navigate(`/classes/${encodeURIComponent(res.class.id)}`);
@@ -1477,6 +1771,10 @@ function ClassPage({ id }) {
   const [busy, setBusy] = useState(null);
   const [notice, setNotice] = useState(null);
   const [actionError, setActionError] = useState('');
+  // The server's under-18 note, kept from the last reply that carried one
+  // (setting the mark, a paste that marked someone). GET /api/classes/:id
+  // does not carry it; if it ever does, that one is used.
+  const [u18Note, setU18Note] = useState('');
 
   const [obs, setObs] = useState(null);
   const obsFor = useRef(null);
@@ -1567,7 +1865,10 @@ function ClassPage({ id }) {
       view={view}
       classId={id}
       onView={(v) => setParams(v === 'roster' ? {} : { view: v }, { replace: true })}
-      onImported={() => load({ silent: true })}
+      onImported={(res) => {
+        if (res?.under18Note && list(res.added).some((s) => s.under18)) setU18Note(res.under18Note);
+        load({ silent: true });
+      }}
       busy={busy}
       notice={notice}
       actionError={actionError}
@@ -1584,8 +1885,19 @@ function ClassPage({ id }) {
         await api.updateStudent(id, student.id, { active: true });
         setNotice({ message: `${student.rollNo} ${student.name} is back on the roster.` });
       })}
+      onMarkUnder18={(student, under18) => act(student, 'under18', async () => {
+        const res = await api.updateStudent(id, student.id, { under18 });
+        if (res?.under18Note) setU18Note(res.under18Note);
+        setNotice({
+          message: under18
+            ? `${student.rollNo} ${student.name} is marked under 18.`
+            : `${student.rollNo} ${student.name} is no longer marked under 18.`,
+        });
+      })}
+      under18Note={data?.under18Note || u18Note}
       onAddStudents={async (students) => {
         const res = await api.addStudents(id, students);
+        if (res?.under18Note) setU18Note(res.under18Note);
         await load({ silent: true });
         return res;
       }}

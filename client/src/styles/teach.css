@@ -472,3 +472,49 @@ label.tc-ed-mark { cursor: pointer; }
   .tc-gate-ladder { height: 56px; gap: 6px; }
   .tc-gate-ladder span { display: none; }
 }
+
+/* The bank's zip-gap additions (B1, #7) and the sample syllabus (M4). */
+
+/* One press for the thin levels, under the coverage sentence. */
+.tc-thin { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.tc-thin > span { flex: 1 1 240px; min-width: 0; font: 400 12.5px/1.45 var(--font); color: var(--text-3); }
+
+/* The review state by level on the room panel: approved solid, waiting
+   hatched, one column a level named by its number. */
+.tc-review { display: flex; flex-direction: column; gap: 8px; }
+.tc-review-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font: 500 12.5px/1.3 var(--font); color: var(--on-panel-2); }
+.tc-review-head b { font: 600 13px/1 var(--mono); color: var(--on-panel); }
+.tc-review-cols { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; height: 60px; }
+.tc-review-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tc-review-bar {
+  flex: 1; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden;
+  border-radius: 4px; background: color-mix(in srgb, var(--on-panel) 8%, transparent);
+}
+.tc-review-bar > i { display: block; flex: none; background: var(--mint); transform-origin: bottom; animation: grow-y var(--t-3, .5s) var(--ease) both; }
+.tc-review-bar > i[data-wait] { background: repeating-linear-gradient(135deg, var(--mint) 0 2px, transparent 2px 5px); }
+.tc-review-col small { font: 500 10.5px/1 var(--mono); color: var(--on-panel-2); text-align: center; }
+.tc-review-key { display: flex; flex-wrap: wrap; gap: 4px 14px; font: 500 11.5px/1.3 var(--font); color: var(--on-panel-2); }
+.tc-review-key span { display: inline-flex; align-items: center; gap: 6px; }
+.tc-review-key i { width: 10px; height: 8px; border-radius: 2px; background: var(--mint); }
+.tc-review-key i[data-wait] { background: repeating-linear-gradient(135deg, var(--mint) 0 2px, transparent 2px 5px); }
+@media (prefers-reduced-motion: reduce) { .tc-review-bar > i { animation: none; } }
+
+/* The sample syllabus is marked as an example until it is replaced. */
+.tc-sample-note {
+  display: flex; align-items: flex-start; gap: 8px; padding: 9px 12px; border-radius: 10px;
+  background: var(--raised); border: 1px dashed var(--line-2); font: 400 12.5px/1.45 var(--font); color: var(--text-2);
+}
+.tc-sample-note svg { flex: none; margin-top: 2px; color: var(--text-3); }
+
+/* The toast (ui/toast.jsx): one short confirmation at the foot of the screen,
+   on the dark panel the brief uses. It never covers the rail, and it rises
+   rather than slides when motion is reduced. */
+.toast-dock { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 60; pointer-events: none; width: max-content; max-width: calc(100vw - 32px); }
+.toast {
+  display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 12px;
+  background: var(--panel); color: var(--on-panel); border: 1px solid var(--panel-line); box-shadow: var(--sh-3);
+  font: 500 13px/1.4 var(--font); animation: toast-in var(--t-2) var(--ease) both;
+}
+.toast .ic, .toast svg { color: var(--on-panel-2); flex: none; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }

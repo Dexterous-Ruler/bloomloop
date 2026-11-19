@@ -106,6 +106,15 @@
 .wl-qr-wait { border-radius: calc(var(--u) * 0.4); background: #EFEDE9; }
 .wl-main[data-pick] .wl-qr-card img, .wl-main[data-pick] .wl-qr-wait { width: calc(var(--u) * 12); }
 
+/* A Teacher-led room with nothing up: the room's title, set large, and no way in. */
+.wl-idle { gap: calc(var(--u) * 2.4); }
+.wl-idle .wl-hero-title { gap: calc(var(--u) * 1); }
+.wl-idle h1 { max-width: 26ch; font: 700 calc(var(--u) * 4.2)/1.08 var(--font); letter-spacing: -0.03em; color: #FFFFFF; text-wrap: balance; overflow-wrap: anywhere; }
+.wl-idle-sub {
+  max-width: 46ch; padding-top: calc(var(--u) * 2); border-top: 1px solid rgba(255, 255, 255, 0.12);
+  font: 500 calc(var(--u) * 1.5)/1.5 var(--font); color: var(--on-panel-2);
+}
+
 /* ------------------------------------------------------------ a question */
 
 .wl-q { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: center; gap: calc(var(--u) * 3); }
@@ -147,6 +156,98 @@
   animation: pop var(--t-3) var(--ease) both;
 }
 .wl-right svg { width: calc(var(--u) * 1.1); height: calc(var(--u) * 1.1); }
+
+/* ------------------------------------------- a question for the class */
+
+/* The question and its options on the left; how many voted, and the counts the
+   server sent, on the right past a hairline. Before the discussion is the
+   hollow bar, after it the solid one: the legend and the order say which, not
+   the colour alone. */
+.wl-cq {
+  --u: calc(min(1cqw, 1.7778cqh) * var(--fit, 1)); /* useFit() lowers --fit when the content would overflow */
+  flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) calc(var(--u) * 21);
+  gap: calc(var(--u) * 3.2); align-items: center;
+}
+.wl-cq-main { display: flex; flex-direction: column; gap: calc(var(--u) * 1.1); min-width: 0; min-height: 0; }
+.wl-cq-head { display: flex; align-items: center; flex-wrap: wrap; gap: calc(var(--u) * 0.6) calc(var(--u) * 1.4); }
+.wl-cq-state {
+  display: inline-flex; align-items: center; gap: calc(var(--u) * 0.55); min-height: calc(var(--u) * 2.2);
+  padding: calc(var(--u) * 0.35) calc(var(--u) * 1); border-radius: 999px;
+  border: 1px solid rgba(156, 211, 174, 0.4); background: rgba(156, 211, 174, 0.1);
+  font: 600 calc(var(--u) * 1)/1.2 var(--font); color: var(--mint);
+}
+.wl-cq-state .live-dot { width: calc(var(--u) * 0.5); height: calc(var(--u) * 0.5); }
+.wl-cq-state[data-state='paused'] { color: #E0B95E; border-color: rgba(224, 185, 94, 0.45); background: rgba(224, 185, 94, 0.08); }
+.wl-cq-state[data-state='closed'] { color: var(--on-panel-2); border-color: rgba(255, 255, 255, 0.16); background: transparent; }
+.wl-cq .wl-q-text { font-size: calc(var(--u) * 2.3); }
+.wl-cq .wl-q-text[data-size='m'] { font-size: calc(var(--u) * 1.9); }
+.wl-cq .wl-q-text[data-size='s'] { font-size: calc(var(--u) * 1.55); }
+.wl-cq .wl-fig img { max-height: calc(var(--u) * 15); }
+.wl-cq .wl-passage { font-size: calc(var(--u) * 1.15); }
+
+.wl-opts[data-bars] { margin-top: 0; }
+.wl-opts[data-bars] > li { min-height: calc(var(--u) * 3.7); padding-top: calc(var(--u) * 0.7); padding-bottom: calc(var(--u) * 0.7); padding-right: calc(var(--u) * 1.2); }
+.wl-opts[data-many] { gap: calc(var(--u) * 0.7); }
+.wl-opts[data-many] > li { min-height: calc(var(--u) * 3.3); padding-top: calc(var(--u) * 0.55); padding-bottom: calc(var(--u) * 0.55); }
+.wl-opts[data-many] .wl-key { width: calc(var(--u) * 2.3); height: calc(var(--u) * 2.3); font-size: calc(var(--u) * 1.15); }
+.wl-opts[data-many] .wl-opt-label { font-size: calc(var(--u) * 1.35); }
+
+.wl-votes { flex: none; width: calc(var(--u) * 19); display: flex; flex-direction: column; justify-content: center; gap: calc(var(--u) * 0.45); }
+.wl-vote { display: grid; grid-template-columns: minmax(0, 1fr) calc(var(--u) * 2.6); align-items: center; gap: calc(var(--u) * 0.8); }
+.wl-vote-track { position: relative; height: calc(var(--u) * 0.9); border-radius: 999px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.wl-vote-track > i {
+  position: absolute; left: 0; top: 0; bottom: 0; width: var(--w); border-radius: inherit; background: var(--mint);
+  transform-origin: left; animation: grow-x 0.7s var(--ease) both;
+}
+.wl-vote[data-round='1'] .wl-vote-track > i { background: rgba(156, 211, 174, 0.3); box-shadow: inset 0 0 0 1px rgba(156, 211, 174, 0.8); }
+.wl-vote b { font: 600 calc(var(--u) * 1.4)/1 var(--mono); text-align: right; color: #FFFFFF; font-variant-numeric: tabular-nums; }
+.wl-vote[data-round='1'] b { color: var(--on-panel-2); }
+
+.wl-legend { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: calc(var(--u) * 0.4) calc(var(--u) * 1.6); padding-right: calc(var(--u) * 1.2); }
+.wl-legend span, .wl-cq-tbl thead th > span { display: inline-flex; align-items: center; gap: calc(var(--u) * 0.5); }
+.wl-legend span { font: 600 calc(var(--u) * 0.95)/1.2 var(--font); color: var(--on-panel-2); }
+.wl-legend i, .wl-cq-tbl thead th i { flex: none; width: calc(var(--u) * 1.5); height: calc(var(--u) * 0.65); border-radius: 999px; background: var(--mint); }
+.wl-legend [data-round='1'] i, .wl-cq-tbl thead th[data-round='1'] i { background: rgba(156, 211, 174, 0.3); box-shadow: inset 0 0 0 1px rgba(156, 211, 174, 0.8); }
+
+.wl-changes { display: flex; flex-direction: column; gap: calc(var(--u) * 0.8); margin-top: calc(var(--u) * 0.2); padding-top: calc(var(--u) * 1); border-top: 1px solid rgba(255, 255, 255, 0.1); }
+.wl-changes ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--u) * 10), 1fr)); gap: calc(var(--u) * 1) calc(var(--u) * 2); }
+.wl-changes li { display: flex; flex-direction: column; gap: calc(var(--u) * 0.35); min-width: 0; animation: rise 0.5s var(--ease) both; }
+.wl-changes b { font: 600 calc(var(--u) * 2.1)/1 var(--font); letter-spacing: -0.02em; color: #FFFFFF; font-variant-numeric: tabular-nums; }
+.wl-changes li > span { font: 500 calc(var(--u) * 1.05)/1.3 var(--font); color: var(--on-panel-2); }
+
+.wl-cq-side {
+  align-self: stretch; display: flex; flex-direction: column; justify-content: center; gap: calc(var(--u) * 2.2); min-width: 0;
+  padding-left: calc(var(--u) * 3); border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+.wl-cq-voted { display: flex; flex-direction: column; gap: calc(var(--u) * 0.4); }
+.wl-cq-voted b { font: 600 calc(var(--u) * 6)/1 var(--font); letter-spacing: -0.03em; color: #FFFFFF; font-variant-numeric: tabular-nums; }
+.wl-cq-voted span { font: 500 calc(var(--u) * 1.3)/1.3 var(--font); color: var(--on-panel-2); }
+
+.wl-cq-tbl { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.wl-cq-tbl th, .wl-cq-tbl td { padding: calc(var(--u) * 0.42) 0; text-align: right; vertical-align: baseline; }
+.wl-cq-tbl td { width: calc(var(--u) * 5.6); font: 600 calc(var(--u) * 1.35)/1.2 var(--mono); color: #FFFFFF; }
+.wl-cq-tbl th[scope='row'] { text-align: left; font: 500 calc(var(--u) * 1.1)/1.3 var(--font); color: var(--on-panel-2); }
+.wl-cq-tbl thead th {
+  padding-bottom: calc(var(--u) * 0.7); border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  font: 600 calc(var(--u) * 0.85)/1.2 var(--font); letter-spacing: 0.1em; text-transform: uppercase; color: var(--on-panel-3);
+}
+.wl-cq-rightrow td b { display: block; font: 600 calc(var(--u) * 2.1)/1 var(--font); letter-spacing: -0.02em; color: var(--mint); }
+.wl-cq-rightrow td small { display: block; margin-top: calc(var(--u) * 0.3); font: 500 calc(var(--u) * 0.95)/1.2 var(--font); color: var(--on-panel-3); }
+.wl-cq-rightrow th, .wl-cq-rightrow td { padding-top: calc(var(--u) * 0.9); }
+.wl-cq-sub th {
+  padding-top: calc(var(--u) * 1.2); text-align: left;
+  font: 600 calc(var(--u) * 0.85)/1.2 var(--font); letter-spacing: 0.1em; text-transform: uppercase; color: var(--on-panel-3);
+}
+
+.wl-cq-held { display: flex; flex-direction: column; gap: calc(var(--u) * 0.7); padding-left: calc(var(--u) * 1); border-left: 2px solid rgba(255, 255, 255, 0.18); }
+.wl-cq-held p { font: 500 calc(var(--u) * 1.15)/1.45 var(--font); color: var(--on-panel-2); }
+
+/* Beside the wheel's pick the room is narrower: the side and the bars give way. */
+.wl-main[data-pick] .wl-cq { grid-template-columns: minmax(0, 1fr) calc(var(--u) * 19); gap: calc(var(--u) * 2.2); }
+.wl-main[data-pick] .wl-cq-side { padding-left: calc(var(--u) * 2.2); }
+.wl-main[data-pick] .wl-cq-tbl td { width: calc(var(--u) * 4.6); }
+.wl-main[data-pick] .wl-votes { width: calc(var(--u) * 11); }
+.wl-main[data-pick] .wl-changes ol { grid-template-columns: repeat(auto-fill, minmax(calc(var(--u) * 8.4), 1fr)); gap: calc(var(--u) * 0.8) calc(var(--u) * 1.4); }
 
 /* ---------------------------------------------- a picture or a passage */
 

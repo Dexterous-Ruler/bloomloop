@@ -7,7 +7,7 @@
 import Tubes from '../fx/Tubes.jsx';
 import { LEVELS } from '../lib/bloom.js';
 import { Button, Level, Num, Panel, Section } from '../ui/index.jsx';
-import { Dock } from './parts.jsx';
+import { Dock, EarlyDays } from './parts.jsx';
 
 // Six tubes across a phone leave about 44px each, which is not room for
 // "Understand". The rack's own aria-label still carries the full name.
@@ -16,7 +16,7 @@ const SHORT = { remember: 'Rem', understand: 'Und', apply: 'App', analyse: 'Ana'
 const R = 42;
 const C = 2 * Math.PI * R;
 
-export default function Finish({ profile, ending, reason = '', led = null, onLeave }) {
+export default function Finish({ profile, ending, reason = '', led = null, linked = false, onLeave }) {
   // A Teacher-led room takes no answers on phones, so there is no set to show:
   // only the server's sentence, and the way out.
   if (ending === 'teacher-led') {
@@ -41,6 +41,13 @@ export default function Finish({ profile, ending, reason = '', led = null, onLea
   const total = profile?.total || { seen: 0, correct: 0 };
   const overall = total.seen ? Math.round((total.correct / total.seen) * 100) : null;
   const reached = profile?.workingLevel;
+  // The server's own sentence about where this student's questions were going
+  // and why. Never a band, never a label on the student.
+  const why = typeof profile?.next?.why === 'string' ? profile.next.why : '';
+  // The levels this student has mastered, each with the server's sentence for
+  // it (counts in words, never a percentage made from them).
+  const mastered = (Array.isArray(profile?.masteryBasis) ? profile.masteryBasis : [])
+    .filter((m) => m?.mastered === true && LEVELS.includes(m.level) && typeof m.sentence === 'string');
 
   const pick = (field) => Object.fromEntries(LEVELS.map((l) => [l, levels[l]?.[field] ?? 0]));
 
@@ -82,6 +89,9 @@ export default function Finish({ profile, ending, reason = '', led = null, onLea
             {reached ? <Level level={reached} solid /> : <b>—</b>}
           </div>
         </div>
+
+        {why && <p className="said ln-done-why">{why}</p>}
+        {why && <EarlyDays next={profile?.next} />}
       </Panel>
 
       <section className="ln-card ln-tubes">
@@ -100,9 +110,25 @@ export default function Finish({ profile, ending, reason = '', led = null, onLea
         />
       </section>
 
+      {mastered.length > 0 && (
+        <section className="ln-card ln-mastered">
+          <Section title="Mastered" sub="The levels where your answers reached this room's goal." as="h3" />
+          <ul>
+            {mastered.map((m) => (
+              <li key={m.level}>
+                <Level level={m.level} />
+                <span>{m.sentence}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <p className="said">
         Your set was built as you went, so it is not the same as anyone else's. You are not being compared with the rest
         of the class.
+        {/* Only when the server linked this room to the signed-in student. */}
+        {linked && ' These answers are in your own history too, because you were signed in.'}
       </p>
 
       <Dock>

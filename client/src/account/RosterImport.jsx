@@ -24,8 +24,14 @@
  * dry run too), 413 over 1 MB, 400 over 2,000 rows or without the two columns.
  *
  *   <RosterImport classId open onOpenChange onDone />
- *     onDone() after a real import, and after a student is put back, so the
- *     roster reads again.
+ *     onDone(reply) after a real import, and onDone() after a student is put
+ *     back, so the roster reads again.
+ *
+ * The under-18 mark (decision 8): a file may carry an Under 18 column (or
+ * under18, minor, below 18), read by the server as yes or no. The screen names
+ * the column the server read (read.columns.under18), marks each row it would
+ * add or added (`under18`), and shows the server's `under18` sentence (a
+ * student already on the roster keeps their mark) and its `under18Note`.
  *   `send` and `restore` stand in for api.importRoster and api.updateStudent,
  *   and `start` opens on a given state ({ how, file, text, stage, reply,
  *   error }): the dev gallery.
@@ -78,7 +84,10 @@ function Group({ title, count, tone, sub, children }) {
   );
 }
 
-/** What the server read: the delimiter, the two columns it used, the rows. Never a value. */
+/**
+ * What the server read: the delimiter, the columns it used, the rows. Never a
+ * value. The under-18 column (decision 8) is named only when the server read one.
+ */
 function ReadLine({ read }) {
   if (!read) return null;
   const cols = read.columns ?? {};
@@ -86,10 +95,29 @@ function ReadLine({ read }) {
     <p className="ri-read">
       Read as {DELIMITER[read.delimiter] ?? read.delimiter ?? 'a CSV'}.
       {cols.roll && <> Roll numbers from <b>“{cols.roll}”</b>{cols.name ? ',' : '.'}</>}
-      {cols.name && <> names from <b>“{cols.name}”</b>.</>}
+      {cols.name && <> names from <b>“{cols.name}”</b>{cols.under18 ? ',' : '.'}</>}
+      {cols.under18 && <> the under-18 mark from <b>“{cols.under18}”</b>, as yes or no.</>}
       {Number.isFinite(read.rows) && ` ${plural(read.rows, 'row')} under the header`}
       {read.blankLines ? `, ${plural(read.blankLines, 'blank line')} skipped.` : Number.isFinite(read.rows) ? '.' : ''}
     </p>
+  );
+}
+
+/** The under-18 mark beside a name. Staff only, like the roster. */
+const Under18 = () => <Chip tone="line" icon="shield" className="cl-u18">Under 18</Chip>;
+
+/**
+ * The file's under-18 column, said where the import shows it: the server's
+ * sentence about students already on the roster whose mark the file does not
+ * change, and its note on what the mark does (a lawyer must confirm it).
+ */
+function Under18Lines({ reply }) {
+  if (!reply?.under18 && !reply?.under18Note) return null;
+  return (
+    <div className="stack stack-2">
+      {reply.under18 && <Note tone="warn" icon="shield">{reply.under18}</Note>}
+      {reply.under18Note && <Note icon="shield">{reply.under18Note}</Note>}
+    </div>
   );
 }
 
@@ -280,6 +308,10 @@ export function ImportBody({
           <p>
             A roster keeps a roll number and a name only. Any other column is left unread and named back to you, never stored.
           </p>
+          <p>
+            One more column is read if the file has it: Under 18 (or Minor), yes or no, the mark that stops integrity
+            signals for that student. An import never changes a student already on the roster.
+          </p>
         </div>
         {error && <Note tone="bad" role="alert">{error}</Note>}
       </div>
@@ -330,10 +362,22 @@ export function ImportBody({
       {error && <Note tone="bad" role="alert">{error}</Note>}
 
       <Ignored reply={reply} />
+      <Under18Lines reply={reply} />
 
       {added.length > 0 && (
-        <Group title={stage === 'done' ? 'Added' : 'Would add'} count={added.length} tone="ok">
-          {added.map((s) => <Row key={`${s.line}:${s.rollNo}`} line={s.line} roll={s.rollNo} name={s.name} />)}
+        <Group
+          title={stage === 'done' ? 'Added' : 'Would add'}
+          count={added.length}
+          tone="ok"
+          sub={reply?.read?.columns?.under18
+            ? `${plural(added.filter((s) => s.under18).length, 'student')} of these ${stage === 'done' ? 'marked' : 'would be marked'} under 18, from the file.`
+            : undefined}
+        >
+          {added.map((s) => (
+            <Row key={`${s.line}:${s.rollNo}`} line={s.line} roll={s.rollNo} name={s.name}>
+              {s.under18 && <Under18 />}
+            </Row>
+          ))}
         </Group>
       )}
       <Refusals reply={reply} canRestore={canRestore} restoring={busy && !['read', 'check', 'import'].includes(busy) ? busy : null} restored={restored} onRestore={onRestore} />
@@ -422,7 +466,7 @@ export default function RosterImport({
       setReply(res);
       setStage('done');
       setRestored({});
-      onDone?.();
+      onDone?.(res);
     } catch (err) {
       setError(err.message || 'The server refused the import.');
     } finally {

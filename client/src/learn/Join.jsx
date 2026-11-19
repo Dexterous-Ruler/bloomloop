@@ -90,13 +90,16 @@ export default function Join({
                   id="ln-code"
                   className="input ln-code"
                   value={code}
-                  onChange={(e) => setCode(e.target.value.replace(/\s+/g, '').toUpperCase().slice(0, 6))}
+                  // Letters and digits only, so a code read aloud as "ABC 123" or pasted
+                  // with a gap or a dash still lands as its six characters.
+                  onChange={(e) => setCode(e.target.value.replace(/[^0-9a-z]/gi, '').toUpperCase().slice(0, 6))}
                   inputMode="text"
                   autoCapitalize="characters"
                   autoCorrect="off"
                   spellCheck="false"
                   autoComplete="off"
-                  maxLength={6}
+                  // Room for a pasted separator; the handler keeps six.
+                  maxLength={9}
                   placeholder="······"
                   autoFocus={!initialCode}
                 />

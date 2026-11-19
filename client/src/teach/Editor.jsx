@@ -12,9 +12,10 @@
  * approve it, and rooms can serve it at once.
  *
  * `onDone(info)` follows every action that worked. `info.note` is one sentence
- * for the bank to show afterwards (the checks that failed, the server's
- * warning, where a new draft went) and `info.tone` is 'ok' when nothing in it
- * needs a second look.
+ * for the bank to show afterwards (the checks that failed, the server's note,
+ * where a new draft went), `info.tone` is 'ok' when nothing in it needs a
+ * second look, and `info.retired` is the id an approval retired: the question
+ * a regenerated draft replaced, which the bank names.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -744,18 +745,213 @@ function Act({ title, line, children, action }) {
   );
 }
 
-/** "AI draft · gemini-2.5-flash", "Offline template", or nothing for a person's own. */
+/**
+ * The server's `provenance.label` ("AI draft", "Offline template, approved",
+ * ...) when the reply carries it. Otherwise "AI draft · gemini-2.5-flash",
+ * "Offline template", "Professor-written" (source 'teacher', since 19 Nov
+ * 2026), or, for 'fallback' with no model, both of the last two: a
+ * professor's own question was stored that way before then.
+ */
 function sourceOf(q) {
-  if (!q?.model) return null;
-  return q.model === 'offline-template' ? 'Offline template' : `AI draft · ${q.model}`;
+  if (q?.provenance?.label) return q.provenance.label;
+  if (q?.source === 'teacher') return 'Professor-written';
+  if (q?.model === 'offline-template') return 'Offline template';
+  if (q?.model) return `AI draft · ${q.model}`;
+  if (q?.source === 'fallback') return 'Offline template, or professor-written before 19 Nov 2026';
+  return null;
 }
 
-export default function Editor({ question, contentId, kinds, onClose, onDone, services = api }) {
+/**
+ * The question a regenerated draft replaces (`replacesId`), from the bank
+ * already loaded: its reference and text, or a line saying it is gone.
+ * `old.status` other than active means it left rooms some other way since.
+ */
+export function Replaces({ old, name }) {
+  return (
+    <span className="au-replaces">
+      <span className="au-replaces-k"><Icon name="refresh" size={13} />Replaces:</span>
+      {old ? (
+        <>
+          {name && <span className="tc-ref">{name}</span>}
+          <span className="au-replaces-t">{old.text}</span>
+          {old.status !== 'active' && <span className="au-replaces-off">set aside since</span>}
+        </>
+      ) : <span className="au-replaces-t">a question no longer in this bank</span>}
+    </span>
+  );
+}
+
+/**
+ * The labels an edit or a retag took off, so the bank can list them to be
+ * added again: from a PATCH reply ([{ option, label, provenance }], one
+ * question, `id`) or a bulk retag's ([{ id, labels: [...] }]). Null when none.
+ */
+export function removedLabels(reply, id) {
+  const items = arr(reply?.misconceptionsRemoved)
+    .flatMap((r) => (Array.isArray(r?.labels) ? r.labels.map((l) => ({ id: r.id, ...l })) : [{ id, ...r }]));
+  return items.length ? { note: reply.misconceptionsNote ?? '', items } : null;
+}
+
+const LABEL_SAID = {
+  added: 'Saved.',
+  edited: 'Saved.',
+  confirmed: 'Confirmed: it is your label now.',
+  cleared: 'Cleared.',
+};
+
+/**
+ * Misconception labels (Phase 5): beside each wrong option of the question as
+ * stored, the misunderstanding a student who picks it most likely holds.
+ * Each is saved on its own (PATCH …/misconceptions, one option at a time), so
+ * it is never part of an edit: the question keeps its status, an approved one
+ * stays approved and a draft stays a draft. An AI draft label reads as a draft
+ * until it is confirmed or rewritten. The counts are the server's: how many
+ * students chose each labelled option across the chapter's rooms, never who.
+ * `canEdit` false (an HOD) reads the labels only.
+ */
+function Labels({ id, services, onChanged }) {
+  const [state, setState] = useState({ data: null, error: '' });
+  const [text, setText] = useState({});
+  const [busy, setBusy] = useState('');
+  const [said, setSaid] = useState({});
+
+  useEffect(() => {
+    let alive = true;
+    services.questionMisconceptions(id).then(
+      (data) => { if (alive) setState({ data, error: '' }); },
+      (err) => { if (alive) setState({ data: null, error: err.message }); },
+    );
+    return () => { alive = false; };
+  }, [id, services]);
+
+  const d = state.data;
+  if (state.error) return <p className="au-mc-gone">The labels did not load: {state.error}</p>;
+  if (!d) return <div className="skel" style={{ height: 96 }} aria-busy="true" aria-label="Reading the labels" />;
+  if (!d.labelled) return null;
+
+  const kind = d.question?.kind ?? 'mcq';
+  const options = arr(d.question?.options);
+  const wrong = arr(d.wrongOptions);
+  const held = new Map(arr(d.misconceptions).map((m) => [m.optionIdx, m]));
+  const counted = arr(d.report?.questions?.[0]?.options);
+  const countOf = (i) => counted.find((o) => o.optionIdx === i);
+  const other = d.report?.questions?.[0]?.otherWordingNote;
+  const max = d.maxLength ?? 120;
+
+  async function change(i, body, what) {
+    setBusy(`${i}:${what}`);
+    setSaid((s) => ({ ...s, [i]: null }));
+    try {
+      const reply = await services.setMisconceptions(id, [{ option: i, ...body }]);
+      // The PATCH answers the labels whole; the counts follow with a fresh read,
+      // since their sentences name the label and whether it is a draft.
+      setState((s) => ({ ...s, data: { ...s.data, ...reply, report: s.data?.report } }));
+      setText((t) => { const next = { ...t }; delete next[i]; return next; });
+      const done = arr(reply?.changed).find((c) => c.optionIdx === i);
+      setSaid((s) => ({ ...s, [i]: { tone: 'ok', text: done ? LABEL_SAID[done.action] : 'Nothing changed.' } }));
+      if (done) {
+        onChanged?.();
+        services.questionMisconceptions(id).then((data) => setState({ data, error: '' }), () => {});
+      }
+    } catch (err) {
+      setSaid((s) => ({ ...s, [i]: { tone: 'bad', text: err.message } }));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  return (
+    <div className="stack stack-2">
+      {d.note && <p className="hint">{d.note} Labels act on the options as stored.</p>}
+      {wrong.length === 0 ? (
+        <p className="au-mc-gone">This question has no wrong option to label.</p>
+      ) : (
+        <ul className="au-mc-list">
+          {wrong.map((i) => {
+            const m = held.get(i);
+            const value = text[i] ?? m?.label ?? '';
+            const trimmed = value.replace(/\s+/g, ' ').trim();
+            const changed = trimmed !== (m?.label ?? '');
+            const n = countOf(i);
+            const tag = kind === 'truefalse' ? options[i] : KEYS[i] ?? i + 1;
+            const note = said[i];
+            const off = Boolean(busy);
+            return (
+              <li key={i} className="au-mc" data-ai={m?.provenance === 'ai' ? 'true' : undefined}>
+                <div className="au-mc-opt">
+                  <span className="tc-ed-mark">{tag}</span>
+                  {kind !== 'truefalse' && <span className="au-mc-otext">{options[i]}</span>}
+                </div>
+                {d.canEdit ? (
+                  <div className="au-mc-row">
+                    <input
+                      className="input grow"
+                      value={value}
+                      placeholder="The misunderstanding behind this answer"
+                      aria-label={`Misconception for ${kind === 'truefalse' ? `"${options[i]}"` : `option ${tag}`}`}
+                      aria-invalid={note?.tone === 'bad' || undefined}
+                      onChange={(e) => { setText((t) => ({ ...t, [i]: e.target.value })); setSaid((s) => ({ ...s, [i]: null })); }}
+                    />
+                    <span className="au-count" data-over={trimmed.length > max ? 'true' : undefined}>{trimmed.length} of {max}</span>
+                    {m?.provenance === 'ai' && !changed ? (
+                      <Button size="sm" icon="check" busy={busy === `${i}:confirm`} disabled={off} onClick={() => change(i, { confirm: true }, 'confirm')}>Confirm</Button>
+                    ) : (
+                      <Button size="sm" busy={busy === `${i}:save`} disabled={off || !changed || !trimmed} onClick={() => change(i, { label: value }, 'save')}>Save</Button>
+                    )}
+                    {m && (
+                      <Button size="sm" variant="ghost" busy={busy === `${i}:clear`} disabled={off} onClick={() => change(i, { label: null }, 'clear')}>Clear</Button>
+                    )}
+                  </div>
+                ) : (
+                  <p className="au-mc-read">{m?.label ?? <span className="au-mc-gone">No label</span>}</p>
+                )}
+                {(m || n?.sentence) && (
+                  <p className="au-mc-meta">
+                    {m && <span className="au-mc-prov" data-ai={m.provenance === 'ai' ? 'true' : undefined}>{m.provenanceLabel ?? (m.provenance === 'ai' ? 'AI draft' : 'Professor’s label')}</span>}
+                    {n?.sentence && <span>{n.sentence}</span>}
+                    {n?.note && <span>{n.note}</span>}
+                  </p>
+                )}
+                {note && (
+                  <p className="au-mc-said" data-tone={note.tone} role={note.tone === 'bad' ? 'alert' : 'status'}>
+                    <Icon name={note.tone === 'bad' ? 'alert' : 'ok'} size={13} />{note.text}
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {other && <p className="hint">{other}</p>}
+      {!d.canEdit && <p className="hint"><Icon name="eye" size={13} /> Read only: the professor who keeps this chapter writes its labels.</p>}
+    </div>
+  );
+}
+
+/**
+ * @param replaces    for a draft with `replacesId`: { old, name }, the replaced
+ *                    question and its reference, from the bank
+ * @param labelKinds  the bank's `misconceptionLabels` ({ kinds, maxLength, note }):
+ *                    which kinds take misconception labels
+ * @param onLabels    after a label is saved, confirmed or cleared (the sheet stays open)
+ */
+export default function Editor({
+  question, contentId, kinds, replaces = null, labelKinds = null, start = null, onClose, onDone, onLabels, services = api,
+}) {
   const creating = question == null;
-  const [draft, setDraft] = useState(() => seed(question));
+  // A question written from scratch starts at the bank's filters in force
+  // (`start`: { bloom, topic }), the level's first interaction filled in, as
+  // picking that level here would.
+  const [draft, setDraft] = useState(() => {
+    const d = seed(question);
+    if (!creating || !start) return d;
+    const at = { ...d, topic: String(start.topic ?? '') };
+    const kind = start.bloom ? (kinds?.forLevel?.[start.bloom] ?? [])[0] : null;
+    return kind ? { ...at, bloom: start.bloom, kind, ...fill(kind, at) } : at;
+  });
+  const started = creating && Boolean(start?.bloom || start?.topic);
   const [busy, setBusy] = useState('');
   const [refused, setRefused] = useState(null);
-  const [confirm, setConfirm] = useState('');
 
   const set = (patch) => { setRefused(null); setDraft((d) => ({ ...d, ...patch })); };
 
@@ -785,7 +981,7 @@ export default function Editor({ question, contentId, kinds, onClose, onDone, se
   }
 
   async function run(what, at, fn) {
-    setBusy(what); setRefused(null); setConfirm('');
+    setBusy(what); setRefused(null);
     try {
       const info = await fn();
       await onDone(info ?? {});
@@ -802,15 +998,21 @@ export default function Editor({ question, contentId, kinds, onClose, onDone, se
   const stimulusChanged = creating || JSON.stringify(stimulus) !== JSON.stringify(stimulusFor(seedStimulus(question?.stimulus)));
   const editBody = () => ({ ...payload(draft), ...(stimulusChanged ? { stimulus } : {}) });
 
+  // An edit that rewords or removes a labelled option, or makes it a right
+  // answer, takes that label off: the reply names each one (`removed`).
   const save = () => run('save', 'top', async () => {
     const reply = await services.editQuestion(question._id, editBody());
-    return noteFor('Saved.', arr(reply?.question?.checks).filter((c) => c && c.ok === false));
+    return { ...noteFor('Saved.', arr(reply?.question?.checks).filter((c) => c && c.ok === false)), removed: removedLabels(reply, question._id) };
   });
 
   const saveAndApprove = () => run('approve', 'top', async () => {
-    await services.editQuestion(question._id, editBody());
+    const edited = await services.editQuestion(question._id, editBody());
     const reply = await services.approveQuestion(question._id);
-    return noteFor('Saved and approved, so rooms can serve it.', reply?.failedChecks);
+    return {
+      ...noteFor('Saved and approved, so rooms can serve it.', reply?.failedChecks),
+      retired: reply?.retired ?? null,
+      removed: removedLabels(edited, question._id),
+    };
   });
 
   const create = () => run('create', 'top', async () => {
@@ -832,10 +1034,12 @@ export default function Editor({ question, contentId, kinds, onClose, onDone, se
     };
   });
 
+  // An active question stays in rooms until its rewrite is approved: the
+  // reply's `note` says so, word for word. Anything else is discarded now.
   const rewrite = () => run('rewrite', 'actions', async () => {
     const reply = await services.regenerateQuestion(question._id);
-    return reply?.warnings?.[0]
-      ? { note: reply.warnings[0] }
+    return reply?.note
+      ? { note: `The rewrite is waiting in Drafts. ${reply.note}`, tone: 'ok' }
       : { note: 'The rewrite is waiting in Drafts. The old wording is in the discarded pile.', tone: 'ok' };
   });
 
@@ -856,8 +1060,8 @@ export default function Editor({ question, contentId, kinds, onClose, onDone, se
   });
 
   const restore = () => run('restore', 'actions', async () => {
-    await services.restoreQuestion(question._id);
-    return { note: 'Back in the bank as approved, so rooms can serve it.', tone: 'ok' };
+    const reply = await services.restoreQuestion(question._id);
+    return { note: 'Back in the bank as approved, so rooms can serve it.', tone: 'ok', retired: reply?.retired ?? null };
   });
 
   const blanks = markers(draft.text);
@@ -874,6 +1078,8 @@ export default function Editor({ question, contentId, kinds, onClose, onDone, se
   const easierWhy = poll ? pollWhy : !down ? `${LABEL[question?.bloom] ?? 'This'} is the bottom of the ladder, so there is no easier level to write it at.` : '';
 
   const source = sourceOf(question);
+  // Labels sit on the stored question, for the kinds the bank says take them (never a poll).
+  const labelled = !creating && arr(labelKinds?.kinds).includes(question.kind ?? 'mcq');
   const slides = arr(question?.sourceRef?.slides);
 
   const description = creating
@@ -918,7 +1124,20 @@ export default function Editor({ question, contentId, kinds, onClose, onDone, se
     >
       <div className="tc-ed">
         {refused?.at === 'top' && <Refusal text={refused.text} />}
+        {!creating && question.provenance?.sentence && <p className="au-prov">{question.provenance.sentence}</p>}
         {!creating && <Checks checks={question.checks} />}
+        {replaces && status !== 'active' && (
+          <div className="au-replaces-box">
+            <Replaces old={replaces.old} name={replaces.name} />
+            {replaces.old?.status === 'active' && (
+              <p>
+                {isDraft
+                  ? `Approving this draft takes ${replaces.name ?? 'that question'} out of rooms; rejecting it leaves ${replaces.name ?? 'that question'} as it is.`
+                  : `Restoring this draft approves it and takes ${replaces.name ?? 'that question'} out of rooms.`}
+              </p>
+            )}
+          </div>
+        )}
 
         <section className="tc-ed-sec" aria-labelledby="ed-level">
           <h4 className="tc-ed-h" id="ed-level">Level</h4>
@@ -927,6 +1146,12 @@ export default function Editor({ question, contentId, kinds, onClose, onDone, se
               <Level key={l} as="button" type="button" level={l} solid={draft.bloom === l} aria-pressed={draft.bloom === l} onClick={() => pickLevel(l)} />
             ))}
           </div>
+          {started && (
+            <p className="hint">
+              Started at the bank’s filter in force
+              {start.bloom ? `: ${LABEL[start.bloom]}` : ''}{start.topic ? `${start.bloom ? ',' : ':'} on “${start.topic}”` : ''}. Change either here.
+            </p>
+          )}
           {draft.bloom ? (
             <>
               <div className="stack stack-2 au-kinds">
@@ -948,6 +1173,9 @@ export default function Editor({ question, contentId, kinds, onClose, onDone, se
                 ? `, so it becomes "${label(draft.kind)}" and needs that shape filled in below.`
                 : '. The interaction it has is asked at both levels, so it carries over.'}
             </Note>
+          )}
+          {!creating && question.levelCheck?.uncertain && question.levelCheck.sentence && (
+            <p className="au-unsure-line"><Icon name="help" size={14} /><span>{question.levelCheck.sentence}</span></p>
           )}
         </section>
 
@@ -998,6 +1226,13 @@ export default function Editor({ question, contentId, kinds, onClose, onDone, se
           )}
         </section>
 
+        {labelled && (
+          <section className="tc-ed-sec" aria-labelledby="ed-mc">
+            <h4 className="tc-ed-h" id="ed-mc">Misconceptions on wrong options</h4>
+            <Labels id={question._id} services={services} onChanged={onLabels} />
+          </section>
+        )}
+
         <section className="tc-ed-sec" aria-labelledby="ed-stim">
           <div className="stack stack-1">
             <h4 className="tc-ed-h" id="ed-stim">Passage or image</h4>
@@ -1036,31 +1271,13 @@ export default function Editor({ question, contentId, kinds, onClose, onDone, se
               <Act
                 title="Rewrite it"
                 line={status === 'active'
-                  ? 'A new draft at the same level takes its place. This question is in use, so it leaves rooms until you approve the rewrite.'
-                  : status === 'discarded'
+                  ? 'A new draft at the same level, to take its place. This question stays in rooms until you approve the rewrite.'
+                  : `${status === 'discarded'
                     ? 'A new draft at the same level, written from the material again.'
-                    : 'A new draft at the same level takes its place, and this one moves to the discarded pile.'}
-                action={(
-                  <Button
-                    size="sm" icon="refresh"
-                    busy={busy === 'rewrite'}
-                    disabled={off || confirm === 'rewrite'}
-                    onClick={() => (status === 'active' ? setConfirm('rewrite') : rewrite())}
-                  >
-                    Rewrite
-                  </Button>
-                )}
-              >
-                {confirm === 'rewrite' && (
-                  <div className="au-confirm" role="group" aria-label="Confirm the rewrite">
-                    <p>Students in a running room stop getting this question now. The rewrite reaches them only after you approve it.</p>
-                    <div className="cluster">
-                      <Button size="sm" variant="ink" autoFocus onClick={rewrite}>Rewrite it</Button>
-                      <Button size="sm" variant="ghost" onClick={() => setConfirm('')}>Keep it</Button>
-                    </div>
-                  </div>
-                )}
-              </Act>
+                    : 'A new draft at the same level takes its place, and this one moves to the discarded pile.'}${
+                    question?.replacesId && !question.approvedAt ? ` The new draft still replaces ${replaces?.name ?? 'the question this one replaces'}.` : ''}`}
+                action={<Button size="sm" icon="refresh" busy={busy === 'rewrite'} disabled={off} onClick={rewrite}>Rewrite</Button>}
+              />
               <Act
                 title="Split into two"
                 line={`Two ${isDraft ? 'drafts' : 'questions'} from one, each checked again. The original moves to the discarded pile.`}

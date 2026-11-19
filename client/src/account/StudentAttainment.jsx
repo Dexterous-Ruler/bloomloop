@@ -43,13 +43,18 @@ export const pctRule = (share) => (num(share) === null ? '—' : `${Number((shar
 /**
  * The evidence types every figure is split by. The provisional type is the
  * keyword marker's match of the rubric, not AI: it is named for what it is.
- * Descriptions come from the server where it sends them.
+ * A re-vote after a class discussion (Phase 5) is always shown and never
+ * counted (`never`): no formula may count it. Labels and descriptions come
+ * from the server where it sends them.
  */
 export const TYPES = [
   { id: 'digital', label: 'Digital answers', short: 'digital' },
   { id: 'aiProvisional', label: 'Provisional machine marks', short: 'provisional machine mark' },
   { id: 'humanReviewed', label: 'Reviewed by a professor', short: 'reviewed by a professor' },
+  { id: 'revote', label: 'Re-votes after discussion', short: 're-vote', never: true },
 ];
+/** The types a formula may count: every type but the re-vote. */
+export const COUNTABLE = TYPES.filter((t) => !t.never);
 export const TYPE_LABEL = Object.fromEntries([...TYPES.map((t) => [t.id, t.label]), ['ungraded', 'Polls']]);
 
 /** The evidence types with the server's labels and descriptions where the reply carries them. */
@@ -58,11 +63,11 @@ export function typesFrom(evidenceTypes) {
   return TYPES.map((t) => ({ ...t, label: given.get(t.id)?.label || t.label, description: given.get(t.id)?.description ?? '' }));
 }
 
-/** Who wrote the question: the second split, when the server sends it. */
+/** Who wrote the question: the second split, labelled by the server where the reply carries it. */
 export const SOURCES = [
   { id: 'aiGenerated', label: 'AI-generated questions' },
   { id: 'professorWritten', label: 'Professor-written questions' },
-  { id: 'offlineTemplate', label: 'Offline-template questions' },
+  { id: 'offlineTemplate', label: 'Offline-template questions (and professor-written ones from before 19 Nov 2026)' },
 ];
 const SOURCE_OF_ROW = { llm: 'aiGenerated', teacher: 'professorWritten', fallback: 'offlineTemplate' };
 
@@ -72,7 +77,7 @@ export function sourcesFrom(questionSources) {
   return SOURCES.map((q) => ({ ...q, label: given.get(q.id)?.label || q.label, description: given.get(q.id)?.description ?? '' }));
 }
 
-/** "Offline-template or professor-written questions: 366; AI-generated questions: 0", from a bySource count. */
+/** "AI-generated questions: 0; Professor-written questions: 12; ...", from a bySource count. */
 export const bySourceLine = (bySource, questionSources) => (bySource && typeof bySource === 'object'
   ? sourcesFrom(questionSources).map((q) => `${q.label}: ${(num(bySource[q.id]) ?? 0).toLocaleString()}`).join('; ')
   : '');
@@ -133,14 +138,15 @@ export function MarksTable({ marks, sources, types, caption }) {
           </thead>
           <tbody>
             {typesFrom(types).map((t) => {
-              const m = marks[t.id];
+              // A re-vote is always shown, with or without answers, and never counted.
+              const m = marks[t.id] ?? (t.never ? { answers: 0, counted: false } : null);
               if (!m) return null;
               return (
                 <tr key={t.id} data-off={m.counted === false || undefined}>
                   <th scope="row">{t.label}</th>
                   <td className="r mono">{num(m.answers) ?? 0}</td>
                   <td className="r mono">{m.answers ? `${mk(m.obtained)} of ${mk(m.possible)}` : '—'}</td>
-                  <td>{m.counted === false ? 'Shown, not counted' : 'Counted'}</td>
+                  <td>{t.never ? 'Never counted' : m.counted === false ? 'Shown, not counted' : 'Counted'}</td>
                 </tr>
               );
             })}
@@ -239,6 +245,10 @@ function AnswerItem({ a, typeLabel, sourceLabel }) {
   const kind = a.kind || a.question?.kind;
   const source = a.questionSourceType || SOURCE_OF_ROW[a.questionSource];
   const reaches = list(a.outcomes);
+  // A vote on a question put to the whole class (`classQuestion: { id, round }`).
+  // Its `note` says why one was set aside, e.g. a student who had already
+  // answered the question alone and been shown its answer.
+  const cq = a.classQuestion ?? (a.classQuestionId ? { id: a.classQuestionId, round: a.round } : null);
   return (
     <li className="atn-ans" data-counts={a.counts ? 'true' : 'false'}>
       <div className="atn-ans-top">
@@ -246,6 +256,7 @@ function AnswerItem({ a, typeLabel, sourceLabel }) {
           <span className="mono">{a.room?.code ?? '—'}</span>
           {a.answeredAt && <span>{dayOf(a.answeredAt)}</span>}
           {num(a.attempt) && a.attempt > 1 && <span>attempt {a.attempt}</span>}
+          {cq && <span className="atn-ans-cq">{Number(cq.round) === 2 ? 'Class question, re-vote' : 'Class question, first vote'}</span>}
         </span>
         <span className="atn-ans-verdict">
           {a.counts ? <Chip tone="accent" icon="check">Counted</Chip> : <Chip tone="line">{a.chosen === false ? 'Set aside' : 'Not counted'}</Chip>}
@@ -423,9 +434,8 @@ export function StudentSheet({ row, state, onClose, onRetry, onPrint, printing, 
                   <p className="t-meta">
                     Oldest first. {plural(ac.rows, 'attempt')} stored in these rooms
                     {ac.setAside ? `, ${ac.setAside} set aside by the attempts rule` : ''}; {plural(ac.graded, 'marked answer')}
-                    {types.filter((t) => ac.byType?.[t.id]).length
-                      ? ` (${types.filter((t) => ac.byType?.[t.id]).map((t) => `${t.label}: ${ac.byType[t.id]}`).join('; ')})`
-                      : ''}
+                    {/* A re-vote is named even at 0, since no formula ever counts it. */}
+                    {` (${types.filter((t) => ac.byType?.[t.id] || t.never).map((t) => `${t.label}: ${ac.byType?.[t.id] ?? 0}${t.never ? ', never counted' : ''}`).join('; ')})`}
                     {ac.ungraded ? `; ${plural(ac.ungraded, 'poll')}` : ''}.
                     {ac.bySource && ` By who wrote the question: ${bySourceLine(ac.bySource, d.questionSources)}.`}
                   </p>

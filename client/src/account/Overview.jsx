@@ -30,8 +30,8 @@ import {
 } from '../ui/index.jsx';
 import InviteStudents from './dashInvite.jsx';
 import {
-  ago, big, busiest, byLevel, Climb, dayOf, Facts, greeting, LevelRows, meanLevel, plural, Rate, roomLink, RoomDot,
-  seriesOf, share, thinnest, todayLine, useMedia,
+  ago, big, busiest, byLevel, byRoll, Climb, dayOf, Facts, greeting, LevelReading, LevelRows, LevelSummary, meanLevel, plural, Rate,
+  restsOn, roomLink, RoomDot, seriesOf, share, thinnest, todayLine, useMedia,
 } from './dashParts.jsx';
 import { AnswerFilters, AnswerList, TopicGrid, TopicGridSkel, useAnswers } from './insightParts.jsx';
 
@@ -180,7 +180,7 @@ function Brief({ counts, sessions, running, roster, bloom, contents, onAnalytics
     lead = (
       <>
         <em>{focus.title || 'Untitled room'}</em> is live, with {plural(focus.joined, 'student')} in
-        {focus.accuracy != null && <> at {share(focus.accuracy)} so far</>}.
+        {focus.accuracy != null && <>, at {share(focus.accuracy)} so far{restsOn(focus)}</>}.
         {focus.banded > 0 && <> {plural(focus.banded, 'is', 'are')} in the support band.</>}
       </>
     );
@@ -193,7 +193,7 @@ function Brief({ counts, sessions, running, roster, bloom, contents, onAnalytics
       <>
         Your last room, <em>{focus.title || 'Untitled room'}</em>
         {dayOf(focus.startedAt) && <> on {dayOf(focus.startedAt)}</>}, closed
-        {focus.accuracy != null && <> at {share(focus.accuracy)}</>} with {plural(focus.joined, 'student')}.
+        {focus.accuracy != null && <> at {share(focus.accuracy)}{restsOn(focus)}</>}, with {plural(focus.joined, 'student')} in it.
       </>
     );
   }
@@ -251,7 +251,7 @@ function Brief({ counts, sessions, running, roster, bloom, contents, onAnalytics
           <span>Mean accuracy</span>
           <b><Num value={share(counts.accuracy)} /></b>
           <Spark values={accuracy} label={`Accuracy in your last ${accuracy.length} rooms`} />
-          <small>{last ? share(last.accuracy) : '—'} <i>last room</i></small>
+          <small>{last ? share(last.accuracy) : '—'} <i>{last && Number.isFinite(last.answers) ? `last room, ${plural(last.answers, 'answer')}` : 'last room'}</i></small>
         </div>
         <div className="ptile" style={{ '--d': '2.1s' }}>
           <span>Support band</span>
@@ -552,10 +552,13 @@ function StudentDetail({ student: s, detail, onRetry, services }) {
  * Nobody selected: every class together stands in the inspector. How the rooms
  * went as figures, then where the answers landed and how well.
  */
-function AllClasses({ counts, bloom, hasStudents }) {
+function AllClasses({ counts, bloom, bands, hasStudents }) {
   const seen = bloom.reduce((n, b) => n + (b.seen ?? 0), 0);
   const peak = busiest(bloom);
   const weakest = thinnest(bloom);
+  // Decision 6: every class together is a summary, so it opens on the three
+  // bands; the six levels are one press away. One student's detail stays six.
+  const [by, setBy] = useState('bands');
 
   return (
     <>
@@ -583,20 +586,22 @@ function AllClasses({ counts, bloom, hasStudents }) {
       <section className="ac-sec">
         <div className="ac-sec-head">
           <h3 className="ac-label">Accuracy by level</h3>
-          <span className="t-meta">correct of answered</span>
+          <LevelReading value={by} onChange={setBy} />
         </div>
-        <LevelRows bloom={bloom} current={seen ? peak?.level : undefined} />
+        <LevelSummary bloom={bloom} bands={bands} by={by} current={seen ? peak?.level : undefined} />
         <p className="t-meta">
           {seen === 0
-            ? 'Fills in from answers, not from banks. One room with one class puts six bars here.'
-            : (
-              <>
-                Marked: {LABEL[peak.level]}, where most questions landed.
-                {weakest && weakest.level !== peak.level && (
-                  <> {LABEL[weakest.level]} is the thinnest at {share(weakest.accuracy)} of {weakest.seen.toLocaleString()} served, so weight the next bank towards it.</>
-                )}
-              </>
-            )}
+            ? 'Correct of answered. Fills in from answers, not from banks.'
+            : by === 'bands'
+              ? 'Correct of answered, two levels to a band, so each figure rests on more answers. Six levels shows which one to weight the next bank towards.'
+              : (
+                <>
+                  Correct of answered. Marked: {LABEL[peak.level]}, where most questions landed.
+                  {weakest && weakest.level !== peak.level && (
+                    <> {LABEL[weakest.level]} is the thinnest at {share(weakest.accuracy)} of {weakest.seen.toLocaleString()} served, so weight the next bank towards it.</>
+                  )}
+                </>
+              )}
         </p>
       </section>
     </>
@@ -678,7 +683,7 @@ function RoomFeed({ sessions, running, contents, onOpenRoom }) {
                 </span>
                 <span className="t-meta">
                   <span className="mono">{r.code}</span>
-                  {` · ${plural(r.joined, 'student')} · ${share(r.accuracy)}`}
+                  {` · ${plural(r.joined, 'student')} · ${share(r.accuracy)}${restsOn(r)}`}
                   {/* The dashboard's rows carry when a room opened, not when it paused. */}
                   {r.status === 'closed' ? (dayOf(r.startedAt) && ` · ${dayOf(r.startedAt)}`) : ` · opened ${ago(r.startedAt) || 'at an unrecorded time'}`}
                   {r.banded > 0 && ` · ${r.banded} in support band`}
@@ -770,7 +775,9 @@ export function OverviewView({
 
   const contents = useMemo(() => data?.contents ?? [], [data]);
   const sessions = useMemo(() => data?.recentSessions ?? [], [data]);
-  const roster = useMemo(() => data?.roster ?? [], [data]);
+  // Roll order, as every staff list of students reads (Phase 5 follow-ups):
+  // never by score.
+  const roster = useMemo(() => [...(data?.roster ?? [])].sort(byRoll), [data]);
   const bloom = useMemo(() => data?.bloom ?? [], [data]);
 
   const shownRoster = useMemo(() => {
@@ -871,7 +878,7 @@ export function OverviewView({
           <h2 id="ac-students-h">Your students</h2>
           <p>
             {plural(roster.length, 'account reports', 'accounts report')} to you
-            {roster.length > 0 && ` · ${linked} linked by roll number`}
+            {roster.length > 0 && ` · ${linked} linked by roll number · in roll order`}
           </p>
         </div>
         {canInvite && roster.length > 0 && (
@@ -987,7 +994,7 @@ export function OverviewView({
                   {detailOf(sel)}
                 </>
               ) : (
-                <AllClasses counts={counts} bloom={bloom} hasStudents={roster.length > 0} />
+                <AllClasses counts={counts} bloom={bloom} bands={data?.levelBands} hasStudents={roster.length > 0} />
               )}
               <div className="ac-foot">
                 <Button size="sm" variant="ghost" className="ac-tap" icon="analytics" onClick={() => navigate('/analytics')}>Analytics</Button>
