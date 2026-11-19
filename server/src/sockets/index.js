@@ -45,6 +45,8 @@ import { claimConnection, pushProjector, screenOf, watchWall } from '../services
 import { roomInsights, sampleFromGrid, scheduleInsights } from '../services/insights.js';
 import { CONFIDENCE_CHOICES, confidenceFrom, storedConfidence } from '../services/confidence.js';
 import { phoneProvenance } from '../services/honesty.js';
+// Phase 6 (decision H15): formulas and code as HTML, an additive field.
+import { phoneRich } from '../services/richText.js';
 import {
   CLASS_LOCK,
   OWN_QUESTION_DETAIL,
@@ -407,12 +409,17 @@ async function dispatchNext(socket, { profile, session, bank = null, resume = fa
     // some, and the phone has to say so rather than promise a fresh set.
     const allowed = retriesAllowed(q, settings, profile.rollNo, supports);
     const spent = triesSpent(profile, q._id);
+    const shown = forStudent(q, `${profile.rollNo}:${q._id}`, supports);
 
     socket.emit('server:question', {
       // `provenance` (Phase 5): who wrote it, in a student's words (never
       // "template" or a model's name). `q` is always servable here, so never a
       // draft. `source` stays beside it as it always was.
-      question: { ...forStudent(q, `${profile.rollNo}:${q._id}`, supports), provenance: phoneProvenance(q) },
+      // `rich` (Phase 6, H15): HTML for each field of `shown` holding a formula
+      // or a code block, built from what the phone is sent and nothing else;
+      // {} for a question without either (services/richText.js). Every other
+      // field is as it was.
+      question: { ...shown, provenance: phoneProvenance(q), rich: await phoneRich(shown) },
       // The phone's own words for the choice (decision (a)): pick.reason, the
       // professor's, can name the band. It stays on the pin, server-side.
       reason: reasonForPhone(profile, q.bloom),

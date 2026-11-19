@@ -21,6 +21,9 @@ const contentSchema = new Schema(
     topics: { type: [String], default: [] },
     // Deck only: each topic and the slide numbers it was read from (0013).
     topicSlides: { type: Schema.Types.Mixed, default: undefined },
+    // Deck only, uploaded from Phase 6 on: each slide's own words,
+    // [{ slide, text }] (0025). Absent on an older deck and on pasted text.
+    slideTexts: { type: Schema.Types.Mixed, default: undefined },
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: false } },
 );

@@ -173,6 +173,14 @@ function clip(value, max) {
   return `${body.replace(/[\s,;:.\-]+$/, '')}...`;
 }
 
+/**
+ * A topic as the generator stamps it on each question it writes: collapsed and
+ * clipped to MAX_TOPIC_CHARS. The Learning Hub (Phase 6) matches a question to
+ * its chapter's topic record by this as well as by the full name, so a long
+ * slide title still owns its questions; no question is rewritten.
+ */
+export const questionTopicFor = (topic) => clip(collapse(topic), MAX_TOPIC_CHARS);
+
 /** FNV-1a. Only needs to be stable and well spread, not cryptographic. */
 function hashString(value) {
   let h = 0x811c9dc5;

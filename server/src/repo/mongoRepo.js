@@ -6,6 +6,16 @@ import {
   Observation, WheelRound, WheelPick, HandTally, RoomActivity, InsightAction, ProjectorLink,
   CourseOutcome, OutcomeTopic, QuestionOutcomeOverride, AttainmentConfig, ClassQuestion,
 } from '../models/index.js';
+// Phase 6: the hub's content backbone (0025).
+import { ClassUnit, ClassChapter, ChapterTopic, TopicLink } from '../models/hubBackbone.js';
+// Phase 6: practice, mastery, the error log and reviews (0026).
+import { HubAttempt, QuestionExplanation } from '../models/hubPractice.js';
+// Phase 6: lessons and languages (0027).
+import { TopicLesson, ItemTranslation, LanguageChoice } from '../models/hubLessons.js';
+// Phase 6: Get Ready, self-tests and goals (0028).
+import { HubRun, HubGoal } from '../models/hubPaths.js';
+// Phase 6: the tutor's hints and feedback (0029).
+import { QuestionHint, OptionFeedback, HintView } from '../models/hubTutor.js';
 
 const lean = (d) => (d ? JSON.parse(JSON.stringify(d)) : null);
 
@@ -495,5 +505,425 @@ export function createMongoRepo() {
     async updateClassQuestion(id, patch) {
       return patchOne(ClassQuestion, id, patch, ['state', 'revealed', 'pausedAt', 'revoteAt', 'closedAt', 'closedBy']);
     },
+
+    // ---- Phase 6: the hub's content backbone (0025; see memoryRepo for the contract) ----
+    ...(() => {
+      // The lower-case name is the unique index's key, not part of the document.
+      const outUnit = (u) => {
+        if (!u) return null;
+        const { nameKey, ...rest } = u;
+        return rest;
+      };
+      const conflict = (err, message) => {
+        if (err?.code === 11000) throw Object.assign(new Error(message), { status: 409 });
+        throw err;
+      };
+      const byPlace = { position: 1, createdAt: 1, _id: 1 };
+      return {
+        async listClassUnits(classId) {
+          return (lean(await ClassUnit.find({ classId: String(classId) }).sort(byPlace).lean()) ?? []).map(outUnit);
+        },
+        async getClassUnit(id) {
+          return outUnit(lean(await ClassUnit.findById(id).lean().catch(() => null)));
+        },
+        async createClassUnit(doc) {
+          try {
+            return outUnit(lean(await ClassUnit.create({ ...doc, classId: String(doc.classId), nameKey: String(doc.name).toLowerCase() })));
+          } catch (err) {
+            return conflict(err, `There is already a unit called "${doc.name}" in this class.`);
+          }
+        },
+        async updateClassUnit(id, patch) {
+          const set = { updatedAt: new Date().toISOString() };
+          if (patch.name !== undefined) Object.assign(set, { name: patch.name, nameKey: String(patch.name).toLowerCase() });
+          if (patch.position !== undefined) set.position = patch.position;
+          try {
+            return outUnit(await patchOne(ClassUnit, id, set, ['name', 'nameKey', 'position', 'updatedAt']));
+          } catch (err) {
+            return conflict(err, `There is already a unit called "${patch.name}" in this class.`);
+          }
+        },
+        // Its chapters first, to no unit: Mongo has no ON DELETE SET NULL.
+        async deleteClassUnit(id) {
+          await ClassChapter.updateMany({ unitId: String(id) }, { $set: { unitId: null } });
+          return Boolean(await ClassUnit.findByIdAndDelete(id).catch(() => null));
+        },
+        async listClassChapters(classId) {
+          return lean(await ClassChapter.find({ classId: String(classId) }).lean()) ?? [];
+        },
+        async placeClassChapter(doc) {
+          try {
+            return lean(await ClassChapter.create({
+              ...doc, classId: String(doc.classId), contentId: String(doc.contentId), unitId: doc.unitId == null ? null : String(doc.unitId),
+            }));
+          } catch (err) {
+            return conflict(err, 'That chapter is already on this class.');
+          }
+        },
+        async updateClassChapter(id, patch) {
+          const set = {};
+          if (patch.unitId !== undefined) set.unitId = patch.unitId == null ? null : String(patch.unitId);
+          if (patch.position !== undefined) set.position = patch.position;
+          return patchOne(ClassChapter, id, set, ['unitId', 'position']);
+        },
+        async removeClassChapter(classId, contentId) {
+          const res = await ClassChapter.deleteOne({ classId: String(classId), contentId: String(contentId) });
+          return (res?.deletedCount ?? 0) > 0;
+        },
+        async listChapterTopics(contentId) {
+          return lean(await ChapterTopic.find({ contentId: String(contentId) }).sort(byPlace).lean()) ?? [];
+        },
+        async getChapterTopic(id) {
+          return lean(await ChapterTopic.findById(id).lean().catch(() => null));
+        },
+        async listChapterTopicsByIds(ids = []) {
+          const wanted = ids.map(String).filter((x) => /^[0-9a-f]{24}$/i.test(x));
+          return wanted.length ? lean(await ChapterTopic.find({ _id: { $in: wanted } }).lean()) ?? [] : [];
+        },
+        // ON CONFLICT DO NOTHING: a key the chapter holds is skipped, one by one.
+        async addChapterTopics(contentId, docs = []) {
+          const made = [];
+          for (const d of docs) {
+            try {
+              made.push(lean(await ChapterTopic.create({ ...d, contentId: String(contentId) })));
+            } catch (err) {
+              if (err?.code !== 11000) throw err;
+            }
+          }
+          return made;
+        },
+        async updateChapterTopic(id, patch) {
+          const set = { updatedAt: new Date().toISOString() };
+          for (const k of ['name', 'position', 'retiredAt']) if (patch[k] !== undefined) set[k] = patch[k];
+          if (patch.name !== undefined) set.key = String(patch.name).toLowerCase();
+          return patchOne(ChapterTopic, id, set, ['name', 'key', 'position', 'retiredAt', 'updatedAt']);
+        },
+        // Its links first: Mongo has no ON DELETE CASCADE.
+        async deleteChapterTopic(id) {
+          await TopicLink.deleteMany({ $or: [{ prerequisiteId: String(id) }, { topicId: String(id) }] });
+          return Boolean(await ChapterTopic.findByIdAndDelete(id).catch(() => null));
+        },
+        async listTopicLinks(filter = {}) {
+          const q = {};
+          if ('ownerId' in filter) q.ownerId = filter.ownerId == null ? null : String(filter.ownerId);
+          if (Array.isArray(filter.topicIds)) {
+            const ids = filter.topicIds.map(String);
+            q.$or = [{ prerequisiteId: { $in: ids } }, { topicId: { $in: ids } }];
+          }
+          return lean(await TopicLink.find(q).sort({ createdAt: 1, _id: 1 }).lean()) ?? [];
+        },
+        async getTopicLink(id) {
+          return lean(await TopicLink.findById(id).lean().catch(() => null));
+        },
+        async addTopicLink(doc) {
+          try {
+            return lean(await TopicLink.create({ ...doc, prerequisiteId: String(doc.prerequisiteId), topicId: String(doc.topicId) }));
+          } catch (err) {
+            return conflict(err, 'Those two topics are already linked.');
+          }
+        },
+        async updateTopicLink(id, patch) {
+          return patchOne(TopicLink, id, patch, ['state', 'decidedAt', 'decidedBy']);
+        },
+        async deleteTopicLink(id) {
+          return Boolean(await TopicLink.findByIdAndDelete(id).catch(() => null));
+        },
+        async setContentSlideTexts(contentId, slideTexts) {
+          return lean(await Content.findByIdAndUpdate(contentId, { $set: { slideTexts } }, { new: true }).lean().catch(() => null));
+        },
+      };
+    })(),
+
+    // ---- Phase 6: practice, mastery, the error log and reviews (0026; see memoryRepo for the contract) ----
+    ...(() => {
+      const inList = (v) => ({ $in: v.map(String) });
+      return {
+        // The unique index on (accountId, clientAttemptId) is the idempotency gate.
+        async addHubAttempt(doc) {
+          try {
+            const made = await HubAttempt.create({ ...doc, accountId: String(doc.accountId) });
+            return { attempt: lean(made), duplicate: false };
+          } catch (err) {
+            if (err?.code !== 11000) throw err;
+            const held = await this.getHubAttemptByKey(doc.accountId, doc.clientAttemptId);
+            if (held) return { attempt: held, duplicate: true };
+            throw err;
+          }
+        },
+        async getHubAttemptByKey(accountId, clientAttemptId) {
+          return lean(await HubAttempt.findOne({ accountId: String(accountId), clientAttemptId: String(clientAttemptId) }).lean());
+        },
+        async listHubAttempts({ accountId, accountIds, topicIds, questionIds, runIds, since } = {}) {
+          for (const v of [accountIds, topicIds, questionIds, runIds]) if (Array.isArray(v) && !v.length) return [];
+          const q = {};
+          if (Array.isArray(accountIds)) q.accountId = inList(accountIds);
+          // Both given: the one account, and only if it is in the list.
+          if (accountId) q.accountId = Array.isArray(accountIds) && !accountIds.map(String).includes(String(accountId)) ? '\u0000' : String(accountId);
+          if (Array.isArray(topicIds)) q.topicId = inList(topicIds);
+          if (Array.isArray(questionIds)) q.questionId = inList(questionIds);
+          if (Array.isArray(runIds)) q.runId = inList(runIds);
+          if (since) q.createdAt = { $gte: String(since) };
+          return lean(await HubAttempt.find(q).sort({ createdAt: 1, _id: 1 }).lean()) ?? [];
+        },
+        async getQuestionExplanation(questionId) {
+          return lean(await QuestionExplanation.findOne({ questionId: String(questionId) }).lean());
+        },
+        async listQuestionExplanations(questionIds = []) {
+          if (!questionIds.length) return [];
+          return lean(await QuestionExplanation.find({ questionId: inList(questionIds) }).lean()) ?? [];
+        },
+        async addQuestionExplanation(doc) {
+          try {
+            return lean(await QuestionExplanation.create({ ...doc, questionId: String(doc.questionId) }));
+          } catch (err) {
+            if (err?.code === 11000) throw Object.assign(new Error('That question already has an explanation.'), { status: 409 });
+            throw err;
+          }
+        },
+        async updateQuestionExplanation(questionId, patch) {
+          const set = { updatedAt: new Date().toISOString() };
+          for (const k of ['text', 'provenance', 'status', 'model', 'sourceRef', 'approvedBy', 'approvedAt']) {
+            if (patch[k] !== undefined) set[k] = patch[k];
+          }
+          return lean(await QuestionExplanation.findOneAndUpdate({ questionId: String(questionId) }, { $set: set },
+            { new: true, runValidators: true }).lean());
+        },
+        async deleteQuestionExplanation(questionId) {
+          const res = await QuestionExplanation.deleteOne({ questionId: String(questionId) });
+          return (res?.deletedCount ?? 0) > 0;
+        },
+      };
+    })(),
+
+    // ---- Phase 6: lessons and languages (0027; see memoryRepo for the contract) ----
+    ...(() => {
+      const conflict = (message) => Object.assign(new Error(message), { status: 409 });
+      const notDraft = (what, rec) => conflict(`Only a draft ${what} can be approved or discarded; this one is ${rec.status}.`);
+      const find = (Model, id) => Model.findById(id).lean().catch(() => null);
+      // Mongo has no transaction here: the server serialises approvals per
+      // topic (and per item), and the partial unique index refuses a second
+      // approved row should two ever race.
+      const decide = async (Model, rec, { status, by }) => {
+        const now = new Date().toISOString();
+        const set = status === 'approved' ? { status, approvedAt: now, approvedBy: by ?? null } : { status, retiredAt: now, retiredBy: by ?? null };
+        return lean(await Model.findOneAndUpdate({ _id: rec._id, status: rec.status }, { $set: set }, { new: true }).lean());
+      };
+      return {
+        async createTopicLesson(doc) {
+          try {
+            return lean(await TopicLesson.create({
+              ...doc, topicId: String(doc.topicId), contentId: String(doc.contentId), status: 'draft',
+            }));
+          } catch (err) {
+            if (err?.code === 11000) throw conflict('Another version of this lesson was written at the same time. Nothing was changed; try again.');
+            throw err;
+          }
+        },
+        async getTopicLesson(id) {
+          return lean(await find(TopicLesson, id));
+        },
+        async listTopicLessons(filter = {}) {
+          const q = {};
+          if (filter.topicId !== undefined) q.topicId = String(filter.topicId);
+          if (filter.contentId !== undefined) q.contentId = String(filter.contentId);
+          return lean(await TopicLesson.find(q).sort({ topicId: 1, version: 1 }).lean()) ?? [];
+        },
+        async approveTopicLesson(id, { by = null } = {}) {
+          const rec = await find(TopicLesson, id);
+          if (!rec) return null;
+          if (rec.status !== 'draft') throw notDraft('lesson', rec);
+          const now = new Date().toISOString();
+          await TopicLesson.updateMany({ topicId: rec.topicId, status: 'approved' },
+            { $set: { status: 'superseded', retiredAt: now, retiredBy: by ?? null } });
+          return decide(TopicLesson, rec, { status: 'approved', by });
+        },
+        async discardTopicLesson(id, { by = null } = {}) {
+          const rec = await find(TopicLesson, id);
+          if (!rec) return null;
+          if (rec.status !== 'draft') throw notDraft('lesson', rec);
+          return decide(TopicLesson, rec, { status: 'discarded', by });
+        },
+        async addItemTranslation(doc) {
+          return lean(await ItemTranslation.create({
+            ...doc, itemId: String(doc.itemId), contentId: String(doc.contentId), status: 'draft',
+          }));
+        },
+        async getItemTranslation(id) {
+          return lean(await find(ItemTranslation, id));
+        },
+        async listItemTranslations(filter = {}) {
+          const q = {};
+          if (filter.contentId !== undefined) q.contentId = String(filter.contentId);
+          if (filter.itemKind !== undefined) q.itemKind = filter.itemKind;
+          if (Array.isArray(filter.itemIds)) q.itemId = { $in: filter.itemIds.map(String) };
+          if (filter.language !== undefined) q.language = filter.language;
+          if (filter.status !== undefined) q.status = { $in: [].concat(filter.status) };
+          return lean(await ItemTranslation.find(q).sort({ createdAt: 1, _id: 1 }).lean()) ?? [];
+        },
+        async editItemTranslation(id, patch) {
+          const rec = await find(ItemTranslation, id);
+          if (!rec) return null;
+          if (rec.status !== 'draft') throw conflict(`Only a draft translation can be changed; this one is ${rec.status}.`);
+          const set = { updatedAt: new Date().toISOString() };
+          for (const k of ['fields', 'sourceFields', 'sourceHash', 'checks', 'provenance', 'editedBy']) if (patch[k] !== undefined) set[k] = patch[k];
+          return lean(await ItemTranslation.findOneAndUpdate({ _id: rec._id, status: 'draft' }, { $set: set }, { new: true }).lean());
+        },
+        async approveItemTranslation(id, { by = null } = {}) {
+          const rec = await find(ItemTranslation, id);
+          if (!rec) return null;
+          if (rec.status !== 'draft') throw notDraft('translation', rec);
+          const now = new Date().toISOString();
+          await ItemTranslation.updateMany({ itemKind: rec.itemKind, itemId: rec.itemId, language: rec.language, status: 'approved' },
+            { $set: { status: 'superseded', retiredAt: now, retiredBy: by ?? null } });
+          return decide(ItemTranslation, rec, { status: 'approved', by });
+        },
+        async discardItemTranslation(id, { by = null } = {}) {
+          const rec = await find(ItemTranslation, id);
+          if (!rec) return null;
+          if (rec.status !== 'draft') throw notDraft('translation', rec);
+          return decide(ItemTranslation, rec, { status: 'discarded', by });
+        },
+        async getLanguageChoice(accountId) {
+          return (await LanguageChoice.findOne({ accountId: String(accountId) }).lean())?.language ?? null;
+        },
+        async setLanguageChoice(accountId, language) {
+          const rec = lean(await LanguageChoice.findOneAndUpdate({ accountId: String(accountId) },
+            { $set: { language, updatedAt: new Date().toISOString() } }, { new: true, upsert: true }).lean());
+          return { accountId: rec.accountId, language: rec.language, updatedAt: rec.updatedAt };
+        },
+      };
+    })(),
+
+    // ---- Phase 6: Get Ready, self-tests and goals (0028; see memoryRepo for the contract) ----
+    ...(() => {
+      const find = (Model, id) => Model.findById(id).lean().catch(() => null);
+      return {
+        // The unique index on (accountId, clientRunId) is the idempotency gate.
+        async addHubRun(doc) {
+          try {
+            const made = await HubRun.create({ ...doc, accountId: String(doc.accountId) });
+            return { run: lean(made), duplicate: false };
+          } catch (err) {
+            if (err?.code !== 11000) throw err;
+            const held = await this.getHubRunByKey(doc.accountId, doc.clientRunId);
+            if (held) return { run: held, duplicate: true };
+            throw err;
+          }
+        },
+        async getHubRun(id) {
+          return lean(await find(HubRun, id));
+        },
+        async getHubRunByKey(accountId, clientRunId) {
+          return lean(await HubRun.findOne({ accountId: String(accountId), clientRunId: String(clientRunId) }).lean());
+        },
+        async listHubRuns({ accountId, ids, kind } = {}) {
+          if (Array.isArray(ids) && !ids.length) return [];
+          const q = {};
+          if (accountId) q.accountId = String(accountId);
+          // An id that is not an ObjectId matches nothing, rather than failing the cast.
+          if (Array.isArray(ids)) q._id = { $in: ids.map(String).filter((x) => /^[0-9a-f]{24}$/i.test(x)) };
+          if (kind) q.kind = kind;
+          return lean(await HubRun.find(q).sort({ startedAt: 1, _id: 1 }).lean()) ?? [];
+        },
+        // Only where it has no end yet, so a second end never overwrites the first.
+        async endHubRun(id, { endedAt, endReason }) {
+          const rec = await find(HubRun, id);
+          if (!rec) return null;
+          if (rec.endedAt) return lean(rec);
+          const done = await HubRun.findOneAndUpdate({ _id: rec._id, endedAt: null }, { $set: { endedAt, endReason } }, { new: true }).lean();
+          return lean(done ?? await find(HubRun, id));
+        },
+        async listHubGoals(accountId) {
+          return lean(await HubGoal.find({ accountId: String(accountId) }).sort({ createdAt: 1, _id: 1 }).lean()) ?? [];
+        },
+        async getHubGoal(id) {
+          return lean(await find(HubGoal, id));
+        },
+        async addHubGoal(doc) {
+          return lean(await HubGoal.create({ ...doc, accountId: String(doc.accountId) }));
+        },
+        async updateHubGoal(id, patch) {
+          const set = { updatedAt: new Date().toISOString() };
+          for (const k of ['title', 'examDate', 'topicIds']) if (patch[k] !== undefined) set[k] = patch[k];
+          return lean(await HubGoal.findByIdAndUpdate(id, { $set: set }, { new: true, runValidators: true }).lean()
+            .catch((err) => { if (err?.name === 'CastError') return null; throw err; }));
+        },
+        async deleteHubGoal(id) {
+          const res = await HubGoal.deleteOne({ _id: id }).catch(() => null);
+          return (res?.deletedCount ?? 0) > 0;
+        },
+      };
+    })(),
+
+    // ---- Phase 6: the tutor's hints and feedback (0029; see memoryRepo for the contract) ----
+    ...(() => {
+      const conflict = (message) => Object.assign(new Error(message), { status: 409 });
+      const EDITABLE = ['text', 'provenance', 'status', 'model', 'sourceRef', 'approvedBy', 'approvedAt'];
+      const ofQuestions = async (Model, questionIds) => (questionIds.length
+        ? lean(await Model.find({ questionId: { $in: questionIds.map(String) } }).sort({ createdAt: 1, _id: 1 }).lean()) ?? [] : []);
+      const insert = async (Model, doc, message) => {
+        try {
+          return lean(await Model.create({ ...doc, questionId: String(doc.questionId) }));
+        } catch (err) {
+          if (err?.code === 11000) throw conflict(message);
+          throw err;
+        }
+      };
+      const edit = (Model, id, patch, allowed) => patchOne(Model, id, { ...patch, updatedAt: new Date().toISOString() }, [...allowed, 'updatedAt']);
+      const remove = async (Model, id) => Boolean(await Model.findByIdAndDelete(id).catch(() => null));
+      return {
+        async listQuestionHints(questionIds = []) {
+          return ofQuestions(QuestionHint, questionIds);
+        },
+        async getQuestionHint(id) {
+          return lean(await QuestionHint.findById(id).lean().catch(() => null));
+        },
+        async addQuestionHint(doc) {
+          return insert(QuestionHint, doc, 'That question already has a hint at this step.');
+        },
+        async updateQuestionHint(id, patch) {
+          return edit(QuestionHint, id, patch, EDITABLE);
+        },
+        async deleteQuestionHint(id) {
+          return remove(QuestionHint, id);
+        },
+        async listOptionFeedback(questionIds = []) {
+          return ofQuestions(OptionFeedback, questionIds);
+        },
+        async getOptionFeedback(id) {
+          return lean(await OptionFeedback.findById(id).lean().catch(() => null));
+        },
+        async addOptionFeedback(doc) {
+          return insert(OptionFeedback, doc, 'That option already has feedback.');
+        },
+        async updateOptionFeedback(id, patch) {
+          return edit(OptionFeedback, id, patch, ['option', ...EDITABLE]);
+        },
+        async deleteOptionFeedback(id) {
+          return remove(OptionFeedback, id);
+        },
+        // The unique index on (accountId, clientAttemptId, position) is the gate.
+        async addHintView(doc) {
+          try {
+            return { view: lean(await HintView.create({ ...doc, accountId: String(doc.accountId) })), duplicate: false };
+          } catch (err) {
+            if (err?.code !== 11000) throw err;
+            const held = lean(await HintView.findOne({
+              accountId: String(doc.accountId), clientAttemptId: String(doc.clientAttemptId), position: doc.position,
+            }).lean());
+            if (held) return { view: held, duplicate: true };
+            throw err;
+          }
+        },
+        async listHintViews({ accountId, clientAttemptId, questionIds } = {}) {
+          if (Array.isArray(questionIds) && !questionIds.length) return [];
+          const q = {};
+          if (accountId) q.accountId = String(accountId);
+          if (clientAttemptId) q.clientAttemptId = String(clientAttemptId);
+          if (Array.isArray(questionIds)) q.questionId = { $in: questionIds.map(String) };
+          return lean(await HintView.find(q).sort({ createdAt: 1, _id: 1 }).lean()) ?? [];
+        },
+      };
+    })(),
   };
 }

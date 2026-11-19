@@ -135,7 +135,8 @@ async function rowCounts(db) {
   const out = {};
   for (const table of ['contents', 'questions', 'sessions', 'profiles', 'accounts', 'invites', 'answers', 'room_archives',
     'answer_reviews', 'media', 'classes', 'class_students', 'attendance', ...RECORD_TABLES, 'projector_links',
-    ...OUTCOME_TABLES, 'class_questions']) {
+    ...OUTCOME_TABLES, 'class_questions', ...HUB_TABLES, ...LESSON_TABLES, ...PATH_TABLES,
+    ...TUTOR_TABLES]) {
     const exists = await db.query(`select to_regclass('public.${table}') is not null as ok`);
     if (!exists.rows[0].ok) continue;
     out[table] = Number((await db.query(`select count(*)::int as n from public.${table}`)).rows[0].n);
@@ -147,7 +148,7 @@ async function rowCounts(db) {
 // and server/src/routes/auth.js read or write. A column added there without a
 // migration should be added here too, and this check then says so.
 const COLUMNS_THE_SERVER_USES = {
-  contents: ['id', 'title', 'kind', 'raw_text', 'topics', 'owner_id', 'created_at', 'topic_slides'],
+  contents: ['id', 'title', 'kind', 'raw_text', 'topics', 'owner_id', 'created_at', 'topic_slides', 'slide_texts'],
   questions: ['id', 'content_id', 'topic', 'text', 'kind', 'options', 'answer_idx', 'bloom', 'status',
     'source', 'payload', 'created_at', 'model', 'source_ref', 'checks', 'created_by', 'approved_by', 'approved_at',
     'replaces_id', 'misconceptions'],
@@ -190,7 +191,50 @@ const COLUMNS_THE_SERVER_USES = {
   attainment_configs: ['id', 'class_id', 'version', 'config', 'created_at', 'created_by'],
   class_questions: ['id', 'session_id', 'seq', 'question_id', 'question_snapshot', 'state', 'revealed', 'started_at',
     'started_by', 'paused_at', 'revote_at', 'closed_at', 'closed_by'],
+  // Phase 6, the hub's content backbone (0025).
+  class_units: ['id', 'class_id', 'name', 'position', 'created_at', 'updated_at', 'created_by'],
+  class_chapters: ['id', 'class_id', 'content_id', 'unit_id', 'position', 'added_at', 'added_by'],
+  chapter_topics: ['id', 'content_id', 'name', 'key', 'position', 'retired_at', 'created_at', 'updated_at'],
+  topic_links: ['id', 'owner_id', 'prerequisite_id', 'topic_id', 'provenance', 'state', 'reason', 'model', 'created_at',
+    'created_by', 'decided_at', 'decided_by'],
+  // Phase 6, practice in the hub (0026).
+  hub_attempts: ['id', 'account_id', 'client_attempt_id', 'class_id', 'content_id', 'topic_id', 'topic', 'question_id', 'bloom',
+    'kind', 'question_snapshot', 'question_source', 'response', 'correct', 'score', 'detail', 'review_status', 'mode', 'language',
+    'hints_used', 'time_taken_ms', 'created_at',
+    // Phase 6, Get Ready and self-tests (0028).
+    'run_id'],
+  question_explanations: ['id', 'question_id', 'text', 'provenance', 'status', 'model', 'source_ref', 'created_by', 'created_at',
+    'updated_at', 'approved_by', 'approved_at'],
+  // Phase 6, lessons and languages (0027).
+  topic_lessons: ['id', 'topic_id', 'content_id', 'owner_id', 'version', 'status', 'source', 'model', 'steps', 'basis', 'warnings',
+    'created_at', 'created_by', 'approved_at', 'approved_by', 'retired_at', 'retired_by'],
+  item_translations: ['id', 'item_kind', 'item_id', 'content_id', 'owner_id', 'language', 'fields', 'source_fields', 'source_hash',
+    'status', 'provenance', 'model', 'checks', 'created_at', 'created_by', 'updated_at', 'edited_by', 'approved_at', 'approved_by',
+    'retired_at', 'retired_by'],
+  student_language_choices: ['account_id', 'language', 'updated_at'],
+  // Phase 6, Get Ready, self-tests and goals (0028).
+  hub_runs: ['id', 'account_id', 'client_run_id', 'kind', 'spec', 'time_limit_seconds', 'started_at', 'deadline_at', 'ended_at',
+    'end_reason'],
+  hub_goals: ['id', 'account_id', 'title', 'exam_date', 'topic_ids', 'created_at', 'updated_at'],
+  // Phase 6, the tutor (0029).
+  question_hints: ['id', 'question_id', 'step', 'text', 'provenance', 'status', 'model', 'source_ref', 'created_by', 'created_at',
+    'updated_at', 'approved_by', 'approved_at'],
+  option_feedback: ['id', 'question_id', 'option', 'option_key', 'text', 'provenance', 'status', 'model', 'source_ref', 'created_by',
+    'created_at', 'updated_at', 'approved_by', 'approved_at'],
+  hub_hint_views: ['id', 'account_id', 'client_attempt_id', 'question_id', 'topic_id', 'content_id', 'mode', 'position', 'kind', 'hint_id',
+    'text', 'provenance', 'language', 'translation_id', 'source_ref', 'plan', 'created_at'],
 };
+
+// The hub's content backbone (0025), and its practice evidence and explanations (0026).
+const HUB_TABLES = ['class_units', 'class_chapters', 'chapter_topics', 'topic_links', 'hub_attempts', 'question_explanations'];
+
+// The hub's lessons and languages (0027).
+const LESSON_TABLES = ['topic_lessons', 'item_translations', 'student_language_choices'];
+
+// The hub's Get Ready checks, self-tests and goals (0028).
+const PATH_TABLES = ['hub_runs', 'hub_goals'];
+// The hub's tutor: hints, feedback on wrong options, and the hints each student opened (0029).
+const TUTOR_TABLES = ['question_hints', 'option_feedback', 'hub_hint_views'];
 
 // The course-outcome tables (0019), and the attainment formula's (0020).
 const OUTCOME_TABLES = ['course_outcomes', 'outcome_topics', 'question_outcome_overrides', 'attainment_configs'];
@@ -1792,6 +1836,629 @@ const kept24 = {};
   // Left in place: the re-run below runs over it.
 }
 
+section('the hub\'s content backbone: units, chapters, topic records, prerequisite links and slide texts (0025)');
+
+// Kept by the re-run section below, which checks each survives it.
+const kept25 = {};
+{
+  const KEPT = { code: '23514' };
+  const legacy = (await db.query(`select id from public.contents where title = 'Legacy'`)).rows[0];
+
+  // contents.slide_texts, as setContentSlideTexts writes it.
+  const s25 = (await db.query(`select data_type, is_nullable from information_schema.columns
+    where table_schema = 'public' and table_name = 'contents' and column_name = 'slide_texts'`)).rows[0] ?? null;
+  check('contents.slide_texts is jsonb and may be null (decks before 0025, pasted text)', s25?.data_type === 'jsonb' && s25?.is_nullable === 'YES');
+  {
+    const { rows } = await db.query('select slide_texts from public.contents where id = $1', [content?.id]);
+    check('a chapter made before it has none', rows[0]?.slide_texts === null);
+  }
+  const slides = (value) => db.query('update public.contents set slide_texts = $2 where id = $1 returning slide_texts', [content?.id, value]);
+  const [withSlides] = (await accepts('each slide\'s own words, as setContentSlideTexts writes them',
+    () => slides(JSON.stringify([{ slide: 1, text: 'Sets are collections' }, { slide: 3, text: 'Union' }])))) ?? [];
+  check('they read back as written', withSlides?.slide_texts?.[1]?.slide === 3 && withSlides?.slide_texts?.[1]?.text === 'Union');
+  await rejects('slide texts that are not a list', () => slides(JSON.stringify({ slide: 1, text: 'x' })), { ...KEPT, match: /contents_slide_texts_check/ });
+  await rejects('a slide with no text', () => slides(JSON.stringify([{ slide: 1 }])), KEPT);
+  await rejects('a slide numbered by text', () => slides(JSON.stringify([{ slide: '1', text: 'x' }])), KEPT);
+
+  // A class of the professor's, for the units and placements.
+  const [cls] = (await db.query(
+    `insert into public.classes (owner_id, course_name, section) values ($1, 'Discrete Maths', 'SY B') returning *`, [PROF])).rows;
+  const [otherClass] = (await db.query(
+    `insert into public.classes (owner_id, course_name, section) values ($1, 'Discrete Maths', 'SY C') returning *`, [PROF])).rows;
+  const unit = (name, classId = cls.id, position = 1) => db.query(
+    `insert into public.class_units (class_id, name, position, created_by) values ($1, $2, $3, $4) returning *`, [classId, name, position, PROF]);
+  const [u1] = (await accepts('a unit, as createClassUnit writes it', () => unit('Unit 1: Sets'))) ?? [];
+  await accepts('a second unit', () => unit('Unit 2', cls.id, 2));
+  await rejects('a unit of the same name in the class, in another case', () => unit('UNIT 1: SETS'), { code: '23505', match: /class_units_class_name_key/ });
+  await accepts('the same name in another class', () => unit('Unit 1: Sets', otherClass.id));
+  await rejects('a blank unit name', () => unit('   '), { ...KEPT, match: /class_units_name_check/ });
+  await rejects('a unit name with a double space', () => unit('Unit  3'), KEPT);
+  await rejects('a unit at position 0', () => unit('Unit 9', cls.id, 0), { ...KEPT, match: /class_units_position_check/ });
+  const [otherUnit] = (await db.query('select id from public.class_units where class_id = $1', [otherClass.id])).rows;
+
+  const place = (cols = {}) => db.query(
+    `insert into public.class_chapters (class_id, content_id, unit_id, position, added_by) values ($1, $2, $3, $4, $5) returning *`,
+    [cols.classId ?? cls.id, cols.contentId ?? content?.id, 'unitId' in cols ? cols.unitId : u1?.id, cols.position ?? 1, PROF]);
+  const [placed] = (await accepts('a chapter placed in a unit, as placeClassChapter writes it', () => place())) ?? [];
+  await rejects('the same chapter twice on a class', () => place({ unitId: null }), { code: '23505', match: /class_chapters_class_content_key/ });
+  await rejects('a chapter in a unit of another class', () => place({ classId: otherClass.id, unitId: u1?.id }), { code: '23503' });
+  await rejects('a chapter placed on a class of another owner (here, a chapter nobody owns)', () =>
+    place({ contentId: legacy?.id, unitId: null }), { ...KEPT, match: /professor who owns it/ });
+  await accepts('the same chapter on another class of the professor\'s, in no unit', () =>
+    place({ classId: otherClass.id, unitId: null }));
+  await rejects('moving it into a unit of another class', () =>
+    db.query('update public.class_chapters set unit_id = $2 where id = $1', [placed?.id, otherUnit?.id]), { code: '23503' });
+  await accepts('removing the unit', () => db.query('delete from public.class_units where id = $1', [u1?.id]));
+  {
+    const { rows } = await db.query('select unit_id, content_id from public.class_chapters where id = $1', [placed?.id]);
+    check('its chapter stays on the class, in no unit ("Other chapters")', rows[0]?.unit_id === null && rows[0]?.content_id === content?.id);
+  }
+
+  // Topic records, as addChapterTopics and syncTopics write them.
+  const topic = (name, key = name.toLowerCase(), contentId = content?.id, position = 1) => db.query(
+    `insert into public.chapter_topics (content_id, name, key, position) values ($1, $2, $3, $4)
+     on conflict (content_id, key) do nothing returning *`, [contentId, name, key, position]);
+  const [sets] = (await accepts('a topic record', () => topic('Sets'))) ?? [];
+  const [relations] = (await accepts('a second topic record', () => topic('Relations', 'relations', content?.id, 2))) ?? [];
+  const [functions] = (await accepts('a third', () => topic('Functions', 'functions', content?.id, 3))) ?? [];
+  {
+    const again = await topic('SETS', 'sets');
+    check('the same key again in the chapter is skipped, as addChapterTopics asks (ON CONFLICT DO NOTHING)', again.rows.length === 0);
+  }
+  await rejects('the same key twice, without the skip', () => db.query(
+    `insert into public.chapter_topics (content_id, name, key) values ($1, 'Sets', 'sets')`, [content?.id]), { code: '23505', match: /chapter_topics_content_key_key/ });
+  await rejects('a topic name with spaces round it', () => topic(' Groups ', 'groups'), { ...KEPT, match: /chapter_topics_name_check/ });
+  await rejects('a topic name over 300 characters', () => topic('x'.repeat(301), 'x'), KEPT);
+  await accepts('retiring a topic, as syncTopics does when questions hang off it', () =>
+    db.query('update public.chapter_topics set retired_at = now() where id = $1', [functions?.id]));
+  await accepts('and bringing it back', () => db.query('update public.chapter_topics set retired_at = null where id = $1', [functions?.id]));
+  const [legacyTopic] = (await topic('Old', 'old', legacy?.id)).rows;
+
+  // Prerequisite links, as addTopicLink and updateTopicLink write them.
+  const link = (p, t, cols = {}) => db.query(
+    `insert into public.topic_links (owner_id, prerequisite_id, topic_id, provenance, state, reason, model, created_by, decided_at, decided_by)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning *`,
+    ['ownerId' in cols ? cols.ownerId : PROF, p, t, cols.provenance ?? 'professor', cols.state ?? 'confirmed', cols.reason ?? '',
+      cols.model ?? null, PROF, 'decidedAt' in cols ? cols.decidedAt : new Date().toISOString(), PROF]);
+  const [l1] = (await accepts('a professor\'s link: Sets before Relations, confirmed at once', () => link(sets?.id, relations?.id))) ?? [];
+  await accepts('Relations before Functions', () => link(relations?.id, functions?.id));
+  await rejects('the same pair twice', () => link(sets?.id, relations?.id, { provenance: 'ai', state: 'proposed', decidedAt: null, model: 'm' }),
+    { code: '23505', match: /topic_links_pair_key/ });
+  await rejects('a topic before itself', () => link(sets?.id, sets?.id), { ...KEPT, match: /topic_links_not_self/ });
+  await rejects('a confirmed link that closes a loop (Functions before Sets)', () => link(functions?.id, sets?.id), { ...KEPT, match: /loop/ });
+  const [proposal] = (await accepts('the same loop as an AI proposal: proposals are drafts and close nothing', () =>
+    link(functions?.id, sets?.id, { provenance: 'ai', state: 'proposed', decidedAt: null, model: 'm', reason: 'One line.' }))) ?? [];
+  await rejects('confirming it', () => db.query(
+    `update public.topic_links set state = 'confirmed', decided_at = now(), decided_by = $2 where id = $1`, [proposal?.id, PROF]),
+  { ...KEPT, match: /loop/ });
+  await accepts('rejecting it', () => db.query(
+    `update public.topic_links set state = 'rejected', decided_at = now(), decided_by = $2 where id = $1`, [proposal?.id, PROF]));
+  await rejects('a professor\'s link left proposed', () => link(sets?.id, functions?.id, { state: 'proposed', decidedAt: null }),
+    { ...KEPT, match: /topic_links_state_check/ });
+  await rejects('a proposal with a decision time', () => link(sets?.id, functions?.id, { provenance: 'ai', state: 'proposed', model: 'm' }),
+    { ...KEPT, match: /topic_links_state_check/ });
+  await rejects('a decision with no decision time', () => link(sets?.id, functions?.id, { decidedAt: null }), KEPT);
+  await rejects('a model on a professor\'s link', () => link(sets?.id, functions?.id, { model: 'm' }), { ...KEPT, match: /topic_links_model_check/ });
+  await rejects('a provenance outside ai and professor', () => link(sets?.id, functions?.id, { provenance: 'teacher' }), KEPT);
+  await rejects('a reason over 300 characters', () => link(sets?.id, functions?.id, { reason: 'x'.repeat(301) }), KEPT);
+  await rejects('a link to a topic of a chapter of another owner', () => link(sets?.id, legacyTopic?.id), { ...KEPT, match: /own professor/ });
+  await rejects('a link owned by someone other than the chapters\' owner', () => link(sets?.id, functions?.id, { ownerId: null }), KEPT);
+  {
+    // Deleting a topic takes its links with it (the server deletes only a record nothing hangs off).
+    const [spare] = (await topic('Spare', 'spare', content?.id, 4)).rows;
+    await link(spare.id, functions?.id);
+    await accepts('deleting a topic record', () => db.query('delete from public.chapter_topics where id = $1', [spare.id]));
+    const { rows } = await db.query('select count(*)::int as n from public.topic_links where prerequisite_id = $1', [spare.id]);
+    check('its links go with it', rows[0].n === 0);
+  }
+  kept25.link = l1?.id;
+  kept25.sets = sets?.id;
+  kept25.functions = functions?.id;
+  kept25.placed = placed?.id;
+  // Left in place: the re-run below runs over them.
+}
+
+section('the hub\'s practice evidence and explanations: hub attempts, append-only, and one explanation per question (0026)');
+
+// Kept by the re-run section below, which checks each survives it.
+const kept26 = {};
+{
+  const KEPT = { code: '23514' };
+  const GUARD = { code: '23001', match: /hub_attempts/ };
+  const [cls26] = (await db.query(
+    `insert into public.classes (owner_id, course_name, section) values ($1, 'Discrete Maths', 'SY D') returning *`, [PROF])).rows;
+  const [q26] = (await insertQuestion({ text: 'Practise me', kind: 'mcq', options: ['a', 'b', 'c', 'd'], answerIdx: 1, bloom: 'apply', source: 'teacher' })).rows;
+  const [temp] = (await db.query(
+    `insert into public.chapter_topics (content_id, name, key, position) values ($1, 'Temp', 'temp', 9) returning *`, [content?.id])).rows;
+
+  // As addHubAttempt writes it.
+  const attempt = (cols = {}) => db.query(
+    `insert into public.hub_attempts (account_id, client_attempt_id, class_id, content_id, topic_id, topic, question_id, bloom, kind,
+       question_snapshot, question_source, response, correct, score, detail, review_status, mode, language, hints_used, time_taken_ms, created_at)
+     values ($1, $2, $3, $4, $5, 'Sets', $6, $7, $8, $9, 'teacher', $10, $11, $12, '', $13, $14, $15, $16, $17, $18) returning *`,
+    [cols.accountId ?? STUDENT, cols.key ?? 'attempt-0001', cls26?.id, content?.id, 'topicId' in cols ? cols.topicId : kept25.sets,
+      'questionId' in cols ? cols.questionId : q26?.id, cols.bloom ?? 'apply', cols.kind ?? 'mcq',
+      JSON.stringify({ id: q26?.id, text: 'Practise me', options: ['a', 'b', 'c', 'd'], answerIdx: 1 }), JSON.stringify(cols.response ?? 1),
+      cols.correct ?? true, cols.score ?? 1, cols.reviewStatus ?? 'auto', cols.mode ?? 'practice', cols.language ?? 'en',
+      cols.hints ?? 0, 'time' in cols ? cols.time : 4200, cols.createdAt ?? new Date().toISOString()]);
+  const [first] = (await accepts('a hub attempt, as addHubAttempt writes it', () => attempt())) ?? [];
+  check('it reads back with its snapshot, response and mark', first?.question_snapshot?.answerIdx === 1 && first?.response === 1
+    && first?.correct === true && Number(first?.score) === 1 && first?.mode === 'practice' && first?.language === 'en' && first?.hints_used === 0
+    && first?.time_taken_ms === 4200);
+  {
+    const { rows } = await db.query(
+      `insert into public.hub_attempts (account_id, client_attempt_id, bloom, correct, score, mode) values ($1, 'attempt-0002', 'remember', false, 0, 'review')
+       returning class_id, topic, kind, question_snapshot, review_status, language, hints_used, time_taken_ms, created_at`, [STUDENT]);
+    const r = rows[0];
+    check('an attempt sent with only what it needs gets the defaults: no links, en, no hints, the server\'s time',
+      r?.class_id === null && r?.topic === '' && r?.kind === 'mcq' && JSON.stringify(r?.question_snapshot) === '{}' && r?.review_status === 'auto'
+      && r?.language === 'en' && r?.hints_used === 0 && r?.time_taken_ms === null && r?.created_at instanceof Date);
+  }
+  await rejects('the same client attempt id twice for one student', () => attempt(),
+    { code: '23505', match: /hub_attempts_account_attempt_key/ });
+  await accepts('the same client attempt id for another student', () => attempt({ accountId: STUDENT_2 }));
+  await accepts('a written answer\'s provisional machine mark', () => attempt({ key: 'attempt-open', kind: 'open', reviewStatus: 'provisional', score: 0.5, correct: false }));
+  await accepts('each of the five modes', async () => {
+    for (const mode of ['exam', 'getready', 'review', 'lesson']) await attempt({ key: `attempt-${mode}`, mode });
+  });
+  await rejects('a client attempt id that is too short', () => attempt({ key: 'short' }), { ...KEPT, match: /hub_attempts_client_attempt_id_check/ });
+  await rejects('a client attempt id with a space', () => attempt({ key: 'two words here' }), KEPT);
+  await rejects('a level spelt "analyze"', () => attempt({ key: 'attempt-0003', bloom: 'analyze' }), { ...KEPT, match: /hub_attempts_bloom_check/ });
+  await rejects('a poll', () => attempt({ key: 'attempt-0004', kind: 'poll' }), { ...KEPT, match: /hub_attempts_kind_check/ });
+  await rejects('a score over 1', () => attempt({ key: 'attempt-0005', score: 1.5 }), { ...KEPT, match: /hub_attempts_score_check/ });
+  await rejects('a review status a hub attempt never has', () => attempt({ key: 'attempt-0006', reviewStatus: 'confirmed' }), { ...KEPT, match: /review_status/ });
+  await rejects('a mode outside the five', () => attempt({ key: 'attempt-0007', mode: 'homework' }), { ...KEPT, match: /hub_attempts_mode_check/ });
+  await rejects('a language that is not a short code', () => attempt({ key: 'attempt-0008', language: 'english' }), { ...KEPT, match: /hub_attempts_language_check/ });
+  await rejects('four hints (the ladder has three steps)', () => attempt({ key: 'attempt-0009', hints: 4 }), { ...KEPT, match: /hub_attempts_hints_used_check/ });
+  await rejects('a negative time taken', () => attempt({ key: 'attempt-0010', time: -1 }), { ...KEPT, match: /hub_attempts_time_taken_check/ });
+  await accepts('no time taken at all', () => attempt({ key: 'attempt-0011', time: null }));
+
+  // Append-only (the guard): nothing changes, nothing goes, except through a foreign key.
+  await rejects('changing a hub attempt\'s response', () => db.query(`update public.hub_attempts set response = '2' where id = $1`, [first?.id]), GUARD);
+  await rejects('changing its mark', () => db.query('update public.hub_attempts set correct = false, score = 0 where id = $1', [first?.id]), GUARD);
+  await rejects('clearing its question by hand', () => db.query('update public.hub_attempts set question_id = null where id = $1', [first?.id]), GUARD);
+  await rejects('deleting it', () => db.query('delete from public.hub_attempts where id = $1', [first?.id]), GUARD);
+  {
+    const [moved] = (await attempt({ key: 'attempt-temp', topicId: temp?.id })).rows;
+    await accepts('deleting a topic record a hub attempt points at', () => db.query('delete from public.chapter_topics where id = $1', [temp?.id]));
+    const { rows } = await db.query('select topic_id, topic, question_snapshot from public.hub_attempts where id = $1', [moved?.id]);
+    check('the attempt stays, its topic link cleared and its topic name and snapshot kept',
+      rows.length === 1 && rows[0].topic_id === null && rows[0].topic === 'Sets' && rows[0].question_snapshot?.answerIdx === 1);
+  }
+  {
+    // A student account deleted: their attempts go with it (the cascade the guard allows).
+    const gone = randomUUID();
+    await db.query('insert into auth.users (id) values ($1)', [gone]);
+    await insertAccount({ id: gone, role: 'student', fullName: 'Leaving', email: 'leaving@example.test', code: 'BL-ST2601', reportsTo: PROF, rollNo: '26' });
+    await attempt({ accountId: gone, key: 'attempt-gone' });
+    await accepts('deleting a student\'s sign-in, which deletes their account', () => db.query('delete from auth.users where id = $1', [gone]));
+    const { rows } = await db.query('select count(*)::int as n from public.hub_attempts where account_id = $1', [gone]);
+    check('their hub attempts go with their account', rows[0].n === 0);
+  }
+
+  // Explanations, as addQuestionExplanation and updateQuestionExplanation write them.
+  const explain = (cols = {}) => db.query(
+    `insert into public.question_explanations (question_id, text, provenance, status, model, source_ref, created_by, approved_by, approved_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning *`,
+    [cols.questionId ?? q26?.id, cols.text ?? 'B is right because the slide says so.', cols.provenance ?? 'ai', cols.status ?? 'draft',
+      'model' in cols ? cols.model : 'm', 'sourceRef' in cols ? cols.sourceRef : JSON.stringify({ kind: 'slides', slides: [2] }), PROF,
+      cols.approvedBy ?? null, 'approvedAt' in cols ? cols.approvedAt : null]);
+  const [draft] = (await accepts('an AI draft explanation, citing its slide', () => explain())) ?? [];
+  check('it reads back a draft, with its model and slides', draft?.status === 'draft' && draft?.model === 'm' && draft?.source_ref?.slides?.[0] === 2);
+  await rejects('a second explanation for the same question', () => explain(), { code: '23505', match: /question_explanations_question_key/ });
+  await accepts('the professor approves it', () => db.query(
+    `update public.question_explanations set status = 'approved', approved_by = $2, approved_at = now(), updated_at = now() where id = $1`, [draft?.id, PROF]));
+  await accepts('the professor rewrites it: theirs now, approved, no model', () => db.query(
+    `update public.question_explanations set text = 'In my words.', provenance = 'professor', model = null where id = $1`, [draft?.id]));
+  const [other26] = (await insertQuestion({ text: 'Explain me', kind: 'mcq', options: ['a', 'b', 'c', 'd'], answerIdx: 0, bloom: 'remember' })).rows;
+  const on = (cols) => explain({ questionId: other26?.id, ...cols });
+  await rejects('a professor\'s explanation left as a draft', () => on({ provenance: 'professor', model: null }), { ...KEPT, match: /question_explanations_status_check/ });
+  await rejects('an approved one with no approval time', () => on({ status: 'approved' }), { ...KEPT, match: /question_explanations_status_check/ });
+  await rejects('a draft with an approval time', () => on({ approvedAt: new Date().toISOString() }), KEPT);
+  await rejects('a model on a professor\'s explanation', () => on({ provenance: 'professor', status: 'approved', approvedAt: new Date().toISOString() }),
+    { ...KEPT, match: /question_explanations_model_check/ });
+  await rejects('a blank text', () => on({ text: '   ' }), { ...KEPT, match: /question_explanations_text_check/ });
+  await rejects('a text over 2000 characters', () => on({ text: 'x'.repeat(2001) }), KEPT);
+  await rejects('a provenance outside ai and professor', () => on({ provenance: 'teacher', model: null, status: 'approved', approvedAt: new Date().toISOString() }),
+    { ...KEPT, match: /question_explanations_provenance_check/ });
+  await rejects('a source_ref that is not an object', () => on({ sourceRef: JSON.stringify([2]) }), { ...KEPT, match: /question_explanations_source_ref_check/ });
+  await accepts('a professor\'s own, approved as written', () => on({ provenance: 'professor', status: 'approved', model: null, approvedAt: new Date().toISOString() }));
+  {
+    await accepts('deleting a question with an explanation and a hub attempt', async () => {
+      await attempt({ key: 'attempt-q-gone', questionId: other26?.id });
+      return db.query('delete from public.questions where id = $1', [other26?.id]);
+    });
+    const e = await db.query('select count(*)::int as n from public.question_explanations where question_id = $1', [other26?.id]);
+    const a = await db.query(`select question_id, question_snapshot from public.hub_attempts where client_attempt_id = 'attempt-q-gone'`);
+    check('its explanation goes with it; the attempt stays, its question cleared and its snapshot kept',
+      e.rows[0].n === 0 && a.rows.length === 1 && a.rows[0].question_id === null && a.rows[0].question_snapshot?.answerIdx === 1);
+  }
+  kept26.attempt = first?.id;
+  kept26.explanation = draft?.id;
+  // Left in place: the re-run below runs over them.
+}
+
+section('lessons and languages: topic lessons, translations and a student\'s language (0027)');
+
+// Kept by the re-run section below, which checks each survives it.
+const kept27 = {};
+{
+  const KEPT = { code: '23514' };
+  const RESTRICT = { code: '23001' };
+  const legacy = (await db.query(`select id from public.contents where title = 'Legacy'`)).rows[0];
+  const STEPS = [
+    { type: 'chunk', slides: [1], text: 'Sets are collections' },
+    { type: 'example', slides: [1], problem: 'Is {1, 1} a set of two?', steps: ['Repeats count once.'], answer: 'No.' },
+    { type: 'questions', slides: [1], questionIds: [] },
+  ];
+
+  // Lessons, as createTopicLesson writes them.
+  const lesson = (cols = {}) => db.query(
+    `insert into public.topic_lessons (topic_id, content_id, owner_id, version, status, source, model, steps, basis, warnings, created_by)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning *`,
+    [cols.topicId ?? kept25.sets, cols.contentId ?? content?.id, 'ownerId' in cols ? cols.ownerId : PROF, cols.version ?? 1,
+      cols.status ?? 'draft', cols.source ?? 'llm', 'model' in cols ? cols.model : 'gemini-2.5-flash', JSON.stringify(cols.steps ?? STEPS),
+      JSON.stringify({ from: 'slides', perSlideText: true, slides: [1], note: 'n' }), JSON.stringify([]), PROF]);
+  const [v1] = (await accepts('a lesson, as createTopicLesson writes it: a draft', () => lesson())) ?? [];
+  check('it reads back a draft, with nothing approved or retired', v1?.status === 'draft' && v1.approved_at === null && v1.retired_at === null
+    && v1.steps?.[1]?.type === 'example');
+  const [v2] = (await accepts('a slides-only version 2, with no model', () => lesson({ version: 2, source: 'slides', model: null }))) ?? [];
+  const [v3] = (await accepts('and a version 3', () => lesson({ version: 3 }))) ?? [];
+  await rejects('a version number taken twice', () => lesson({ version: 2, source: 'slides', model: null }),
+    { code: '23505', match: /topic_lessons_topic_version_key/ });
+  await rejects('a lesson written as approved', () => lesson({ version: 9, status: 'approved' }), { ...KEPT, match: /written as a draft/ });
+  await rejects('a source outside llm and slides', () => lesson({ version: 9, source: 'web' }), { ...KEPT, match: /topic_lessons_source_check/ });
+  await rejects('an AI lesson with no model', () => lesson({ version: 9, model: null }), { ...KEPT, match: /topic_lessons_source_check/ });
+  await rejects('a slides-only lesson naming a model', () => lesson({ version: 9, source: 'slides' }), KEPT);
+  await rejects('a version below 1', () => lesson({ version: 0 }), { ...KEPT, match: /topic_lessons_version_check/ });
+  await rejects('a lesson with no steps', () => lesson({ version: 9, steps: [] }), { ...KEPT, match: /topic_lessons_steps_check/ });
+  await rejects('a step of another type', () => lesson({ version: 9, steps: [{ type: 'video' }] }), { ...KEPT, match: /topic_lessons_steps_check/ });
+  await rejects('a lesson whose topic is not one of its chapter\'s', () => lesson({ version: 9, contentId: legacy?.id, ownerId: null }),
+    { code: '23503', match: /one of its chapter's topics/ });
+  await rejects('a lesson of another owner than its chapter\'s', () => lesson({ version: 9, ownerId: null }), { ...KEPT, match: /owns its chapter/ });
+
+  const approveLesson = (id, by = PROF) => db.query('select * from public.approve_topic_lesson($1, $2)', [id, by]);
+  const [a1] = (await accepts('approving version 1, as approveTopicLesson does (approve_topic_lesson)', () => approveLesson(v1?.id))) ?? [];
+  check('it is approved, with who and when', a1?.status === 'approved' && a1.approved_by === PROF && a1.approved_at !== null);
+  await rejects('approving it again', () => approveLesson(v1?.id), { ...KEPT, match: /only a draft lesson can be approved/ });
+  await accepts('approving version 2', () => approveLesson(v2?.id));
+  {
+    const { rows } = await db.query(`select version, status, approved_at is not null as approved, retired_at is not null as retired
+      from public.topic_lessons where topic_id = $1 and version < 3 order by version`, [kept25.sets]);
+    check('version 1 is retired by the same statement, keeping when it was approved; version 2 serves', JSON.stringify(rows)
+      === JSON.stringify([{ version: 1, status: 'superseded', approved: true, retired: true }, { version: 2, status: 'approved', approved: true, retired: false }]),
+    JSON.stringify(rows));
+  }
+  check('approving no such lesson returns no row', (await approveLesson(randomUUID())).rows.length === 0);
+  await rejects('a second approved lesson for a topic, written directly', () => db.query(
+    `update public.topic_lessons set status = 'approved', approved_at = now(), approved_by = $2 where id = $1`, [v3?.id, PROF]),
+  { code: '23505', match: /topic_lessons_one_approved/ });
+  await rejects('a retired lesson brought back', () => db.query(
+    `update public.topic_lessons set status = 'approved', retired_at = null, retired_by = null where id = $1`, [v1?.id]),
+  { ...KEPT, match: /not from superseded to approved/ });
+  await rejects('changing an approved lesson\'s steps', () => db.query(
+    `update public.topic_lessons set steps = '[{"type": "chunk", "text": "changed"}]' where id = $1`, [v2?.id]), { ...RESTRICT, match: /written once/ });
+  await rejects('changing a draft\'s steps too: what was written is kept', () => db.query(
+    `update public.topic_lessons set steps = '[{"type": "chunk", "text": "changed"}]' where id = $1`, [v3?.id]), RESTRICT);
+  await rejects('changing who approved it', () => db.query(`update public.topic_lessons set approved_by = $2 where id = $1`, [v2?.id, HOD]),
+    { ...RESTRICT, match: /written once/ });
+  await rejects('deleting a lesson', () => db.query('delete from public.topic_lessons where id = $1', [v1?.id]),
+    { ...RESTRICT, match: /goes only with its topic or its chapter/ });
+  await accepts('discarding a draft, as discardTopicLesson does', () => db.query(
+    `update public.topic_lessons set status = 'discarded', retired_at = now(), retired_by = $2 where id = $1 and status = 'draft'`, [v3?.id, PROF]));
+  await rejects('a discarded draft brought back', () => db.query(
+    `update public.topic_lessons set status = 'draft', retired_at = null, retired_by = null where id = $1`, [v3?.id]), KEPT);
+  await rejects('approving a discarded draft', () => approveLesson(v3?.id), { ...KEPT, match: /only a draft lesson/ });
+
+  // Translations, as addItemTranslation and editItemTranslation write them.
+  const HASH = 'a'.repeat(64);
+  const translation = (cols = {}) => db.query(
+    `insert into public.item_translations (item_kind, item_id, content_id, owner_id, language, fields, source_fields, source_hash,
+       status, provenance, model, checks, created_by)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) returning *`,
+    [cols.itemKind ?? 'question', cols.itemId ?? mcq?.id, cols.contentId ?? content?.id, 'ownerId' in cols ? cols.ownerId : PROF,
+      cols.language ?? 'hi', JSON.stringify(cols.fields ?? { text: 'एक चुनें', options: ['a', 'b', 'c', 'd'] }),
+      JSON.stringify(cols.sourceFields ?? { text: 'Pick one', options: ['a', 'b', 'c', 'd'] }), cols.sourceHash ?? HASH,
+      cols.status ?? 'draft', cols.provenance ?? 'ai', 'model' in cols ? cols.model : 'gemini-2.5-flash',
+      JSON.stringify(cols.checks ?? [{ field: 'text', id: 'numbers', blocking: false, message: 'm' }]), cols.createdBy ?? PROF]);
+  const [t1] = (await accepts('a Hindi translation of a question, a draft', () => translation())) ?? [];
+  const [t2] = (await accepts('a second draft of it', () => translation())) ?? [];
+  await accepts('a Marathi one written by the professor, with no model', () => translation({ language: 'mr', provenance: 'professor', model: null }));
+  await accepts('a lesson\'s translation, in the same shape', () => translation({ itemKind: 'lesson', itemId: v2?.id,
+    fields: { 'steps.0.text': 'Sets संग्रह हैं' }, sourceFields: { 'steps.0.text': 'Sets are collections' } }));
+  await accepts('the kinds kept for the tutor\'s hints and explanations', () => translation({ itemKind: 'hint', itemId: randomUUID(),
+    fields: { text: 'संकेत' }, sourceFields: { text: 'A nudge' } }));
+  await rejects('a kind outside the list', () => translation({ itemKind: 'slide' }), { ...KEPT, match: /item_translations_kind_check/ });
+  await rejects('a language outside Hindi and Marathi', () => translation({ language: 'en' }), { ...KEPT, match: /item_translations_language_check/ });
+  await rejects('fields that are not an object', () => translation({ fields: ['x'] }), { ...KEPT, match: /item_translations_shape_check/ });
+  await rejects('a source hash that is not 64 hex digits', () => translation({ sourceHash: 'abc' }), { ...KEPT, match: /item_translations_shape_check/ });
+  await rejects('a provenance outside ai and professor', () => translation({ provenance: 'teacher' }), { ...KEPT, match: /item_translations_provenance_check/ });
+  await rejects('a translation written as approved', () => translation({ status: 'approved' }), { ...KEPT, match: /written as a draft/ });
+  await rejects('a translation of another owner than its chapter\'s', () => translation({ ownerId: null }), { ...KEPT, match: /owns its chapter/ });
+  await accepts('editing a draft\'s text, as editItemTranslation does', () => db.query(
+    `update public.item_translations set fields = '{"text": "एक चुनिए", "options": ["a", "b", "c", "d"]}', provenance = 'professor',
+       edited_by = $2, updated_at = now(), checks = '[]' where id = $1`, [t1?.id, PROF]));
+  const approveTranslation = (id, by = PROF) => db.query('select * from public.approve_item_translation($1, $2)', [id, by]);
+  await accepts('approving it (approve_item_translation)', () => approveTranslation(t1?.id));
+  await accepts('approving the second draft', () => approveTranslation(t2?.id));
+  {
+    const { rows } = await db.query(`select id, status from public.item_translations where item_kind = 'question' and item_id = $1 and language = 'hi'
+      order by created_at, id`, [mcq?.id]);
+    const by = Object.fromEntries(rows.map((r) => [r.id, r.status]));
+    check('the first is retired by the same statement; one approved per item and language', by[t1?.id] === 'superseded' && by[t2?.id] === 'approved',
+      JSON.stringify(rows));
+  }
+  await rejects('editing an approved translation\'s text', () => db.query(
+    `update public.item_translations set fields = '{"text": "x"}' where id = $1`, [t2?.id]), { ...RESTRICT, match: /only while it is a draft/ });
+  await rejects('changing which item a translation is of', () => db.query(
+    `update public.item_translations set item_id = $2 where id = $1`, [t1?.id, randomUUID()]), { ...RESTRICT, match: /written once/ });
+  await rejects('approving a retired translation again', () => approveTranslation(t1?.id), { ...KEPT, match: /only a draft translation/ });
+  await rejects('deleting a translation', () => db.query('delete from public.item_translations where id = $1', [t2?.id]),
+    { ...RESTRICT, match: /goes only with its chapter/ });
+
+  // Who decided is cleared when that account goes (ON DELETE SET NULL), and nothing else changes.
+  const HOD2 = randomUUID();
+  await db.query('insert into auth.users (id) values ($1)', [HOD2]);
+  await insertAccount({ id: HOD2, role: 'hod', fullName: 'Head 2', email: 'hod2@example.test', code: 'BL-HD0027', department: 'MECH' });
+  const [t3] = (await translation({ language: 'mr' })).rows;
+  await approveTranslation(t3.id, HOD2);
+  await accepts('deleting the sign-in of the account that approved a translation', () => db.query('delete from auth.users where id = $1', [HOD2]));
+  {
+    const { rows } = await db.query('select status, approved_by, approved_at is not null as approved from public.item_translations where id = $1', [t3.id]);
+    check('the translation stays approved, with who approved it cleared', rows[0]?.status === 'approved' && rows[0].approved_by === null && rows[0].approved,
+      JSON.stringify(rows));
+  }
+
+  // A student's language, as setLanguageChoice writes it (an upsert on the account).
+  const choose = (language) => db.query(`insert into public.student_language_choices (account_id, language) values ($1, $2)
+    on conflict (account_id) do update set language = excluded.language, updated_at = now() returning *`, [STUDENT, language]);
+  await accepts('a student chooses Hindi', () => choose('hi'));
+  await accepts('and then Marathi', () => choose('mr'));
+  {
+    const { rows } = await db.query('select language from public.student_language_choices where account_id = $1', [STUDENT]);
+    check('one row per student, the latest choice', rows.length === 1 && rows[0].language === 'mr');
+  }
+  await rejects('a language outside English, Hindi and Marathi', () => choose('ta'), { ...KEPT, match: /student_language_choices_language_check/ });
+
+  kept27.topic = kept25.sets;
+  kept27.lesson = v2?.id;
+  kept27.translation = t2?.id;
+  // Left in place: the re-run below runs over them.
+}
+
+section('Get Ready checks, self-tests and goals: runs written once, answers filed under their own run, goals (0028)');
+
+// Kept by the re-run section below, which checks each survives it.
+const kept28 = {};
+{
+  const KEPT = { code: '23514' };
+  const GUARD = { code: '23001', match: /hub_runs/ };
+  const STARTED = '2026-11-19T04:30:00.000Z';
+  // As addHubRun writes it.
+  const run = (cols = {}) => db.query(
+    `insert into public.hub_runs (account_id, client_run_id, kind, spec, time_limit_seconds, started_at, deadline_at, ended_at, end_reason)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning *`,
+    [cols.accountId ?? STUDENT, cols.key ?? 'run-0001', cols.kind ?? 'getready',
+      JSON.stringify(cols.spec ?? { targetTopicId: kept25.sets, prerequisites: [] }), cols.limit ?? null, cols.startedAt ?? STARTED,
+      cols.deadline ?? null, cols.endedAt ?? null, cols.endReason ?? null]);
+  const [gr] = (await accepts('a Get Ready check, as addHubRun writes it', () => run())) ?? [];
+  check('it reads back open, with its spec', gr?.ended_at === null && gr?.end_reason === null && gr?.spec?.targetTopicId === kept25.sets);
+  const [exam] = (await accepts('a timed self-test: its deadline is its start plus the limit', () => run({
+    key: 'run-0002', kind: 'exam', spec: { questions: [] }, limit: 600, deadline: '2026-11-19T04:40:00.000Z',
+  }))) ?? [];
+  await rejects('the same client run id twice for one student', () => run(), { code: '23505', match: /hub_runs_account_run_key/ });
+  await accepts('the same client run id for another student', () => run({ accountId: STUDENT_2 }));
+  await rejects('a client run id that is too short', () => run({ key: 'short' }), { ...KEPT, match: /hub_runs_client_run_id_check/ });
+  await rejects('a kind outside getready and exam', () => run({ key: 'run-0003', kind: 'quiz' }), { ...KEPT, match: /hub_runs_kind_check/ });
+  await rejects('a spec that is not an object', () => run({ key: 'run-0004', spec: [] }), { ...KEPT, match: /hub_runs_spec_check/ });
+  await rejects('a time limit on a Get Ready check', () => run({ key: 'run-0005', limit: 600, deadline: '2026-11-19T04:40:00.000Z' }),
+    { ...KEPT, match: /hub_runs_time_limit_check/ });
+  await rejects('a deadline that is not the start plus the limit', () => run({
+    key: 'run-0006', kind: 'exam', limit: 600, deadline: '2026-11-19T05:40:00.000Z',
+  }), { ...KEPT, match: /hub_runs_time_limit_check/ });
+  await rejects('a time limit over three hours', () => run({ key: 'run-0007', kind: 'exam', limit: 10860, deadline: '2026-11-19T07:31:00.000Z' }), KEPT);
+  await rejects('an end with no reason', () => run({ key: 'run-0008', endedAt: STARTED }), { ...KEPT, match: /hub_runs_end_check/ });
+  await rejects('a check handed in like a self-test', () => run({ key: 'run-0009', endedAt: STARTED, endReason: 'submitted' }),
+    { ...KEPT, match: /hub_runs_end_check/ });
+  await rejects('a self-test timed out with no time limit', () => run({ key: 'run-0010', kind: 'exam', spec: {}, endedAt: STARTED, endReason: 'timed-out' }), KEPT);
+  await rejects('an end before the start', () => run({ key: 'run-0011', endedAt: '2026-11-19T04:00:00.000Z', endReason: 'complete' }), KEPT);
+  await accepts('a check complete when it starts (nothing to ask)', () => run({ key: 'run-0012', endedAt: STARTED, endReason: 'complete' }));
+
+  // Answers filed under a run, as addHubAttempt writes them with a run.
+  const filed = (cols = {}) => db.query(
+    `insert into public.hub_attempts (account_id, client_attempt_id, bloom, correct, score, mode, run_id)
+     values ($1, $2, 'apply', true, 1, $3, $4) returning *`,
+    [cols.accountId ?? STUDENT, cols.key, cols.mode ?? 'getready', 'runId' in cols ? cols.runId : gr?.id]);
+  const [a1] = (await accepts('a Get Ready answer filed under its check', () => filed({ key: 'run-attempt-01' }))) ?? [];
+  check('it reads back with its run', a1?.run_id === gr?.id);
+  await accepts('a self-test answer filed under its self-test', () => filed({ key: 'run-attempt-02', mode: 'exam', runId: exam?.id }));
+  await accepts('a practice answer with no run, as before', () => filed({ key: 'run-attempt-00', mode: 'practice', runId: null }));
+  await rejects('an answer filed under another student\'s run', () => filed({ key: 'run-attempt-03', accountId: STUDENT_2 }),
+    { ...KEPT, match: /own student's run/ });
+  await rejects('a practice answer filed under a check', () => filed({ key: 'run-attempt-04', mode: 'practice' }), { ...KEPT, match: /must have that mode/ });
+  await rejects('a self-test answer filed under a check', () => filed({ key: 'run-attempt-05', mode: 'exam' }), { ...KEPT, match: /must have that mode/ });
+  await rejects('an answer filed under a run that does not exist', () => filed({ key: 'run-attempt-06', runId: randomUUID() }), KEPT);
+  await rejects('moving an answer to another run', () => db.query('update public.hub_attempts set run_id = $2 where id = $1', [a1?.id, exam?.id]),
+    { code: '23001', match: /hub_attempts/ });
+
+  // Written once, then ended once.
+  await accepts('ending the check, as endHubRun does (only where it has no end yet)', () => db.query(
+    `update public.hub_runs set ended_at = $2, end_reason = 'complete' where id = $1 and ended_at is null`, [gr?.id, '2026-11-19T04:35:00.000Z']));
+  await rejects('ending it again', () => db.query(`update public.hub_runs set ended_at = now(), end_reason = 'complete' where id = $1`, [gr?.id]),
+    { ...GUARD, match: /written once/ });
+  await rejects('changing a self-test\'s list', () => db.query(`update public.hub_runs set spec = '{}' where id = $1`, [exam?.id]), GUARD);
+  await rejects('stretching a self-test\'s time', () => db.query(
+    `update public.hub_runs set time_limit_seconds = 1200, deadline_at = started_at + interval '20 minutes' where id = $1`, [exam?.id]), GUARD);
+  await rejects('ending a self-test while stretching its time', () => db.query(
+    `update public.hub_runs set ended_at = now(), end_reason = 'timed-out', deadline_at = started_at + interval '600 seconds' + interval '1 minute' where id = $1`,
+    [exam?.id]), GUARD);
+  await rejects('deleting a run', () => db.query('delete from public.hub_runs where id = $1', [exam?.id]), { ...GUARD, match: /goes only with its student/ });
+  await accepts('handing the self-test in', () => db.query(
+    `update public.hub_runs set ended_at = $2, end_reason = 'submitted' where id = $1 and ended_at is null`, [exam?.id, '2026-11-19T04:38:00.000Z']));
+  {
+    // A student account deleted: their runs, the answers filed under them and their goals go together.
+    const gone = randomUUID();
+    await db.query('insert into auth.users (id) values ($1)', [gone]);
+    await insertAccount({ id: gone, role: 'student', fullName: 'Leaving', email: 'leaving28@example.test', code: 'BL-ST2801', reportsTo: PROF, rollNo: '28' });
+    const [r] = (await run({ accountId: gone, key: 'run-gone-01', kind: 'exam', spec: {} })).rows;
+    await filed({ accountId: gone, key: 'run-gone-a1', mode: 'exam', runId: r.id });
+    await db.query(`insert into public.hub_goals (account_id, exam_date, topic_ids) values ($1, '2026-12-01', $2)`, [gone, JSON.stringify([kept25.sets])]);
+    await accepts('deleting a student\'s sign-in with a run, an answer filed under it and a goal', () => db.query('delete from auth.users where id = $1', [gone]));
+    const { rows } = await db.query(`select (select count(*) from public.hub_runs where account_id = $1)::int as r,
+      (select count(*) from public.hub_attempts where account_id = $1)::int as a, (select count(*) from public.hub_goals where account_id = $1)::int as g`, [gone]);
+    check('their runs, answers and goals go with their account', JSON.stringify(rows[0]) === '{"r":0,"a":0,"g":0}', JSON.stringify(rows[0]));
+  }
+
+  // Goals, as addHubGoal and updateHubGoal write them.
+  const goal = (cols = {}) => db.query(
+    `insert into public.hub_goals (account_id, title, exam_date, topic_ids) values ($1, $2, $3, $4) returning *, exam_date::text as day`,
+    [STUDENT, cols.title ?? 'Mid-semester', cols.date ?? '2026-12-01', JSON.stringify(cols.topics ?? [kept25.sets])]);
+  const [g1] = (await accepts('a goal: an exam date and its topics', () => goal())) ?? [];
+  check('it reads back with its day and topics', g1?.day === '2026-12-01' && JSON.stringify(g1?.topic_ids) === JSON.stringify([kept25.sets]) && g1?.title === 'Mid-semester');
+  await rejects('a title over 80 characters', () => goal({ title: 'x'.repeat(81) }), { ...KEPT, match: /hub_goals_title_check/ });
+  await rejects('a goal with no topics', () => goal({ topics: [] }), { ...KEPT, match: /hub_goals_topic_ids_check/ });
+  await rejects('topics that are not a list', () => goal({ topics: { a: 1 } }), { ...KEPT, match: /hub_goals_topic_ids_check/ });
+  await rejects('61 topics', () => goal({ topics: Array.from({ length: 61 }, () => randomUUID()) }), KEPT);
+  await rejects('a day that does not exist', () => goal({ date: '2026-02-30' }));
+  await accepts('changing and removing a goal (the student\'s own plan, not evidence)', async () => {
+    await db.query(`update public.hub_goals set title = 'Finals', updated_at = now() where id = $1`, [g1?.id]);
+    return db.query('delete from public.hub_goals where id = $1', [g1?.id]);
+  });
+  const [g2] = (await goal({ title: 'Kept' })).rows;
+  kept28.check = gr?.id;
+  kept28.exam = exam?.id;
+  kept28.attempt = a1?.id;
+  kept28.goal = g2?.id;
+  // Left in place: the re-run below runs over them.
+}
+
+section('the tutor: hint ladders, feedback on wrong options and the hints each student opened (0029)');
+
+// Kept by the re-run section below, which checks each survives it.
+const kept29 = {};
+{
+  const KEPT = { code: '23514' };
+  const GUARD = { code: '23001', match: /hub_hint_views/ };
+  const [q29] = (await insertQuestion({ text: 'Hint me', kind: 'mcq', options: ['a', 'b', 'c', 'd'], answerIdx: 1, bloom: 'remember', source: 'teacher' })).rows;
+  const now = new Date().toISOString();
+
+  // Hints, as addQuestionHint and updateQuestionHint write them.
+  const hint = (cols = {}) => db.query(
+    `insert into public.question_hints (question_id, step, text, provenance, status, model, source_ref, created_by, approved_by, approved_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning *`,
+    [cols.questionId ?? q29?.id, cols.step ?? 1, cols.text ?? 'What does slide 2 say about sets?', cols.provenance ?? 'ai', cols.status ?? 'draft',
+      'model' in cols ? cols.model : 'm', 'sourceRef' in cols ? cols.sourceRef : JSON.stringify({ kind: 'slides', slides: [2] }), PROF,
+      cols.approvedBy ?? null, 'approvedAt' in cols ? cols.approvedAt : null]);
+  const [h1] = (await accepts('an AI draft hint, step 1, citing its slide', () => hint())) ?? [];
+  check('it reads back a draft, with its model and slides', h1?.status === 'draft' && h1?.model === 'm' && h1?.source_ref?.slides?.[0] === 2
+    && Number(h1?.step) === 1);
+  await rejects('a second hint at the same step', () => hint(), { code: '23505', match: /question_hints_question_step_key/ });
+  await accepts('the professor\'s own step 2, approved as written', () => hint({ step: 2, provenance: 'professor', status: 'approved', model: null, approvedAt: now }));
+  await accepts('the professor approves the draft', () => db.query(
+    `update public.question_hints set status = 'approved', approved_by = $2, approved_at = now(), updated_at = now() where id = $1`, [h1?.id, PROF]));
+  await rejects('a step 4 (the ladder has three)', () => hint({ step: 4 }), { ...KEPT, match: /question_hints_step_check/ });
+  await rejects('a step 0', () => hint({ step: 0 }), { ...KEPT, match: /question_hints_step_check/ });
+  await rejects('a blank text', () => hint({ step: 3, text: '  ' }), { ...KEPT, match: /question_hints_text_check/ });
+  await rejects('a text over 600 characters', () => hint({ step: 3, text: 'x'.repeat(601) }), { ...KEPT, match: /question_hints_text_check/ });
+  await rejects('a professor\'s hint left as a draft', () => hint({ step: 3, provenance: 'professor', model: null }), { ...KEPT, match: /question_hints_status_check/ });
+  await rejects('an approved hint with no approval time', () => hint({ step: 3, status: 'approved' }), { ...KEPT, match: /question_hints_status_check/ });
+  await rejects('a model on a professor\'s hint', () => hint({ step: 3, provenance: 'professor', status: 'approved', approvedAt: now }),
+    { ...KEPT, match: /question_hints_model_check/ });
+  await rejects('a provenance outside ai and professor', () => hint({ step: 3, provenance: 'teacher', model: null, status: 'approved', approvedAt: now }),
+    { ...KEPT, match: /question_hints_provenance_check/ });
+  await rejects('a source_ref that is not an object', () => hint({ step: 3, sourceRef: JSON.stringify([2]) }), { ...KEPT, match: /question_hints_source_ref_check/ });
+
+  // Feedback on wrong options, as addOptionFeedback writes it.
+  const feedback = (cols = {}) => db.query(
+    `insert into public.option_feedback (question_id, option, option_key, text, provenance, status, model, source_ref, created_by, approved_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning *`,
+    [cols.questionId ?? q29?.id, cols.option ?? 'C', cols.optionKey ?? 'c', cols.text ?? 'c mixes up the two definitions.', cols.provenance ?? 'ai',
+      cols.status ?? 'draft', 'model' in cols ? cols.model : 'm', null, PROF, 'approvedAt' in cols ? cols.approvedAt : null]);
+  const [f1] = (await accepts('AI draft feedback on a wrong option, keyed by its words', () => feedback())) ?? [];
+  await rejects('a second feedback on the same option', () => feedback({ option: 'c ' }), { code: '23505', match: /option_feedback_question_option_key/ });
+  await accepts('the professor\'s own feedback on another option', () => feedback({ option: 'D', optionKey: 'd', provenance: 'professor', model: null,
+    status: 'approved', approvedAt: now }));
+  await rejects('a blank option', () => feedback({ option: ' ', optionKey: ' ' }), { ...KEPT, match: /option_feedback_option_check/ });
+  await rejects('a text over 600 characters', () => feedback({ option: 'A', optionKey: 'a', text: 'x'.repeat(601) }), { ...KEPT, match: /option_feedback_text_check/ });
+  await rejects('a professor\'s feedback left as a draft', () => feedback({ option: 'A', optionKey: 'a', provenance: 'professor', model: null }),
+    { ...KEPT, match: /option_feedback_status_check/ });
+
+  // The hints a student opened, as addHintView writes them.
+  const view = (cols = {}) => db.query(
+    `insert into public.hub_hint_views (account_id, client_attempt_id, question_id, topic_id, content_id, mode, position, kind, hint_id, text,
+       provenance, language, translation_id, source_ref, plan)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) returning *`,
+    [cols.accountId ?? STUDENT, cols.key ?? 'hint-attempt-01', 'questionId' in cols ? cols.questionId : q29?.id, kept25.sets, content?.id,
+      cols.mode ?? 'practice', cols.position ?? 1, cols.kind ?? 'nudge', h1?.id, cols.text ?? 'What does slide 2 say about sets?',
+      cols.provenance ?? 'ai', cols.language ?? 'en', null, JSON.stringify({ kind: 'slides', slides: [2] }),
+      JSON.stringify(cols.plan ?? { items: [{ kind: 'nudge', step: 1 }, { kind: 'strategy', step: 2 }], why: 'w' })]);
+  const [v1] = (await accepts('a hint opened in practice, as addHintView writes it', () => view())) ?? [];
+  check('it reads back with its plan, the words shown and the server\'s time', v1?.plan?.items?.length === 2 && v1?.text?.startsWith('What')
+    && v1?.created_at instanceof Date);
+  await rejects('the same position twice for one attempt', () => view(), { code: '23505', match: /hub_hint_views_attempt_position_key/ });
+  await accepts('position 2 of the same attempt, and hints opened in a lesson and a review set', async () => {
+    await view({ position: 2, kind: 'strategy' });
+    await view({ key: 'hint-attempt-02', mode: 'lesson' });
+    await view({ key: 'hint-attempt-03', mode: 'review', kind: 'feedback' });
+  });
+  await rejects('a hint opened in a self-test', () => view({ key: 'hint-attempt-04', mode: 'exam' }), { ...KEPT, match: /hub_hint_views_mode_check/ });
+  await rejects('a hint opened in Get Ready', () => view({ key: 'hint-attempt-05', mode: 'getready' }), { ...KEPT, match: /hub_hint_views_mode_check/ });
+  await rejects('a fourth hint', () => view({ position: 4 }), { ...KEPT, match: /hub_hint_views_position_check/ });
+  await rejects('a kind outside the four', () => view({ key: 'hint-attempt-06', kind: 'answer' }), { ...KEPT, match: /hub_hint_views_kind_check/ });
+  await rejects('a short attempt id', () => view({ key: 'short' }), { ...KEPT, match: /hub_hint_views_client_attempt_id_check/ });
+  await rejects('a plan that is not an object', () => view({ key: 'hint-attempt-07', plan: [] }), { ...KEPT, match: /hub_hint_views_shape_check/ });
+  await rejects('a provenance outside ai and professor', () => view({ key: 'hint-attempt-08', provenance: 'model' }),
+    { ...KEPT, match: /hub_hint_views_provenance_check/ });
+  // Append-only (the guard): nothing changes, nothing goes, except through a foreign key.
+  await rejects('changing the words shown', () => db.query(`update public.hub_hint_views set text = 'other' where id = $1`, [v1?.id]), GUARD);
+  await rejects('clearing its question by hand', () => db.query('update public.hub_hint_views set question_id = null where id = $1', [v1?.id]), GUARD);
+  await rejects('deleting it', () => db.query('delete from public.hub_hint_views where id = $1', [v1?.id]), GUARD);
+
+  // hub_attempts: no hints on an attempt in a self-test or Get Ready.
+  const attempt = (key, mode, hints) => db.query(
+    `insert into public.hub_attempts (account_id, client_attempt_id, bloom, correct, score, mode, hints_used)
+     values ($1, $2, 'remember', true, 1, $3, $4)`, [STUDENT, key, mode, hints]);
+  await accepts('an attempt with two hints in practice, and one in a lesson', async () => {
+    await attempt('hint-attempt-01', 'practice', 2);
+    await attempt('hint-attempt-02', 'lesson', 1);
+  });
+  await accepts('attempts with no hints in a self-test and in Get Ready', async () => {
+    await attempt('exam-attempt-01', 'exam', 0);
+    await attempt('ready-attempt-01', 'getready', 0);
+  });
+  await rejects('hints on a self-test attempt', () => attempt('exam-attempt-02', 'exam', 1), { ...KEPT, match: /hub_attempts_hints_mode_check/ });
+  await rejects('hints on a Get Ready attempt', () => attempt('ready-attempt-02', 'getready', 2), { ...KEPT, match: /hub_attempts_hints_mode_check/ });
+
+  {
+    // A question deleted: its hints and feedback go with it; the view stays, its link cleared and its words kept.
+    const [gone] = (await insertQuestion({ text: 'Delete me', kind: 'mcq', options: ['a', 'b', 'c', 'd'], answerIdx: 0, bloom: 'remember' })).rows;
+    await hint({ questionId: gone?.id });
+    await feedback({ questionId: gone?.id, option: 'b', optionKey: 'b' });
+    await view({ key: 'hint-attempt-09', questionId: gone?.id });
+    await accepts('deleting a question with hints, feedback and a hint view', () => db.query('delete from public.questions where id = $1', [gone?.id]));
+    const left = await db.query(`select (select count(*) from public.question_hints where question_id = $1)::int as h,
+      (select count(*) from public.option_feedback where question_id = $1)::int as f`, [gone?.id]);
+    const v = await db.query(`select question_id, text from public.hub_hint_views where client_attempt_id = 'hint-attempt-09'`);
+    check('its hints and feedback go with it; the view stays, its question cleared and its words kept',
+      left.rows[0].h === 0 && left.rows[0].f === 0 && v.rows.length === 1 && v.rows[0].question_id === null && v.rows[0].text.startsWith('What'),
+      JSON.stringify({ left: left.rows, v: v.rows }));
+  }
+  {
+    // A student account deleted: their hint views go with it, as their hub attempts do.
+    const leaving = randomUUID();
+    await db.query('insert into auth.users (id) values ($1)', [leaving]);
+    await insertAccount({ id: leaving, role: 'student', fullName: 'Leaving', email: 'leaving29@example.test', code: 'BL-ST2901', reportsTo: PROF, rollNo: '29' });
+    await view({ accountId: leaving, key: 'hint-attempt-10' });
+    await accepts('deleting a student\'s sign-in, which deletes their account', () => db.query('delete from auth.users where id = $1', [leaving]));
+    const { rows } = await db.query('select count(*)::int as n from public.hub_hint_views where account_id = $1', [leaving]);
+    check('their hint views go with their account', rows[0].n === 0);
+  }
+  kept29.hint = h1?.id;
+  kept29.feedback = f1?.id;
+  kept29.view = v1?.id;
+  // Left in place: the re-run below runs over them.
+}
+
 section('deleting');
 
 await rejects('deleting the sign-in of a professor who owns material and students', () =>
@@ -1861,6 +2528,61 @@ sameSnapshot('the re-run left the schema exactly as it was', shapeBeforeRerun, a
   await accepts('and a label is still accepted after it', () => db.query(
     `update public.questions set misconceptions = '[{"option": "c", "label": "after", "provenance": "professor"}]' where id = $1`,
     [kept24.question]));
+  // 0025: the hub's rows survive, and its loop guard still refuses after it.
+  const l25 = await db.query('select state, provenance from public.topic_links where id = $1', [kept25.link]);
+  const p25 = await db.query('select unit_id from public.class_chapters where id = $1', [kept25.placed]);
+  const s25 = await db.query(`select slide_texts from public.contents where slide_texts is not null`);
+  check('the hub\'s links, placements and slide texts survive the re-run (0025)',
+    l25.rows[0]?.state === 'confirmed' && l25.rows[0]?.provenance === 'professor' && p25.rows.length === 1 && p25.rows[0].unit_id === null
+    && s25.rows.length === 1, JSON.stringify({ l: l25.rows, p: p25.rows }));
+  await rejects('and a confirmed loop is still refused after it', () => db.query(
+    `insert into public.topic_links (owner_id, prerequisite_id, topic_id, provenance, state, decided_at)
+     select owner_id, $1, $2, 'professor', 'confirmed', now() from public.topic_links where id = $3`,
+    [kept25.functions, kept25.sets, kept25.link]), { code: '23514', match: /loop/ });
+  // 0026: the attempts and explanations survive, and the guard still refuses after it.
+  const a26 = await db.query('select response, correct, mode from public.hub_attempts where id = $1', [kept26.attempt]);
+  const e26 = await db.query('select provenance, status, text from public.question_explanations where id = $1', [kept26.explanation]);
+  check('hub attempts and explanations survive the re-run (0026)',
+    a26.rows[0]?.response === 1 && a26.rows[0]?.correct === true && a26.rows[0]?.mode === 'practice'
+    && e26.rows[0]?.provenance === 'professor' && e26.rows[0]?.status === 'approved' && e26.rows[0]?.text === 'In my words.',
+    JSON.stringify({ a: a26.rows, e: e26.rows }));
+  await rejects('and a hub attempt is still written once after it', () => db.query(
+    `update public.hub_attempts set correct = false where id = $1`, [kept26.attempt]), { code: '23001', match: /hub_attempts/ });
+  // 0027: the lessons, translations and a student's language survive, and the guards still hold after it.
+  const l27 = await db.query('select version, status from public.topic_lessons where topic_id = $1 order by version', [kept27.topic]);
+  const t27 = await db.query('select status, fields from public.item_translations where id = $1', [kept27.translation]);
+  const c27 = await db.query('select language from public.student_language_choices where account_id = $1', [STUDENT]);
+  check('the lessons, translations and a student\'s language survive the re-run (0027)',
+    JSON.stringify(l27.rows.map((r) => [r.version, r.status])) === JSON.stringify([[1, 'superseded'], [2, 'approved'], [3, 'discarded']])
+    && t27.rows[0]?.status === 'approved' && t27.rows[0]?.fields?.text === 'एक चुनें' && c27.rows[0]?.language === 'mr',
+    JSON.stringify({ l: l27.rows, t: t27.rows, c: c27.rows }));
+  await rejects('and an approved lesson\'s steps are still refused a change after it', () => db.query(
+    `update public.topic_lessons set steps = '[{"type": "chunk", "text": "changed"}]' where id = $1`, [kept27.lesson]), { code: '23001' });
+  // 0028: the runs, the answers filed under them and goals survive, and the guards still hold after it.
+  const r28 = await db.query('select kind, end_reason from public.hub_runs where id = any($1) order by kind', [[kept28.check, kept28.exam]]);
+  const a28 = await db.query('select run_id from public.hub_attempts where id = $1', [kept28.attempt]);
+  const g28 = await db.query('select title from public.hub_goals where id = $1', [kept28.goal]);
+  check('Get Ready checks, self-tests, the answers filed under them and goals survive the re-run (0028)',
+    JSON.stringify(r28.rows) === JSON.stringify([{ kind: 'exam', end_reason: 'submitted' }, { kind: 'getready', end_reason: 'complete' }])
+    && a28.rows[0]?.run_id === kept28.check && g28.rows[0]?.title === 'Kept',
+    JSON.stringify({ r: r28.rows, a: a28.rows, g: g28.rows }));
+  await rejects('and a run is still ended only once after it', () => db.query(
+    `update public.hub_runs set end_reason = 'timed-out' where id = $1`, [kept28.exam]), { code: '23001', match: /hub_runs/ });
+  await rejects('and an answer is still filed only in its run\'s mode after it', () => db.query(
+    `insert into public.hub_attempts (account_id, client_attempt_id, bloom, correct, score, mode, run_id) values ($1, 'after-rerun-01', 'apply', true, 1, 'practice', $2)`,
+    [STUDENT, kept28.check]), { code: '23514', match: /must have that mode/ });
+  // 0029: the hints, feedback and hints opened survive, and the guards still hold after it.
+  const h29 = await db.query('select status, step from public.question_hints where id = $1', [kept29.hint]);
+  const f29 = await db.query('select status, option_key from public.option_feedback where id = $1', [kept29.feedback]);
+  const v29 = await db.query('select kind, plan from public.hub_hint_views where id = $1', [kept29.view]);
+  check('hints, feedback and the hints opened survive the re-run (0029)',
+    h29.rows[0]?.status === 'approved' && Number(h29.rows[0]?.step) === 1 && f29.rows[0]?.option_key === 'c' && v29.rows[0]?.kind === 'nudge'
+    && v29.rows[0]?.plan?.items?.length === 2, JSON.stringify({ h: h29.rows, f: f29.rows, v: v29.rows }));
+  await rejects('and a hint view is still written once after it', () => db.query(
+    `update public.hub_hint_views set text = 'x' where id = $1`, [kept29.view]), { code: '23001', match: /hub_hint_views/ });
+  await rejects('and hints on a self-test attempt are still refused after it', () => db.query(
+    `insert into public.hub_attempts (account_id, client_attempt_id, bloom, correct, score, mode, hints_used)
+     values ($1, 'exam-after-rerun', 'remember', true, 1, 'exam', 1)`, [STUDENT]), { code: '23514', match: /hub_attempts_hints_mode_check/ });
 }
 
 await db.close();
@@ -2079,6 +2801,215 @@ section('0024 on a database that already holds questions and answers');
     && JSON.stringify(await shape()) === JSON.stringify(questionsBefore), JSON.stringify(rows));
   check('no answer is touched', JSON.stringify((await before24.query('select * from public.answers')).rows) === JSON.stringify(answersBefore));
   await before24.close();
+}
+
+// ------------------------------- 0025 over chapters, classes and questions --
+
+section('0025 on a database that already holds chapters, classes, questions and answers');
+
+{
+  const before25 = await freshDatabase();
+  await applyAll(before25, files.filter((f) => f.name < '0025'), 'up to 0024');
+  await before25.exec(`
+    insert into public.contents (id, title, kind, topics, topic_slides) values
+      ('71111111-1111-4111-8111-111111111111', 'deck', 'pptx', '["Sets", "Relations"]', '{"Sets": [2, 3]}');
+    insert into public.questions (id, content_id, topic, text, options, answer_idx, bloom, status, source, payload)
+      values ('72222222-2222-4222-8222-222222222222', '71111111-1111-4111-8111-111111111111', 'Sets', 'Pick one', '["a","b","c","d"]', 1,
+              'remember', 'active', 'llm', '{}');
+    insert into public.classes (id, course_name, section) values ('73333333-3333-4333-8333-333333333333', 'Maths', 'A');
+    insert into public.sessions (id, code, content_id, status, class_id)
+      values ('74444444-4444-4444-8444-444444444444', 'OLD025', '71111111-1111-4111-8111-111111111111', 'closed',
+              '73333333-3333-4333-8333-333333333333');
+    insert into public.answers (session_id, answer_key, roll_no, question_id, bloom, topic)
+      values ('74444444-4444-4444-8444-444444444444', 'k-25', '21CS01', '72222222-2222-4222-8222-222222222222', 'remember', 'Sets');
+  `);
+  const counts = await rowCounts(before25);
+  const questionsBefore = (await before25.query('select * from public.questions')).rows;
+  const answersBefore = (await before25.query('select * from public.answers')).rows;
+  const ok = await applyAll(before25, files.filter((f) => f.name >= '0025'), 'over existing chapters');
+  check('0025 applies over existing chapters, adding and removing no row', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before25)).filter(([t]) => t in counts))));
+  const { rows } = await before25.query('select slide_texts, topics, topic_slides from public.contents');
+  check('a chapter made before it has no slide texts, and keeps its topics and slide numbers',
+    rows[0]?.slide_texts === null && rows[0]?.topics?.length === 2 && rows[0]?.topic_slides?.Sets?.[1] === 3, JSON.stringify(rows));
+  check('no question and no answer is touched', JSON.stringify((await before25.query('select * from public.questions')).rows) === JSON.stringify(questionsBefore)
+    && JSON.stringify((await before25.query('select * from public.answers')).rows) === JSON.stringify(answersBefore));
+  const hub = await before25.query(`select (select count(*) from public.class_units)::int as u, (select count(*) from public.class_chapters)::int as c,
+    (select count(*) from public.chapter_topics)::int as t, (select count(*) from public.topic_links)::int as l`);
+  check('and the hub starts empty: no unit, placement, topic record or link is made by the migration', JSON.stringify(hub.rows[0]) === '{"u":0,"c":0,"t":0,"l":0}',
+    JSON.stringify(hub.rows[0]));
+  await before25.close();
+}
+
+// ------------------------- 0026 over a hub that already holds topics and answers --
+
+section('0026 on a database that already holds topic records, links, questions and room answers');
+
+{
+  const before26 = await freshDatabase();
+  await applyAll(before26, files.filter((f) => f.name < '0026'), 'up to 0025');
+  await before26.exec(`
+    insert into public.contents (id, title, kind, topics) values ('81111111-1111-4111-8111-111111111111', 'deck', 'pptx', '["Sets", "Relations"]');
+    insert into public.questions (id, content_id, topic, text, options, answer_idx, bloom, status, source, payload)
+      values ('82222222-2222-4222-8222-222222222222', '81111111-1111-4111-8111-111111111111', 'Sets', 'Pick one', '["a","b","c","d"]', 1,
+              'remember', 'active', 'llm', '{}');
+    insert into public.sessions (id, code, content_id, status) values ('84444444-4444-4444-8444-444444444444', 'OLD026',
+              '81111111-1111-4111-8111-111111111111', 'closed');
+    insert into public.answers (session_id, answer_key, roll_no, question_id, bloom, topic)
+      values ('84444444-4444-4444-8444-444444444444', 'k-26', '21CS01', '82222222-2222-4222-8222-222222222222', 'remember', 'Sets');
+    insert into public.chapter_topics (id, content_id, name, key, position) values
+      ('85555555-5555-4555-8555-555555555555', '81111111-1111-4111-8111-111111111111', 'Sets', 'sets', 1),
+      ('86666666-6666-4666-8666-666666666666', '81111111-1111-4111-8111-111111111111', 'Relations', 'relations', 2);
+    insert into public.topic_links (prerequisite_id, topic_id, provenance, state, decided_at)
+      values ('85555555-5555-4555-8555-555555555555', '86666666-6666-4666-8666-666666666666', 'professor', 'confirmed', now());
+  `);
+  const counts = await rowCounts(before26);
+  const kept = async () => JSON.stringify(await Promise.all(['questions', 'answers', 'chapter_topics', 'topic_links']
+    .map(async (t) => (await before26.query(`select * from public.${t} order by id`)).rows)));
+  const rowsBefore = await kept();
+  const ok = await applyAll(before26, files.filter((f) => f.name >= '0026'), 'over an existing hub');
+  check('0026 applies over an existing hub, adding and removing no row', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before26)).filter(([t]) => t in counts))));
+  check('no question, answer, topic record or link is touched', (await kept()) === rowsBefore);
+  const empty = await before26.query(`select (select count(*) from public.hub_attempts)::int as a, (select count(*) from public.question_explanations)::int as e`);
+  check('and practice starts empty: no attempt or explanation is made by the migration', JSON.stringify(empty.rows[0]) === '{"a":0,"e":0}',
+    JSON.stringify(empty.rows[0]));
+  await before26.close();
+}
+
+// ------------------------- 0027 over chapters, topic records and questions --
+
+section('0027 on a database that already holds chapters, topic records, questions and answers');
+
+{
+  const before27 = await freshDatabase();
+  await applyAll(before27, files.filter((f) => f.name < '0027'), 'before 0027');
+  await before27.exec(`
+    insert into public.contents (id, title, kind, topics, topic_slides, slide_texts) values
+      ('81111111-1111-4111-8111-111111111111', 'deck', 'pptx', '["Sets"]', '{"Sets": [1]}', '[{"slide": 1, "text": "Sets"}]');
+    insert into public.chapter_topics (id, content_id, name, key, position)
+      values ('85555555-5555-4555-8555-555555555555', '81111111-1111-4111-8111-111111111111', 'Sets', 'sets', 1);
+    insert into public.questions (id, content_id, topic, text, options, answer_idx, bloom, status, source, payload)
+      values ('82222222-2222-4222-8222-222222222222', '81111111-1111-4111-8111-111111111111', 'Sets', 'Pick one', '["a","b","c","d"]', 1,
+              'remember', 'active', 'llm', '{}');
+    insert into public.sessions (id, code, content_id, status)
+      values ('84444444-4444-4444-8444-444444444444', 'OLD027', '81111111-1111-4111-8111-111111111111', 'closed');
+    insert into public.answers (session_id, answer_key, roll_no, question_id, bloom, topic, language)
+      values ('84444444-4444-4444-8444-444444444444', 'k-27', '21CS01', '82222222-2222-4222-8222-222222222222', 'remember', 'Sets', 'en');
+  `);
+  const counts = await rowCounts(before27);
+  const read = async (table) => (await before27.query(`select * from public.${table} order by id`)).rows;
+  const kept = { questions: await read('questions'), answers: await read('answers'), chapter_topics: await read('chapter_topics'), contents: await read('contents') };
+  const ok = await applyAll(before27, files.filter((f) => f.name >= '0027'), 'over existing chapters');
+  check('0027 applies over existing chapters, adding and removing no row', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before27)).filter(([t]) => t in counts))));
+  const same = [];
+  for (const table of Object.keys(kept)) if (JSON.stringify(await read(table)) !== JSON.stringify(kept[table])) same.push(table);
+  check('no chapter, topic record, question or answer is touched', same.length === 0, same.join(', '));
+  const made = await before27.query(`select (select count(*) from public.topic_lessons)::int as l, (select count(*) from public.item_translations)::int as t,
+    (select count(*) from public.student_language_choices)::int as c`);
+  check('and nothing is made by the migration: no lesson, translation or choice of language', JSON.stringify(made.rows[0]) === '{"l":0,"t":0,"c":0}',
+    JSON.stringify(made.rows[0]));
+  await before27.close();
+}
+
+// ------------------------------------------- 0028 over hub attempts already kept --
+
+section('0028 on a database that already holds hub attempts, topic records, questions and links');
+
+{
+  const before28 = await freshDatabase();
+  await applyAll(before28, files.filter((f) => f.name < '0028'), 'before 0028');
+  const [H, P, S] = [randomUUID(), randomUUID(), randomUUID()];
+  await before28.query('insert into auth.users (id) values ($1), ($2), ($3)', [H, P, S]);
+  const add = (id, role, code, reportsTo, rollNo) => before28.query(
+    `insert into public.accounts (id, role, code, department, reports_to, roll_no) values ($1, $2, $3, 'CSE', $4, $5)`,
+    [id, role, code, reportsTo, rollNo]);
+  await add(H, 'hod', 'BL-HD2802', null, null);
+  await add(P, 'professor', 'BL-PR2802', H, null);
+  await add(S, 'student', 'BL-ST2802', P, '21CS01');
+  await before28.exec(`
+    insert into public.contents (id, title, kind, topics, owner_id) values
+      ('81111111-1111-4111-8111-111111111111', 'deck', 'pptx', '["Sets", "Relations"]', '${P}');
+    insert into public.chapter_topics (id, content_id, name, key, position) values
+      ('85555555-5555-4555-8555-555555555555', '81111111-1111-4111-8111-111111111111', 'Sets', 'sets', 1),
+      ('86666666-6666-4666-8666-666666666666', '81111111-1111-4111-8111-111111111111', 'Relations', 'relations', 2);
+    insert into public.topic_links (owner_id, prerequisite_id, topic_id, provenance, state, decided_at)
+      values ('${P}', '85555555-5555-4555-8555-555555555555', '86666666-6666-4666-8666-666666666666', 'professor', 'confirmed', now());
+    insert into public.questions (id, content_id, topic, text, options, answer_idx, bloom, status, source, payload)
+      values ('82222222-2222-4222-8222-222222222222', '81111111-1111-4111-8111-111111111111', 'Sets', 'Pick one', '["a","b","c","d"]', 1,
+              'remember', 'active', 'teacher', '{}');
+    insert into public.hub_attempts (account_id, client_attempt_id, topic_id, question_id, bloom, correct, score, mode) values
+      ('${S}', 'before-28-01', '85555555-5555-4555-8555-555555555555', '82222222-2222-4222-8222-222222222222', 'remember', true, 1, 'practice'),
+      ('${S}', 'before-28-02', '85555555-5555-4555-8555-555555555555', '82222222-2222-4222-8222-222222222222', 'remember', false, 0, 'exam');
+  `);
+  const counts = await rowCounts(before28);
+  const read = async (table) => (await before28.query(`select * from public.${table} order by id`)).rows;
+  const kept = { hub_attempts: await read('hub_attempts'), questions: await read('questions'), chapter_topics: await read('chapter_topics'), topic_links: await read('topic_links') };
+  const ok = await applyAll(before28, files.filter((f) => f.name >= '0028'), 'over existing hub attempts');
+  check('0028 applies over existing hub attempts, adding and removing no row', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before28)).filter(([t]) => t in counts))));
+  const changed = [];
+  for (const table of Object.keys(kept)) {
+    // The new column aside, every value is as it was.
+    const now = (await read(table)).map(({ run_id: _run, ...rest }) => rest);
+    if (JSON.stringify(now) !== JSON.stringify(kept[table])) changed.push(table);
+  }
+  check('no hub attempt, question, topic record or link is touched', changed.length === 0, changed.join(', '));
+  const runs = await before28.query('select run_id from public.hub_attempts');
+  check('every attempt kept before reads as one with no run, an exam-mode one included', runs.rows.length === 2 && runs.rows.every((r) => r.run_id === null));
+  const made = await before28.query(`select (select count(*) from public.hub_runs)::int as r, (select count(*) from public.hub_goals)::int as g`);
+  check('and nothing is made by the migration: no run and no goal', JSON.stringify(made.rows[0]) === '{"r":0,"g":0}', JSON.stringify(made.rows[0]));
+  await before28.close();
+}
+
+// ----------------------- 0029 over hub attempts in every mode, questions and translations --
+
+section('0029 on a database that already holds hub attempts in every mode, questions and translations');
+
+{
+  const before29 = await freshDatabase();
+  await applyAll(before29, files.filter((f) => f.name < '0029'), 'before 0029');
+  const [H, P, S] = ['81111111-0000-4000-8000-000000000001', '81111111-0000-4000-8000-000000000002', '81111111-0000-4000-8000-000000000003'];
+  await before29.query('insert into auth.users (id) values ($1), ($2), ($3)', [H, P, S]);
+  const add = (id, role, code, reportsTo, rollNo) => before29.query(
+    `insert into public.accounts (id, role, code, department, reports_to, roll_no) values ($1, $2, $3, 'CSE', $4, $5)`, [id, role, code, reportsTo, rollNo]);
+  await add(H, 'hod', 'BL-HD0029', null, null);
+  await add(P, 'professor', 'BL-PR0029', H, null);
+  await add(S, 'student', 'BL-ST0029', P, '21CS29');
+  await before29.exec(`
+    insert into public.contents (id, title, kind, topics, topic_slides) values
+      ('81111111-1111-4111-8111-111111111111', 'deck', 'pptx', '["Sets"]', '{"Sets": [1]}');
+    insert into public.chapter_topics (id, content_id, name, key, position)
+      values ('85555555-5555-4555-8555-555555555555', '81111111-1111-4111-8111-111111111111', 'Sets', 'sets', 1);
+    insert into public.questions (id, content_id, topic, text, options, answer_idx, bloom, status, source, payload)
+      values ('82222222-2222-4222-8222-222222222222', '81111111-1111-4111-8111-111111111111', 'Sets', 'Pick one', '["a","b","c","d"]', 1,
+              'remember', 'active', 'llm', '{}');
+    insert into public.hub_attempts (account_id, client_attempt_id, topic_id, question_id, bloom, correct, score, mode, hints_used) values
+      ('${S}', 'before-0029-01', '85555555-5555-4555-8555-555555555555', '82222222-2222-4222-8222-222222222222', 'remember', true, 1, 'practice', 0),
+      ('${S}', 'before-0029-02', '85555555-5555-4555-8555-555555555555', '82222222-2222-4222-8222-222222222222', 'remember', false, 0, 'exam', 0),
+      ('${S}', 'before-0029-03', '85555555-5555-4555-8555-555555555555', '82222222-2222-4222-8222-222222222222', 'remember', false, 0, 'exam', 1);
+    insert into public.item_translations (item_kind, item_id, content_id, language, fields, source_fields, source_hash, provenance)
+      values ('hint', '86666666-6666-4666-8666-666666666666', '81111111-1111-4111-8111-111111111111', 'hi', '{"hint": "x"}', '{"hint": "y"}',
+              '${'b'.repeat(64)}', 'professor');
+  `);
+  const counts = await rowCounts(before29);
+  const read = async (table) => (await before29.query(`select * from public.${table} order by id`)).rows;
+  const kept = { questions: await read('questions'), hub_attempts: await read('hub_attempts'), item_translations: await read('item_translations') };
+  const ok = await applyAll(before29, files.filter((f) => f.name >= '0029'), 'over existing hub attempts');
+  check('0029 applies over hub attempts in every mode, adding and removing no row', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before29)).filter(([t]) => t in counts))));
+  const same = [];
+  for (const table of Object.keys(kept)) if (JSON.stringify(await read(table)) !== JSON.stringify(kept[table])) same.push(table);
+  check('no question, hub attempt or translation is touched (an older self-test attempt holding a hint is left as it was)', same.length === 0, same.join(', '));
+  await rejects('while a new self-test attempt with hints is refused', () => before29.query(
+    `insert into public.hub_attempts (account_id, client_attempt_id, bloom, correct, score, mode, hints_used) values ($1, 'after-0029-01', 'remember', true, 1, 'exam', 1)`,
+    [S]), { code: '23514', match: /hub_attempts_hints_mode_check/ });
+  const made = await before29.query(`select (select count(*) from public.question_hints)::int as h, (select count(*) from public.option_feedback)::int as f,
+    (select count(*) from public.hub_hint_views)::int as v`);
+  check('and the tutor starts empty: no hint, feedback or hint view is made by the migration', JSON.stringify(made.rows[0]) === '{"h":0,"f":0,"v":0}',
+    JSON.stringify(made.rows[0]));
+  await before29.close();
 }
 
 // ------------------------------------- 0011 over accounts that already clash --

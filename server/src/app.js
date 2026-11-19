@@ -31,6 +31,17 @@ import projectorRoutes from './routes/projector.js';
 import insightRoutes from './routes/insights.js';
 import classQuestionRoutes from './routes/classQuestions.js';
 import misconceptionRoutes, { classMisconceptionRoutes } from './routes/misconceptions.js';
+// ---- Phase 6: the hub's content backbone ----
+import hubRoutes from './routes/hub.js';
+// ---- Phase 6: practice, mastery, the error log and reviews ----
+import hubPracticeRoutes from './routes/hubPractice.js';
+// ---- Phase 6: lessons and languages ----
+import hubLessonRoutes from './routes/hubLessons.js';
+import hubLanguageRoutes from './routes/hubLanguages.js';
+// ---- Phase 6: Get Ready, refresher paths, self-tests, goals and the hub home ----
+import hubPathRoutes from './routes/hubPaths.js';
+// ---- Phase 6: the tutor ----
+import hubTutorRoutes from './routes/hubTutor.js';
 
 /**
  * Any successful write to a question bank drops the live loop's cached copy of
@@ -163,6 +174,54 @@ export function createApp() {
   // snapshots with their rubrics. Which rooms a teacher may read or decide on is
   // checked inside, per answer, by ownership.js.
   app.use('/api/review', requireTeacher, reviewRoutes);
+
+  // ---- Phase 6: the hub's content backbone ----
+  // The Learning Hub (/api/hub): units, the chapters a class covers, topic
+  // records and prerequisite links. Accounts only, never the teacher key: the
+  // router's own guard answers 503 without Supabase and needs a signed-in
+  // account, and services/hubAccess.js decides who reaches which class (a
+  // rostered student of the class's professor, its owner, the department's HOD).
+  app.use('/api/hub', hubRoutes);
+
+  // ---- Phase 6: practice, mastery, the error log and reviews ----
+  // The hub's practice loop, a student's progress, error log, reviews and
+  // weeks, staff's reads of them, and explanations (/api/hub/practice/...,
+  // /progress, /review/due, /errors, /consistency, /classes/:id/progress,
+  // /questions/:id/explanation, /explanations/...). Behind the same guard as
+  // the backbone (accounts only, 503 without Supabase), after it, at paths it
+  // does not answer. Nothing here is read by a room, attainment or the register.
+  app.use('/api/hub', hubPracticeRoutes);
+
+  // ---- Phase 6: lessons and languages ----
+  // A topic's lessons from the professor's own slides (H11) and the English,
+  // Hindi and Marathi switch (H12), under /api/hub beside the backbone. Each
+  // router repeats the hub's gate (hubGate: 503 without Supabase, a signed-in
+  // account, never the teacher key); the account is resolved once per request.
+  // The paths are their own, so no request one answers reaches the other. A
+  // lesson writes its retrieval questions into the bank as drafts only, which
+  // no room serves, so the live loop's cached bank needs no refresh here: the
+  // bank's own approve routes refresh it.
+  app.use('/api/hub', hubLessonRoutes);
+  app.use('/api/hub', hubLanguageRoutes);
+
+  // ---- Phase 6: Get Ready, refresher paths, self-tests, goals and the hub home ----
+  // A student's Get Ready checks (H9) and the refresher paths after them, their
+  // self-tests (H10), their goals and the hub home (H16), and staff's reads of
+  // Get Ready results and students by topic state (H17): /api/hub/home,
+  // /getready..., /exams..., /goals..., /classes/:id/states and
+  // /classes/:id/students/:id/getready. The same gate as every hub router, at
+  // paths none of the others answers. Answers are hub attempts (never room
+  // answers), so no room, attainment figure or register reads any of it.
+  app.use('/api/hub', hubPathRoutes);
+
+  // ---- Phase 6: the tutor ----
+  // Hint ladders and feedback on wrong options (H13): a student opens approved
+  // hints one at a time before answering, in practice, review sets and lessons
+  // (never a self-test or Get Ready), and each one opened is recorded; staff
+  // write, draft on the button (in the background) and approve them. Behind the
+  // same gate (hubGate), at paths no other hub router answers. Nothing here is
+  // read by a room, attainment or the register.
+  app.use('/api/hub', hubTutorRoutes);
 
   // Mixed, like /api/session: the upload is the teacher's and gated inside;
   // GET /:id is open at the mount, because a phone's <img> carries no

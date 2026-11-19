@@ -62,6 +62,8 @@ import { LABEL as KIND_LABEL, forStudent, isUngraded, score } from '../questionT
 import { CONFIDENCE, CONFIDENCE_CHOICES, CONFIDENCE_NOTE, confidenceCounts, confidenceOf } from './confidence.js';
 import { allAnswers } from './evidence.js';
 import { SOURCE_LABEL, phoneProvenance, sourceOf } from './honesty.js';
+// Phase 6 (decision H15): formulas and code as HTML, an additive field.
+import { phoneRichSync } from './richText.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -454,6 +456,7 @@ export function answeredAloneOf(cq, ownFinal = []) {
  * mid-question; null otherwise. Never a count, a distribution or a classmate.
  */
 export function phoneQuestion(cq, { mine = null } = {}) {
+  const shown = forStudent(asQuestion(cq), seedOf(cq), null);
   return {
     id: String(cq._id),
     seq: cq.seq,
@@ -465,7 +468,10 @@ export function phoneQuestion(cq, { mine = null } = {}) {
     // an AI question reads "chosen by your professor", which putting it to the
     // class is. Named by the class question's id, never the bank question's
     // (KEY SAFETY above): a phone votes by the class question's id anyway.
-    question: { ...forStudent(asQuestion(cq), seedOf(cq), null), _id: String(cq._id), provenance: phoneProvenance(snapOf(cq)) },
+    // `rich` (Phase 6, H15): HTML for the fields of `shown` holding a formula
+    // or a code block, {} otherwise; built synchronously, so a code block is
+    // highlighted once the highlighter has loaded (services/richText.js).
+    question: { ...shown, _id: String(cq._id), provenance: phoneProvenance(snapOf(cq)), rich: phoneRichSync(shown) },
     options: optionsOf(snapOf(cq)),
     confidence: CONFIDENCE_CHOICES,
     mine,

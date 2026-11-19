@@ -874,5 +874,676 @@ export function createMemoryRepo() {
     async updateClassQuestion(id, patch) {
       return update(classQuestions, id, patch, ['state', 'revealed', 'pausedAt', 'revoteAt', 'closedAt', 'closedBy']);
     },
+
+    // ---- Phase 6: the hub's content backbone (0025; services/hubTopics.js, services/hubAccess.js, routes/hub.js) ----
+    // A class's units and the chapters placed on it, each chapter's topic
+    // records, prerequisite links between topics, and a deck's per-slide text.
+    // The same contract as the Postgres tables: one unit name per class (case
+    // ignored), one placement per (class, chapter), one record per (chapter,
+    // key), one link per (prerequisite, topic); a removed unit leaves its
+    // chapters in no unit, as ON DELETE SET NULL does.
+    ...(() => {
+      const units = new Map();
+      const placements = new Map();
+      const topics = new Map();
+      const links = new Map();
+      const nameTaken = (classId, name, exceptId = null) => [...units.values()].some((u) => u.classId === String(classId)
+        && u.name.toLowerCase() === String(name).toLowerCase() && u._id !== exceptId);
+      const unitConflict = (name) => Object.assign(new Error(`There is already a unit called "${name}" in this class.`), { status: 409 });
+      const inOrder = (a, b) => (a.position - b.position) || String(a.createdAt ?? a.addedAt).localeCompare(String(b.createdAt ?? b.addedAt));
+      return {
+        /** A class's units by position, then age. */
+        async listClassUnits(classId) {
+          return clone([...units.values()].filter((u) => u.classId === String(classId)).sort(inOrder));
+        },
+
+        async getClassUnit(id) {
+          return clone(units.get(String(id)) ?? null);
+        },
+
+        async createClassUnit(doc) {
+          if (nameTaken(doc.classId, doc.name)) throw unitConflict(doc.name);
+          const now = new Date().toISOString();
+          const rec = { _id: oid(), position: 1, createdBy: null, createdAt: now, updatedAt: now, ...clone(doc), classId: String(doc.classId) };
+          units.set(rec._id, rec);
+          return clone(rec);
+        },
+
+        /** Name and position only; the class never changes. */
+        async updateClassUnit(id, patch) {
+          const rec = units.get(String(id));
+          if (!rec) return null;
+          if (patch.name !== undefined && nameTaken(rec.classId, patch.name, rec._id)) throw unitConflict(patch.name);
+          for (const k of ['name', 'position']) if (patch[k] !== undefined) rec[k] = patch[k];
+          rec.updatedAt = new Date().toISOString();
+          return clone(rec);
+        },
+
+        /** The unit goes; its chapters stay on the class, in no unit. */
+        async deleteClassUnit(id) {
+          const key = String(id);
+          for (const p of placements.values()) if (p.unitId === key) p.unitId = null;
+          return units.delete(key);
+        },
+
+        /** Every chapter placed on a class, in no particular order (the views order them). */
+        async listClassChapters(classId) {
+          return clone([...placements.values()].filter((p) => p.classId === String(classId)));
+        },
+
+        /** A chapter already on the class is a 409, as class_chapters_class_content_key makes it. */
+        async placeClassChapter(doc) {
+          const held = [...placements.values()].some((p) => p.classId === String(doc.classId) && p.contentId === String(doc.contentId));
+          if (held) throw Object.assign(new Error('That chapter is already on this class.'), { status: 409 });
+          const rec = {
+            _id: oid(), unitId: null, position: 1, addedBy: null, addedAt: new Date().toISOString(),
+            ...clone(doc), classId: String(doc.classId), contentId: String(doc.contentId),
+          };
+          if (rec.unitId != null) rec.unitId = String(rec.unitId);
+          placements.set(rec._id, rec);
+          return clone(rec);
+        },
+
+        /** Its unit (null for none) and position only. */
+        async updateClassChapter(id, patch) {
+          const rec = placements.get(String(id));
+          if (!rec) return null;
+          if (patch.unitId !== undefined) rec.unitId = patch.unitId == null ? null : String(patch.unitId);
+          if (patch.position !== undefined) rec.position = patch.position;
+          return clone(rec);
+        },
+
+        async removeClassChapter(classId, contentId) {
+          for (const [id, p] of placements) {
+            if (p.classId === String(classId) && p.contentId === String(contentId)) return placements.delete(id);
+          }
+          return false;
+        },
+
+        /** A chapter's topic records, retired ones included, by position then age. */
+        async listChapterTopics(contentId) {
+          return clone([...topics.values()].filter((t) => t.contentId === String(contentId)).sort(inOrder));
+        },
+
+        async getChapterTopic(id) {
+          return clone(topics.get(String(id)) ?? null);
+        },
+
+        async listChapterTopicsByIds(ids = []) {
+          return clone(ids.map((id) => topics.get(String(id))).filter(Boolean));
+        },
+
+        /** Insert; a key the chapter already holds is skipped (ON CONFLICT DO NOTHING). Returns the rows added. */
+        async addChapterTopics(contentId, docs = []) {
+          const made = [];
+          for (const d of docs) {
+            if ([...topics.values()].some((t) => t.contentId === String(contentId) && t.key === d.key)) continue;
+            const now = new Date().toISOString();
+            const rec = { _id: oid(), position: 1, retiredAt: null, createdAt: now, updatedAt: now, ...clone(d), contentId: String(contentId) };
+            topics.set(rec._id, rec);
+            made.push(rec);
+          }
+          return clone(made);
+        },
+
+        /** Name, position and retiredAt only (the key follows the name). */
+        async updateChapterTopic(id, patch) {
+          const rec = topics.get(String(id));
+          if (!rec) return null;
+          for (const k of ['name', 'position', 'retiredAt']) if (patch[k] !== undefined) rec[k] = patch[k];
+          if (patch.name !== undefined) rec.key = String(patch.name).toLowerCase();
+          rec.updatedAt = new Date().toISOString();
+          return clone(rec);
+        },
+
+        /** The record and, as ON DELETE CASCADE does, any link touching it. */
+        async deleteChapterTopic(id) {
+          const key = String(id);
+          for (const [lid, l] of links) if (l.prerequisiteId === key || l.topicId === key) links.delete(lid);
+          return topics.delete(key);
+        },
+
+        /**
+         * `ownerId` (null for the unowned): one professor's links. `topicIds`:
+         * only those touching these topics. Oldest first.
+         */
+        async listTopicLinks(filter = {}) {
+          const ids = Array.isArray(filter.topicIds) ? new Set(filter.topicIds.map(String)) : null;
+          return clone([...links.values()]
+            .filter((l) => (!('ownerId' in filter) || String(l.ownerId ?? '') === String(filter.ownerId ?? ''))
+              && (!ids || ids.has(l.prerequisiteId) || ids.has(l.topicId)))
+            .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))));
+        },
+
+        async getTopicLink(id) {
+          return clone(links.get(String(id)) ?? null);
+        },
+
+        /** One link per (prerequisite, topic): a second is a 409, as topic_links_pair_key makes it. */
+        async addTopicLink(doc) {
+          const p = String(doc.prerequisiteId);
+          const t = String(doc.topicId);
+          if ([...links.values()].some((l) => l.prerequisiteId === p && l.topicId === t)) {
+            throw Object.assign(new Error('Those two topics are already linked.'), { status: 409 });
+          }
+          const rec = {
+            _id: oid(), ownerId: null, reason: '', model: null, createdBy: null, createdAt: new Date().toISOString(),
+            decidedAt: null, decidedBy: null, ...clone(doc), prerequisiteId: p, topicId: t,
+          };
+          links.set(rec._id, rec);
+          return clone(rec);
+        },
+
+        /** Its state and who decided it, and when, only: the pair, provenance and reason are written once. */
+        async updateTopicLink(id, patch) {
+          return update(links, id, patch, ['state', 'decidedAt', 'decidedBy']);
+        },
+
+        async deleteTopicLink(id) {
+          return links.delete(String(id));
+        },
+
+        /** A deck's per-slide text (0025), written once after the upload. */
+        async setContentSlideTexts(contentId, slideTexts) {
+          const rec = contents.get(String(contentId));
+          if (!rec) return null;
+          rec.slideTexts = clone(slideTexts);
+          return clone(rec);
+        },
+      };
+    })(),
+
+    // ---- Phase 6: practice, mastery, the error log and reviews (0026; services/hubPractice.js, routes/hubPractice.js) ----
+    // A student's hub attempts, append-only, one per (account, client attempt
+    // id): a resend returns the stored row with `duplicate: true`, never a
+    // second one, as hub_attempts_account_attempt_key makes it in Postgres.
+    // Nothing here updates or deletes an attempt. And one explanation per
+    // question (question_explanations_question_key).
+    ...(() => {
+      const attempts = new Map(); // key: _id
+      const attemptKeys = new Map(); // `${accountId}:${clientAttemptId}` -> _id
+      const explanations = new Map(); // key: questionId
+      let seq = 0;
+      // Server time, then the order written: rows of one millisecond keep it.
+      const inOrder = (a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.seq - b.seq);
+      const out = (rec) => {
+        if (!rec) return null;
+        const { seq: _seq, ...row } = rec;
+        return clone(row);
+      };
+      const listed = (v) => (Array.isArray(v) ? new Set(v.map(String)) : null);
+      return {
+        async addHubAttempt(doc) {
+          const k = `${doc.accountId}:${doc.clientAttemptId}`;
+          const held = attemptKeys.get(k);
+          if (held) return { attempt: out(attempts.get(held)), duplicate: true };
+          const rec = {
+            _id: oid(),
+            classId: null,
+            contentId: null,
+            topicId: null,
+            topic: '',
+            questionId: null,
+            kind: 'mcq',
+            questionSnapshot: {},
+            questionSource: 'llm',
+            response: null,
+            detail: '',
+            reviewStatus: 'auto',
+            language: 'en',
+            hintsUsed: 0,
+            timeTakenMs: null,
+            // The Get Ready check or self-test it was given in (0028), or none.
+            runId: null,
+            createdAt: new Date().toISOString(),
+            ...clone(doc),
+            accountId: String(doc.accountId),
+            seq: (seq += 1),
+          };
+          attempts.set(rec._id, rec);
+          attemptKeys.set(k, rec._id);
+          return { attempt: out(rec), duplicate: false };
+        },
+
+        async getHubAttemptByKey(accountId, clientAttemptId) {
+          const id = attemptKeys.get(`${accountId}:${clientAttemptId}`);
+          return id ? out(attempts.get(id)) : null;
+        },
+
+        /**
+         * Oldest first (server time, then id). Filters are ANDed: `accountId`,
+         * `accountIds`, `topicIds`, `questionIds`, `runIds` (lists; an empty list
+         * matches nothing) and `since` (an ISO time, inclusive).
+         */
+        async listHubAttempts({ accountId, accountIds, topicIds, questionIds, runIds, since } = {}) {
+          const accounts = listed(accountIds);
+          const topics = listed(topicIds);
+          const questions = listed(questionIds);
+          const runs = listed(runIds);
+          return [...attempts.values()]
+            .filter((a) => (!accountId || a.accountId === String(accountId))
+              && (!accounts || accounts.has(a.accountId))
+              && (!topics || topics.has(String(a.topicId ?? '')))
+              && (!questions || questions.has(String(a.questionId ?? '')))
+              && (!runs || runs.has(String(a.runId ?? '')))
+              && (!since || a.createdAt >= since))
+            .sort(inOrder)
+            .map(out);
+        },
+
+        async getQuestionExplanation(questionId) {
+          return clone(explanations.get(String(questionId)) ?? null);
+        },
+
+        async listQuestionExplanations(questionIds = []) {
+          return clone(questionIds.map((id) => explanations.get(String(id))).filter(Boolean));
+        },
+
+        /** Insert only: a question that already has one is a 409, as question_explanations_question_key makes it. */
+        async addQuestionExplanation(doc) {
+          const key = String(doc.questionId);
+          if (explanations.has(key)) {
+            throw Object.assign(new Error('That question already has an explanation.'), { status: 409 });
+          }
+          const now = new Date().toISOString();
+          const rec = {
+            _id: oid(), model: null, sourceRef: null, createdBy: null, createdAt: now, updatedAt: now,
+            approvedBy: null, approvedAt: null, ...clone(doc), questionId: key,
+          };
+          explanations.set(key, rec);
+          return clone(rec);
+        },
+
+        /** Its words, who wrote it, whether it is approved and what it cites; the question never changes. */
+        async updateQuestionExplanation(questionId, patch) {
+          const rec = explanations.get(String(questionId));
+          if (!rec) return null;
+          for (const k of ['text', 'provenance', 'status', 'model', 'sourceRef', 'approvedBy', 'approvedAt']) {
+            if (patch[k] !== undefined) rec[k] = clone(patch[k]);
+          }
+          rec.updatedAt = new Date().toISOString();
+          return clone(rec);
+        },
+
+        async deleteQuestionExplanation(questionId) {
+          return explanations.delete(String(questionId));
+        },
+      };
+    })(),
+
+    // ---- Phase 6: lessons and languages (0027; services/hubLessons.js, services/hubLanguages.js, routes/hubLessons.js, routes/hubLanguages.js) ----
+    // A topic's lessons, one row per version; Hindi and Marathi versions of
+    // what a student reads; and each student's chosen language. The same
+    // contract as the Postgres tables: a row is written as a draft; its content
+    // never changes, except a translation's while it is a draft; only its status
+    // moves on (draft -> approved -> superseded, or draft -> discarded), and
+    // approving one retires the one approved before it at once, so one is
+    // approved per topic, and per item and language. Nothing is deleted.
+    ...(() => {
+      const lessons = new Map();
+      const translations = new Map();
+      const choices = new Map();
+      const conflict = (message) => Object.assign(new Error(message), { status: 409 });
+      const notDraft = (what, rec) => conflict(`Only a draft ${what} can be approved or discarded; this one is ${rec.status}.`);
+      const decide = (map, rec, { status, by }) => {
+        const now = new Date().toISOString();
+        if (status === 'approved') Object.assign(rec, { status, approvedAt: now, approvedBy: by ?? null });
+        else Object.assign(rec, { status, retiredAt: now, retiredBy: by ?? null });
+        return clone(rec);
+      };
+      return {
+        /** A new version of a topic's lesson, as a draft. A version the topic already has is a 409. */
+        async createTopicLesson(doc) {
+          const topicId = String(doc.topicId);
+          if ([...lessons.values()].some((l) => l.topicId === topicId && l.version === doc.version)) {
+            throw conflict('Another version of this lesson was written at the same time. Nothing was changed; try again.');
+          }
+          const rec = {
+            _id: oid(), ownerId: null, model: null, basis: {}, warnings: [], createdBy: null,
+            ...clone(doc),
+            topicId, contentId: String(doc.contentId), status: 'draft', createdAt: new Date().toISOString(),
+            approvedAt: null, approvedBy: null, retiredAt: null, retiredBy: null,
+          };
+          lessons.set(rec._id, rec);
+          return clone(rec);
+        },
+
+        async getTopicLesson(id) {
+          return clone(lessons.get(String(id)) ?? null);
+        },
+
+        /** `topicId` or `contentId`: their lessons, every status, oldest version first. */
+        async listTopicLessons(filter = {}) {
+          return clone([...lessons.values()]
+            .filter((l) => (filter.topicId === undefined || l.topicId === String(filter.topicId))
+              && (filter.contentId === undefined || l.contentId === String(filter.contentId)))
+            .sort((a, b) => String(a.topicId).localeCompare(String(b.topicId)) || a.version - b.version));
+        },
+
+        /** Approve a draft and retire the topic's approved one. Null when there is no such lesson; 409 when it is not a draft. */
+        async approveTopicLesson(id, { by = null } = {}) {
+          const rec = lessons.get(String(id));
+          if (!rec) return null;
+          if (rec.status !== 'draft') throw notDraft('lesson', rec);
+          for (const l of lessons.values()) if (l.topicId === rec.topicId && l.status === 'approved') decide(lessons, l, { status: 'superseded', by });
+          return decide(lessons, rec, { status: 'approved', by });
+        },
+
+        /** Discard a draft. Null when there is no such lesson; 409 when it is not a draft. */
+        async discardTopicLesson(id, { by = null } = {}) {
+          const rec = lessons.get(String(id));
+          if (!rec) return null;
+          if (rec.status !== 'draft') throw notDraft('lesson', rec);
+          return decide(lessons, rec, { status: 'discarded', by });
+        },
+
+        /** A translation, as a draft. */
+        async addItemTranslation(doc) {
+          const now = new Date().toISOString();
+          const rec = {
+            _id: oid(), ownerId: null, model: null, checks: [], createdBy: null, editedBy: null,
+            ...clone(doc),
+            itemId: String(doc.itemId), contentId: String(doc.contentId), status: 'draft', createdAt: now, updatedAt: now,
+            approvedAt: null, approvedBy: null, retiredAt: null, retiredBy: null,
+          };
+          translations.set(rec._id, rec);
+          return clone(rec);
+        },
+
+        async getItemTranslation(id) {
+          return clone(translations.get(String(id)) ?? null);
+        },
+
+        /**
+         * `contentId`, `itemKind`, `itemIds`, `language`, `status` (one, or a
+         * list): the translations matching all given, oldest first.
+         */
+        async listItemTranslations(filter = {}) {
+          const ids = Array.isArray(filter.itemIds) ? new Set(filter.itemIds.map((x) => String(x).toLowerCase())) : null;
+          const statuses = filter.status === undefined ? null : [].concat(filter.status);
+          return clone([...translations.values()]
+            .filter((t) => (filter.contentId === undefined || t.contentId === String(filter.contentId))
+              && (filter.itemKind === undefined || t.itemKind === filter.itemKind)
+              && (!ids || ids.has(t.itemId.toLowerCase()))
+              && (filter.language === undefined || t.language === filter.language)
+              && (!statuses || statuses.includes(t.status)))
+            .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))));
+        },
+
+        /** A draft's text, the English it is checked against, its checks and who edited it. 409 when it is not a draft. */
+        async editItemTranslation(id, patch) {
+          const rec = translations.get(String(id));
+          if (!rec) return null;
+          if (rec.status !== 'draft') throw conflict(`Only a draft translation can be changed; this one is ${rec.status}.`);
+          for (const k of ['fields', 'sourceFields', 'sourceHash', 'checks', 'provenance', 'editedBy']) {
+            if (patch[k] !== undefined) rec[k] = clone(patch[k]);
+          }
+          rec.updatedAt = new Date().toISOString();
+          return clone(rec);
+        },
+
+        /** Approve a draft and retire the approved one of its item and language. Null / 409 as for a lesson. */
+        async approveItemTranslation(id, { by = null } = {}) {
+          const rec = translations.get(String(id));
+          if (!rec) return null;
+          if (rec.status !== 'draft') throw notDraft('translation', rec);
+          for (const t of translations.values()) {
+            if (t.itemKind === rec.itemKind && t.itemId === rec.itemId && t.language === rec.language && t.status === 'approved') {
+              decide(translations, t, { status: 'superseded', by });
+            }
+          }
+          return decide(translations, rec, { status: 'approved', by });
+        },
+
+        async discardItemTranslation(id, { by = null } = {}) {
+          const rec = translations.get(String(id));
+          if (!rec) return null;
+          if (rec.status !== 'draft') throw notDraft('translation', rec);
+          return decide(translations, rec, { status: 'discarded', by });
+        },
+
+        /** A student's chosen language, or null when they chose none. */
+        async getLanguageChoice(accountId) {
+          return choices.get(String(accountId))?.language ?? null;
+        },
+
+        async setLanguageChoice(accountId, language) {
+          const rec = { accountId: String(accountId), language, updatedAt: new Date().toISOString() };
+          choices.set(rec.accountId, rec);
+          return clone(rec);
+        },
+      };
+    })(),
+
+    // ---- Phase 6: Get Ready, self-tests and goals (0028; services/hubGetReady.js, services/hubExam.js, services/hubGoals.js, routes/hubPaths.js) ----
+    // A student's runs (a Get Ready check or a self-test), one per (account,
+    // client run id): a resend returns the stored run with `duplicate: true`,
+    // as hub_runs_account_run_key makes it in Postgres. A run is written once
+    // and then only ended, once (0028's guard); nothing here deletes one. Its
+    // attempts are hub attempts carrying its id (listHubAttempts({ runIds })).
+    // And a student's goals, which are theirs to change or remove.
+    ...(() => {
+      const runs = new Map(); // key: _id
+      const runKeys = new Map(); // `${accountId}:${clientRunId}` -> _id
+      const goals = new Map();
+      let seq = 0;
+      const out = (rec) => {
+        if (!rec) return null;
+        const { seq: _seq, ...row } = rec;
+        return clone(row);
+      };
+      const inOrder = (a, b) => (a.startedAt < b.startedAt ? -1 : a.startedAt > b.startedAt ? 1 : a.seq - b.seq);
+      return {
+        async addHubRun(doc) {
+          const k = `${doc.accountId}:${doc.clientRunId}`;
+          const held = runKeys.get(k);
+          if (held) return { run: out(runs.get(held)), duplicate: true };
+          const rec = {
+            _id: oid(),
+            spec: {},
+            timeLimitSeconds: null,
+            startedAt: new Date().toISOString(),
+            deadlineAt: null,
+            endedAt: null,
+            endReason: null,
+            ...clone(doc),
+            accountId: String(doc.accountId),
+            seq: (seq += 1),
+          };
+          runs.set(rec._id, rec);
+          runKeys.set(k, rec._id);
+          return { run: out(rec), duplicate: false };
+        },
+
+        async getHubRun(id) {
+          return out(runs.get(String(id)) ?? null);
+        },
+
+        async getHubRunByKey(accountId, clientRunId) {
+          const id = runKeys.get(`${accountId}:${clientRunId}`);
+          return id ? out(runs.get(id)) : null;
+        },
+
+        /** Oldest first. Filters are ANDed: `accountId`, `ids` (a list; empty matches nothing), `kind`. */
+        async listHubRuns({ accountId, ids, kind } = {}) {
+          const wanted = Array.isArray(ids) ? new Set(ids.map(String)) : null;
+          return [...runs.values()]
+            .filter((r) => (!accountId || r.accountId === String(accountId))
+              && (!wanted || wanted.has(r._id))
+              && (!kind || r.kind === kind))
+            .sort(inOrder)
+            .map(out);
+        },
+
+        /** Write the run's end, once. A run already ended is returned unchanged; null when there is none. */
+        async endHubRun(id, { endedAt, endReason }) {
+          const rec = runs.get(String(id));
+          if (!rec) return null;
+          if (!rec.endedAt) Object.assign(rec, { endedAt, endReason });
+          return out(rec);
+        },
+
+        /** A student's goals, oldest first. */
+        async listHubGoals(accountId) {
+          return clone([...goals.values()].filter((g) => g.accountId === String(accountId))
+            .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))));
+        },
+
+        async getHubGoal(id) {
+          return clone(goals.get(String(id)) ?? null);
+        },
+
+        async addHubGoal(doc) {
+          const now = new Date().toISOString();
+          const rec = { _id: oid(), title: '', createdAt: now, updatedAt: now, ...clone(doc), accountId: String(doc.accountId) };
+          goals.set(rec._id, rec);
+          return clone(rec);
+        },
+
+        /** Its title, exam date and topics; whose it is never changes. */
+        async updateHubGoal(id, patch) {
+          const rec = goals.get(String(id));
+          if (!rec) return null;
+          for (const k of ['title', 'examDate', 'topicIds']) if (patch[k] !== undefined) rec[k] = clone(patch[k]);
+          rec.updatedAt = new Date().toISOString();
+          return clone(rec);
+        },
+
+        async deleteHubGoal(id) {
+          return goals.delete(String(id));
+        },
+      };
+    })(),
+
+    // ---- Phase 6: the tutor's hints and feedback (0029; services/hubTutor.js, routes/hubTutor.js) ----
+    // A question's hint ladder, one row per step (question_hints_question_step_key:
+    // a second for one step is a 409); feedback on wrong options, one per
+    // (question, option key) (option_feedback_question_option_key); both edited in
+    // place, as explanations are. And the hints each student opened, append-only,
+    // one per (account, client attempt id, position): a second for one position
+    // returns the stored row with `duplicate: true`, as
+    // hub_hint_views_attempt_position_key makes it in Postgres. Nothing here
+    // updates or deletes a hint view.
+    ...(() => {
+      const hints = new Map();
+      const feedback = new Map();
+      const views = new Map();
+      const viewKeys = new Map(); // `${accountId}:${clientAttemptId}:${position}` -> _id
+      let seq = 0;
+      const conflict = (message) => Object.assign(new Error(message), { status: 409 });
+      const ofQuestions = (map, questionIds) => {
+        const ids = new Set(questionIds.map(String));
+        return clone([...map.values()].filter((r) => ids.has(r.questionId))
+          .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))));
+      };
+      const patchRow = (map, id, patch, allowed) => {
+        const rec = map.get(String(id));
+        if (!rec) return null;
+        for (const k of allowed) if (patch[k] !== undefined) rec[k] = clone(patch[k]);
+        rec.updatedAt = new Date().toISOString();
+        return clone(rec);
+      };
+      const EDITABLE = ['text', 'provenance', 'status', 'model', 'sourceRef', 'approvedBy', 'approvedAt'];
+      return {
+        /** Every hint of these questions, every status, oldest first. */
+        async listQuestionHints(questionIds = []) {
+          return ofQuestions(hints, questionIds);
+        },
+
+        async getQuestionHint(id) {
+          return clone(hints.get(String(id)) ?? null);
+        },
+
+        /** Insert only: a step the question already has is a 409. */
+        async addQuestionHint(doc) {
+          const questionId = String(doc.questionId);
+          if ([...hints.values()].some((h) => h.questionId === questionId && h.step === doc.step)) {
+            throw conflict('That question already has a hint at this step.');
+          }
+          const now = new Date().toISOString();
+          const rec = {
+            _id: oid(), model: null, sourceRef: null, createdBy: null, createdAt: now, updatedAt: now, approvedBy: null, approvedAt: null,
+            ...clone(doc), questionId,
+          };
+          hints.set(rec._id, rec);
+          return clone(rec);
+        },
+
+        /** Its words, who wrote it, whether it is approved and what it cites; the question and step never change. */
+        async updateQuestionHint(id, patch) {
+          return patchRow(hints, id, patch, EDITABLE);
+        },
+
+        async deleteQuestionHint(id) {
+          return hints.delete(String(id));
+        },
+
+        /** Every feedback row of these questions, every status, oldest first. */
+        async listOptionFeedback(questionIds = []) {
+          return ofQuestions(feedback, questionIds);
+        },
+
+        async getOptionFeedback(id) {
+          return clone(feedback.get(String(id)) ?? null);
+        },
+
+        /** Insert only: an option (by key) the question already has feedback on is a 409. */
+        async addOptionFeedback(doc) {
+          const questionId = String(doc.questionId);
+          if ([...feedback.values()].some((f) => f.questionId === questionId && f.optionKey === doc.optionKey)) {
+            throw conflict('That option already has feedback.');
+          }
+          const now = new Date().toISOString();
+          const rec = {
+            _id: oid(), model: null, sourceRef: null, createdBy: null, createdAt: now, updatedAt: now, approvedBy: null, approvedAt: null,
+            ...clone(doc), questionId,
+          };
+          feedback.set(rec._id, rec);
+          return clone(rec);
+        },
+
+        /** As a hint, and the option's words as they stand now (its key never changes). */
+        async updateOptionFeedback(id, patch) {
+          return patchRow(feedback, id, patch, ['option', ...EDITABLE]);
+        },
+
+        async deleteOptionFeedback(id) {
+          return feedback.delete(String(id));
+        },
+
+        async addHintView(doc) {
+          const k = `${doc.accountId}:${doc.clientAttemptId}:${doc.position}`;
+          const held = viewKeys.get(k);
+          if (held) {
+            const { seq: _s, ...row } = views.get(held);
+            return { view: clone(row), duplicate: true };
+          }
+          const rec = {
+            _id: oid(), questionId: null, topicId: null, contentId: null, hintId: null, language: 'en', translationId: null,
+            sourceRef: null, plan: {}, createdAt: new Date().toISOString(),
+            ...clone(doc), accountId: String(doc.accountId), seq: (seq += 1),
+          };
+          views.set(rec._id, rec);
+          viewKeys.set(k, rec._id);
+          const { seq: _s, ...row } = rec;
+          return { view: clone(row), duplicate: false };
+        },
+
+        /**
+         * Oldest first (server time, then the order written). Filters are ANDed:
+         * `accountId`, `clientAttemptId`, `questionIds` (a list; an empty list
+         * matches nothing).
+         */
+        async listHintViews({ accountId, clientAttemptId, questionIds } = {}) {
+          const qs = Array.isArray(questionIds) ? new Set(questionIds.map(String)) : null;
+          return [...views.values()]
+            .filter((v) => (!accountId || v.accountId === String(accountId))
+              && (!clientAttemptId || v.clientAttemptId === String(clientAttemptId))
+              && (!qs || qs.has(String(v.questionId ?? ''))))
+            .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.seq - b.seq))
+            .map(({ seq: _s, ...row }) => clone(row));
+        },
+      };
+    })(),
   };
 }

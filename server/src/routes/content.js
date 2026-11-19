@@ -10,6 +10,23 @@ import { getRepo } from '../repo/index.js';
 import { extractFromPptx, extractFromText, MAX_TOPICS } from '../services/extract.js';
 import { isRecordId } from '../ids.js';
 import { assertCanRead, assertCanWrite, readable } from '../ownership.js';
+import { slideTextsFrom, syncTopicsQuietly } from '../services/hubTopics.js';
+
+/**
+ * Phase 6 (0025, decision H4): each slide's own words, kept for the Learning
+ * Hub, by a write of its own after the chapter is made. A store without 0025
+ * keeps none, says so in the log, and the upload succeeds exactly as before.
+ */
+async function keepSlideTexts(repo, content, slides) {
+  const slideTexts = slideTextsFrom(slides);
+  if (!slideTexts.length) return content;
+  try {
+    return (await repo.setContentSlideTexts(content._id, slideTexts)) ?? content;
+  } catch (err) {
+    console.error('[content] the deck\'s per-slide text was not kept:', err.message);
+    return content;
+  }
+}
 
 const router = express.Router();
 
@@ -111,11 +128,11 @@ router.post('/', readUpload, async (req, res, next) => {
         ? String(req.query.ocr)
         : 'auto';
 
-      const { rawText, topics, topicSlides, slideCount, readBy, ocr, warnings } = await extractFromPptx(
+      const { rawText, topics, topicSlides, slides, slideCount, readBy, ocr, warnings } = await extractFromPptx(
         req.file.buffer,
         { ocr: mode },
       );
-      const content = await repo.createContent({
+      const made = await repo.createContent({
         title: titleFromFilename(req.file.originalname),
         kind: 'pptx',
         rawText,
@@ -127,6 +144,10 @@ router.post('/', readUpload, async (req, res, next) => {
         // Stamped from the verified token, never from the request body.
         ownerId: req.viewer?.id ?? null,
       });
+      const content = await keepSlideTexts(repo, made, slides);
+      // The chapter's topic records for the Learning Hub (Phase 6); a failure
+      // is logged and the next write to the chapter tries again.
+      await syncTopicsQuietly(repo, content);
       res.status(201).json({
         contentId: content._id,
         title: content.title,
@@ -160,6 +181,7 @@ router.post('/', readUpload, async (req, res, next) => {
       topics,
       ownerId: req.viewer?.id ?? null,
     });
+    await syncTopicsQuietly(repo, content);
 
     res.status(201).json({
       contentId: content._id,
@@ -227,6 +249,9 @@ router.patch('/:id', async (req, res, next) => {
       topics: tidyTopics(req.body.topics),
     });
     if (!content) throw Object.assign(new Error('No such content.'), { status: 404 });
+    // Keep the Learning Hub's topic records in step (Phase 6): a topic that left
+    // the list is retired when questions or links hang off it, else removed.
+    await syncTopicsQuietly(getRepo(), content);
     res.json({ content });
   } catch (err) {
     next(err);

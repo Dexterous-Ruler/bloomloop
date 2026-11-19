@@ -44,6 +44,9 @@ const outContent = (r) =>
     ownerId: r.owner_id ?? null,
     createdAt: r.created_at,
     topicSlides: r.topic_slides && typeof r.topic_slides === 'object' ? r.topic_slides : {},
+    // 0025: each slide's own words, [{ slide, text }]; null before 0025 is
+    // applied, for a deck uploaded before it, and for pasted text.
+    slideTexts: Array.isArray(r.slide_texts) ? r.slide_texts : null,
   };
 
 const inContent = (d) => ({
@@ -1577,6 +1580,773 @@ export function createSupabaseRepo() {
       if (error) fail('updateClassQuestion')(error);
       return outClassQuestion(data);
     },
+
+    // ---- Phase 6: the hub's content backbone (0025; see memoryRepo for the contract) ----
+    ...(() => {
+      const outUnit = (r) => r && {
+        _id: r.id, classId: r.class_id, name: r.name, position: r.position,
+        createdBy: r.created_by ?? null, createdAt: r.created_at, updatedAt: r.updated_at,
+      };
+      const outPlacement = (r) => r && {
+        _id: r.id, classId: r.class_id, contentId: r.content_id, unitId: r.unit_id ?? null, position: r.position,
+        addedBy: r.added_by ?? null, addedAt: r.added_at,
+      };
+      const outTopic = (r) => r && {
+        _id: r.id, contentId: r.content_id, name: r.name, key: r.key, position: r.position,
+        retiredAt: r.retired_at ?? null, createdAt: r.created_at, updatedAt: r.updated_at,
+      };
+      const outLink = (r) => r && {
+        _id: r.id, ownerId: r.owner_id ?? null, prerequisiteId: r.prerequisite_id, topicId: r.topic_id,
+        provenance: r.provenance, state: r.state, reason: r.reason ?? '', model: r.model ?? null,
+        createdBy: r.created_by ?? null, createdAt: r.created_at, decidedAt: r.decided_at ?? null, decidedBy: r.decided_by ?? null,
+      };
+      const one = async (op, table, id, out) => {
+        if (!isUuid(id)) return null;
+        const { data, error } = await db.from(table).select('*').eq('id', id).maybeSingle();
+        if (error) fail(op)(error);
+        return out(data);
+      };
+      const unitTaken = (name) => conflict(`There is already a unit called "${name}" in this class.`);
+      return {
+        async listClassUnits(classId) {
+          if (!isUuid(classId)) return [];
+          return allRecords('listClassUnits', 'class_units', (q) => q.eq('class_id', classId), ['position', 'created_at', 'id'], outUnit);
+        },
+        async getClassUnit(id) {
+          return one('getClassUnit', 'class_units', id, outUnit);
+        },
+        // 23505 on class_units_class_name_key: the class has a unit of that name.
+        async createClassUnit(doc) {
+          const { data, error } = await db.from('class_units').insert({
+            class_id: doc.classId, name: doc.name, position: doc.position ?? 1, created_by: doc.createdBy ?? null,
+          }).select().single();
+          if (error?.code === '23505') throw unitTaken(doc.name);
+          if (error) fail('createClassUnit')(error);
+          return outUnit(data);
+        },
+        async updateClassUnit(id, patch) {
+          if (!isUuid(id)) return null;
+          const set = pick(patch, { name: 'name', position: 'position' });
+          set.updated_at = new Date().toISOString();
+          const { data, error } = await db.from('class_units').update(set).eq('id', id).select().maybeSingle();
+          if (error?.code === '23505') throw unitTaken(patch.name);
+          if (error) fail('updateClassUnit')(error);
+          return outUnit(data);
+        },
+        // Its chapters go to no unit by ON DELETE SET NULL.
+        async deleteClassUnit(id) {
+          if (!isUuid(id)) return false;
+          const rows = unwrap('deleteClassUnit', await db.from('class_units').delete().eq('id', id).select('id'));
+          return (rows ?? []).length > 0;
+        },
+        async listClassChapters(classId) {
+          if (!isUuid(classId)) return [];
+          return allRecords('listClassChapters', 'class_chapters', (q) => q.eq('class_id', classId), ['position', 'added_at', 'id'], outPlacement);
+        },
+        // 23505 on class_chapters_class_content_key: already on the class.
+        async placeClassChapter(doc) {
+          const { data, error } = await db.from('class_chapters').insert({
+            class_id: doc.classId, content_id: doc.contentId, unit_id: doc.unitId ?? null, position: doc.position ?? 1,
+            added_by: doc.addedBy ?? null,
+          }).select().single();
+          if (error?.code === '23505') throw conflict('That chapter is already on this class.');
+          if (error) fail('placeClassChapter')(error);
+          return outPlacement(data);
+        },
+        async updateClassChapter(id, patch) {
+          if (!isUuid(id)) return null;
+          const set = pick(patch, { unitId: 'unit_id', position: 'position' });
+          if (Object.keys(set).length === 0) return one('updateClassChapter', 'class_chapters', id, outPlacement);
+          const { data, error } = await db.from('class_chapters').update(set).eq('id', id).select().maybeSingle();
+          if (error) fail('updateClassChapter')(error);
+          return outPlacement(data);
+        },
+        async removeClassChapter(classId, contentId) {
+          if (!isUuid(classId) || !isUuid(contentId)) return false;
+          const rows = unwrap('removeClassChapter', await db.from('class_chapters').delete()
+            .eq('class_id', classId).eq('content_id', contentId).select('id'));
+          return (rows ?? []).length > 0;
+        },
+        async listChapterTopics(contentId) {
+          if (!isUuid(contentId)) return [];
+          return allRecords('listChapterTopics', 'chapter_topics', (q) => q.eq('content_id', contentId), ['position', 'created_at', 'id'], outTopic);
+        },
+        async getChapterTopic(id) {
+          return one('getChapterTopic', 'chapter_topics', id, outTopic);
+        },
+        async listChapterTopicsByIds(ids = []) {
+          const wanted = [...new Set(ids.map(String).filter(isUuid))];
+          const out = [];
+          for (let i = 0; i < wanted.length; i += 200) {
+            const rows = unwrap('listChapterTopicsByIds', await db.from('chapter_topics').select('*').in('id', wanted.slice(i, i + 200)));
+            out.push(...(rows ?? []).map(outTopic));
+          }
+          return out;
+        },
+        // ON CONFLICT (content_id, key) DO NOTHING: only the rows added come back.
+        async addChapterTopics(contentId, docs = []) {
+          if (!docs.length) return [];
+          const rows = unwrap('addChapterTopics', await db.from('chapter_topics').upsert(
+            docs.map((d) => ({ content_id: contentId, name: d.name, key: d.key, position: d.position ?? 1 })),
+            { onConflict: 'content_id,key', ignoreDuplicates: true },
+          ).select());
+          return (rows ?? []).map(outTopic);
+        },
+        async updateChapterTopic(id, patch) {
+          if (!isUuid(id)) return null;
+          const set = pick(patch, { name: 'name', position: 'position', retiredAt: 'retired_at' });
+          if (patch.name !== undefined) set.key = String(patch.name).toLowerCase();
+          set.updated_at = new Date().toISOString();
+          const { data, error } = await db.from('chapter_topics').update(set).eq('id', id).select().maybeSingle();
+          if (error) fail('updateChapterTopic')(error);
+          return outTopic(data);
+        },
+        // Its links go by ON DELETE CASCADE; the server deletes only a record nothing hangs off.
+        async deleteChapterTopic(id) {
+          if (!isUuid(id)) return false;
+          const rows = unwrap('deleteChapterTopic', await db.from('chapter_topics').delete().eq('id', id).select('id'));
+          return (rows ?? []).length > 0;
+        },
+        async listTopicLinks(filter = {}) {
+          const ids = Array.isArray(filter.topicIds) ? filter.topicIds.map(String).filter(isUuid) : null;
+          if (ids && !ids.length) return [];
+          return allRecords('listTopicLinks', 'topic_links', (q) => {
+            let r = q;
+            if ('ownerId' in filter) r = filter.ownerId == null ? r.is('owner_id', null) : r.eq('owner_id', filter.ownerId);
+            if (ids) {
+              const list = ids.map(postgrestQuote).join(',');
+              r = r.or(`prerequisite_id.in.(${list}),topic_id.in.(${list})`);
+            }
+            return r;
+          }, ['created_at', 'id'], outLink);
+        },
+        async getTopicLink(id) {
+          return one('getTopicLink', 'topic_links', id, outLink);
+        },
+        // 23505 on topic_links_pair_key: those two topics are already linked.
+        async addTopicLink(doc) {
+          const { data, error } = await db.from('topic_links').insert({
+            owner_id: doc.ownerId ?? null,
+            prerequisite_id: doc.prerequisiteId,
+            topic_id: doc.topicId,
+            provenance: doc.provenance,
+            state: doc.state,
+            reason: doc.reason ?? '',
+            model: doc.model ?? null,
+            created_by: doc.createdBy ?? null,
+            decided_at: doc.decidedAt ?? null,
+            decided_by: doc.decidedBy ?? null,
+          }).select().single();
+          if (error?.code === '23505') throw conflict('Those two topics are already linked.');
+          if (error) fail('addTopicLink')(error);
+          return outLink(data);
+        },
+        async updateTopicLink(id, patch) {
+          if (!isUuid(id)) return null;
+          const set = pick(patch, { state: 'state', decidedAt: 'decided_at', decidedBy: 'decided_by' });
+          if (Object.keys(set).length === 0) return one('updateTopicLink', 'topic_links', id, outLink);
+          const { data, error } = await db.from('topic_links').update(set).eq('id', id).select().maybeSingle();
+          if (error) fail('updateTopicLink')(error);
+          return outLink(data);
+        },
+        async deleteTopicLink(id) {
+          if (!isUuid(id)) return false;
+          const rows = unwrap('deleteTopicLink', await db.from('topic_links').delete().eq('id', id).select('id'));
+          return (rows ?? []).length > 0;
+        },
+        // Its own statement, after the chapter is made: without 0025 this one
+        // write fails and the caller carries on (routes/content.js).
+        async setContentSlideTexts(contentId, slideTexts) {
+          if (!isUuid(contentId)) return null;
+          const { data, error } = await db.from('contents').update({ slide_texts: slideTexts }).eq('id', contentId).select().maybeSingle();
+          if (error) fail('setContentSlideTexts')(error);
+          return outContent(data);
+        },
+      };
+    })(),
+
+    // ---- Phase 6: practice, mastery, the error log and reviews (0026; see memoryRepo for the contract) ----
+    ...(() => {
+      const outAttempt = (r) => r && {
+        _id: r.id,
+        accountId: r.account_id,
+        clientAttemptId: r.client_attempt_id,
+        classId: r.class_id ?? null,
+        contentId: r.content_id ?? null,
+        topicId: r.topic_id ?? null,
+        topic: r.topic ?? '',
+        questionId: r.question_id ?? null,
+        bloom: r.bloom,
+        kind: r.kind ?? 'mcq',
+        questionSnapshot: r.question_snapshot ?? {},
+        questionSource: r.question_source ?? 'llm',
+        response: r.response ?? null,
+        correct: r.correct === true,
+        score: Number(r.score),
+        detail: r.detail ?? '',
+        reviewStatus: r.review_status ?? 'auto',
+        mode: r.mode,
+        language: r.language ?? 'en',
+        hintsUsed: Number(r.hints_used) || 0,
+        timeTakenMs: r.time_taken_ms == null ? null : Number(r.time_taken_ms),
+        // 0028's column; a database without it reads as no run.
+        runId: r.run_id ?? null,
+        createdAt: r.created_at,
+      };
+      const outExplanation = (r) => r && {
+        _id: r.id,
+        questionId: r.question_id,
+        text: r.text,
+        provenance: r.provenance,
+        status: r.status,
+        model: r.model ?? null,
+        sourceRef: r.source_ref ?? null,
+        createdBy: r.created_by ?? null,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        approvedBy: r.approved_by ?? null,
+        approvedAt: r.approved_at ?? null,
+      };
+      // Ids in one `in` filter, at most this many a request: a URL holds only so many.
+      const CHUNK = 100;
+      const byTime = (a, b) => (Date.parse(a.createdAt) - Date.parse(b.createdAt))
+        || String(a.createdAt).localeCompare(String(b.createdAt)) || String(a._id).localeCompare(String(b._id));
+      return {
+        // 23505 on hub_attempts_account_attempt_key: the stored row, never a second.
+        async addHubAttempt(doc) {
+          const { data, error } = await db.from('hub_attempts').insert({
+            account_id: doc.accountId,
+            client_attempt_id: doc.clientAttemptId,
+            class_id: doc.classId ?? null,
+            content_id: doc.contentId ?? null,
+            topic_id: doc.topicId ?? null,
+            topic: doc.topic ?? '',
+            question_id: doc.questionId ?? null,
+            bloom: doc.bloom,
+            kind: doc.kind ?? 'mcq',
+            question_snapshot: doc.questionSnapshot ?? {},
+            question_source: doc.questionSource ?? 'llm',
+            response: doc.response ?? null,
+            correct: doc.correct === true,
+            score: doc.score,
+            detail: doc.detail ?? '',
+            review_status: doc.reviewStatus ?? 'auto',
+            mode: doc.mode,
+            language: doc.language ?? 'en',
+            hints_used: doc.hintsUsed ?? 0,
+            time_taken_ms: doc.timeTakenMs ?? null,
+            // Sent only when there is one, so practice still saves on a database without 0028.
+            ...(doc.runId ? { run_id: doc.runId } : {}),
+            created_at: doc.createdAt ?? new Date().toISOString(),
+          }).select().single();
+          if (!error) return { attempt: outAttempt(data), duplicate: false };
+          if (error.code === '23505') {
+            const held = await this.getHubAttemptByKey(doc.accountId, doc.clientAttemptId);
+            if (held) return { attempt: held, duplicate: true };
+          }
+          return fail('addHubAttempt')(error);
+        },
+        async getHubAttemptByKey(accountId, clientAttemptId) {
+          if (!isUuid(accountId)) return null;
+          const { data, error } = await db.from('hub_attempts').select('*')
+            .eq('account_id', accountId).eq('client_attempt_id', String(clientAttemptId)).maybeSingle();
+          if (error) fail('getHubAttemptByKey')(error);
+          return outAttempt(data);
+        },
+        // The longest id list is sent in chunks and the pages merged in time order.
+        async listHubAttempts({ accountId, accountIds, topicIds, questionIds, runIds, since } = {}) {
+          const lists = { account_id: accountIds, topic_id: topicIds, question_id: questionIds, run_id: runIds };
+          const clean = {};
+          for (const [col, v] of Object.entries(lists)) {
+            if (!Array.isArray(v)) continue;
+            clean[col] = [...new Set(v.map(String).filter(isUuid))];
+            if (!clean[col].length) return [];
+          }
+          if (accountId && !isUuid(accountId)) return [];
+          const longest = Object.keys(clean).sort((a, b) => clean[b].length - clean[a].length)[0];
+          const parts = [];
+          const chunks = longest ? Array.from({ length: Math.ceil(clean[longest].length / CHUNK) },
+            (_, i) => clean[longest].slice(i * CHUNK, (i + 1) * CHUNK)) : [null];
+          for (const chunk of chunks) {
+            parts.push(...await allRecords('listHubAttempts', 'hub_attempts', (q) => {
+              let r = q;
+              if (accountId) r = r.eq('account_id', accountId);
+              for (const [col, ids] of Object.entries(clean)) r = r.in(col, col === longest ? chunk : ids);
+              if (since) r = r.gte('created_at', since);
+              return r;
+            }, ['created_at', 'id'], outAttempt));
+          }
+          return chunks.length > 1 ? parts.sort(byTime) : parts;
+        },
+        async getQuestionExplanation(questionId) {
+          if (!isUuid(questionId)) return null;
+          const { data, error } = await db.from('question_explanations').select('*').eq('question_id', questionId).maybeSingle();
+          if (error) fail('getQuestionExplanation')(error);
+          return outExplanation(data);
+        },
+        async listQuestionExplanations(questionIds = []) {
+          const ids = [...new Set(questionIds.map(String).filter(isUuid))];
+          const out = [];
+          for (let i = 0; i < ids.length; i += CHUNK) {
+            const rows = unwrap('listQuestionExplanations', await db.from('question_explanations').select('*')
+              .in('question_id', ids.slice(i, i + CHUNK)));
+            out.push(...(rows ?? []).map(outExplanation));
+          }
+          return out;
+        },
+        // 23505 on question_explanations_question_key: it already has one.
+        async addQuestionExplanation(doc) {
+          const { data, error } = await db.from('question_explanations').insert({
+            question_id: doc.questionId,
+            text: doc.text,
+            provenance: doc.provenance,
+            status: doc.status ?? 'draft',
+            model: doc.model ?? null,
+            source_ref: doc.sourceRef ?? null,
+            created_by: doc.createdBy ?? null,
+            approved_by: doc.approvedBy ?? null,
+            approved_at: doc.approvedAt ?? null,
+          }).select().single();
+          if (error?.code === '23505') throw conflict('That question already has an explanation.');
+          if (error) fail('addQuestionExplanation')(error);
+          return outExplanation(data);
+        },
+        async updateQuestionExplanation(questionId, patch) {
+          if (!isUuid(questionId)) return null;
+          const set = pick(patch, {
+            text: 'text', provenance: 'provenance', status: 'status', model: 'model', sourceRef: 'source_ref',
+            approvedBy: 'approved_by', approvedAt: 'approved_at',
+          });
+          set.updated_at = new Date().toISOString();
+          const { data, error } = await db.from('question_explanations').update(set).eq('question_id', questionId).select().maybeSingle();
+          if (error) fail('updateQuestionExplanation')(error);
+          return outExplanation(data);
+        },
+        async deleteQuestionExplanation(questionId) {
+          if (!isUuid(questionId)) return false;
+          const rows = unwrap('deleteQuestionExplanation', await db.from('question_explanations').delete()
+            .eq('question_id', questionId).select('id'));
+          return (rows ?? []).length > 0;
+        },
+      };
+    })(),
+
+    // ---- Phase 6: lessons and languages (0027; see memoryRepo for the contract) ----
+    ...(() => {
+      const outLesson = (r) => r && {
+        _id: r.id, topicId: r.topic_id, contentId: r.content_id, ownerId: r.owner_id ?? null, version: r.version,
+        status: r.status, source: r.source, model: r.model ?? null,
+        steps: Array.isArray(r.steps) ? r.steps : [], basis: r.basis ?? {}, warnings: Array.isArray(r.warnings) ? r.warnings : [],
+        createdAt: r.created_at, createdBy: r.created_by ?? null, approvedAt: r.approved_at ?? null, approvedBy: r.approved_by ?? null,
+        retiredAt: r.retired_at ?? null, retiredBy: r.retired_by ?? null,
+      };
+      const outTranslation = (r) => r && {
+        _id: r.id, itemKind: r.item_kind, itemId: r.item_id, contentId: r.content_id, ownerId: r.owner_id ?? null,
+        language: r.language, fields: r.fields ?? {}, sourceFields: r.source_fields ?? {}, sourceHash: r.source_hash,
+        status: r.status, provenance: r.provenance, model: r.model ?? null, checks: Array.isArray(r.checks) ? r.checks : [],
+        createdAt: r.created_at, createdBy: r.created_by ?? null, updatedAt: r.updated_at, editedBy: r.edited_by ?? null,
+        approvedAt: r.approved_at ?? null, approvedBy: r.approved_by ?? null, retiredAt: r.retired_at ?? null, retiredBy: r.retired_by ?? null,
+      };
+      const one = async (op, table, id, out) => {
+        if (!isUuid(id)) return null;
+        const { data, error } = await db.from(table).select('*').eq('id', id).maybeSingle();
+        if (error) fail(op)(error);
+        return out(data);
+      };
+      // 23514 from approve_topic_lesson / approve_item_translation: not a draft.
+      const notDraft = (what, error) => {
+        const now = / is (\w+)$/.exec(error?.message ?? '')?.[1];
+        return conflict(`Only a draft ${what} can be approved or discarded${now ? `; this one is ${now}` : ''}.`);
+      };
+      // A draft discarded with a plain update, where it is still a draft;
+      // null when there is no such row, 409 when it is no longer a draft.
+      const discard = async (op, table, id, by, out, what) => {
+        if (!isUuid(id)) return null;
+        const { data, error } = await db.from(table)
+          .update({ status: 'discarded', retired_at: new Date().toISOString(), retired_by: by ?? null })
+          .eq('id', id).eq('status', 'draft').select().maybeSingle();
+        if (error) fail(op)(error);
+        if (data) return out(data);
+        const now = await one(op, table, id, out);
+        if (!now) return null;
+        throw conflict(`Only a draft ${what} can be approved or discarded; this one is ${now.status}.`);
+      };
+      return {
+        // 23505 on topic_lessons_topic_version_key: another version took the number.
+        async createTopicLesson(doc) {
+          const { data, error } = await db.from('topic_lessons').insert({
+            topic_id: doc.topicId, content_id: doc.contentId, owner_id: doc.ownerId ?? null, version: doc.version,
+            source: doc.source, model: doc.model ?? null, steps: doc.steps, basis: doc.basis ?? {}, warnings: doc.warnings ?? [],
+            created_by: doc.createdBy ?? null,
+          }).select().single();
+          if (error?.code === '23505') throw conflict('Another version of this lesson was written at the same time. Nothing was changed; try again.');
+          if (error) fail('createTopicLesson')(error);
+          return outLesson(data);
+        },
+        async getTopicLesson(id) {
+          return one('getTopicLesson', 'topic_lessons', id, outLesson);
+        },
+        async listTopicLessons(filter = {}) {
+          if (filter.topicId !== undefined && !isUuid(filter.topicId)) return [];
+          if (filter.contentId !== undefined && !isUuid(filter.contentId)) return [];
+          return allRecords('listTopicLessons', 'topic_lessons', (q) => {
+            let r = q;
+            if (filter.topicId !== undefined) r = r.eq('topic_id', filter.topicId);
+            if (filter.contentId !== undefined) r = r.eq('content_id', filter.contentId);
+            return r;
+          }, ['topic_id', 'version'], outLesson);
+        },
+        // One statement (approve_topic_lesson, 0027): the topic is never left with none approved.
+        async approveTopicLesson(id, { by = null } = {}) {
+          if (!isUuid(id)) return null;
+          const { data, error } = await db.rpc('approve_topic_lesson', { p_lesson: id, p_by: by ?? null });
+          if (error?.code === '23514') throw notDraft('lesson', error);
+          if (error) fail('approveTopicLesson')(error);
+          return outLesson(Array.isArray(data) ? data[0] ?? null : data);
+        },
+        async discardTopicLesson(id, { by = null } = {}) {
+          return discard('discardTopicLesson', 'topic_lessons', id, by, outLesson, 'lesson');
+        },
+        async addItemTranslation(doc) {
+          const { data, error } = await db.from('item_translations').insert({
+            item_kind: doc.itemKind, item_id: doc.itemId, content_id: doc.contentId, owner_id: doc.ownerId ?? null,
+            language: doc.language, fields: doc.fields, source_fields: doc.sourceFields, source_hash: doc.sourceHash,
+            provenance: doc.provenance, model: doc.model ?? null, checks: doc.checks ?? [], created_by: doc.createdBy ?? null,
+          }).select().single();
+          if (error) fail('addItemTranslation')(error);
+          return outTranslation(data);
+        },
+        async getItemTranslation(id) {
+          return one('getItemTranslation', 'item_translations', id, outTranslation);
+        },
+        async listItemTranslations(filter = {}) {
+          const ids = Array.isArray(filter.itemIds) ? [...new Set(filter.itemIds.map(String).filter(isUuid))] : null;
+          if (ids && !ids.length) return [];
+          if (filter.contentId !== undefined && !isUuid(filter.contentId)) return [];
+          const statuses = filter.status === undefined ? null : [].concat(filter.status);
+          const read = (slice) => allRecords('listItemTranslations', 'item_translations', (q) => {
+            let r = q;
+            if (filter.contentId !== undefined) r = r.eq('content_id', filter.contentId);
+            if (filter.itemKind !== undefined) r = r.eq('item_kind', filter.itemKind);
+            if (slice) r = r.in('item_id', slice);
+            if (filter.language !== undefined) r = r.eq('language', filter.language);
+            if (statuses) r = r.in('status', statuses);
+            return r;
+          }, ['created_at', 'id'], outTranslation);
+          if (!ids) return read(null);
+          const out = [];
+          for (let i = 0; i < ids.length; i += 200) out.push(...await read(ids.slice(i, i + 200)));
+          return out;
+        },
+        // Where it is still a draft (0027's guard refuses any other).
+        async editItemTranslation(id, patch) {
+          if (!isUuid(id)) return null;
+          const set = pick(patch, {
+            fields: 'fields', sourceFields: 'source_fields', sourceHash: 'source_hash', checks: 'checks', provenance: 'provenance', editedBy: 'edited_by',
+          });
+          set.updated_at = new Date().toISOString();
+          const { data, error } = await db.from('item_translations').update(set).eq('id', id).eq('status', 'draft').select().maybeSingle();
+          if (error) fail('editItemTranslation')(error);
+          if (data) return outTranslation(data);
+          const now = await one('editItemTranslation', 'item_translations', id, outTranslation);
+          if (!now) return null;
+          throw conflict(`Only a draft translation can be changed; this one is ${now.status}.`);
+        },
+        // One statement (approve_item_translation, 0027).
+        async approveItemTranslation(id, { by = null } = {}) {
+          if (!isUuid(id)) return null;
+          const { data, error } = await db.rpc('approve_item_translation', { p_translation: id, p_by: by ?? null });
+          if (error?.code === '23514') throw notDraft('translation', error);
+          if (error) fail('approveItemTranslation')(error);
+          return outTranslation(Array.isArray(data) ? data[0] ?? null : data);
+        },
+        async discardItemTranslation(id, { by = null } = {}) {
+          return discard('discardItemTranslation', 'item_translations', id, by, outTranslation, 'translation');
+        },
+        async getLanguageChoice(accountId) {
+          if (!isUuid(accountId)) return null;
+          const { data, error } = await db.from('student_language_choices').select('language').eq('account_id', accountId).maybeSingle();
+          if (error) fail('getLanguageChoice')(error);
+          return data?.language ?? null;
+        },
+        async setLanguageChoice(accountId, language) {
+          const { data, error } = await db.from('student_language_choices')
+            .upsert({ account_id: accountId, language, updated_at: new Date().toISOString() }, { onConflict: 'account_id' })
+            .select().single();
+          if (error) fail('setLanguageChoice')(error);
+          return { accountId: data.account_id, language: data.language, updatedAt: data.updated_at };
+        },
+      };
+    })(),
+
+    // ---- Phase 6: Get Ready, self-tests and goals (0028; see memoryRepo for the contract) ----
+    ...(() => {
+      const outRun = (r) => r && {
+        _id: r.id,
+        accountId: r.account_id,
+        clientRunId: r.client_run_id,
+        kind: r.kind,
+        spec: r.spec ?? {},
+        timeLimitSeconds: r.time_limit_seconds == null ? null : Number(r.time_limit_seconds),
+        startedAt: r.started_at,
+        deadlineAt: r.deadline_at ?? null,
+        endedAt: r.ended_at ?? null,
+        endReason: r.end_reason ?? null,
+      };
+      const outGoal = (r) => r && {
+        _id: r.id,
+        accountId: r.account_id,
+        title: r.title ?? '',
+        examDate: r.exam_date,
+        topicIds: Array.isArray(r.topic_ids) ? r.topic_ids : [],
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      };
+      const one = async (op, table, id, out) => {
+        if (!isUuid(id)) return null;
+        const { data, error } = await db.from(table).select('*').eq('id', id).maybeSingle();
+        if (error) fail(op)(error);
+        return out(data);
+      };
+      return {
+        // 23505 on hub_runs_account_run_key: the stored run, never a second.
+        async addHubRun(doc) {
+          const { data, error } = await db.from('hub_runs').insert({
+            account_id: doc.accountId,
+            client_run_id: doc.clientRunId,
+            kind: doc.kind,
+            spec: doc.spec ?? {},
+            time_limit_seconds: doc.timeLimitSeconds ?? null,
+            started_at: doc.startedAt ?? new Date().toISOString(),
+            deadline_at: doc.deadlineAt ?? null,
+            ended_at: doc.endedAt ?? null,
+            end_reason: doc.endReason ?? null,
+          }).select().single();
+          if (!error) return { run: outRun(data), duplicate: false };
+          if (error.code === '23505') {
+            const held = await this.getHubRunByKey(doc.accountId, doc.clientRunId);
+            if (held) return { run: held, duplicate: true };
+          }
+          return fail('addHubRun')(error);
+        },
+        async getHubRun(id) {
+          return one('getHubRun', 'hub_runs', id, outRun);
+        },
+        async getHubRunByKey(accountId, clientRunId) {
+          if (!isUuid(accountId)) return null;
+          const { data, error } = await db.from('hub_runs').select('*')
+            .eq('account_id', accountId).eq('client_run_id', String(clientRunId)).maybeSingle();
+          if (error) fail('getHubRunByKey')(error);
+          return outRun(data);
+        },
+        async listHubRuns({ accountId, ids, kind } = {}) {
+          if (accountId && !isUuid(accountId)) return [];
+          const clean = Array.isArray(ids) ? [...new Set(ids.map(String).filter(isUuid))] : null;
+          if (clean && !clean.length) return [];
+          const read = (slice) => allRecords('listHubRuns', 'hub_runs', (q) => {
+            let r = q;
+            if (accountId) r = r.eq('account_id', accountId);
+            if (slice) r = r.in('id', slice);
+            if (kind) r = r.eq('kind', kind);
+            return r;
+          }, ['started_at', 'id'], outRun);
+          if (!clean) return read(null);
+          const out = [];
+          for (let i = 0; i < clean.length; i += 100) out.push(...await read(clean.slice(i, i + 100)));
+          return out.sort((a, b) => (Date.parse(a.startedAt) - Date.parse(b.startedAt)) || String(a._id).localeCompare(String(b._id)));
+        },
+        // Where it has no end yet (0028's guard refuses any other change), so a
+        // second end never overwrites the first; then the run as it stands.
+        async endHubRun(id, { endedAt, endReason }) {
+          if (!isUuid(id)) return null;
+          const { data, error } = await db.from('hub_runs').update({ ended_at: endedAt, end_reason: endReason })
+            .eq('id', id).is('ended_at', null).select().maybeSingle();
+          if (error) fail('endHubRun')(error);
+          return data ? outRun(data) : one('endHubRun', 'hub_runs', id, outRun);
+        },
+        async listHubGoals(accountId) {
+          if (!isUuid(accountId)) return [];
+          return allRecords('listHubGoals', 'hub_goals', (q) => q.eq('account_id', accountId), ['created_at', 'id'], outGoal);
+        },
+        async getHubGoal(id) {
+          return one('getHubGoal', 'hub_goals', id, outGoal);
+        },
+        async addHubGoal(doc) {
+          const { data, error } = await db.from('hub_goals').insert({
+            account_id: doc.accountId, title: doc.title ?? '', exam_date: doc.examDate, topic_ids: doc.topicIds,
+          }).select().single();
+          if (error) fail('addHubGoal')(error);
+          return outGoal(data);
+        },
+        async updateHubGoal(id, patch) {
+          if (!isUuid(id)) return null;
+          const set = pick(patch, { title: 'title', examDate: 'exam_date', topicIds: 'topic_ids' });
+          set.updated_at = new Date().toISOString();
+          const { data, error } = await db.from('hub_goals').update(set).eq('id', id).select().maybeSingle();
+          if (error) fail('updateHubGoal')(error);
+          return outGoal(data);
+        },
+        async deleteHubGoal(id) {
+          if (!isUuid(id)) return false;
+          const rows = unwrap('deleteHubGoal', await db.from('hub_goals').delete().eq('id', id).select('id'));
+          return (rows ?? []).length > 0;
+        },
+      };
+    })(),
+
+    // ---- Phase 6: the tutor's hints and feedback (0029; see memoryRepo for the contract) ----
+    ...(() => {
+      const approval = (r) => ({
+        provenance: r.provenance, status: r.status, model: r.model ?? null, sourceRef: r.source_ref ?? null,
+        createdBy: r.created_by ?? null, createdAt: r.created_at, updatedAt: r.updated_at,
+        approvedBy: r.approved_by ?? null, approvedAt: r.approved_at ?? null,
+      });
+      const outHint = (r) => r && { _id: r.id, questionId: r.question_id, step: Number(r.step), text: r.text, ...approval(r) };
+      const outFeedback = (r) => r && {
+        _id: r.id, questionId: r.question_id, option: r.option, optionKey: r.option_key, text: r.text, ...approval(r),
+      };
+      const outView = (r) => r && {
+        _id: r.id,
+        accountId: r.account_id,
+        clientAttemptId: r.client_attempt_id,
+        questionId: r.question_id ?? null,
+        topicId: r.topic_id ?? null,
+        contentId: r.content_id ?? null,
+        mode: r.mode,
+        position: Number(r.position),
+        kind: r.kind,
+        hintId: r.hint_id ?? null,
+        text: r.text,
+        provenance: r.provenance,
+        language: r.language ?? 'en',
+        translationId: r.translation_id ?? null,
+        sourceRef: r.source_ref ?? null,
+        plan: r.plan ?? {},
+        createdAt: r.created_at,
+      };
+      const APPROVAL_COLS = {
+        text: 'text', provenance: 'provenance', status: 'status', model: 'model', sourceRef: 'source_ref',
+        approvedBy: 'approved_by', approvedAt: 'approved_at',
+      };
+      const CHUNK = 100;
+      const ofQuestions = async (op, table, questionIds, out) => {
+        const ids = [...new Set(questionIds.map(String).filter(isUuid))];
+        const rows = [];
+        for (let i = 0; i < ids.length; i += CHUNK) {
+          rows.push(...(unwrap(op, await db.from(table).select('*').in('question_id', ids.slice(i, i + CHUNK))
+            .order('created_at', { ascending: true }).order('id', { ascending: true })) ?? []).map(out));
+        }
+        return rows;
+      };
+      const one = async (op, table, id, out) => {
+        if (!isUuid(id)) return null;
+        const { data, error } = await db.from(table).select('*').eq('id', id).maybeSingle();
+        if (error) fail(op)(error);
+        return out(data);
+      };
+      const insert = async (op, table, row, out, message) => {
+        const { data, error } = await db.from(table).insert(row).select().single();
+        if (error?.code === '23505') throw conflict(message);
+        if (error) fail(op)(error);
+        return out(data);
+      };
+      const edit = async (op, table, id, set, out) => {
+        if (!isUuid(id)) return null;
+        const { data, error } = await db.from(table).update({ ...set, updated_at: new Date().toISOString() }).eq('id', id).select().maybeSingle();
+        if (error) fail(op)(error);
+        return out(data);
+      };
+      const remove = async (op, table, id) => {
+        if (!isUuid(id)) return false;
+        return (unwrap(op, await db.from(table).delete().eq('id', id).select('id')) ?? []).length > 0;
+      };
+      const approvalRow = (doc) => ({
+        text: doc.text, provenance: doc.provenance, status: doc.status ?? 'draft', model: doc.model ?? null,
+        source_ref: doc.sourceRef ?? null, created_by: doc.createdBy ?? null,
+        approved_by: doc.approvedBy ?? null, approved_at: doc.approvedAt ?? null,
+      });
+      return {
+        async listQuestionHints(questionIds = []) {
+          return ofQuestions('listQuestionHints', 'question_hints', questionIds, outHint);
+        },
+        async getQuestionHint(id) {
+          return one('getQuestionHint', 'question_hints', id, outHint);
+        },
+        // 23505 on question_hints_question_step_key: the step is taken.
+        async addQuestionHint(doc) {
+          return insert('addQuestionHint', 'question_hints', { question_id: doc.questionId, step: doc.step, ...approvalRow(doc) }, outHint,
+            'That question already has a hint at this step.');
+        },
+        async updateQuestionHint(id, patch) {
+          return edit('updateQuestionHint', 'question_hints', id, pick(patch, APPROVAL_COLS), outHint);
+        },
+        async deleteQuestionHint(id) {
+          return remove('deleteQuestionHint', 'question_hints', id);
+        },
+        async listOptionFeedback(questionIds = []) {
+          return ofQuestions('listOptionFeedback', 'option_feedback', questionIds, outFeedback);
+        },
+        async getOptionFeedback(id) {
+          return one('getOptionFeedback', 'option_feedback', id, outFeedback);
+        },
+        // 23505 on option_feedback_question_option_key: the option has feedback.
+        async addOptionFeedback(doc) {
+          return insert('addOptionFeedback', 'option_feedback', {
+            question_id: doc.questionId, option: doc.option, option_key: doc.optionKey, ...approvalRow(doc),
+          }, outFeedback, 'That option already has feedback.');
+        },
+        async updateOptionFeedback(id, patch) {
+          return edit('updateOptionFeedback', 'option_feedback', id, pick(patch, { option: 'option', ...APPROVAL_COLS }), outFeedback);
+        },
+        async deleteOptionFeedback(id) {
+          return remove('deleteOptionFeedback', 'option_feedback', id);
+        },
+        // 23505 on hub_hint_views_attempt_position_key: the stored row, never a second.
+        async addHintView(doc) {
+          const { data, error } = await db.from('hub_hint_views').insert({
+            account_id: doc.accountId,
+            client_attempt_id: doc.clientAttemptId,
+            question_id: doc.questionId ?? null,
+            topic_id: doc.topicId ?? null,
+            content_id: doc.contentId ?? null,
+            mode: doc.mode,
+            position: doc.position,
+            kind: doc.kind,
+            hint_id: doc.hintId ?? null,
+            text: doc.text,
+            provenance: doc.provenance,
+            language: doc.language ?? 'en',
+            translation_id: doc.translationId ?? null,
+            source_ref: doc.sourceRef ?? null,
+            plan: doc.plan ?? {},
+          }).select().single();
+          if (!error) return { view: outView(data), duplicate: false };
+          if (error.code === '23505') {
+            const { data: held, error: again } = await db.from('hub_hint_views').select('*')
+              .eq('account_id', doc.accountId).eq('client_attempt_id', String(doc.clientAttemptId)).eq('position', doc.position).maybeSingle();
+            if (again) fail('addHintView')(again);
+            if (held) return { view: outView(held), duplicate: true };
+          }
+          return fail('addHintView')(error);
+        },
+        async listHintViews({ accountId, clientAttemptId, questionIds } = {}) {
+          if (accountId && !isUuid(accountId)) return [];
+          const ids = Array.isArray(questionIds) ? [...new Set(questionIds.map(String).filter(isUuid))] : null;
+          if (ids && !ids.length) return [];
+          const read = (slice) => allRecords('listHintViews', 'hub_hint_views', (q) => {
+            let r = q;
+            if (accountId) r = r.eq('account_id', accountId);
+            if (clientAttemptId) r = r.eq('client_attempt_id', String(clientAttemptId));
+            if (slice) r = r.in('question_id', slice);
+            return r;
+          }, ['created_at', 'position', 'id'], outView);
+          if (!ids) return read(null);
+          const out = [];
+          for (let i = 0; i < ids.length; i += CHUNK) out.push(...await read(ids.slice(i, i + CHUNK)));
+          return ids.length > CHUNK ? out.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)) : out;
+        },
+      };
+    })(),
   };
 }
 
@@ -1652,6 +2422,48 @@ export const ROUTE_SCHEMA = Object.freeze([
   ['attainment_configs', null, '0020_attainment_configs.sql', 'attainment reports and the marks register fail, and no formula can be saved'],
   ['attendance', 'roll_no', '0021_attendance_roll.sql',
     'every attendance mark fails to save: a phone joining a class room marks nobody present, and a professor\'s marks are refused'],
+  // Phase 6, the hub's content backbone (0025). Without the column a deck still
+  // uploads (the slide texts are written by a statement of their own, and a
+  // failure there is logged); without the tables only the hub's routes fail,
+  // and an upload or a topic edit still saves.
+  ['contents', 'slide_texts', '0025_hub_backbone.sql',
+    'a deck uploaded now keeps no per-slide text (its topics still cite their slides by number)'],
+  ['class_units', null, '0025_hub_backbone.sql', 'the learning hub\'s units cannot be read or saved'],
+  ['class_chapters', null, '0025_hub_backbone.sql', 'no chapter can be placed on a class\'s hub, and no student reaches one'],
+  ['chapter_topics', null, '0025_hub_backbone.sql', 'chapters have no topic records, so the hub shows no topics and no link can be made'],
+  ['topic_links', null, '0025_hub_backbone.sql', 'prerequisite links cannot be read, proposed or saved'],
+  // Phase 6, practice in the hub (0026). Without the attempts table no practice
+  // answer is saved, so the hub serves no practice question; without the
+  // explanations table a practice answer is still saved and marked, and only
+  // the explanation after it is missing. Rooms read neither.
+  ['hub_attempts', null, '0026_hub_practice.sql',
+    'no practice answer can be saved or read, so practice, mastery, the error log and reviews in the hub fail'],
+  ['question_explanations', null, '0026_hub_practice.sql',
+    'explanations cannot be written, generated or shown after a practice answer (the answer itself is still saved and marked)'],
+  // Phase 6, lessons and languages (0027). Without them only the hub's lesson
+  // and language routes fail; a student reads everything else in English, and
+  // no room, question or upload is touched.
+  ['topic_lessons', null, '0027_lessons_and_languages.sql', 'no lesson can be made, approved or read'],
+  ['item_translations', null, '0027_lessons_and_languages.sql',
+    'no Hindi or Marathi version can be made, approved or shown, so students read English'],
+  ['student_language_choices', null, '0027_lessons_and_languages.sql',
+    'a student\'s choice of language cannot be saved, so they read English'],
+  // Phase 6, Get Ready, self-tests and goals (0028). Without them only those
+  // hub routes fail: practice still saves its answers (an attempt is sent with
+  // a run only when it has one), and no room, question or upload is touched.
+  ['hub_runs', null, '0028_hub_paths_and_goals.sql',
+    'no Get Ready check or self-test can be started or read (the hub home shows the rest, without refresher paths)'],
+  ['hub_attempts', 'run_id', '0028_hub_paths_and_goals.sql',
+    'no Get Ready or self-test answer can be saved (practice answers still are)'],
+  ['hub_goals', null, '0028_hub_paths_and_goals.sql', 'a student\'s goals cannot be set or read (the hub home shows the rest without them)'],
+  // Phase 6, the tutor (0029). Without them practice and lessons offer no hints
+  // and no feedback on a wrong option; every answer is still saved and marked.
+  ['question_hints', null, '0029_hub_tutor.sql',
+    'no hint can be written, generated, approved or shown, so practice and lessons offer none (answers are still saved and marked)'],
+  ['option_feedback', null, '0029_hub_tutor.sql',
+    'no feedback on a wrong option can be written, generated, approved or shown (answers are still saved and marked)'],
+  ['hub_hint_views', null, '0029_hub_tutor.sql',
+    'a hint cannot be opened, because each one opened must be recorded with the answer'],
 ]);
 
 /** One missing piece, as a sentence naming the file to apply. */
