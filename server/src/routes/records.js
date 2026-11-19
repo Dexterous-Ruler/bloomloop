@@ -28,6 +28,13 @@
 // question asked aloud may be put up by the professor, never its hands
 // (services/projector.js). A room opened for a class works from its roster, so
 // every record here works with no phone joined.
+//
+// Phase 7 (an offline console): every write here may carry a replay key, which
+// routes/recordSync.js, mounted ahead of this router, honours; and a write that
+// replaces a mark (an observation, a pick's response, a tally or activity edit,
+// an insight action) may say what it was made from, `basedOn`, and is refused
+// with 409 if that has moved on (services/recordSync.js). Without either, as
+// before.
 
 import express from 'express';
 
@@ -72,6 +79,17 @@ import {
   tallyDefaultsFrom,
   tallyView,
 } from '../services/records.js';
+import {
+  basedOnFields,
+  basedOnTime,
+  changedSentence,
+  insightSentence,
+  insightStale,
+  movedFields,
+  observationSentence,
+  observationStale,
+  staleReply,
+} from '../services/recordSync.js';
 import {
   DEFAULT_SETTINGS,
   askFrom,
@@ -235,6 +253,7 @@ router.post('/:code/observations', requireTeacher, async (req, res, next) => {
     const kind = observationKindFrom(body.kind);
     const note = noteFrom(body.note);
     if (kind === null && note) throw fail('A cleared mark carries no note: send kind null without one.', 400);
+    const basedOn = basedOnTime(body.basedOn);
     const day = roomDay(session);
 
     const out = await withRecordsLock(session, async () => {
@@ -244,6 +263,8 @@ router.post('/:code/observations', requireTeacher, async (req, res, next) => {
       const before = currentObservation(events);
       const same = kind === null ? !before : Boolean(before) && before.kind === kind && (before.note ?? '') === note;
       if (same) return { subject, events, before, changed: false };
+      // Phase 7: made from another mark than the one in force now (basedOn).
+      if (observationStale(before, basedOn)) return { subject, events, before, stale: true };
       const made = await getRepo().addObservation({
         sessionId: String(session._id),
         classId: session.classId ?? null,
@@ -261,9 +282,19 @@ router.post('/:code/observations', requireTeacher, async (req, res, next) => {
     if (out.changed) await afterRecord(req, session);
     const rooms = await roomCodes(out.events, session);
     const current = currentObservation(out.events);
+    const student = { studentId: out.subject.classStudentId, rollNo: out.subject.rollNo, name: out.subject.name };
+    if (out.stale) {
+      // As a success reads (student, day, current, history), with the sentence.
+      const labelOf = (k) => OBSERVATION_KINDS.find((x) => x.id === k)?.label ?? k;
+      return res.status(409).json(staleReply(
+        observationSentence(out.subject.name, out.before, out.events.at(-1), labelOf),
+        current ? observationView(current, rooms) : null,
+        { student, day, history: out.events.map((e) => observationView(e, rooms)), privacy: STAFF_ONLY },
+      ));
+    }
     res.json({
       changed: out.changed,
-      student: { studentId: out.subject.classStudentId, rollNo: out.subject.rollNo, name: out.subject.name },
+      student,
       day,
       current: current ? observationView(current, rooms) : null,
       replaced: out.changed && out.before ? observationView(out.before, rooms) : null,
@@ -486,13 +517,25 @@ router.patch('/:code/wheel/picks/:pickId', requireTeacher, async (req, res, next
       throw fail('markAttendance must be true or false.', 400);
     }
     const status = body.status === undefined ? undefined : pickStatusFrom(body.status);
+    const basedOn = basedOnFields(body.basedOn, ['ask', 'questionId', 'status']);
     const repo = getRepo();
 
-    const { pick, attendance } = await withRecordsLock(session, async () => {
+    const { pick, attendance, stale } = await withRecordsLock(session, async () => {
       const current = (await repo.listWheelPicks(session._id)).find((p) => sameId(p._id, req.params.pickId));
       if (!current) throw fail('That pick was not found.', 404);
       const wantsQuestion = body.questionId !== undefined && body.questionId !== null;
       const patch = askFrom(body, { current, servable: wantsQuestion ? await servable(session) : [] });
+      // Phase 7: what this write sets, against the pick as the screen showed it
+      // (basedOn) and as it is now. Ids compared in any case, as sameId does.
+      const id = (v) => (v === undefined || v === null ? null : String(v).trim().toLowerCase());
+      const wanted = {};
+      if (body.ask !== undefined) wanted.ask = patch.ask;
+      if (body.questionId !== undefined) wanted.questionId = id(patch.questionId);
+      if (status !== undefined) wanted.status = status;
+      const seen = basedOn && { ...basedOn, ...('questionId' in basedOn ? { questionId: id(basedOn.questionId) } : {}) };
+      if (movedFields(seen, { ask: current.ask, questionId: id(current.questionId), status: current.status }, wanted).length) {
+        return { pick: current, attendance: null, stale: true };
+      }
       if (status !== undefined && status !== current.status) {
         Object.assign(patch, { status, statusAt: laterThan(current.statusAt), statusBy: viewerId(req) });
       }
@@ -503,6 +546,12 @@ router.patch('/:code/wheel/picks/:pickId', requireTeacher, async (req, res, next
         : null;
       return { pick: updated, attendance: marked };
     });
+
+    if (stale) {
+      const view = (await wheelBody(session)).picks.find((p) => p.id === String(pick._id)) ?? null;
+      // No time: a pick keeps one for its response only, not for what was asked.
+      return res.status(409).json(staleReply(changedSentence('This pick', null, view?.statusLabel), view, { privacy: STAFF_ONLY }));
+    }
 
     // The present count on every teacher screen watching the room, and a Mixed
     // or Teacher-led room's feed.
@@ -583,26 +632,48 @@ router.post('/:code/tallies', requireTeacher, async (req, res, next) => {
   }
 });
 
+/** A tally edit's fields off a body, checked; also what the screen showed (basedOn), in the same form. */
+function tallyFields(body) {
+  const patch = {};
+  if (body.text !== undefined) patch.text = questionTextFrom(body.text, { required: true });
+  if (body.labels !== undefined) patch.labels = labelsFrom(body.labels);
+  if (body.counts !== undefined) patch.counts = countsFrom(body.counts);
+  if (body.correct !== undefined) patch.correct = correctFrom(body.correct);
+  if (body.revealed !== undefined) {
+    if (typeof body.revealed !== 'boolean') throw fail('revealed must be true or false.', 400);
+    patch.revealed = body.revealed;
+  }
+  return patch;
+}
+
 /** Edit a tally: { text?, labels?, counts?, revealed?, correct? }. Counts are whole numbers of 0 or more. */
 router.patch('/:code/tallies/:tallyId', requireTeacher, async (req, res, next) => {
   try {
     const session = await writeRoom(req.params.code, req.viewer);
     const body = req.body ?? {};
-    const patch = {};
-    if (body.text !== undefined) patch.text = questionTextFrom(body.text, { required: true });
-    if (body.labels !== undefined) patch.labels = labelsFrom(body.labels);
-    if (body.counts !== undefined) patch.counts = countsFrom(body.counts);
-    if (body.correct !== undefined) patch.correct = correctFrom(body.correct);
-    if (body.revealed !== undefined) {
-      if (typeof body.revealed !== 'boolean') throw fail('revealed must be true or false.', 400);
-      patch.revealed = body.revealed;
-    }
+    const patch = tallyFields(body);
     if (!Object.keys(patch).length) throw fail('Send text, labels, counts, revealed or correct to change.', 400);
+    const basedOn = basedOnFields(body.basedOn, ['text', 'labels', 'counts', 'revealed', 'correct']);
+    const shown = basedOn && tallyFields(basedOn);
     const repo = getRepo();
-    const updated = await withRecordsLock(session, async () => {
+    const { updated, stale } = await withRecordsLock(session, async () => {
       const t = await roomTally(session, req.params.tallyId);
-      return (await repo.updateTally(t._id, { ...patch, updatedAt: laterThan(t.updatedAt) })) ?? t;
+      // Phase 7: a field this edit sets that changed since the screen showed it (basedOn).
+      const now = {
+        text: t.text,
+        labels: t.labels ?? ['', '', '', ''],
+        counts: (Array.isArray(t.counts) ? t.counts : [0, 0, 0, 0]).map(Number),
+        revealed: t.revealed === true,
+        correct: Number.isInteger(t.correct) ? t.correct : null,
+      };
+      if (movedFields(shown, now, patch).length) return { updated: t, stale: true };
+      return { updated: (await repo.updateTally(t._id, { ...patch, updatedAt: laterThan(t.updatedAt) })) ?? t };
     });
+    if (stale) {
+      const { people } = await roomContext(session);
+      return res.status(409).json(staleReply(changedSentence('This question\'s tally', updated.updatedAt),
+        tallyView(updated, presentCount(people)), { privacy: STAFF_ONLY }));
+    }
     // Its text or options may be on the projector.
     await pushProjector(req.app.get('io'), repo, session);
     const { people } = await roomContext(session);
@@ -721,16 +792,31 @@ router.patch('/:code/activities/:activityId', requireTeacher, async (req, res, n
     if (body.outcome === undefined && body.groups === undefined && body.tallyId === undefined) {
       throw fail('Send outcome, groups or tallyId to change.', 400);
     }
+    // Phase 7: the activity as the screen showed it, in the form it is stored in.
+    const id = (v) => (v === undefined || v === null ? null : String(v).trim().toLowerCase());
+    const basedOn = basedOnFields(body.basedOn, ['outcome', 'groups', 'tallyId']);
+    const shown = basedOn && {
+      ...('outcome' in basedOn ? { outcome: noteFrom(basedOn.outcome, 'outcome') } : {}),
+      ...('groups' in basedOn ? { groups: groupsFrom(basedOn.groups) } : {}),
+      ...('tallyId' in basedOn ? { tallyId: id(basedOn.tallyId) } : {}),
+    };
     const repo = getRepo();
-    const updated = await withRecordsLock(session, async () => {
+    const { updated, stale } = await withRecordsLock(session, async () => {
       const a = (await repo.listActivities(session._id)).find((x) => sameId(x._id, req.params.activityId));
       if (!a) throw fail('That activity was not found.', 404);
       const patch = {};
       if (body.outcome !== undefined) patch.outcome = noteFrom(body.outcome, 'outcome');
       if (body.groups !== undefined) patch.groups = activityGroups(a.kind, body.groups);
       if (body.tallyId !== undefined) patch.tallyId = await activityTally(session, a.kind, body.tallyId);
-      return (await repo.updateActivity(a._id, { ...patch, updatedAt: laterThan(a.updatedAt) })) ?? a;
+      const now = { outcome: a.outcome ?? '', groups: Array.isArray(a.groups) ? a.groups : [], tallyId: id(a.tallyId) };
+      if (movedFields(shown, now, { ...patch, ...('tallyId' in patch ? { tallyId: id(patch.tallyId) } : {}) }).length) {
+        return { updated: a, stale: true };
+      }
+      return { updated: (await repo.updateActivity(a._id, { ...patch, updatedAt: laterThan(a.updatedAt) })) ?? a };
     });
+    if (stale) {
+      return res.status(409).json(staleReply(changedSentence('This activity', updated.updatedAt), activityView(updated), { privacy: STAFF_ONLY }));
+    }
     res.json({ activity: activityView(updated), privacy: STAFF_ONLY });
   } catch (err) {
     next(err);
@@ -761,18 +847,29 @@ router.post('/:code/insights/actions', requireTeacher, async (req, res, next) =>
     const flagId = flagIdFrom(req.body?.flagId);
     const action = insightActionFrom(req.body?.action);
     const note = noteFrom(req.body?.note);
+    const basedOn = basedOnTime(req.body?.basedOn);
     const repo = getRepo();
-    const made = await withRecordsLock(session, async () => {
-      const last = (await repo.listInsightActions(session._id)).at(-1);
-      return repo.addInsightAction({
-        sessionId: String(session._id),
-        flagId,
-        action,
-        note,
-        actedBy: viewerId(req),
-        actedAt: laterThan(last?.actedAt),
-      });
+    const { made, stale } = await withRecordsLock(session, async () => {
+      const actions = await repo.listInsightActions(session._id);
+      const last = actions.at(-1);
+      // Phase 7: another action on this card since the screen showed its last
+      // one (basedOn), and not this same action: the latest action is in force.
+      const onCard = actions.filter((a) => a.flagId === flagId).at(-1);
+      if (insightStale(onCard, basedOn, action)) return { made: onCard, stale: true };
+      return {
+        made: await repo.addInsightAction({
+          sessionId: String(session._id),
+          flagId,
+          action,
+          note,
+          actedBy: viewerId(req),
+          actedAt: laterThan(last?.actedAt),
+        }),
+      };
     });
+    if (stale) {
+      return res.status(409).json(staleReply(insightSentence(made), insightActionView(made), { privacy: STAFF_ONLY }));
+    }
     // A dismissal hides the card on every teacher screen watching the room, at
     // the next insights push (services/insights.js); never sent anywhere else.
     scheduleInsights(req.app.get('io'), repo, session);

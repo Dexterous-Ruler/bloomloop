@@ -63,6 +63,8 @@ import {
   signalsOff,
 } from '../services/roster.js';
 import { RECORDS_LOCK } from '../services/records.js';
+import { newerMarks, newerMarksSentence, staleReply } from '../services/recordSync.js';
+import { importedRooms } from '../services/roomImport.js';
 import { forgetInsights } from '../services/insights.js';
 import { CLASS_LOCK } from '../services/classQuestions.js';
 
@@ -179,8 +181,12 @@ function randomCode() {
   return out;
 }
 
-/** Keep drawing codes until one is free. 31^6 codes, so this almost never loops. */
-async function allocateCode(repo) {
+/**
+ * Keep drawing codes until one is free. 31^6 codes, so this almost never loops.
+ * Also draws the code of a room imported from laptop mode whose own code is
+ * taken here (routes/laptop.js, Phase 7).
+ */
+export async function allocateCode(repo) {
   for (let attempt = 0; attempt < CODE_ATTEMPTS; attempt += 1) {
     const code = randomCode();
     if (!(await repo.getSessionByCode(code))) return code;
@@ -555,20 +561,38 @@ router.get('/:code/grid', requireTeacher, async (req, res, next) => {
     // An HOD may read any session in their department; a professor only theirs.
     const session = await teacherRoom(req.params.code, req.viewer);
     const { rows, attendance, waiting, feed } = await gridFor(session);
+    const importedFrom = (await importedRooms(getRepo(), [session])).get(String(session._id));
     // `attendance` only for a room opened for a class, `waiting` only while a
-    // room waits to start, `feed` only in a Mixed or Teacher-led room: every
-    // other room's grid is exactly what it was.
+    // room waits to start, `feed` only in a Mixed or Teacher-led room,
+    // `importedFrom` only for a room imported from a file laptop mode saved
+    // (Phase 7: never presented as a room this server ran): every other room's
+    // grid is exactly what it was.
     res.json({
       rows,
       levels: LEVELS,
       ...(attendance ? { attendance } : {}),
       ...(waiting ? { waiting } : {}),
       ...(feed ? { feed } : {}),
+      ...(importedFrom ? { importedFrom } : {}),
     });
   } catch (err) {
     next(err);
   }
 });
+
+/**
+ * The room as the evidence and attendance routes head their reply. `importedFrom`
+ * only for a room imported from a file laptop mode saved (Phase 7), with the
+ * sentence that says the file was checked for its shape, not that it is
+ * unchanged: no screen then shows such a room as one this server ran.
+ */
+async function roomHead(session) {
+  const importedFrom = (await importedRooms(getRepo(), [session])).get(String(session._id));
+  return {
+    code: session.code, title: session.title ?? '', startedAt: session.startedAt ?? null, status: session.status,
+    ...(importedFrom ? { importedFrom } : {}),
+  };
+}
 
 /**
  * A room this viewer may read, by code. "No such code" and "not a room you may
@@ -611,7 +635,7 @@ router.get('/:code/answers', requireTeacher, async (req, res, next) => {
     const names = new Map((await repo.listProfiles(session._id)).map((p) => [String(p.rollNo), p.name ?? '']));
 
     res.json({
-      room: { code: session.code, title: session.title ?? '', startedAt: session.startedAt ?? null, status: session.status },
+      room: await roomHead(session),
       rollNo: rollNo || null,
       items: rows.slice(0, limit).map((a) => answerItem(a, session, { name: names.get(String(a.rollNo)) ?? '' })),
       limit,
@@ -633,7 +657,7 @@ router.get('/:code/topics', requireTeacher, async (req, res, next) => {
   try {
     const session = await readableRoom(req.params.code, req.viewer);
     res.json({
-      room: { code: session.code, title: session.title ?? '', startedAt: session.startedAt ?? null, status: session.status },
+      room: await roomHead(session),
       ...(await roomTopics(getRepo(), session)),
     });
   } catch (err) {
@@ -653,7 +677,7 @@ router.get('/:code/items', requireTeacher, async (req, res, next) => {
   try {
     const session = await readableRoom(req.params.code, req.viewer);
     res.json({
-      room: { code: session.code, title: session.title ?? '', startedAt: session.startedAt ?? null, status: session.status },
+      room: await roomHead(session),
       questionIds: session.questionIds ?? null,
       ...(await roomItemStats(getRepo(), session)),
     });
@@ -681,7 +705,7 @@ async function attendanceBody(session, cls) {
     repo.listProfiles(session._id),
   ]);
   return {
-    room: { code: session.code, title: session.title ?? '', startedAt: session.startedAt ?? null, status: session.status },
+    room: await roomHead(session),
     class: { id: String(cls._id), courseName: cls.courseName, section: cls.section, termLabel: cls.termLabel ?? '' },
     ...attendanceReport({ roster, marks, profiles }),
   };
@@ -718,6 +742,11 @@ router.get('/:code/attendance', requireTeacher, async (req, res, next) => {
  * fromJoins is a 409 in a Teacher-led room: no phone joins one, so it would
  * mark every student not yet marked absent.
  *
+ * Phase 7: a mark may carry `basedOn`, the markedAt the screen showed for that
+ * student (null for unmarked). If a professor's mark with another status was
+ * made since, nothing is changed: 409, naming the newer marks, with the
+ * register as it stands (services/recordSync.js). Without it, as before.
+ *
  * Write rule: the room's owner (404 for anyone who may not read it, 403 for an
  * HOD who may). Allowed on a closed room: attendance is often corrected after
  * the class. Refused (409) while the room is being deleted, since a mark landing
@@ -738,6 +767,7 @@ router.post('/:code/attendance', requireTeacher, async (req, res, next) => {
     const release = await lockProfile(session._id, ATTENDANCE_LOCK);
     let changed = 0;
     let kept = 0;
+    let stale = null;
     try {
       if (roomDeleting(session._id)) throw fail('That room is being deleted. Nothing was changed.', 409);
       const [roster, marks, profiles] = await Promise.all([
@@ -750,6 +780,13 @@ router.post('/:code/attendance', requireTeacher, async (req, res, next) => {
         ({ marks: wanted, kept } = marksFromJoins({ roster, marks, profiles }));
       } else {
         wanted = marksFrom(req.body?.marks, roster);
+        // Phase 7: a mark sent with what the screen showed (basedOn) is not
+        // written over a professor's mark made since. All or nothing, as above.
+        const newer = newerMarks(req.body?.marks, wanted, marks);
+        if (newer.length) {
+          stale = { error: newerMarksSentence(newer, roster), newer };
+          wanted = [];
+        }
       }
       const markedAt = new Date().toISOString();
       const rollOf = markRollNo(marks, roster);
@@ -767,6 +804,13 @@ router.post('/:code/attendance', requireTeacher, async (req, res, next) => {
       changed = wanted.length;
     } finally {
       release();
+    }
+
+    if (stale) {
+      const newer = stale.newer.map((m) => ({
+        studentId: String(m.classStudentId), status: m.status, markedAt: m.markedAt ?? null, markedBy: m.markedBy ?? null,
+      }));
+      return res.status(409).json(staleReply(stale.error, await attendanceBody(session, cls), { newer }));
     }
 
     // The present count on every teacher screen watching the room.
@@ -790,6 +834,8 @@ router.get('/', requireTeacher, async (req, res, next) => {
   try {
     const repo = getRepo();
     const rooms = await readable(req.viewer, await repo.listSessions());
+    // Rooms imported from a file laptop mode saved (Phase 7), in one read.
+    const imported = await importedRooms(repo, rooms);
 
     const rows = await Promise.all(
       rooms.map(async (session) => {
@@ -835,6 +881,9 @@ router.get('/', requireTeacher, async (req, res, next) => {
           // An HOD sees the whole department's rooms but may not act on them,
           // so the buttons are driven by the same rule the routes enforce.
           canControl: await canWrite(req.viewer, session.ownerId ?? null),
+          // Only for a room imported from a file laptop mode saved: where it came
+          // from, and that the file was checked for its shape only.
+          ...(imported.has(String(session._id)) ? { importedFrom: imported.get(String(session._id)) } : {}),
         };
       }),
     );

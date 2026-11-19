@@ -44,12 +44,15 @@ Full detail: `docs/DATABASE_SCHEMA.md`.
 | `0027_lessons_and_languages.sql` | Topic lessons, Hindi and Marathi versions, a student's language | Warns: no lesson or translation can be made, approved or shown; students read English |
 | `0028_hub_paths_and_goals.sql` | Get Ready checks and self-tests (`hub_runs`, `hub_attempts.run_id`), goals | Warns: no Get Ready check, self-test or goal works; practice still saves |
 | `0029_hub_tutor.sql` | Hints, feedback on wrong options, the hints a student opened; no hints in a self-test or Get Ready | Warns: no hint or feedback is offered; answers are still saved and marked |
+| `0030_offline_packs.sql` | `question_packs` (Phase 7); `answers.device_answered_at`; `profiles.served_log` | Stops |
+| `0031_room_imports.sql` | Rooms imported from laptop mode: where each came from (Phase 7) | Warns: importing a laptop's room file fails |
+| `0032_record_write_keys.sql` | Replay keys of teacher-record writes from an offline console (Phase 7) | Warns: a record write sent with a replay key fails; one without a key works |
 
-The next new file takes `0030`.
+The next new file takes `0033`.
 
 ## Applying
 
-Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0029`).
+Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0032`).
 
 `0013` must be in place before the Phase 2 server is deployed: every generated
 question is saved with columns it adds, and the server's boot probe falls back to
@@ -130,6 +133,47 @@ point at tables earlier ones make (`0026`, `0027` and `0029` at `0025`'s
 VALID, so attempts already stored are not checked. None has run anywhere but PGlite
 (`npm run migrations`, 1226 of 1226 on 19 November 2026); nothing was run against the
 hosted project.
+
+**`0030` (Phase 7: question packs and the phone's own answer time) must be applied
+before the server that writes it is deployed.** It adds the `question_packs` table (the
+few questions a phone is sent for use while its connection is down, ids only, no key;
+written once, gone with its room) and one nullable column, `answers.device_answered_at`
+(when the phone says an answer that waited on it was given, kept for the record and
+never read for order or counting). The server writes the column with every answer and
+the table with every pack, and reads the table for an answer that is not to the
+question on the phone's screen, so the boot probe treats both as pieces rooms need:
+without `0030` the server does not use Supabase at all and its boot log names `0030` to
+apply. `0030` rewrites no row and backfills nothing; every existing answer reads as one
+whose phone sent no time. It also adds `profiles.served_log` (added by the review fixes
+of 19 Nov 2026): every question the server put on a phone's screen, the first time each,
+so an answer that waited on the phone past the room's close is still known for one the
+phone was given after the pin moved on. It is written with every profile, so it is in
+the boot probe too; a constant default (`'[]'`), so no profile row is rewritten. Run only
+on PGlite.
+
+`0031` (Phase 7: rooms imported from laptop mode) adds one table, `room_imports`: one
+row per room file a professor imports after running a class on their laptop with no
+internet (`docs/TRAVEL_ROUTER.md`). It records the laptop's room id (unique, so the
+same room imported twice changes nothing), the room it became, who imported it and
+when, and the file as uploaded. The room itself is written to the existing tables like
+any room. A row is written once: the database refuses every edit except the room or
+account it names being set to null when that room or account is deleted. Only the
+import writes it, so the boot probe warns rather than stops: without `0031` every room
+runs, and importing a laptop's room file fails, naming `0031`. The live loop also reads
+it when a phone asks to send saved answers to a closed room, since a room imported from
+a laptop takes none; without `0031` there is no import to find, and that works as
+before. `0031` changes no existing row. Run only on PGlite.
+
+`0032` (Phase 7: replay keys for the teacher-record writes) adds one table,
+`record_writes`. When the network drops, the professor's console keeps each record she
+makes (an attendance mark, an observation, a pick's response, a hand count, an activity,
+what was done about an insight) and sends it again when it reconnects, with a key of its
+own. The server keeps the reply of the first write made with each key, so a write sent
+twice is done once: a hand is never counted twice. A row is written once and goes with
+its room; it is not part of the room's archive. Only a write that carries a key reads or
+writes it, so the boot probe warns rather than stops: without `0032` a write sent with a
+key fails, naming `0032`, and every write sent without one works as before. `0032`
+changes no existing row. Run only on PGlite.
 
 `0011` creates its index only if no two accounts in one department hold the same
 roll number once trimmed, single-spaced and upper-cased. If some do, it raises a

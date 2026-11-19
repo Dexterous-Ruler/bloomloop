@@ -78,6 +78,7 @@ import { LEVEL_BANDS } from './classAnalytics.js';
 import {
   VIA, chapterMap, inOrder, linkViews, outcomeIndex, overrideQuestions, readOutcomeMap, resolveAnswer, topicKey,
 } from './outcomes.js';
+import { ANSWERED_AGAIN_DETAIL, OVER_CAP_DETAIL, keptNotCounted } from './offline.js';
 import { DEFAULT_PRESET, PRESETS, presetById } from './attainmentPresets.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
@@ -507,7 +508,7 @@ function levelsSentence(config) {
  * `rooms` are all the class's rooms the caller may read, which name the room
  * weights by code; `counted`, the rooms a report counts, when it is a report.
  */
-export function methodologyText(formula, { rooms = [], counted: inReport = null } = {}) {
+export function methodologyText(formula, { rooms = [], counted: inReport = null, window = {} } = {}) {
   const c = formula.config;
   const counted = PHRASE_ORDER.filter((t) => c.evidence[t]);
   const left = PHRASE_ORDER.filter((t) => !c.evidence[t]);
@@ -542,13 +543,14 @@ export function methodologyText(formula, { rooms = [], counted: inReport = null 
     CLASS_SENTENCE,
     ROOMS_SENTENCE,
     'Rooms deleted from the live views are not counted; their evidence is kept in room archives.',
+    ...[importedRoomsSentence(inReport ?? [], window)].filter(Boolean),
     'This is direct attainment from class evidence only. A college\'s final attainment may combine it with examinations or '
       + 'surveys by its own formula; this report does not.',
   ].join(' ');
 }
 
 /** The register's own paragraph: no thresholds, outcomes or room weights apply there. */
-export function registerMethodologyText(formula) {
+export function registerMethodologyText(formula, { counted: inReport = [], window = {} } = {}) {
   const c = formula.config;
   const counted = PHRASE_ORDER.filter((t) => c.evidence[t]);
   const left = PHRASE_ORDER.filter((t) => !c.evidence[t]);
@@ -567,6 +569,7 @@ export function registerMethodologyText(formula) {
       + 'present.',
     ROLLS_SENTENCE,
     ROOMS_SENTENCE,
+    ...[importedRoomsSentence(inReport, window)].filter(Boolean),
     'Course outcomes, thresholds and room weights do not apply here; the attainment report applies them. Teacher records '
       + 'are not marks and are not in this register.',
   ].join(' ');
@@ -725,6 +728,13 @@ const later = (a, b) => String(a.answeredAt ?? '').localeCompare(String(b.answer
  * bank once asked, so their own answer always came first. Their own answer is
  * the one that counts, under either rule.
  *
+ * An answer the live loop kept and did not count (Phase 7: one that reached the
+ * server after its room closed, not served to that phone before the close or
+ * past the grace window, one past the room's cap on questions per student, or
+ * a second answer to a question already marked; keptNotCounted in
+ * services/offline.js) is set aside under either rule: it is
+ * kept as a record, never as evidence.
+ *
  * @returns {{ chosen: object[], chosenIds: Set<string>, setAside: number, knewKey: Set<string> }}
  */
 export function chooseAnswers(answers = [], config, { perRoom = false } = {}) {
@@ -742,6 +752,7 @@ export function chooseAnswers(answers = [], config, { perRoom = false } = {}) {
     const roll = String(a.rollNo);
     const room = String(a.sessionId);
     if (a.classQuestionId && a.final === false) continue;
+    if (keptNotCounted(a)) continue;
     if (evidenceTypeOf(a) === 'revote') {
       const k = `${room}\u0000${roll}\u0000${questionKeyOf(a)}`;
       if (!revotes.has(k) || later(a, revotes.get(k)) > 0) revotes.set(k, a);
@@ -1074,8 +1085,30 @@ const roomView = (r, config) => {
   return {
     roomId: String(r._id), code: r.code, title: r.title ?? '', day: roomDay(r), startedAt: r.startedAt ?? null,
     status: r.status, weight: w ? w.weight : 1,
+    // A room imported from a file laptop mode saved (Phase 7): said on the
+    // room, so no report presents it as one this server ran.
+    ...(r.importedFrom ? { importedFrom: r.importedFrom } : {}),
   };
 };
+
+/**
+ * What a report says about rooms imported from files laptop mode saved
+ * (Phase 7), or null when it counts none and left none out. The file was
+ * checked for its shape, not for being unchanged since the laptop saved it, so
+ * the report says so wherever it is read or printed (its methodology), and
+ * names the rooms. `window.imported` 'leave-out' is the report asked to leave
+ * them out.
+ */
+export function importedRoomsSentence(counted = [], window = {}) {
+  if (window.imported === 'leave-out') {
+    return 'Rooms imported from files saved by laptop mode are left out of this report.';
+  }
+  const codes = counted.filter((r) => r.importedFrom).map((r) => r.code);
+  if (!codes.length) return null;
+  return `${codes.length === 1 ? `One room counted here (${codes[0]}) was` : `${codes.length} rooms counted here (${listed(codes)}) were`} `
+    + 'imported from a file saved by laptop mode. BloomLoop checked that each such file is a room it can read, not that it '
+    + 'is unchanged since the laptop saved it; a report can leave these rooms out.';
+}
 
 /* ------------------------------------------------------ teacher records -- */
 
@@ -1251,10 +1284,10 @@ export function classAttainment({
 
   return {
     class: classSummary(cls),
-    window: { from: window.from ?? null, to: window.to ?? null, rooms: window.rooms ?? null },
+    window: { from: window.from ?? null, to: window.to ?? null, rooms: window.rooms ?? null, ...(window.imported ? { imported: window.imported } : {}) },
     rooms: rooms.map((r) => roomView(r, config)),
     formula: formulaView(formula, classRooms, { counted: rooms }),
-    methodology: methodologyText(formula, { rooms: classRooms, counted: rooms }),
+    methodology: methodologyText(formula, { rooms: classRooms, counted: rooms, window }),
     evidenceTypes: EVIDENCE_TYPES,
     states: STATES,
     answers: t.totals,
@@ -1279,6 +1312,15 @@ function answerNote(a, { chosen, type, config, res, known, knewKey = new Set() }
     }
     if (a.classQuestionId && a.final === false) {
       return 'Not counted: a class question vote that was changed afterwards, or that came after its round closed.';
+    }
+    if (keptNotCounted(a)) {
+      if (a.detail === ANSWERED_AGAIN_DETAIL) {
+        return 'Not counted: the student had already been marked on this question when this answer arrived.';
+      }
+      return a.detail === OVER_CAP_DETAIL
+        ? 'Not counted: it arrived after the student had answered as many questions as the room asks each student.'
+        : 'Not counted: it reached the server after the room closed, and either the question had not been given to '
+          + 'this student before the close or it came after the time allowed for answers saved on a phone.';
     }
     if (a.final === false && config.attempts === 'final') return 'Not counted: an attempt followed by a retry.';
     if (a.final === false && isWritten(a)) {
@@ -1342,10 +1384,10 @@ export function studentAttainment({
   return {
     class: classSummary(cls),
     student: { ...studentView(student), status, statusLabel: statusLabel(status) },
-    window: { from: window.from ?? null, to: window.to ?? null, rooms: window.rooms ?? null },
+    window: { from: window.from ?? null, to: window.to ?? null, rooms: window.rooms ?? null, ...(window.imported ? { imported: window.imported } : {}) },
     rooms: rooms.map((r) => roomView(r, config)),
     formula: formulaView(formula, classRooms, { counted: rooms }),
-    methodology: methodologyText(formula, { rooms: classRooms, counted: rooms }),
+    methodology: methodologyText(formula, { rooms: classRooms, counted: rooms, window }),
     evidenceTypes: EVIDENCE_TYPES,
     questionSources: QUESTION_SOURCES,
     states: STATES,
@@ -1457,10 +1499,10 @@ export function marksRegister({
 
   return {
     class: classSummary(cls),
-    window: { from: window.from ?? null, to: window.to ?? null, rooms: window.rooms ?? null },
+    window: { from: window.from ?? null, to: window.to ?? null, rooms: window.rooms ?? null, ...(window.imported ? { imported: window.imported } : {}) },
     rooms: rooms.map((r) => roomView(r, config)),
     formula: formulaView(formula, classRooms, { counted: rooms }),
-    methodology: registerMethodologyText(formula),
+    methodology: registerMethodologyText(formula, { counted: rooms, window }),
     evidenceTypes: EVIDENCE_TYPES,
     answers: { rows: answers.length, setAside, chosen: chosen.length },
     students: rows,
@@ -1501,11 +1543,19 @@ function dayFrom(raw, field) {
  * caller may read: opened on or after `from` and on or before `to` (the room's
  * day in India's time, roomDay), and only the codes in `rooms` when it is sent.
  * Oldest first. A code that is not one of the class's rooms is a 400.
+ *
+ * `imported=leave-out` (Phase 7) leaves out every room imported from a file
+ * laptop mode saved (a room carrying `importedFrom`): such a file is checked
+ * for its shape, not for being unchanged, so a report may be wanted without
+ * them. `imported=count`, or nothing, counts them like any room, and the
+ * report names them (importedRoomsSentence).
  */
 export function roomsWindow(query = {}, rooms = []) {
   const from = dayFrom(query.from, 'from');
   const to = dayFrom(query.to, 'to');
   if (from && to && from > to) throw fail('from must not be after to.', 400);
+  const imported = query.imported === undefined || query.imported === '' ? 'count' : String(query.imported);
+  if (imported !== 'count' && imported !== 'leave-out') throw fail('imported must be count or leave-out.', 400);
   let codes = null;
   if (query.rooms !== undefined && query.rooms !== '') {
     const raw = Array.isArray(query.rooms) ? query.rooms.join(',') : String(query.rooms);
@@ -1521,9 +1571,10 @@ export function roomsWindow(query = {}, rooms = []) {
   }
   const wanted = codes ? new Set(codes) : null;
   const chosen = rooms
-    .filter((r) => (!wanted || wanted.has(String(r.code).toUpperCase())) && (!from || roomDay(r) >= from) && (!to || roomDay(r) <= to))
+    .filter((r) => (!wanted || wanted.has(String(r.code).toUpperCase())) && (!from || roomDay(r) >= from) && (!to || roomDay(r) <= to)
+      && !(imported === 'leave-out' && r.importedFrom))
     .sort((a, b) => String(a.startedAt ?? '').localeCompare(String(b.startedAt ?? '')) || String(a.code).localeCompare(String(b.code)));
-  return { rooms: chosen, window: { from, to, rooms: codes } };
+  return { rooms: chosen, window: { from, to, rooms: codes, ...(imported === 'leave-out' ? { imported } : {}) } };
 }
 
 const uniqueIds = (ids) => [...new Map(ids.filter(Boolean).map((id) => [idKey(id), String(id)])).values()];

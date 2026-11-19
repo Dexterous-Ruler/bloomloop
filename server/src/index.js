@@ -7,6 +7,10 @@ import { config, hasGemini, hasClassroom } from './config.js';
 import { initStore, getRepo } from './repo/index.js';
 import { createApp } from './app.js';
 import { attachSockets } from './sockets/index.js';
+import {
+  enterLaptopMode, laptopBanner, laptopRequested, laptopSocketOptions, watchAddresses,
+} from './laptop.js';
+import { createArchiveWriter } from './services/laptopArchive.js';
 
 function lanAddresses() {
   const out = [];
@@ -19,18 +23,33 @@ function lanAddresses() {
 }
 
 async function main() {
+  // Phase 7: laptop mode (`--laptop`, laptop.js) switches every network service
+  // off before the store is chosen, so the laptop never waits on one it cannot
+  // reach. Every other start is as before.
+  const laptop = laptopRequested() ? enterLaptopMode() : null;
+
   fs.mkdirSync(config.uploadsDir, { recursive: true });
 
   await initStore();
 
   const app = createApp();
   const server = http.createServer(app);
-  const io = new Server(server, { cors: { origin: '*' }, pingTimeout: 20000 });
+  const io = new Server(server, laptop ? laptopSocketOptions() : { cors: { origin: '*' }, pingTimeout: 20000 });
 
   attachSockets(io);
   app.set('io', io);
 
+  // Laptop mode: every room to the laptop's disk, at each close and on the interval.
+  const writer = laptop
+    ? createArchiveWriter({ getRepo, dir: laptop.archiveDir, intervalMs: laptop.intervalMs, source: laptop }).start()
+    : null;
+  const stopWatching = laptop ? watchAddresses() : null;
+
   server.listen(config.port, '0.0.0.0', () => {
+    if (laptop) {
+      for (const line of laptopBanner({ clientBuilt: fs.existsSync(config.clientDist) })) console.log(line);
+      return;
+    }
     const bar = '='.repeat(60);
     console.log(`\n${bar}`);
     console.log('  BloomLoop server up');
@@ -61,8 +80,17 @@ async function main() {
 
   const shutdown = () => {
     console.log('\n[server] shutting down');
-    server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 3000).unref();
+    if (!writer) {
+      server.close(() => process.exit(0));
+      return;
+    }
+    // Laptop mode: every room written once more before the process goes.
+    stopWatching();
+    writer.stop()
+      .then(() => console.log(`[laptop] rooms saved to ${writer.folder}`))
+      .catch((err) => console.error(`[laptop] the last save failed: ${err.message}`))
+      .finally(() => server.close(() => process.exit(0)));
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

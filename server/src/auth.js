@@ -19,7 +19,7 @@ import { createClient } from '@supabase/supabase-js';
 
 import { config, hasSupabase } from './config.js';
 import { getAccount, listBelow } from './services/accounts.js';
-import { isTeacher } from './teacherAuth.js';
+import { KEY_BLOCKED_MESSAGE, checkTeacherKey, teacherKeyCheck } from './teacherAuth.js';
 
 /**
  * Where a resolved identity is parked for the life of one request. A symbol so
@@ -138,7 +138,7 @@ async function verify(req) {
  *
  * @returns {Promise<{ok: boolean, role: string|null, accountId: string|null, reason: string}>}
  */
-export async function verifyTeacherCredentials({ key = '', token = '' } = {}) {
+export async function verifyTeacherCredentials({ key = '', token = '', address = null } = {}) {
   if (token) {
     // Reuse verify() by handing it the shape it reads from.
     const shim = { headers: { authorization: `Bearer ${token}` }, get: () => `Bearer ${token}` };
@@ -151,8 +151,11 @@ export async function verifyTeacherCredentials({ key = '', token = '' } = {}) {
   }
 
   if (key) {
-    const shim = { get: (h) => (h.toLowerCase() === 'x-teacher-key' ? key : undefined), query: {} };
-    if (isTeacher(shim)) return { ok: true, role: 'professor', accountId: null, reason: '' };
+    // Counted against the socket's address in laptop mode, as a request's key
+    // is (teacherAuth.js): the socket is the other door to the same key.
+    const check = checkTeacherKey(key, address);
+    if (check === 'ok') return { ok: true, role: 'professor', accountId: null, reason: '' };
+    if (check === 'blocked') return { ok: false, role: null, accountId: null, reason: KEY_BLOCKED_MESSAGE };
   }
 
   return { ok: false, role: null, accountId: null, reason: 'Teacher credentials required.' };
@@ -242,11 +245,14 @@ export async function requireTeacher(req, _res, next) {
       tokenError = error;
     }
 
-    if (isTeacher(req)) {
+    const check = teacherKeyCheck(req);
+    if (check === 'ok') {
       req.account = null;
       req.viewer = LEGACY_TEACHER;
       return next();
     }
+    // Laptop mode only: too many wrong keys from this address (teacherAuth.js).
+    if (check === 'blocked') return next(deny(KEY_BLOCKED_MESSAGE, 429));
 
     next(
       tokenError ??

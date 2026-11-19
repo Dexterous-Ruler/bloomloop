@@ -68,6 +68,36 @@ import {
   votingRound,
   withoutAsked,
 } from '../services/classQuestions.js';
+import {
+  AFTER_CLOSE_DETAIL,
+  ANSWERED_AGAIN_DETAIL,
+  ANSWERED_AGAIN_MESSAGE,
+  ASKED_KEPT_MESSAGE,
+  DELIVER_IMPORTED_REASON,
+  DELIVER_MESSAGE,
+  GRACE_MS,
+  NOT_THIS_ROOM_MESSAGE,
+  OVER_CAP_DETAIL,
+  PACK_EMPTY_NOTE,
+  PACK_FAILED_NOTE,
+  PACK_SIZE,
+  choosePack,
+  deviceTimeOf,
+  keptAfterClose,
+  keptAnsweredAgain,
+  keptNotCounted,
+  lateVerdict,
+  livePack,
+  logServed,
+  overCapMessage,
+  packExpiry,
+  packPayload,
+  packRecordNeed,
+  packableLevels,
+  sameId,
+  servedAtFor,
+} from '../services/offline.js';
+import { isImportedRoom } from '../services/roomImport.js';
 
 const presence = new Map(); // `${code}:${rollNo}` -> socket.id
 const bankCache = new Map(); // sessionId -> Promise<question[]>
@@ -248,14 +278,21 @@ async function loadSession(rawCode) {
  * to the whole class it is never served to a phone on its own in this room
  * again (services/classQuestions.js says why). Starting a class question clears
  * this cache (releaseSession), so the next read leaves it out.
+ *
+ * A closed room's bank is read and not cached (Phase 7): only answers that
+ * arrive after the close read it, and a cache entry would outlive the room.
  */
 function loadBank(session) {
   const id = String(session._id);
+  const read = () => {
+    const repo = getRepo();
+    return Promise.all([repo.listQuestions(session.contentId), repo.listClassQuestions(session._id)])
+      .then(([questions, asked]) => withoutAsked(servableFor(session, questions), asked));
+  };
+  if (session.status === 'closed') return read();
   let pending = bankCache.get(id);
   if (!pending) {
-    const repo = getRepo();
-    pending = Promise.all([repo.listQuestions(session.contentId), repo.listClassQuestions(session._id)])
-      .then(([questions, asked]) => withoutAsked(servableFor(session, questions), asked));
+    pending = read();
     // A failed read must not poison the cache for the rest of the session.
     pending.catch(() => bankCache.delete(id));
     bankCache.set(id, pending);
@@ -395,11 +432,19 @@ async function dispatchNext(socket, { profile, session, bank = null, resume = fa
 
     // Pinned before it is sent, and only when it changes: the profile is the
     // record of what this student is looking at, and it has to be written before
-    // the phone can possibly answer it.
-    if (String(profile.served?.questionId ?? '') !== String(q._id)) {
+    // the phone can possibly answer it. Logged too, in the same write (Phase 7):
+    // the pin moves on, the log keeps every question this phone was given, so an
+    // answer to one of them that waited on the phone past the close is still
+    // known for one it was given (servedAtFor).
+    const repin = String(profile.served?.questionId ?? '') !== String(q._id);
+    if (repin) {
+      // The question it replaces was given too: a profile from before the log
+      // has it only on its pin.
+      if (profile.served?.questionId) logServed(profile, profile.served.questionId, profile.served.at);
       profile.served = { questionId: String(q._id), at: new Date().toISOString(), reason: pick.reason };
-      await getRepo().saveProfile(profile).catch((err) => logError('pin', err));
     }
+    const logged = logServed(profile, q._id, profile.served.at);
+    if (repin || logged) await getRepo().saveProfile(profile).catch((err) => logError('pin', err));
 
     // forStudent() is the single place that decides what a phone may see. It
     // strips every answer field and shuffles match/order/rank/categorise
@@ -449,7 +494,16 @@ async function handleJoin(io, socket, payload) {
       reject(socket, 'No session with that code - check the code on the board.');
       return;
     }
-    if (session.status === 'closed') {
+    // `deliver` (Phase 7, O2): the phone holds answers it has not yet sent. In a
+    // closed room that is the only reason to come back: the phone is let in to
+    // send them, and is given no question. At any time while the room exists,
+    // not only inside the grace window: O2 stores every late answer that
+    // reaches the server, and one after the window is stored and counts
+    // nowhere (lateVerdict). Without it a closed room refuses the join as it
+    // always has.
+    const deliver = payload?.deliver === true;
+    const closed = session.status === 'closed';
+    if (closed && !deliver) {
       reject(socket, 'That session has already been closed.');
       return;
     }
@@ -494,6 +548,27 @@ async function handleJoin(io, socket, payload) {
     const repo = getRepo();
     const name = String(payload?.name ?? '').trim().slice(0, 60);
     const stored = await repo.getProfile(session._id, rollNo);
+    // A phone with nothing of its own in a closed room has nothing to send to
+    // it; nor has one whose room is being archived and deleted, where anything
+    // this join wrote would land after the archive was read.
+    if (closed && (!stored || roomDeleting(session._id))) {
+      reject(socket, 'That session has already been closed.');
+      return;
+    }
+    // A room imported from laptop mode (Phase 7, O4) was run on the laptop: its
+    // phones answered there, and the file it was imported from is its whole
+    // record, never added to (services/roomImport.js). Read only here, for a
+    // phone that has a row of its own in the closed room, and by the room's id
+    // (one indexed read): before the roll number and the row were checked,
+    // anyone with the code on the wall could make the server list every import.
+    if (closed && await isImportedRoom(repo, session._id).catch((err) => {
+      // A store without the import records (0031) holds no import.
+      logError('imports', err);
+      return false;
+    })) {
+      reject(socket, DELIVER_IMPORTED_REASON);
+      return;
+    }
 
     // The supports the student's professor set. A signed-in student's come
     // with their account. Without a sign-in they still come from the room
@@ -549,7 +624,9 @@ async function handleJoin(io, socket, payload) {
     // Here, under this student's lock and after the profile is saved, so a room
     // being deleted has either waited for this or is seen and nothing is written.
     // Never allowed to stop a join: a failed write is logged, not shown.
-    if (session.classId && !roomDeleting(session._id)) {
+    // Attendance closes with the room: a phone back only to send what it
+    // saved (Phase 7) marks nobody.
+    if (session.classId && !closed && !roomDeleting(session._id)) {
       await markJoined(repo, session, rollNo).catch((err) => logError('attendance', err));
     }
 
@@ -572,15 +649,28 @@ async function handleJoin(io, socket, payload) {
       // the start serves only such phones (startRoom), so a phone this join
       // served itself is not served a second time.
       waiting: false,
+      // Phase 7 (O2): in a closed room, here only to send answers saved on
+      // the phone; each is answered, and nothing new is served.
+      deliverOnly: closed,
+      // Phase 7: in an open room, a phone with answers waiting is served
+      // nothing at the join. They go first and move the ladder, and its next
+      // question is chosen when it asks (student:next), resuming the question
+      // pinned on its screen as this join would have.
+      resumePending: deliver && !closed,
     };
     socket.join(`session:${session.code}`);
 
-    const bank = await loadBank(session);
+    const bank = closed ? [] : await loadBank(session);
     const settings = sessionSettings(session);
     socket.emit('session:accepted', {
       profile: rowFor(profile, settings),
       session: { code: session.code, title: session.title ?? '', settings },
       bankCount: bank.length,
+      ...(closed ? {
+        deliverOnly: true,
+        deliverUntil: new Date(Date.parse(session.closedAt) + GRACE_MS).toISOString(),
+        message: DELIVER_MESSAGE,
+      } : {}),
       supports: phoneSupports(supports),
       // Whether this phone's answers go into the signed-in student's history
       // (decision 7), and, when it sent a sign-in that could not be linked, why not.
@@ -592,6 +682,7 @@ async function handleJoin(io, socket, payload) {
     });
 
     await broadcastGrid(io, session);
+    if (closed) return;
     // Paused: the student is in the room and stays in it, but gets nothing to
     // answer until the teacher resumes. The phone shows the paused card.
     if (session.status === 'paused') {
@@ -623,8 +714,9 @@ async function handleJoin(io, socket, payload) {
     }
     // `resume` because every join is potentially a reconnect: the same roll
     // number finding an existing profile IS the resume case, and a first join
-    // simply has no pin to honour.
-    await dispatchNext(socket, { profile, session: room, bank, resume: true });
+    // simply has no pin to honour. Not for a phone with answers waiting
+    // (resumePending above): it asks once they are in.
+    if (!socket.data.student.resumePending) await dispatchNext(socket, { profile, session: room, bank, resume: true });
     // A class question running in the room (Phase 5): a phone that joins or
     // reconnects mid-question is sent it where it stands, with its own vote in
     // the current round, after its own question, which it parks.
@@ -645,7 +737,7 @@ async function handleJoin(io, socket, payload) {
  * repaired from the stored answer here, so a resend can never leave the two
  * disagreeing and never counts twice.
  */
-async function replayStored(io, socket, { session, profile, prior, settings }) {
+async function replayStored(io, socket, { session, profile, prior, settings, ids = {} }) {
   // Only ever this student's own row. handleAnswer re-keys an attempt whose key
   // another student's row holds, so the one way left to get here with someone
   // else's row is two phones racing on one key. Answering from it would credit
@@ -680,6 +772,7 @@ async function replayStored(io, socket, { session, profile, prior, settings }) {
       reason: row.next.why,
       levelChanged: false,
       profile: row,
+      ...ids,
     });
     return;
   }
@@ -716,7 +809,12 @@ async function replayStored(io, socket, { session, profile, prior, settings }) {
         redemption: settings.redemption,
       }).profile;
     }
-    current.served = null;
+    // The pin is spent only when it is on the question this answer settles. An
+    // answer to a packed question (Phase 7) was never the pin, and clearing it
+    // here lost the question still on the phone's screen.
+    if (String(current.served?.questionId ?? '').toLowerCase() === String(prior.questionId ?? '').toLowerCase()) {
+      current.served = null;
+    }
     await repo.saveProfile(current);
     await broadcastGrid(io, session);
   }
@@ -738,23 +836,40 @@ async function replayStored(io, socket, { session, profile, prior, settings }) {
     reason: row.next.why,
     levelChanged: false,
     profile: row,
+    ...ids,
   });
 }
 
 async function handleAnswer(io, socket, payload) {
+  const ctx = socket.data.student;
+  // This phone's place in its student's queue, taken as the answer ARRIVES:
+  // before the first await, so no answer can overtake the one sent before it
+  // while either waits on the store. The ladder moves in the order the server
+  // receives answers (Phase 7, O2 and O3), never by a phone's clock, and an
+  // outbox sending a morning's answers is marked one by one in that order.
+  const turn = ctx ? lockProfile(ctx.sessionId, ctx.rollNo) : null;
   let release = null;
   try {
-    const ctx = socket.data.student;
     if (!ctx) {
       reject(socket, 'Join a session before answering.');
       return;
     }
+    release = await turn;
 
     const session = await loadSession(ctx.code);
-    if (!session || session.status === 'closed') {
+    if (!session) {
       socket.emit('session:closed', {});
       return;
     }
+    // Phase 7 (O2): an answer reaching a closed room is stored, never dropped.
+    // It counts when the server served or packed its question to this phone
+    // before the close and it arrived within the grace window; otherwise it is
+    // kept, marked as having arrived after the close, and counts nowhere.
+    // Either way the phone is told which, and nothing new is served.
+    const closed = session.status === 'closed';
+    // A phone still in the room when it closed is then told so, as it always
+    // was; one back only to send what it saved knows already.
+    const closedNote = () => { if (closed && !ctx.deliverOnly) socket.emit('session:closed', {}); };
     if (session.status === 'paused') {
       socket.emit('session:paused', { code: session.code });
       return;
@@ -765,7 +880,15 @@ async function handleAnswer(io, socket, payload) {
       return;
     }
 
-    const questionId = String(payload?.questionId ?? '');
+    // The id as the phone sent it, echoed in every reply; and the id this
+    // handler compares, in lower case. The store finds a uuid (Postgres) or an
+    // ObjectId (Mongo) whatever the case of its letters, so an id compared here
+    // as sent let a phone send a question it had been marked on in upper case,
+    // pass the double-tap guard below and be marked on it a second time, once
+    // per mix of cases. Every id the server hands out is in lower case; once
+    // the question is found, its own id is used from there on.
+    const sentId = String(payload?.questionId ?? '');
+    let questionId = sentId.trim().toLowerCase();
     // `response` carries whatever the kind needs - a number, an array of
     // numbers, or a string. `answerIdx` is still read so a phone that was
     // already mid-session on the previous client keeps working.
@@ -775,7 +898,6 @@ async function handleAnswer(io, socket, payload) {
       return;
     }
 
-    release = await lockProfile(ctx.sessionId, ctx.rollNo);
     // The room is being archived and deleted. An answer written now would land
     // after the archive was read and go with the room. Refused the way a failed
     // save is, so the phone keeps it and resends: a room that is gone then says
@@ -804,6 +926,12 @@ async function handleAnswer(io, socket, payload) {
     const print = answerPrint(response);
     const sent = String(payload?.answerId ?? '');
     let answerKey = ANSWER_ID.test(sent) ? sent : `legacy-${ctx.rollNo}-${questionId}-${print}`;
+    // Which of its answers a reply is about (Phase 7): the question, and the
+    // phone's own answerId as it sent it, so an outbox sending several can tell
+    // its replies apart. Added to every reply below; nothing else changes.
+    const ids = { questionId: sentId, ...(ANSWER_ID.test(sent) ? { answerId: sent } : {}) };
+    // Said instead of a mark: the answer is saved and counts nowhere.
+    const kept = (message, extra = {}) => socket.emit('server:kept', { ...ids, counted: false, ...extra, message });
 
     // 1. An attempt the server already holds: answer it with the stored outcome.
     let prior = await repo.getAnswerByKey(ctx.sessionId, answerKey);
@@ -826,43 +954,131 @@ async function handleAnswer(io, socket, payload) {
     // moved on again, as it was then, and told nothing about the mark: sent
     // back, the stored mark told any phone the key of a question still being
     // voted on, one option at a time, and still did after a close without the
-    // key.
+    // key. Since Phase 7 it is also told the answer is saved and not counted
+    // (server:kept, no mark), so an outbox can settle it; a closed room serves
+    // nothing.
+    // Moved on to a new question only when the answer was to the question on
+    // its screen (or it has none). An answer to another question (an outbox
+    // answer, Phase 7) is sent the screen's own question again instead
+    // (resume), so the phone still hears a question back, as it always did,
+    // and the pin stays where it is: moved, the screen's question was lost,
+    // and with it, after a close, the record that it was given.
+    const onScreen = (id) => !profile.served?.questionId || sameId(profile.served.questionId, id);
     if (prior?.classQuestionId) {
-      await dispatchNext(socket, { profile, session });
+      kept(ASKED_KEPT_MESSAGE);
+      if (closed) closedNote();
+      else await dispatchNext(socket, { profile, session, resume: !onScreen(prior.questionId) });
+      return;
+    }
+    // An answer kept and not counted (Phase 7), sent again: told again why (as
+    // it was when it arrived), never marked. After the close: the verdict on
+    // when it arrived. Past the room's cap: the cap.
+    if (prior && keptAfterClose(prior)) {
+      const packs = await repo.listQuestionPacks(ctx.sessionId, ctx.rollNo);
+      const servedAt = servedAtFor({ profile, packs, questionId: prior.questionId, before: session.closedAt });
+      kept(lateVerdict({ closedAt: session.closedAt, servedAt, now: Date.parse(prior.answeredAt) }).message, { late: true });
+      closedNote();
+      return;
+    }
+    if (prior && keptAnsweredAgain(prior)) {
+      kept(ANSWERED_AGAIN_MESSAGE);
+      closedNote();
+      return;
+    }
+    if (prior && keptNotCounted(prior)) {
+      kept(overCapMessage(settings.questionsPerStudent ?? 0));
+      closedNote();
       return;
     }
     if (prior) {
-      await replayStored(io, socket, { session, profile, prior, settings });
+      await replayStored(io, socket, { session, profile, prior, settings, ids });
+      closedNote();
       return;
     }
 
     // 2. A question this student has already been marked on, arriving under a
     // new key. A double-tap on a phone must not score twice - but the phone still
     // has to hear something back, or it sits with its options disabled.
-    const already = profile.history.find((h) => String(h.questionId) === questionId);
-    // A student at the room's cap (0018) has finished: an answer to a question
-    // they were never served is not taken. Below `already`, so a resend of the
-    // answer that reached the cap is still answered from what was recorded.
+    const already = profile.history.find((h) => sameId(h.questionId, questionId));
+    // A student at the room's cap (0018) has finished. Checked below, once it is
+    // known whether the server gave this phone the question (Phase 7): one it
+    // never gave is not taken, as always; one it served or packed is stored,
+    // not counted, since an outbox replaying a pack can honestly arrive past the
+    // cap. Either way the phone is told it has finished, as it always was.
+    // Below `already`, so a resend of the answer that reached the cap is still
+    // answered from what was recorded.
     const cap = settings.questionsPerStudent;
-    if (!already && cap && profile.history.length >= cap) {
-      socket.emit('server:exhausted', { profile: rowFor(profile, settings), reason: capReason(cap) });
-      return;
-    }
+    // Stored and not counted (19 Nov 2026 fix): before, this answer was never
+    // stored. That broke O1's "never drops an answer": a packed question can be
+    // served and answered live while its copy waits in the phone's outbox, and
+    // the copy then arrives here. It is kept as given, `final` false with a
+    // detail saying why and no mark of its own (the machine's reading beside it
+    // for staff). It moves no level and every report leaves it out
+    // (keptNotCounted). The phone is told, as before, the mark the question
+    // was given when this is the same answer sent again (a double-tap): that
+    // mark is this answer's too. Any other answer is told it is saved and does
+    // not count, and no mark: the earlier mark is not its own.
     if (already) {
+      const earlier = already.answerId ? await repo.getAnswerByKey(ctx.sessionId, already.answerId).catch(() => null) : null;
       const stale = await repo.getQuestion(questionId).catch(() => null);
-      const row = rowFor(profile, settings);
-      socket.emit('server:result', {
-        correct: already.correct,
-        score: already.score ?? (already.correct ? 1 : 0),
-        ...((already.kind ?? stale?.kind) === 'open' && !already.review ? { provisional: true } : {}),
+      // The question as it was asked: the earlier answer's own snapshot, which
+      // outlives an edit or a delete, else the question as it stands now.
+      const asked = stale && String(stale.contentId) === String(session.contentId) ? stale : null;
+      const seed = `${ctx.rollNo}:${asked?._id ?? questionId}`;
+      const graded = asked ? score(asked, response, seed, supports) : null;
+      const stamped = await repo.recordAnswer({
+        sessionId: ctx.sessionId,
+        answerKey,
+        rollNo: ctx.rollNo,
+        accountId: profile.accountId ?? null,
+        accountVerified: Boolean(ctx.verifiedAccountId) && String(ctx.verifiedAccountId) === String(profile.accountId ?? ''),
+        questionId: String(earlier?.questionId ?? asked?._id ?? already.questionId),
+        contentId: earlier?.contentId ?? asked?.contentId ?? session.contentId ?? null,
+        topic: earlier?.topic ?? asked?.topic ?? already.topic ?? '',
+        bloom: earlier?.bloom ?? asked?.bloom ?? already.bloom,
+        kind: earlier?.kind ?? asked?.kind ?? already.kind ?? 'mcq',
+        questionSnapshot: earlier?.questionSnapshot
+          ?? (asked ? snapshotOf(asked, shownOptionIndices(asked, seed, supports)) : { id: String(already.questionId) }),
+        response,
+        attempt: Math.min(32767, (Number(earlier?.attempt) || 1) + 1),
+        final: false,
+        correct: null,
+        score: null,
         ungraded: already.ungraded === true,
-        solution: stale ? score(stale, response, `${ctx.rollNo}:${stale._id}`, supports).solution : null,
-        kind: already.kind ?? stale?.kind ?? 'mcq',
-        workingLevel: profile.workingLevel,
-        reason: row.next.why,
-        levelChanged: false,
-        profile: row,
+        servedAt: earlier?.servedAt ?? null,
+        answeredAt: new Date().toISOString(),
+        ...(deviceTimeOf(payload?.deviceAnsweredAt) ? { deviceAnsweredAt: deviceTimeOf(payload.deviceAnsweredAt) } : {}),
+        language: 'en',
+        questionSource: earlier?.questionSource ?? asked?.source ?? 'llm',
+        detail: ANSWERED_AGAIN_DETAIL,
+        autoCorrect: graded?.correct ?? null,
+        autoScore: graded?.score ?? null,
+        autoDetail: graded?.detail ?? '',
+        reviewStatus: 'auto',
+        confidence: storedConfidence(confidenceFrom(payload?.confidence)),
       });
+      // Two resends racing on one key: the second is answered from the first.
+      if (stamped.duplicate && !keptNotCounted(stamped.answer)) {
+        await replayStored(io, socket, { session, profile, prior: stamped.answer, settings, ids });
+      } else if (earlier && answerPrint(earlier.response) === print) {
+        const row = rowFor(profile, settings);
+        socket.emit('server:result', {
+          correct: already.correct,
+          score: already.score ?? (already.correct ? 1 : 0),
+          ...((already.kind ?? stale?.kind) === 'open' && !already.review ? { provisional: true } : {}),
+          ungraded: already.ungraded === true,
+          solution: asked ? score(asked, response, seed, supports).solution : null,
+          kind: already.kind ?? stale?.kind ?? 'mcq',
+          workingLevel: profile.workingLevel,
+          reason: row.next.why,
+          levelChanged: false,
+          profile: row,
+          ...ids,
+        });
+      } else {
+        kept(ANSWERED_AGAIN_MESSAGE, closed ? { late: true } : {});
+      }
+      closedNote();
       return;
     }
 
@@ -889,10 +1105,22 @@ async function handleAnswer(io, socket, payload) {
       : null;
     if (!question) {
       logIgnored('student:answer', `question ${questionId} is not in this bank`);
-      // Unfreeze the phone by moving it on rather than leaving it stuck.
-      await dispatchNext(socket, { profile, session, bank });
+      // Unfreeze the phone by moving it on rather than leaving it stuck. A
+      // closed room has nothing to move it on to, so it is told plainly, in an
+      // event that says the answer is refused for good (server:refused), not
+      // the "did not save, send it again" of session:rejected. A phone whose
+      // screen holds another question is sent that one again (onScreen above).
+      if (closed) {
+        socket.emit('server:refused', { ...ids, message: NOT_THIS_ROOM_MESSAGE });
+        closedNote();
+      } else {
+        await dispatchNext(socket, { profile, session, bank, resume: !onScreen(questionId) });
+      }
       return;
     }
+    // The question's own id from here on: every comparison, the stored row and
+    // the ladder carry it exactly as the bank does.
+    questionId = String(question._id);
 
     // A question put to the class in this room (Phase 5): the bank leaves it
     // out, so a phone gets here when it held the question on its own screen
@@ -925,7 +1153,9 @@ async function handleAnswer(io, socket, payload) {
           correct: countsTowardMastery(question) ? graded.correct : null,
           score: countsTowardMastery(question) ? graded.score : null,
           ungraded: !countsTowardMastery(question),
-          servedAt: profile.served?.at ?? null,
+          // When this question was given to the phone (the pin's time only when
+          // it is the pin), not the time of whatever is on its screen now.
+          servedAt: servedAtFor({ profile, questionId }),
           questionSource: question.source ?? 'llm',
           detail: OWN_QUESTION_DETAIL,
           autoCorrect: graded.correct,
@@ -937,10 +1167,52 @@ async function handleAnswer(io, socket, payload) {
           round: roundOf(asked),
         });
         logIgnored('student:answer', `question ${questionId} was put to the class; kept with it, not counted`);
-        await dispatchNext(socket, { profile, session, bank });
+        kept(ASKED_KEPT_MESSAGE);
+        if (closed) closedNote();
+        else await dispatchNext(socket, { profile, session, bank, resume: !onScreen(questionId) });
         return;
       }
     }
+
+    // Phase 7: was this question given to this phone, and when? The question
+    // pinned on its screen was; otherwise one the server put on its screen
+    // before (the profile's log of serves) or sent in a pack (question_packs,
+    // read only then: a live answer is to the pinned question). In an open
+    // room an answer to a question other than the pinned one is marked now,
+    // in one go, and the pin is left where it is. In a closed room only what
+    // was given before the close can count (lateVerdict).
+    const pinned = sameId(profile.served?.questionId, questionId);
+    const packs = pinned ? [] : await repo.listQuestionPacks(ctx.sessionId, ctx.rollNo).catch((err) => {
+      // In an open room a pack that cannot be read leaves the answer as it was
+      // taken before packs existed; in a closed room it decides whether the
+      // answer counts, so the phone is told it did not save and sends it again.
+      if (closed) throw err;
+      logError('packs', err);
+      return [];
+    });
+    // When it was given: the pin's time only when it is the pin, never the time
+    // of another question still on the screen.
+    const givenAt = pinned ? (profile.served?.at ?? null) : servedAtFor({ profile, packs, questionId });
+    const given = pinned || Boolean(givenAt);
+    const verdict = closed
+      ? lateVerdict({ closedAt: session.closedAt, servedAt: servedAtFor({ profile, packs, questionId, before: session.closedAt }) })
+      : null;
+    // An answer to a question not on the phone's screen (from its outbox, or a
+    // pack), or one after the close, had no screen to try again on. It also
+    // never re-pins the question (the retry below), which moved the pin off
+    // the question really on the screen.
+    const oneGo = !pinned || closed;
+    // At the room's cap (0018; see `cap` above). An answer to a question the
+    // server never gave this phone is not taken, as before Phase 7, unless it
+    // arrived after the close, where O2 keeps every answer (below).
+    const overCap = Boolean(cap) && profile.history.length >= cap;
+    if (overCap && !given && !(verdict && !verdict.counted)) {
+      socket.emit('server:exhausted', { profile: rowFor(profile, settings), reason: capReason(cap), ...ids });
+      closedNote();
+      return;
+    }
+    // Why an answer that reached the server is kept and not counted, or null.
+    const keptAs = verdict && !verdict.counted ? AFTER_CLOSE_DETAIL : overCap ? OVER_CAP_DETAIL : null;
 
     const spent = triesSpent(profile, questionId);
     // The same answer as the attempt just refused, under a new key: that is a
@@ -957,7 +1229,9 @@ async function handleAnswer(io, socket, payload) {
         reason: row.next.why,
         levelChanged: false,
         profile: row,
+        ...ids,
       });
+      closedNote();
       return;
     }
     const attempt = spent + 1;
@@ -975,8 +1249,12 @@ async function handleAnswer(io, socket, payload) {
 
     // Checked on the first attempt only: `served.at` is when the server sent
     // this question, so the gap is real elapsed time and not something the
-    // phone reported about itself. A retry's gap measures nothing new.
-    if (attempt === 1) checkLatency(profile, question, profile.served?.at);
+    // phone reported about itself. A retry's gap measures nothing new. A packed
+    // question's gap runs from when the pack was sent (Phase 7), so only a
+    // first answer arriving faster than that can show here. An answer that
+    // will not count touches no profile, so records nothing.
+    const servedAt = givenAt;
+    if (attempt === 1 && !keptAs) checkLatency(profile, question, servedAt);
 
     // Scored here, from the stored item, per its kind. A client-sent
     // correctness flag is never read. The SAME seed and supports forStudent()
@@ -1004,8 +1282,12 @@ async function handleAnswer(io, socket, payload) {
       questionSnapshot: snapshotOf(question, shownOptionIndices(question, seed, supports)),
       response,
       attempt,
-      servedAt: profile.served?.at ?? null,
+      servedAt,
       answeredAt,
+      // When the phone says it was answered (Phase 7): for the record only.
+      // `answeredAt` above is when the server received it, and is the time
+      // that orders and counts. Written only when the phone sent one.
+      ...(deviceTimeOf(payload?.deviceAnsweredAt) ? { deviceAnsweredAt: deviceTimeOf(payload.deviceAnsweredAt) } : {}),
       language: 'en',
       questionSource: question.source ?? 'llm',
       detail: graded.detail ?? '',
@@ -1021,6 +1303,44 @@ async function handleAnswer(io, socket, payload) {
       // or without it (services/confidence.js).
       confidence: storedConfidence(confidenceFrom(payload?.confidence)),
     };
+    // Late fields on a reply (Phase 7): whether it arrived after the close, and why it counts.
+    const lateNote = verdict ? { late: true, message: verdict.message } : {};
+    // An answer to the pinned question spends the pin, as before; an answer to
+    // any other (a packed one, an outbox one, Phase 7) leaves the question on
+    // the screen pinned where it is. Spending it then lost the screen's
+    // question, and with it, after a close, the record that it was given.
+    const pinAfter = () => (pinned ? null : (profile.served ?? null));
+
+    // Phase 7 (O2): after the close, and not served or packed to this phone
+    // before it, or past the grace window; or past the room's cap. Stored as
+    // given, `final` false and a detail saying why; no profile, no level, no
+    // band moves, and every report leaves it out (keptNotCounted). The
+    // machine's reading is kept beside it for staff (`auto*`, in `evidence`)
+    // and the row's own mark is left empty: a mark on it would reach the
+    // student's own list of answers, and a phone that sent any id of the room's
+    // bank could read a key from it, one option at a time. The phone is told it
+    // is saved and does not count, and is sent no mark and no key; at the cap it
+    // is told it has finished, as it always was.
+    if (keptAs) {
+      const stamped = await repo.recordAnswer({
+        ...evidence,
+        final: false,
+        correct: null,
+        score: null,
+        ungraded: !countsTowardMastery(question),
+        detail: keptAs,
+      });
+      if (stamped.duplicate && !keptNotCounted(stamped.answer)) {
+        await replayStored(io, socket, { session, profile, prior: stamped.answer, settings, ids });
+      } else if (keptAs === AFTER_CLOSE_DETAIL) {
+        kept(verdict.message, { late: true });
+      } else {
+        kept(overCapMessage(cap), closed ? { late: true } : {});
+        if (!closed) socket.emit('server:exhausted', { profile: rowFor(profile, settings), reason: capReason(cap) });
+      }
+      closedNote();
+      return;
+    }
 
     // A poll asks without assessing. It is recorded so it is never served
     // again, and it touches no level, no accuracy and no band.
@@ -1029,13 +1349,14 @@ async function handleAnswer(io, socket, payload) {
         ...evidence, ungraded: true, correct: null, score: null, final: true, reviewStatus: 'auto',
       });
       if (stamped.duplicate) {
-        await replayStored(io, socket, { session, profile, prior: stamped.answer, settings });
+        await replayStored(io, socket, { session, profile, prior: stamped.answer, settings, ids });
+        closedNote();
         return;
       }
       const { profile: next } = recordUngraded(profile, {
         questionId, bloom: question.bloom, topic: question.topic ?? '', kind, answerId: answerKey, at: answeredAt,
       });
-      next.served = null;
+      next.served = pinAfter();
       await repo.saveProfile(await unlessMinor(next));
       const row = rowFor(next, settings);
       socket.emit('server:result', {
@@ -1049,20 +1370,26 @@ async function handleAnswer(io, socket, payload) {
         reason: row.next.why,
         levelChanged: false,
         profile: row,
+        ...lateNote,
+        ...ids,
       });
+      closedNote();
       await broadcastGrid(io, session);
       return;
     }
 
     // Wrong with goes left: this attempt is stored as evidence but does not
-    // count. The answer is NOT revealed - that would end the retry.
+    // count. The answer is NOT revealed - that would end the retry. Never for
+    // an answer marked after the fact (`oneGo`, Phase 7): a packed question
+    // answered offline, or any answer after the room closed, had no screen to
+    // try again on, so it is final at its first attempt.
     const allowed = retriesAllowed(question, settings, ctx.rollNo, supports);
-    if (!graded.correct && attempt <= allowed) {
+    if (!graded.correct && attempt <= allowed && !oneGo) {
       const stamped = await repo.recordAnswer({
         ...evidence, final: false, correct: false, score: graded.score,
       });
       if (stamped.duplicate) {
-        await replayStored(io, socket, { session, profile, prior: stamped.answer, settings });
+        await replayStored(io, socket, { session, profile, prior: stamped.answer, settings, ids });
         return;
       }
       profile.served = {
@@ -1086,6 +1413,7 @@ async function handleAnswer(io, socket, payload) {
         reason: row.next.why,
         levelChanged: false,
         profile: row,
+        ...ids,
       });
       return;
     }
@@ -1096,7 +1424,8 @@ async function handleAnswer(io, socket, payload) {
       ...evidence, final: true, correct: graded.correct, score: graded.score,
     });
     if (stamped.duplicate) {
-      await replayStored(io, socket, { session, profile, prior: stamped.answer, settings });
+      await replayStored(io, socket, { session, profile, prior: stamped.answer, settings, ids });
+      closedNote();
       return;
     }
 
@@ -1115,8 +1444,9 @@ async function handleAnswer(io, socket, payload) {
     });
     checkLevelJump(next);
     // Answered, so the pin is spent. Leaving it set would resume a student onto
-    // a question they have already been marked on.
-    next.served = null;
+    // a question they have already been marked on. A packed question was not
+    // the pin, so the pin stays on the question still on the screen.
+    next.served = pinAfter();
     await repo.saveProfile(await unlessMinor(next));
 
     const row = rowFor(next, settings);
@@ -1137,7 +1467,10 @@ async function handleAnswer(io, socket, payload) {
       reason: row.next.why,
       levelChanged: Boolean(decision.changed),
       profile: row,
+      ...lateNote,
+      ...ids,
     });
+    closedNote();
 
     await broadcastGrid(io, session);
   } catch (err) {
@@ -1185,9 +1518,157 @@ async function handleNext(socket) {
       return;
     }
 
-    await dispatchNext(socket, { profile: hydrate(stored), session });
+    // The first ask after a join that served nothing because the phone had
+    // answers waiting (Phase 7, resumePending) resumes the question pinned on
+    // its screen, as that join would have; every other ask is for a new one.
+    const resume = ctx.resumePending === true;
+    ctx.resumePending = false;
+    await dispatchNext(socket, { profile: hydrate(stored), session, resume });
   } catch (err) {
     logError('student:next', err);
+  } finally {
+    release?.();
+  }
+}
+
+/* ----------------------------------------------- question packs (Phase 7) --
+ *
+ * student:pack {} -> server:pack { issuedAt, expiresAt, graceMinutes,
+ * timePerQuestion?, questions: [{ question, reason }], note } (packPayload in
+ * services/offline.js), or { questions: [], note } when there is nothing to
+ * pack or it could not be recorded: the few questions this phone would
+ * be served next, for use while its connection is down (O3; the rules are
+ * services/offline.js, the reasoning docs/OFFLINE_SELECTION.md).
+ *
+ * Every question goes through forStudent(), as a live one does: no key, nothing
+ * a phone could mark with. Its answers arrive later as ordinary student:answer
+ * events and are marked here, in the order they arrive. The pack is recorded
+ * (question_packs, 0030) BEFORE it is sent, so every answer to it is
+ * recognised as served; one that could not be recorded is not sent.
+ *
+ * Asking again returns the pack the phone holds while it has not expired, its
+ * answered questions replaced from the same stable order. A new record is
+ * written only when the pack gains a question its live record does not hold
+ * (packRecordNeed): the question on the screen moving does not, and a phone
+ * has at most PACK_RECORD_LIMIT records in a room.
+ *
+ * One request at a time per connection: a request that arrives while one is
+ * being answered is folded into one more answer after it, however many arrive.
+ * And only this student's lock is taken, never the room's: the room's
+ * class-question lock (CLASS_LOCK) taken here let one phone sending pack
+ * requests without end hold up every class question, the room's close and its
+ * delete, and every other phone's pack.
+ */
+async function handlePack(socket) {
+  if (socket.data.packing) {
+    socket.data.packAgain = true;
+    return;
+  }
+  socket.data.packing = true;
+  try {
+    do {
+      socket.data.packAgain = false;
+      await packOnce(socket);
+    } while (socket.data.packAgain && socket.connected);
+  } finally {
+    socket.data.packing = false;
+  }
+}
+
+async function packOnce(socket) {
+  let release = null;
+  try {
+    const ctx = socket.data.student;
+    if (!ctx) {
+      reject(socket, 'Join a session before asking for questions.');
+      return;
+    }
+    const session = await loadSession(ctx.code);
+    if (!session || session.status === 'closed') {
+      socket.emit('session:closed', {});
+      return;
+    }
+    if (session.status === 'paused') {
+      socket.emit('session:paused', { code: session.code });
+      return;
+    }
+    if (session.status === 'waiting') {
+      socket.emit('server:waiting', { code: session.code, title: session.title ?? '', message: WAITING_MESSAGE });
+      return;
+    }
+
+    release = await lockProfile(ctx.sessionId, ctx.rollNo);
+    if (roomDeleting(ctx.sessionId)) {
+      socket.emit('server:pack', { questions: [], note: PACK_FAILED_NOTE });
+      return;
+    }
+    const repo = getRepo();
+    const stored = await repo.getProfile(ctx.sessionId, ctx.rollNo);
+    if (!stored) {
+      reject(socket, 'Your row is gone - rejoin with your roll number.');
+      return;
+    }
+    const profile = hydrate(stored);
+    const settings = sessionSettings(session);
+    // The live loop's own bank (servable, nothing asked to the class), with
+    // the room's class questions read again here.
+    const [bank, asked, packs] = await Promise.all([
+      loadBank(session), repo.listClassQuestions(session._id), repo.listQuestionPacks(ctx.sessionId, ctx.rollNo),
+    ]);
+    const items = withoutAsked(bank, asked);
+    // The question on the phone's screen is not packed: the phone holds it.
+    const pin = profile.served?.questionId ? [String(profile.served.questionId)] : [];
+
+    // What the phone holds already and keeps: its live pack's questions still
+    // open (not marked, not pinned, still servable, still at a level it may be
+    // packed at), in the order it had them.
+    const live = livePack(packs);
+    const marked = new Set(profile.history.map((h) => String(h.questionId)));
+    const levels = new Set(packableLevels(profile, { adapt: settings.adapt }));
+    const byId = new Map(items.map((q) => [String(q._id), q]));
+    const held = (live?.questionIds ?? []).map((id) => byId.get(String(id)))
+      .filter((q) => q && !marked.has(String(q._id)) && !pin.includes(String(q._id)) && levels.has(q.bloom));
+    // Never more than the room's cap on questions per student leaves. A
+    // question of the live pack now on the screen keeps its place in the pack:
+    // filled from the bank, every move of the pin onto a packed question
+    // (student:next asks for a new pin each time) made a new pack and a new
+    // record, without one answer.
+    const cap = settings.questionsPerStudent;
+    const pinHeld = pin.length > 0 && (live?.questionIds ?? []).some((id) => sameId(id, pin[0]));
+    const size = Math.max(0, (cap ? cap - profile.history.length - pin.length : PACK_SIZE) - (pinHeld ? 1 : 0));
+    let chosen = choosePack(profile, items, { size, adapt: settings.adapt, exclude: pin, held });
+
+    const need = packRecordNeed({ live, chosen, count: packs.length });
+    // At the limit: only what the live pack's record already covers.
+    if (need === 'limit') chosen = chosen.filter((c) => (live?.questionIds ?? []).some((id) => sameId(id, c.question._id)));
+    if (!chosen.length) {
+      socket.emit('server:pack', { questions: [], note: PACK_EMPTY_NOTE });
+      return;
+    }
+    let pack = live;
+    if (need === 'write') {
+      const issuedAt = new Date().toISOString();
+      pack = await repo.addQuestionPack({
+        sessionId: ctx.sessionId, rollNo: ctx.rollNo, questionIds: chosen.map((c) => String(c.question._id)), issuedAt,
+        expiresAt: packExpiry(issuedAt),
+      });
+    }
+    // A question put to the class while this ran is not sent (the bank above
+    // was read before it started). Its record does no harm: an answer to it is
+    // kept with the class question first, whatever any pack says.
+    const nowAsked = await repo.listClassQuestions(session._id);
+    const sendable = new Set(withoutAsked(chosen.map((c) => c.question), nowAsked).map((q) => String(q._id)));
+    chosen = chosen.filter((c) => sendable.has(String(c.question._id)));
+    if (!chosen.length) {
+      socket.emit('server:pack', { questions: [], note: PACK_EMPTY_NOTE });
+      return;
+    }
+    // Each question as server:question carries it (packPayload): forStudent()
+    // and the phone's own provenance, never a key.
+    socket.emit('server:pack', packPayload({ pack, chosen, profile, supports: ctx.supports ?? null, settings }));
+  } catch (err) {
+    logError('student:pack', err);
+    socket.emit('server:pack', { questions: [], note: PACK_FAILED_NOTE });
   } finally {
     release?.();
   }
@@ -1216,6 +1697,8 @@ export async function startRoom(io, session) {
       const ctx = socket.data.student;
       if (ctx?.sessionId !== id || !ctx.waiting) return;
       ctx.waiting = false;
+      // Served here, so its next ask is for a new question (Phase 7).
+      ctx.resumePending = false;
       const stored = await getRepo().getProfile(id, ctx.rollNo);
       if (stored && socket.connected) await dispatchNext(socket, { profile: hydrate(stored), session, resume: true });
     } catch (err) {
@@ -1670,7 +2153,9 @@ async function handleWatch(socket, payload) {
     // The grid is the whole class's performance, and the room code is on a wall.
     // Credentials arrive in the payload because a socket has no headers to read,
     // and are checked against exactly the rules the HTTP guard uses.
-    const who = await verifyTeacherCredentials({ key: payload?.key, token: payload?.token });
+    // The connection's address too: in laptop mode wrong keys are counted per
+    // address, here as for a request (teacherAuth.js).
+    const who = await verifyTeacherCredentials({ key: payload?.key, token: payload?.token, address: socket.handshake?.address });
     if (!who.ok) {
       reject(socket, who.reason || 'Teacher credentials required to watch a session.');
       return;
@@ -1786,6 +2271,7 @@ export function attachSockets(io) {
     socket.on('student:signal', unlessProjector('student:signal', (payload) => handleSignal(socket, payload)));
     socket.on('student:answer', unlessProjector('student:answer', (payload) => handleAnswer(io, socket, payload)));
     socket.on('student:next', unlessProjector('student:next', () => handleNext(socket)));
+    socket.on('student:pack', unlessProjector('student:pack', () => handlePack(socket)));
     socket.on('student:vote', unlessProjector('student:vote', (payload) => handleVote(io, socket, payload)));
     socket.on('teacher:watch', unlessProjector('teacher:watch', (payload) => handleWatch(socket, payload)));
     socket.on('projector:watch', (payload) => watchWall(io, getRepo(), socket, payload)

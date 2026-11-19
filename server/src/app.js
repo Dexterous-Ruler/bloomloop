@@ -42,6 +42,9 @@ import hubLanguageRoutes from './routes/hubLanguages.js';
 import hubPathRoutes from './routes/hubPaths.js';
 // ---- Phase 6: the tutor ----
 import hubTutorRoutes from './routes/hubTutor.js';
+import { importBodyRefused, importRoutes, laptopRoutes, saveRoomsOnClose } from './routes/laptop.js';
+import { laptopOrigin } from './laptop.js';
+import recordSyncRoutes from './routes/recordSync.js';
 
 /**
  * Any successful write to a question bank drops the live loop's cached copy of
@@ -85,7 +88,9 @@ export function createApp() {
         // No Origin: a same-origin fetch, a curl, or a native app. Not a
         // cross-site request, so there is nothing for CORS to decide.
         if (!origin) return cb(null, true);
-        return cb(null, allowed.has(origin));
+        // In laptop mode only (Phase 7), a page on this laptop's own LAN or
+        // loopback address and port as well; false on every other server.
+        return cb(null, allowed.has(origin) || laptopOrigin(origin));
       },
       credentials: true,
     }),
@@ -123,11 +128,33 @@ export function createApp() {
   // only id the caller may name is one already in their own subject list.
   app.use('/api/analytics', analyticsRoutes);
 
+  // ---- Phase 7: laptop mode and room imports ----
+  // Laptop mode (laptop.js): a room closed or deleted is written to the
+  // laptop's disk at once. Ahead of the room routers, which answer the close;
+  // it does nothing on a server that is not in laptop mode.
+  app.use('/api/session', saveRoomsOnClose);
+  // Is this server a laptop in laptop mode, and where are its rooms saved.
+  // Staff only, gated inside.
+  app.use('/api/laptop', laptopRoutes);
+  // A room archive saved by laptop mode, imported as a closed room the caller
+  // owns, and the list of imports. Staff only, gated inside; an HOD reads and
+  // never imports. A body the JSON parser refused is answered with a sentence.
+  app.use('/api/imports/rooms', importRoutes);
+  app.use('/api/imports', importBodyRefused);
+
   // Teacher-only. The bank carries answerIdx and the content list carries the
   // contentIds that reach it, so both are gated - see auth.js.
   app.use('/api/content', requireTeacher, contentRoutes);
   app.use('/api/generate', requireTeacher, freshBank, generateRoutes);
   app.use('/api/bank', requireTeacher, freshBank, bankRoutes);
+
+  // ---- Phase 7: replay-safe teacher records ----
+  // Ahead of the routers that write them: a teacher-record or attendance write
+  // carrying a replay key (Idempotency-Key) is answered from the key's kept
+  // reply when it was done before, and otherwise goes on to its own router, its
+  // reply kept under the key. A request without a key passes straight through.
+  // Gated per route, with the write's own rule, like the routers it fronts.
+  app.use('/api/session', recordSyncRoutes);
 
   // Mixed: students read GET /:code, everything else is the teacher's. Gated
   // per-route inside the router rather than at the mount.

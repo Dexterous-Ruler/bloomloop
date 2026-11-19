@@ -71,7 +71,9 @@ export const ARCHIVE_LIMIT_BYTES = 1024 * 1024;
 
 const PAGE = 1000;
 
-const ANSWER_TIMES = ['servedAt', 'answeredAt', 'reviewedAt'];
+// deviceAnsweredAt (0030, Phase 7): the phone's own time, kept as an offset like
+// the rest; empty on every answer that did not wait on a phone, so absent then.
+const ANSWER_TIMES = ['servedAt', 'answeredAt', 'reviewedAt', 'deviceAnsweredAt'];
 const HISTORY_TIMES = ['at'];
 const REVIEW_TIMES = ['reviewedAt'];
 const ATTENDANCE_TIMES = ['markedAt'];
@@ -264,7 +266,11 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
   // Decision 8: a student their class roster marks under 18 leaves no signal in
   // the archive either, even one recorded before the mark was set.
   const minors = minorRolls(roster, marks);
-  const studentRows = profiles.map(({ _id, sessionId: _s, history, ...rest }) => (
+  // The log of what each phone was given (servedLog, Phase 7) is left out: it
+  // decides only whether an answer arriving after the close counts, and no
+  // answer can reach a room once it is archived; kept, it would fill the 1 MB
+  // an archive may be for nothing.
+  const studentRows = profiles.map(({ _id, sessionId: _s, history, servedLog: _log, ...rest }) => (
     minors.has(String(rest.rollNo)) ? { ...rest, integrity: [] } : rest));
 
   // -------------------------------------------------------------- answers --

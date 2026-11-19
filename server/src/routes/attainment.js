@@ -53,6 +53,7 @@ import {
   attainmentCsv, bloomCsv, exportFilename, fileHeaders, registerCsv, reportFormat, sheetFrom,
 } from '../services/exports.js';
 import { attainmentHtml, registerHtml, studentHtml } from '../services/printable.js';
+import { importedRooms } from '../services/roomImport.js';
 
 const router = express.Router();
 
@@ -82,10 +83,14 @@ async function configBody(cls, viewer, formula, rooms) {
  * The class's rooms the caller may read, then those the query asks for.
  * `classRooms` is all of the first: a report names its room weights from them,
  * so a weighted room the query leaves out is not mistaken for a deleted one.
+ * Each room imported from a file laptop mode saved carries `importedFrom`
+ * (Phase 7), so a report names it, and ?imported=leave-out can leave it out.
  */
 async function roomsFor(cls, viewer, query) {
   const repo = getRepo();
-  const all = await readable(viewer, await repo.listSessionsForClass(cls._id));
+  const readableRooms = await readable(viewer, await repo.listSessionsForClass(cls._id));
+  const imported = await importedRooms(repo, readableRooms);
+  const all = readableRooms.map((r) => (imported.has(String(r._id)) ? { ...r, importedFrom: imported.get(String(r._id)) } : r));
   return { ...roomsWindow(query, all), classRooms: all };
 }
 

@@ -438,13 +438,18 @@ export function answeredAloneNote(n) {
  * How many students in the room gave a final answer of their own (not a vote)
  * to this class question's bank question: each was sent its key with their
  * result. Polls have no key, so none. Counts roll numbers, never names them.
+ *
+ * The question is matched by its bank id, or by the id its snapshot keeps when
+ * the bank id is gone (Phase 7): a question deleted from the bank since, or a
+ * room imported from laptop mode, whose questions were never in this bank.
  */
 export function answeredAloneOf(cq, ownFinal = []) {
   if (isUngraded(kindOf(cq))) return 0;
-  const id = String(cq?.questionId ?? '').toLowerCase();
+  const idOf = (row) => String(row?.questionId ?? row?.questionSnapshot?.id ?? '').toLowerCase();
+  const id = idOf(cq);
   if (!id) return 0;
   return new Set(ownFinal
-    .filter((a) => !a.classQuestionId && a.final !== false && String(a.questionId ?? '').toLowerCase() === id)
+    .filter((a) => !a.classQuestionId && a.final !== false && idOf(a) === id)
     .map((a) => String(a.rollNo))).size;
 }
 

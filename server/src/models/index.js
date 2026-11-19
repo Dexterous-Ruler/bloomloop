@@ -215,6 +215,14 @@ const profileSchema = new Schema(
       default: null,
     },
 
+    // 0030 (Phase 7, the offline fixes): every question put on this phone's
+    // screen, first time each, { questionId, at }. The pin above moves on; this
+    // says what the phone was given before a room closed.
+    servedLog: {
+      type: [{ _id: false, questionId: String, at: String }],
+      default: [],
+    },
+
     // Phase 6. Append-only integrity signals.
     integrity: { type: Array, default: [] },
 
@@ -266,6 +274,9 @@ const answerSchema = new Schema(
     // given in; null on every other answer.
     classQuestionId: { type: String, default: null },
     round: { type: Number, enum: [1, 2, null], default: null },
+    // 0030 (Phase 7): when the phone says it was answered, for the record only;
+    // never read for the order of marking or for whether an answer counts.
+    deviceAnsweredAt: { type: String, default: null },
   },
   { versionKey: false },
 );
@@ -608,5 +619,70 @@ const classQuestionSchema = new Schema(
 );
 classQuestionSchema.index({ sessionId: 1, seq: 1 }, { unique: true });
 export const ClassQuestion = model('ClassQuestion', classQuestionSchema);
+
+// A question pack (supabase/migrations/0030, Phase 7): the questions a phone
+// would be served next, sent for use while its connection is down. Ids only,
+// never a key. Written once; the repository never updates one, and a room's
+// packs go with the room.
+const questionPackSchema = new Schema(
+  {
+    sessionId: { type: String, required: true },
+    rollNo: { type: String, required: true },
+    questionIds: {
+      type: [String],
+      validate: { validator: (v) => v.length >= 1 && v.length <= 20, message: 'A question pack holds 1 to 20 questions.' },
+    },
+    issuedAt: { type: String, default: nowIso },
+    expiresAt: { type: String, required: true },
+  },
+  { versionKey: false, minimize: false },
+);
+questionPackSchema.index({ sessionId: 1, rollNo: 1, issuedAt: 1 });
+export const QuestionPack = model('QuestionPack', questionPackSchema);
+
+// ---- Phase 7: laptop mode and room imports ----
+// One room archive from laptop mode, imported as a closed room (supabase/
+// migrations/0031, services/roomImport.js): the laptop's room id, unique, so a
+// second import of one room changes nothing, and the archive as uploaded.
+const roomImportSchema = new Schema(
+  {
+    sourceRoomId: { type: String, required: true, unique: true },
+    sourceCode: { type: String, required: true },
+    source: { type: Object, default: null },
+    sessionId: { type: String, default: null },
+    ownerId: { type: String, default: null },
+    importedBy: { type: String, default: null },
+    importedAt: { type: String, default: nowIso },
+    archivedAt: { type: String, default: null },
+    bytes: { type: Number, required: true, min: 1, max: 1024 * 1024 },
+    sha256: { type: String, required: true },
+    summary: { type: Object, default: {} },
+    data: { type: Schema.Types.Mixed, required: true },
+  },
+  { versionKey: false, minimize: false },
+);
+// The live loop and the staff routes find an import by the room it made
+// (listRoomImportsForSessions), as 0031's unique session_id lets Postgres.
+roomImportSchema.index({ sessionId: 1 }, { sparse: true });
+export const RoomImport = model('RoomImport', roomImportSchema);
+
+// Phase 7: the replay key of a teacher-record write (supabase/migrations/0032).
+// Append-only: the repository never updates one; they go with the room.
+const recordWriteSchema = new Schema(
+  {
+    sessionId: { type: String, required: true },
+    writer: { type: String, required: true, maxlength: 64 },
+    key: { type: String, required: true, match: /^[A-Za-z0-9_-]{8,64}$/ },
+    route: { type: String, required: true, match: /^[a-z][a-z-]{0,39}$/ },
+    target: { type: String, default: '', maxlength: 64 },
+    bodyHash: { type: String, required: true, match: /^[0-9a-f]{64}$/ },
+    status: { type: Number, required: true, min: 200, max: 299 },
+    reply: { type: Schema.Types.Mixed, required: true },
+    createdAt: { type: String, default: nowIso },
+  },
+  { versionKey: false, minimize: false },
+);
+recordWriteSchema.index({ sessionId: 1, writer: 1, key: 1 }, { unique: true });
+export const RecordWrite = model('RecordWrite', recordWriteSchema);
 
 export { levelCounter };

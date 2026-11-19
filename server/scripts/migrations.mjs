@@ -136,7 +136,7 @@ async function rowCounts(db) {
   for (const table of ['contents', 'questions', 'sessions', 'profiles', 'accounts', 'invites', 'answers', 'room_archives',
     'answer_reviews', 'media', 'classes', 'class_students', 'attendance', ...RECORD_TABLES, 'projector_links',
     ...OUTCOME_TABLES, 'class_questions', ...HUB_TABLES, ...LESSON_TABLES, ...PATH_TABLES,
-    ...TUTOR_TABLES]) {
+    ...TUTOR_TABLES, 'question_packs', 'room_imports', 'record_writes']) {
     const exists = await db.query(`select to_regclass('public.${table}') is not null as ok`);
     if (!exists.rows[0].ok) continue;
     out[table] = Number((await db.query(`select count(*)::int as n from public.${table}`)).rows[0].n);
@@ -156,11 +156,13 @@ const COLUMNS_THE_SERVER_USES = {
     'mastery_goal', 'reattempts', 'redemption', 'question_ids', 'class_id', 'mode', 'adapt', 'start_level',
     'questions_per_student', 'time_per_question'],
   profiles: ['id', 'session_id', 'roll_no', 'name', 'levels', 'working_level', 'reason', 'history', 'served_id',
-    'served_at', 'served_why', 'served_tries', 'served_last', 'integrity', 'account_id', 'updated_at', 'account_verified'],
+    'served_at', 'served_why', 'served_tries', 'served_last', 'integrity', 'account_id', 'updated_at', 'account_verified',
+    'served_log'],
   answers: ['id', 'session_id', 'answer_key', 'roll_no', 'account_id', 'question_id', 'content_id', 'topic', 'bloom',
     'kind', 'question_snapshot', 'response', 'attempt', 'final', 'correct', 'score', 'detail', 'ungraded',
     'language', 'question_source', 'served_at', 'answered_at', 'review_status', 'auto_correct', 'auto_score',
-    'auto_detail', 'reviewed_by', 'reviewed_at', 'review_note', 'confidence', 'account_verified', 'class_question_id', 'round'],
+    'auto_detail', 'reviewed_by', 'reviewed_at', 'review_note', 'confidence', 'account_verified', 'class_question_id', 'round',
+    'device_answered_at'],
   accounts: ['id', 'role', 'full_name', 'email', 'code', 'department', 'reports_to', 'roll_no', 'active',
     'created_at', 'updated_at', 'google_sub', 'google_email', 'google_linked_at', 'google_link_source',
     'accommodations'],
@@ -223,6 +225,10 @@ const COLUMNS_THE_SERVER_USES = {
     'created_at', 'updated_at', 'approved_by', 'approved_at'],
   hub_hint_views: ['id', 'account_id', 'client_attempt_id', 'question_id', 'topic_id', 'content_id', 'mode', 'position', 'kind', 'hint_id',
     'text', 'provenance', 'language', 'translation_id', 'source_ref', 'plan', 'created_at'],
+  question_packs: ['id', 'session_id', 'roll_no', 'question_ids', 'issued_at', 'expires_at'],
+  room_imports: ['id', 'source_room_id', 'source_code', 'source', 'session_id', 'owner_id', 'imported_by', 'imported_at',
+    'archived_at', 'bytes', 'sha256', 'summary', 'data'],
+  record_writes: ['id', 'session_id', 'writer', 'write_key', 'route', 'target', 'body_hash', 'status', 'reply', 'created_at'],
 };
 
 // The hub's content backbone (0025), and its practice evidence and explanations (0026).
@@ -260,8 +266,11 @@ check('supabase/migrations holds at least one file', files.length > 0);
 
 const numbers = files.map((f) => /^(\d{4})_[a-z0-9_]+\.sql$/.exec(f.name)?.[1]);
 check('every file is named NNNN_name.sql', numbers.every(Boolean), files.map((f) => f.name).join(', '));
-check('numbers are unique and run 0000, 0001, ... without gaps',
-  numbers.every((n, i) => Number(n) === i), numbers.join(', '));
+{
+  const want = numbers.map((_, n) => String(n).padStart(4, '0'));
+  check('numbers are unique and run 0000, 0001, ... without gaps',
+    numbers.join(',') === want.join(','), numbers.join(', '));
+}
 
 const loose = (await readdir(SUPABASE_DIR)).filter((n) => n.endsWith('.sql'));
 check('no loose .sql files left in supabase/ (one source of truth)', loose.length === 0, loose.join(', '));
@@ -2459,6 +2468,221 @@ const kept29 = {};
   // Left in place: the re-run below runs over them.
 }
 
+section('question packs and the phone\'s own answer time (0030)');
+
+// Kept by the re-run section below, which checks each survives it.
+const kept30 = {};
+{
+  const KEPT = { code: '23001' };
+  const s = (await db.query(`select data_type, is_nullable, column_default from information_schema.columns
+    where table_schema = 'public' and table_name = 'answers' and column_name = 'device_answered_at'`)).rows[0] ?? null;
+  check('answers.device_answered_at is a timestamp with time zone, empty unless a phone sent one, with no default',
+    s?.data_type === 'timestamp with time zone' && s?.is_nullable === 'YES' && s?.column_default === null, JSON.stringify(s));
+  const [plain] = (await insertAnswer({ key: 'k-30-plain', questionId: match?.id })).rows;
+  check('an answer saved as every save before 0030 sent it has no phone time', plain?.device_answered_at === null,
+    JSON.stringify(plain?.device_answered_at));
+  // As recordAnswer writes an answer that waited on a phone (sockets/index.js).
+  const [timed] = (await accepts('an answer with the time the phone says it was answered, as recordAnswer writes it', () => db.query(
+    `insert into public.answers (session_id, answer_key, roll_no, bloom, answered_at, device_answered_at)
+     values ($1, 'k-30-timed', '07', 'remember', '2026-11-19T10:40:00Z', '2026-11-19T10:02:00Z') returning *`,
+    [session?.id]))) ?? [];
+  check('it reads back beside the time the server received it, the two apart',
+    new Date(timed?.device_answered_at).toISOString() === '2026-11-19T10:02:00.000Z'
+    && new Date(timed?.answered_at).toISOString() === '2026-11-19T10:40:00.000Z', JSON.stringify(timed));
+  await rejects('the phone\'s time is written once (0012\'s guard)', () =>
+    db.query('update public.answers set device_answered_at = now() where id = $1', [timed?.id]), KEPT);
+  await rejects('and cannot be given to an answer afterwards', () =>
+    db.query('update public.answers set device_answered_at = now() where id = $1', [plain?.id]), KEPT);
+  await accepts('a kept-after-close answer, final false with its detail, as the live loop writes it', () => db.query(
+    `insert into public.answers (session_id, answer_key, roll_no, bloom, final, correct, score, detail, auto_correct, auto_score)
+     values ($1, 'k-30-late', '07', 'remember', false, null, null, 'Arrived after the room closed: kept, not counted.', true, 1)`,
+    [session?.id]));
+
+  // A pack, as addQuestionPack writes it: question ids only.
+  const arr = (ids) => `{${ids.join(',')}}`;
+  const five = [mcq?.id, match?.id, randomUUID(), randomUUID(), randomUUID()];
+  const pack = (ids, cols = {}) => db.query(
+    `insert into public.question_packs (session_id, roll_no, question_ids, issued_at, expires_at)
+     values ($1, '07', $2::uuid[], $3, $4) returning *`,
+    [cols.sessionId ?? session?.id, ids, cols.issuedAt ?? '2026-11-19T09:00:00Z', cols.expiresAt ?? '2026-11-19T15:00:00Z']);
+  const [p1] = (await accepts('a pack of five questions for one phone, as addQuestionPack writes it', () => pack(arr(five)))) ?? [];
+  check('it reads back with its questions in order, its roll number and its times',
+    JSON.stringify(p1?.question_ids) === JSON.stringify(five) && p1?.roll_no === '07'
+    && new Date(p1?.expires_at).getTime() - new Date(p1?.issued_at).getTime() === 6 * 3600 * 1000, JSON.stringify(p1));
+  await rejects('an empty pack', () => pack('{}'), { code: '23514', match: /question_packs_questions_check/ });
+  await rejects('a pack of 21', () => pack(arr(Array.from({ length: 21 }, () => randomUUID()))),
+    { code: '23514', match: /question_packs_questions_check/ });
+  await rejects('a pack with a missing question in it', () => pack(`{${mcq?.id},NULL}`), { code: '23514', match: /question_packs_questions_check/ });
+  await rejects('a pack that is not a plain list', () => pack(`{{${mcq?.id}},{${match?.id}}}`), { code: '23514' });
+  await rejects('a pack that expires when it is sent', () => pack(arr(five), { expiresAt: '2026-11-19T09:00:00Z' }),
+    { code: '23514', match: /question_packs_expiry_check/ });
+  await rejects('a pack for a room that does not exist', () => pack(arr(five), { sessionId: randomUUID() }), { code: '23503' });
+  await rejects('a pack is written once: no change', () =>
+    db.query(`update public.question_packs set question_ids = $2::uuid[] where id = $1`, [p1?.id, arr(five.slice(0, 2))]), KEPT);
+  await rejects('nor a later expiry', () =>
+    db.query(`update public.question_packs set expires_at = expires_at + interval '1 day' where id = $1`, [p1?.id]), KEPT);
+  await rejects('and no delete but with its room', () => db.query('delete from public.question_packs where id = $1', [p1?.id]), KEPT);
+  await accepts('a second pack for the same phone is a new row', () => pack(arr(five.slice(0, 3)), { issuedAt: '2026-11-19T09:30:00Z',
+    expiresAt: '2026-11-19T15:30:00Z' }));
+  {
+    const idx = await db.query(`select indexdef from pg_indexes where schemaname = 'public' and indexname = 'question_packs_room_roll_idx'`);
+    check('a phone\'s packs are found by room and roll number, oldest first, through an index',
+      /\(session_id, roll_no, issued_at\)/.test(idx.rows[0]?.indexdef ?? ''), idx.rows[0]?.indexdef ?? 'missing');
+  }
+  {
+    // Deleting a room takes its packs with it: the guard lets the cascade through.
+    const [gone] = (await db.query(
+      `insert into public.sessions (code, content_id, owner_id) values ('QP0001', $1, $2) returning id`, [content?.id, PROF])).rows;
+    await pack(arr(five), { sessionId: gone.id });
+    await accepts('deleting a room whose phones took packs', () => db.query('delete from public.sessions where id = $1', [gone.id]));
+    const left = await db.query('select count(*)::int as n from public.question_packs where session_id = $1', [gone.id]);
+    check('its packs go with it', left.rows[0].n === 0, JSON.stringify(left.rows[0]));
+  }
+  // The log of serves (the review fixes of 19 Nov 2026): every question the
+  // server put on a phone's screen, written with the pin by saveProfile.
+  {
+    const c = (await db.query(`select data_type, is_nullable, column_default from information_schema.columns
+      where table_schema = 'public' and table_name = 'profiles' and column_name = 'served_log'`)).rows[0] ?? null;
+    check('profiles.served_log is a JSON value, never empty, an empty list unless a serve was logged',
+      c?.data_type === 'jsonb' && c?.is_nullable === 'NO' && /'\[\]'::jsonb/.test(c?.column_default ?? ''), JSON.stringify(c));
+    const log = [{ questionId: mcq?.id, at: '2026-11-19T09:00:00.000Z' }, { questionId: match?.id, at: '2026-11-19T09:02:00.000Z' }];
+    const [saved] = (await accepts('a profile saved with its log of serves, as saveProfile writes it', () => db.query(
+      `insert into public.profiles (session_id, roll_no, served_id, served_at, served_log)
+       values ($1, '30', $2, '2026-11-19T09:02:00Z', $3) returning *`,
+      [session?.id, match?.id, JSON.stringify(log)]))) ?? [];
+    // jsonb keeps a list's order, not the order of an object's keys.
+    const pairs = (list) => JSON.stringify((list ?? []).map((e) => [e.questionId, e.at]));
+    check('it reads back as it was written, in the order served', pairs(saved?.served_log) === pairs(log),
+      JSON.stringify(saved?.served_log));
+    const [bare] = (await accepts('a profile saved as every save before this column sent it', () => db.query(
+      `insert into public.profiles (session_id, roll_no) values ($1, '31') returning *`, [session?.id]))) ?? [];
+    check('has an empty log', JSON.stringify(bare?.served_log) === '[]', JSON.stringify(bare?.served_log));
+    await accepts('the log grows as the pin moves on (an update, as every profile save is)', () => db.query(
+      `update public.profiles set served_log = served_log || $2::jsonb where id = $1`,
+      [saved?.id, JSON.stringify([{ questionId: randomUUID(), at: '2026-11-19T09:05:00.000Z' }])]));
+    await rejects('a log that is not a list', () => db.query(
+      `update public.profiles set served_log = '{"questionId": "x"}' where id = $1`, [saved?.id]),
+    { code: '23514', match: /profiles_served_log_check/ });
+    await rejects('a log of more than 1000 serves', () => db.query(
+      `update public.profiles set served_log = (select jsonb_agg(jsonb_build_object('questionId', g)) from generate_series(1, 1001) g)
+       where id = $1`, [saved?.id]), { code: '23514', match: /profiles_served_log_check/ });
+    await rejects('a profile with no log at all', () => db.query(
+      `update public.profiles set served_log = null where id = $1`, [saved?.id]), { code: '23502' });
+    kept30.profile = saved?.id;
+  }
+  kept30.pack = p1?.id;
+  kept30.answer = timed?.id;
+  // Left in place: the re-run below runs over them.
+}
+
+section('rooms imported from laptop mode (0031)');
+
+// Kept by the re-run section below, which checks it survives it.
+const kept31 = {};
+{
+  const [room] = (await db.query(
+    `insert into public.sessions (code, content_id, owner_id, status, closed_at) values ('LPT031', $1, $2, 'closed', now()) returning *`,
+    [content?.id, PROF])).rows;
+  const sha = 'a'.repeat(64);
+  // The columns importRoom() writes, last, once the room's rows are in.
+  const record = (cols = {}) => db.query(
+    `insert into public.room_imports (source_room_id, source_code, source, session_id, owner_id, imported_by, imported_at,
+       archived_at, bytes, sha256, summary, data)
+     values ($1, $2, $3, $4, $5, $6, now(), $7, $8, $9, $10, $11) returning *`,
+    [cols.sourceRoomId ?? '0123456789abcdef01234567', cols.sourceCode ?? 'LPT031', JSON.stringify(cols.source ?? { run: 'c0ffee12', startedAt: '2026-11-19T04:00:00.000Z' }),
+      'sessionId' in cols ? cols.sessionId : room.id, 'ownerId' in cols ? cols.ownerId : PROF, 'importedBy' in cols ? cols.importedBy : PROF,
+      '2026-11-19T05:00:00.000Z', cols.bytes ?? 2048, cols.sha256 ?? sha, JSON.stringify(cols.summary ?? { answers: 3 }),
+      JSON.stringify(cols.data ?? { format: 'bloomloop.room-archive', version: 1, laptop: { run: 'c0ffee12' } })]);
+  const [rec] = (await accepts('an import, as importRoom writes it', () => record())) ?? [];
+  check('it reads back with the laptop\'s run and the room it became',
+    rec?.source?.run === 'c0ffee12' && rec?.session_id === room.id && rec?.owner_id === PROF && rec?.bytes === 2048
+    && rec?.data?.laptop?.run === 'c0ffee12', JSON.stringify(rec));
+  await rejects('the same laptop room imported twice', () => record({ sessionId: null }), { code: '23505', match: /room_imports_source_room_id_key/ });
+  await rejects('two imports becoming one room', () => record({ sourceRoomId: 'other-room' }), { code: '23505', match: /room_imports_session_id_key/ });
+  await rejects('an empty file', () => record({ sourceRoomId: 'r-empty', sessionId: null, bytes: 0 }), { code: '23514', match: /room_imports_bytes_check/ });
+  await rejects('a file over the 1 MiB an archive may be', () =>
+    record({ sourceRoomId: 'r-big', sessionId: null, bytes: 1048577 }), { code: '23514', match: /room_imports_bytes_check/ });
+  await rejects('a hash that is not one', () => record({ sourceRoomId: 'r-hash', sessionId: null, sha256: 'xyz' }), { code: '23514', match: /room_imports_sha256_check/ });
+  await rejects('a laptop room id that could be a path', () => record({ sourceRoomId: '../etc', sessionId: null }), { code: '23514', match: /room_imports_source_check/ });
+  await rejects('a room code that is not one', () => record({ sourceRoomId: 'r-code', sourceCode: 'lpt 31', sessionId: null }), { code: '23514' });
+  await rejects('an archive that is not an object', () => record({ sourceRoomId: 'r-list', sessionId: null, data: [1, 2] }), { code: '23514' });
+  await rejects('a room that does not exist', () => record({ sourceRoomId: 'r-none', sessionId: randomUUID() }), { code: '23503' });
+  // Written once: no column changes by hand.
+  const KEPT = { code: '23001', match: /never edited/ };
+  await rejects('the archive kept with an import is never edited', () =>
+    db.query(`update public.room_imports set data = '{"edited": true}' where id = $1`, [rec?.id]), KEPT);
+  await rejects('nor when or by whom it was imported', () =>
+    db.query('update public.room_imports set imported_at = now() - interval \'1 day\', imported_by = null where id = $1', [rec?.id]), KEPT);
+  await rejects('nor the room it became, by hand', () => db.query('update public.room_imports set session_id = null where id = $1', [rec?.id]), KEPT);
+  {
+    // A deleted room and a deleted account set theirs to null, through their foreign keys; the record stays.
+    const LEAVER = randomUUID();
+    await db.query('insert into auth.users (id) values ($1)', [LEAVER]);
+    await insertAccount({ id: LEAVER, role: 'professor', code: 'BL-PR0031', reportsTo: HOD });
+    const [gone] = (await db.query(
+      `insert into public.sessions (code, content_id, owner_id) values ('LPT032', $1, $2) returning id`, [content?.id, LEAVER])).rows;
+    const [theirs] = (await record({ sourceRoomId: 'r-leaver', sourceCode: 'LPT032', sessionId: gone.id, ownerId: LEAVER, importedBy: LEAVER })).rows;
+    await accepts('deleting an imported room', () => db.query('delete from public.sessions where id = $1', [gone.id]));
+    await accepts('deleting the account that imported it', () => db.query('delete from auth.users where id = $1', [LEAVER]));
+    const { rows } = await db.query('select session_id, owner_id, imported_by, data, sha256 from public.room_imports where id = $1', [theirs?.id]);
+    check('the import record stays, naming no room and no account, its file as it was',
+      rows.length === 1 && rows[0].session_id === null && rows[0].owner_id === null && rows[0].imported_by === null
+      && rows[0].data?.laptop?.run === 'c0ffee12' && rows[0].sha256 === sha, JSON.stringify(rows));
+    await accepts('the record can be deleted (erasure)', () => db.query('delete from public.room_imports where id = $1', [theirs?.id]));
+  }
+  kept31.import = rec?.id;
+  // Left in place: the re-run below runs over it.
+}
+
+section('replay keys of teacher-record writes (0032)');
+
+// Kept by the re-run section below, which checks it survives it.
+const kept32 = {};
+{
+  const KEPT = { code: '23001' };
+  const [room] = (await db.query(
+    `insert into public.sessions (code, content_id, owner_id) values ('RW0001', $1, $2) returning *`, [content?.id, PROF])).rows;
+  const HASH = 'a'.repeat(64);
+  // The insert addRecordWrite() sends.
+  const keep = (w = {}) => db.query(
+    `insert into public.record_writes (session_id, writer, write_key, route, target, body_hash, status, reply)
+     values ($1, $2, $3, $4, $5, $6, $7, $8) returning *`,
+    [given(w, 'sessionId', room.id), given(w, 'writer', PROF), given(w, 'key', '7f9c2a10-4b1e-4c3a-9d2e-0a1b2c3d4e5f'),
+      given(w, 'route', 'tally-increment'), given(w, 'target', 'some-tally-id'), given(w, 'hash', HASH), given(w, 'status', 200),
+      JSON.stringify(given(w, 'reply', { tally: { counts: [1, 0, 0, 0] }, clamped: false }))]);
+  const [row] = (await accepts('a write\'s key with its reply, as addRecordWrite writes it', () => keep())) ?? [];
+  check('it reads back with its reply whole, and the time it was first met', row?.reply?.tally?.counts?.[0] === 1
+    && row?.reply?.clamped === false && row?.created_at instanceof Date && row?.target === 'some-tally-id', JSON.stringify(row));
+  await rejects('the same key from the same writer in the same room again', () => keep({ hash: 'b'.repeat(64) }),
+    { code: '23505', match: /record_writes_session_writer_key_key/ });
+  await accepts('the same key from another writer (the shared teacher key)', () => keep({ writer: 'shared-key' }));
+  await accepts('a write that names no record: target empty', () => keep({ key: 'activity-key-0001', route: 'activity', target: '' }));
+  await rejects('a key that is not one', () => keep({ key: 'short' }), { code: '23514', match: /record_writes_key_check/ });
+  await rejects('a route outside the shape', () => keep({ key: 'route-key-00001', route: 'Tally Increment' }),
+    { code: '23514', match: /record_writes_route_check/ });
+  await rejects('a hash that is not one', () => keep({ key: 'hash-key-000001', hash: 'xyz' }), { code: '23514', match: /record_writes_hash_check/ });
+  await rejects('a refusal kept: only a success is', () => keep({ key: 'status-key-0001', status: 409 }),
+    { code: '23514', match: /record_writes_status_check/ });
+  await rejects('a reply that is not an object', () => keep({ key: 'reply-key-00001', reply: [1, 2] }),
+    { code: '23514', match: /record_writes_reply_check/ });
+  await rejects('no writer', () => keep({ key: 'writer-key-0001', writer: '' }), { code: '23514', match: /record_writes_writer_check/ });
+  await rejects('a room that does not exist', () => keep({ key: 'room-key-000001', sessionId: randomUUID() }), { code: '23503' });
+  await rejects('a kept key is never edited', () =>
+    db.query(`update public.record_writes set reply = '{}' where id = $1`, [row?.id]), KEPT);
+  await rejects('nor deleted on its own', () => db.query('delete from public.record_writes where id = $1', [row?.id]), KEPT);
+  {
+    // Deleting the room takes its keys with it.
+    const [gone] = (await db.query(
+      `insert into public.sessions (code, content_id, owner_id) values ('RW0002', $1, $2) returning id`, [content?.id, PROF])).rows;
+    await keep({ sessionId: gone.id, key: 'gone-key-000001' });
+    await accepts('deleting a room whose writes were sent with keys', () => db.query('delete from public.sessions where id = $1', [gone.id]));
+    const left = await db.query('select count(*)::int as n from public.record_writes where session_id = $1', [gone.id]);
+    check('its keys go with it', left.rows[0].n === 0);
+  }
+  kept32.room = room.id;
+  // Left in place: the re-run below runs over them.
+}
+
 section('deleting');
 
 await rejects('deleting the sign-in of a professor who owns material and students', () =>
@@ -2583,6 +2807,38 @@ sameSnapshot('the re-run left the schema exactly as it was', shapeBeforeRerun, a
   await rejects('and hints on a self-test attempt are still refused after it', () => db.query(
     `insert into public.hub_attempts (account_id, client_attempt_id, bloom, correct, score, mode, hints_used)
      values ($1, 'exam-after-rerun', 'remember', true, 1, 'exam', 1)`, [STUDENT]), { code: '23514', match: /hub_attempts_hints_mode_check/ });
+  // 0030: a pack and a phone's time survive, a pack is still written once, and a
+  // new one is still accepted after it.
+  const p30 = await db.query('select cardinality(question_ids) as n, roll_no from public.question_packs where id = $1', [kept30.pack]);
+  const a30 = await db.query('select device_answered_at from public.answers where id = $1', [kept30.answer]);
+  check('a question pack and a phone\'s own answer time survive the re-run (0030)',
+    p30.rows[0]?.n === 5 && p30.rows[0]?.roll_no === '07'
+    && new Date(a30.rows[0]?.device_answered_at).toISOString() === '2026-11-19T10:02:00.000Z', JSON.stringify({ p: p30.rows, a: a30.rows }));
+  await rejects('and a pack is still written once after it', () =>
+    db.query(`update public.question_packs set roll_no = '08' where id = $1`, [kept30.pack]), { code: '23001' });
+  await accepts('and a new pack is still accepted after it', () => db.query(
+    `insert into public.question_packs (session_id, roll_no, question_ids, expires_at)
+     select session_id, '08', question_ids, now() + interval '6 hours' from public.question_packs where id = $1`, [kept30.pack]));
+  const l30 = await db.query('select served_log from public.profiles where id = $1', [kept30.profile]);
+  check('a profile\'s log of serves survives the re-run (0030)', l30.rows[0]?.served_log?.length === 3, JSON.stringify(l30.rows));
+  await rejects('and its check still holds after it', () => db.query(
+    `update public.profiles set served_log = '"not a list"' where id = $1`, [kept30.profile]), { code: '23514' });
+  // 0031: the import record survives, and an import is still accepted after it.
+  const r31 = await db.query('select source_code, source, bytes, data from public.room_imports where id = $1', [kept31.import]);
+  check('an import record and its file survive the re-run (0031)',
+    r31.rows[0]?.source_code === 'LPT031' && r31.rows[0]?.source?.run === 'c0ffee12' && r31.rows[0]?.data?.laptop?.run === 'c0ffee12',
+    JSON.stringify(r31.rows));
+  await accepts('and another import is still accepted after it', () => db.query(
+    `insert into public.room_imports (source_room_id, source_code, bytes, sha256, data) values ('after-rerun', 'AFT031', 10, $1, '{}')`,
+    ['b'.repeat(64)]));
+  // 0032: the kept keys survive, and a key is still accepted after it.
+  const k32 = await db.query('select writer, write_key, status, reply from public.record_writes where session_id = $1 order by writer, write_key',
+    [kept32.room]);
+  check('a room\'s replay keys and their replies survive the re-run (0032)', k32.rows.length === 3
+    && k32.rows.every((r) => r.status === 200) && k32.rows.some((r) => r.reply?.tally?.counts?.[0] === 1), JSON.stringify(k32.rows));
+  await accepts('and a key is still accepted after it', () => db.query(
+    `insert into public.record_writes (session_id, writer, write_key, route, body_hash, status, reply)
+     values ($1, 'shared-key', 'after-rerun-0001', 'observation', $2, 200, '{"changed": true}')`, [kept32.room, 'c'.repeat(64)]));
 }
 
 await db.close();
@@ -2799,10 +3055,19 @@ section('0024 on a database that already holds questions and answers');
   check('every question saved before it has no labels, and is otherwise as it was',
     rows.length === 2 && rows.every((r) => JSON.stringify(r.misconceptions) === '[]')
     && JSON.stringify(await shape()) === JSON.stringify(questionsBefore), JSON.stringify(rows));
-  check('no answer is touched', JSON.stringify((await before24.query('select * from public.answers')).rows) === JSON.stringify(answersBefore));
+  // A column a later file adds to every answer (device_answered_at, 0030) is
+  // empty on each of them: no answer touched, so it is left out of the comparison.
+  const answersAfter = (await before24.query('select * from public.answers')).rows;
+  check('no answer is touched', answersAfter.every((r) => (r.device_answered_at ?? null) === null)
+    && JSON.stringify(answersAfter.map(({ device_answered_at: _d, ...rest }) => rest)) === JSON.stringify(answersBefore));
   await before24.close();
 }
 
+// A later migration may add a column (0030 adds answers.device_answered_at, null on
+// every row it finds). The "nothing touched" checks below compare only the columns a
+// row had before, so they keep testing what they were written for.
+const asBefore = (after, before) => JSON.stringify(after.map((row, i) => Object.fromEntries(
+  Object.keys(before[i] ?? row).map((k) => [k, row[k]]))));
 // ------------------------------- 0025 over chapters, classes and questions --
 
 section('0025 on a database that already holds chapters, classes, questions and answers');
@@ -2832,8 +3097,8 @@ section('0025 on a database that already holds chapters, classes, questions and 
   const { rows } = await before25.query('select slide_texts, topics, topic_slides from public.contents');
   check('a chapter made before it has no slide texts, and keeps its topics and slide numbers',
     rows[0]?.slide_texts === null && rows[0]?.topics?.length === 2 && rows[0]?.topic_slides?.Sets?.[1] === 3, JSON.stringify(rows));
-  check('no question and no answer is touched', JSON.stringify((await before25.query('select * from public.questions')).rows) === JSON.stringify(questionsBefore)
-    && JSON.stringify((await before25.query('select * from public.answers')).rows) === JSON.stringify(answersBefore));
+  check('no question and no answer is touched', asBefore((await before25.query('select * from public.questions')).rows, questionsBefore) === JSON.stringify(questionsBefore)
+    && asBefore((await before25.query('select * from public.answers')).rows, answersBefore) === JSON.stringify(answersBefore));
   const hub = await before25.query(`select (select count(*) from public.class_units)::int as u, (select count(*) from public.class_chapters)::int as c,
     (select count(*) from public.chapter_topics)::int as t, (select count(*) from public.topic_links)::int as l`);
   check('and the hub starts empty: no unit, placement, topic record or link is made by the migration', JSON.stringify(hub.rows[0]) === '{"u":0,"c":0,"t":0,"l":0}',
@@ -2864,9 +3129,11 @@ section('0026 on a database that already holds topic records, links, questions a
       values ('85555555-5555-4555-8555-555555555555', '86666666-6666-4666-8666-666666666666', 'professor', 'confirmed', now());
   `);
   const counts = await rowCounts(before26);
-  const kept = async () => JSON.stringify(await Promise.all(['questions', 'answers', 'chapter_topics', 'topic_links']
-    .map(async (t) => (await before26.query(`select * from public.${t} order by id`)).rows)));
-  const rowsBefore = await kept();
+  const tables26 = ['questions', 'answers', 'chapter_topics', 'topic_links'];
+  const rows26 = async () => Promise.all(tables26.map(async (t) => (await before26.query(`select * from public.${t} order by id`)).rows));
+  const before26Rows = await rows26();
+  const rowsBefore = JSON.stringify(before26Rows);
+  const kept = async () => JSON.stringify((await rows26()).map((r, i) => JSON.parse(asBefore(r, before26Rows[i]))));
   const ok = await applyAll(before26, files.filter((f) => f.name >= '0026'), 'over an existing hub');
   check('0026 applies over an existing hub, adding and removing no row', ok && JSON.stringify(counts) === JSON.stringify(
     Object.fromEntries(Object.entries(await rowCounts(before26)).filter(([t]) => t in counts))));
@@ -2904,7 +3171,7 @@ section('0027 on a database that already holds chapters, topic records, question
   check('0027 applies over existing chapters, adding and removing no row', ok && JSON.stringify(counts) === JSON.stringify(
     Object.fromEntries(Object.entries(await rowCounts(before27)).filter(([t]) => t in counts))));
   const same = [];
-  for (const table of Object.keys(kept)) if (JSON.stringify(await read(table)) !== JSON.stringify(kept[table])) same.push(table);
+  for (const table of Object.keys(kept)) if (asBefore(await read(table), kept[table]) !== JSON.stringify(kept[table])) same.push(table);
   check('no chapter, topic record, question or answer is touched', same.length === 0, same.join(', '));
   const made = await before27.query(`select (select count(*) from public.topic_lessons)::int as l, (select count(*) from public.item_translations)::int as t,
     (select count(*) from public.student_language_choices)::int as c`);
@@ -3010,6 +3277,119 @@ section('0029 on a database that already holds hub attempts in every mode, quest
   check('and the tutor starts empty: no hint, feedback or hint view is made by the migration', JSON.stringify(made.rows[0]) === '{"h":0,"f":0,"v":0}',
     JSON.stringify(made.rows[0]));
   await before29.close();
+}
+
+// -------------------------------------------- 0030 over answers already given --
+
+section('0030 on a database that already holds rooms, profiles and answers');
+
+{
+  const before30 = await freshDatabase();
+  await applyAll(before30, files.filter((f) => f.name < '0030'), 'up to the file before 0030');
+  await before30.exec(`
+    insert into public.contents (id, title, kind) values ('71111111-1111-4111-8111-111111111111', 'deck', 'pptx');
+    insert into public.sessions (id, code, content_id, status, closed_at)
+      values ('73333333-3333-4333-8333-333333333333', 'OLD030', '71111111-1111-4111-8111-111111111111', 'closed', now());
+    insert into public.profiles (session_id, roll_no, served_id, served_at)
+      values ('73333333-3333-4333-8333-333333333333', '21CS01', '72222222-2222-4222-8222-222222222222', now());
+    insert into public.answers (session_id, answer_key, roll_no, bloom, final, correct, score, served_at)
+      values ('73333333-3333-4333-8333-333333333333', 'k-30-a', '21CS01', 'remember', true, true, 1, now()),
+             ('73333333-3333-4333-8333-333333333333', 'k-30-b', '21CS01', 'apply', false, false, 0, now());
+  `);
+  const counts = await rowCounts(before30);
+  const without = (rows) => JSON.stringify(rows.map(({ device_answered_at: _d, ...rest }) => rest));
+  const answersBefore = (await before30.query('select * from public.answers order by answer_key')).rows;
+  const profilesBefore = (await before30.query('select * from public.profiles')).rows;
+  const ok = await applyAll(before30, files.filter((f) => f.name >= '0030'), 'over existing answers');
+  const after = Object.fromEntries(Object.entries(await rowCounts(before30)).filter(([t]) => t in counts));
+  check('0030 applies over existing rooms, profiles and answers, adding and removing none',
+    ok && JSON.stringify(counts) === JSON.stringify(after), `${JSON.stringify(counts)} -> ${JSON.stringify(after)}`);
+  const answersAfter = (await before30.query('select * from public.answers order by answer_key')).rows;
+  check('every answer given before it reads back as one whose phone sent no time, and is otherwise as it was',
+    answersAfter.every((r) => r.device_answered_at === null) && without(answersAfter) === without(answersBefore),
+    JSON.stringify(answersAfter.map((r) => [r.answer_key, r.device_answered_at])));
+  // served_log is new on every profile: an empty list, read from the column's
+  // default, so it is left out of the comparison and checked on its own.
+  const profilesAfter = (await before30.query('select * from public.profiles')).rows;
+  check('no profile is touched (the phone\'s place, its pin, is as it was), and each reads as one with no serves logged',
+    JSON.stringify(profilesAfter.map(({ served_log: _l, ...rest }) => rest)) === JSON.stringify(profilesBefore)
+    && profilesAfter.every((p) => JSON.stringify(p.served_log) === '[]'), JSON.stringify(profilesAfter.map((p) => p.served_log)));
+  const t = await before30.query('select count(*)::int as n from public.question_packs');
+  check('and no phone holds a pack', t.rows[0].n === 0);
+  await before30.close();
+}
+
+// ------------------------------- 0031 over rooms and answers already kept --
+
+section('0031 on a database that already holds rooms, answers and archives');
+
+{
+  const before31 = await freshDatabase();
+  await applyAll(before31, files.filter((f) => f.name < '0031'), 'up to the file before 0031');
+  await before31.exec(`
+    insert into public.contents (id, title, kind) values ('71111111-1111-4111-8111-111111111111', 'deck', 'pptx');
+    insert into public.sessions (id, code, content_id, status)
+      values ('73333333-3333-4333-8333-333333333333', 'OLD031', '71111111-1111-4111-8111-111111111111', 'closed');
+    insert into public.answers (session_id, answer_key, roll_no, bloom, kind, response, question_snapshot)
+      values ('73333333-3333-4333-8333-333333333333', 'k-31', '21CS01', 'remember', 'mcq', '0', '{"text": "Pick one"}');
+    insert into public.room_archives (session_id, code, bytes, data)
+      values ('74444444-4444-4444-8444-444444444444', 'GONE31', 10, '{"format": "bloomloop.room-archive"}');
+  `);
+  const counts = await rowCounts(before31);
+  const kept = async () => JSON.stringify([
+    (await before31.query('select * from public.sessions order by id')).rows,
+    (await before31.query('select * from public.answers order by id')).rows,
+    (await before31.query('select * from public.room_archives order by id')).rows,
+  ]);
+  const rowsBefore = await kept();
+  const ok = await applyAll(before31, files.filter((f) => f.name >= '0031'), 'over existing rooms');
+  check('0031 applies over existing rooms, answers and archives, adding and removing none', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before31)).filter(([t]) => t in counts))));
+  check('no room, answer or archive is touched', (await kept()) === rowsBefore);
+  const { rows } = await before31.query('select count(*)::int as n from public.room_imports');
+  check('and there is no import yet', rows[0].n === 0);
+  await before31.close();
+}
+
+// ------------------------------------- 0032 over teacher records already kept --
+
+section('0032 on a database that already holds attendance and teacher records');
+
+{
+  const before32 = await freshDatabase();
+  await applyAll(before32, files.filter((f) => f.name < '0032'), 'up to 0031');
+  await before32.exec(`
+    insert into public.contents (id, title, kind) values ('71111111-1111-4111-8111-111111111111', 'deck', 'pptx');
+    insert into public.classes (id, course_name, section) values ('72222222-2222-4222-8222-222222222222', 'Networks', 'A');
+    insert into public.class_students (id, class_id, roll_no, name)
+      values ('73333333-3333-4333-8333-333333333333', '72222222-2222-4222-8222-222222222222', '21CS01', 'Asha');
+    insert into public.sessions (id, code, content_id, status, class_id)
+      values ('74444444-4444-4444-8444-444444444444', 'OLD032', '71111111-1111-4111-8111-111111111111', 'open',
+              '72222222-2222-4222-8222-222222222222');
+    insert into public.attendance (session_id, class_student_id, status, source)
+      values ('74444444-4444-4444-8444-444444444444', '73333333-3333-4333-8333-333333333333', 'late', 'teacher');
+    insert into public.observations (session_id, class_id, class_student_id, roll_no, day, kind, note)
+      values ('74444444-4444-4444-8444-444444444444', '72222222-2222-4222-8222-222222222222',
+              '73333333-3333-4333-8333-333333333333', '21CS01', '2026-11-19', 'understood', 'before 0032');
+    insert into public.hand_tallies (session_id, seq, question_text, counts)
+      values ('74444444-4444-4444-8444-444444444444', 1, 'Which layer routes?', '{3,1,0,0}');
+    insert into public.room_activities (session_id, seq, kind, outcome)
+      values ('74444444-4444-4444-8444-444444444444', 1, 'check', 'Most got it');
+  `);
+  const counts = await rowCounts(before32);
+  const read = async () => JSON.stringify((await before32.query(`
+    select (select json_agg(json_build_object('s', status, 'src', source, 'at', marked_at)) from public.attendance) as a,
+           (select json_agg(json_build_object('k', kind, 'n', note, 'at', observed_at)) from public.observations) as o,
+           (select json_agg(json_build_object('c', counts, 'at', updated_at)) from public.hand_tallies) as t,
+           (select json_agg(json_build_object('o', outcome, 'at', updated_at)) from public.room_activities) as r`)).rows[0]);
+  const recordsBefore = await read();
+  const ok = await applyAll(before32, files.filter((f) => f.name >= '0032'), 'over existing records');
+  check('0032 applies over existing attendance and records, adding and removing none', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before32)).filter(([t]) => t in counts))));
+  check('every mark and record reads back exactly as it was', (await read()) === recordsBefore);
+  const k = await before32.query('select count(*)::int as n from public.record_writes');
+  check('and no write has a key: the table starts empty', k.rows[0].n === 0);
+  await before32.close();
 }
 
 // ------------------------------------- 0011 over accounts that already clash --

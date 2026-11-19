@@ -245,6 +245,8 @@ export function emptyProfile({ sessionId, rollNo, name = '', accountId = null, s
     // The question this student is currently on. Held server-side so a closed
     // tab comes back to the SAME item rather than a fresh one.
     served: null,
+    // Every question put on this phone's screen, first time each (Phase 7).
+    servedLog: [],
     // Append-only record of what was observable during the session. Signals, not
     // proof - see services/integrity.js for why that distinction is load-bearing.
     integrity: [],
@@ -262,6 +264,13 @@ export function hydrate(raw = {}) {
     history: Array.isArray(raw.history) ? raw.history.slice() : [],
     reason: raw.reason ?? '',
     served: normaliseServed(raw.served),
+    // Every question the server put on this phone's screen, first time each
+    // (Phase 7, 0030): { questionId, at }. The pin above moves on; this does
+    // not, so an answer that waited on the phone is still known for one it was
+    // given (services/offline.js logServed, servedAtFor).
+    servedLog: Array.isArray(raw.servedLog)
+      ? raw.servedLog.filter((e) => e && typeof e === 'object' && e.questionId).map((e) => ({ questionId: String(e.questionId), at: e.at ?? null }))
+      : [],
     integrity: Array.isArray(raw.integrity) ? raw.integrity.slice() : [],
     accountId: raw.accountId ?? null,
     // Strictly true: a link written before 0022, or by a typed roll number, is unverified.

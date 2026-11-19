@@ -176,6 +176,8 @@ const outProfile = (r) =>
           last: r.served_last ?? '',
         }
       : null,
+    // 0030 (Phase 7): every question put on this phone's screen, first time each.
+    servedLog: Array.isArray(r.served_log) ? r.served_log : [],
     integrity: Array.isArray(r.integrity) ? r.integrity : [],
     // The student account this room profile is linked to, or null.
     accountId: r.account_id ?? null,
@@ -225,6 +227,8 @@ const outAnswer = (r) =>
     // 0023: the class question and round of a vote; null on every other answer.
     classQuestionId: r.class_question_id ?? null,
     round: r.round == null ? null : Number(r.round),
+    // 0030: when the phone says it was answered; for the record only.
+    deviceAnsweredAt: r.device_answered_at ?? null,
   };
 
 const outArchive = (r) =>
@@ -414,6 +418,21 @@ const outInsightAction = (r) =>
     actedAt: r.acted_at,
   };
 
+// Phase 7 (0032): a teacher-record write's replay key.
+const outRecordWrite = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    writer: r.writer,
+    key: r.write_key,
+    route: r.route,
+    target: r.target ?? '',
+    bodyHash: r.body_hash,
+    status: Number(r.status),
+    reply: r.reply && typeof r.reply === 'object' ? r.reply : {},
+    createdAt: r.created_at,
+  };
+
 const outProjectorLink = (r) =>
   r && {
     _id: r.id,
@@ -481,6 +500,17 @@ const outClassQuestion = (r) =>
     closedBy: r.closed_by ?? null,
   };
 
+// 0030 (Phase 7): a question pack sent to one phone.
+const outQuestionPack = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    rollNo: r.roll_no,
+    questionIds: Array.isArray(r.question_ids) ? r.question_ids.map(String) : [],
+    issuedAt: r.issued_at,
+    expiresAt: r.expires_at,
+  };
+
 // 0020: a class's attainment formula, one row per saved version.
 const outAttainmentConfig = (r) =>
   r && {
@@ -525,6 +555,7 @@ const inAnswer = (d) => ({
   account_verified: d.accountVerified === true,
   class_question_id: d.classQuestionId ?? null,
   round: d.round ?? null,
+  device_answered_at: d.deviceAnsweredAt ?? null,
 });
 
 /** Only the fields the caller actually sent, so a PATCH never blanks a column. */
@@ -822,6 +853,8 @@ export function createSupabaseRepo() {
               // last one had already spent.
               served_tries: profile.served?.tries ?? 0,
               served_last: profile.served?.last || null,
+              // 0030 (Phase 7): the pin moves on, the log of serves does not.
+              served_log: Array.isArray(profile.servedLog) ? profile.servedLog : [],
               integrity: profile.integrity ?? [],
               account_id: profile.accountId ?? null,
               account_verified: profile.accountVerified === true,
@@ -2347,8 +2380,243 @@ export function createSupabaseRepo() {
         },
       };
     })(),
+    // ---- Phase 7: question packs ----
+    // See memoryRepo for the contract (question_packs, 0030). Written once: the
+    // table's trigger refuses an update, and a delete except with the room.
+
+    async addQuestionPack(doc) {
+      const { data, error } = await db.from('question_packs').insert({
+        session_id: doc.sessionId,
+        roll_no: String(doc.rollNo),
+        question_ids: (doc.questionIds ?? []).map(String),
+        issued_at: doc.issuedAt ?? new Date().toISOString(),
+        expires_at: doc.expiresAt,
+      }).select().single();
+      // 23514: 0030's checks (1 to 20 questions, none null, an expiry after the issue).
+      if (error?.code === '23514') {
+        throw Object.assign(new Error('A question pack holds 1 to 20 questions and expires after it is sent.'), { status: 400 });
+      }
+      if (error) fail('addQuestionPack')(error);
+      return outQuestionPack(data);
+    },
+
+    async listQuestionPacks(sessionId, rollNo) {
+      if (!isUuid(sessionId)) return [];
+      return allRecords('listQuestionPacks', 'question_packs',
+        (q) => q.eq('session_id', sessionId).eq('roll_no', String(rollNo)), ['issued_at', 'id'], outQuestionPack);
+    },
+
+    // ---- Phase 7: laptop mode and room imports ----
+    // See memoryRepo for the contract. room_imports is 0031. PostgREST runs no
+    // transaction across calls, so the room is written table by table and, on
+    // any failure after the session row, deleted again: its rows go with it by
+    // ON DELETE CASCADE, which 0012's guards allow.
+
+    async importRoom({ record, session, classQuestions = [], profiles = [], answers = [], reviews = [], attendance = [] }) {
+      const exists = (code, message) => Object.assign(new Error(message), { code });
+      const CHUNK = 500;
+      const chunks = (list) => Array.from({ length: Math.ceil(list.length / CHUNK) }, (_, i) => list.slice(i * CHUNK, (i + 1) * CHUNK));
+      const { data: made, error } = await db.from('sessions').insert({
+        code: session.code,
+        content_id: session.contentId,
+        title: session.title ?? '',
+        status: session.status ?? 'closed',
+        owner_id: session.ownerId ?? null,
+        started_at: session.startedAt,
+        closed_at: session.closedAt ?? null,
+        paused_at: session.pausedAt ?? null,
+        mastery_goal: session.masteryGoal,
+        reattempts: session.reattempts,
+        redemption: session.redemption,
+        question_ids: Array.isArray(session.questionIds) ? session.questionIds : null,
+        class_id: session.classId ?? null,
+        mode: session.mode ?? 'devices',
+        adapt: session.adapt !== false,
+        start_level: session.startLevel ?? 'understand',
+        questions_per_student: session.questionsPerStudent ?? null,
+        time_per_question: session.timePerQuestion ?? null,
+      }).select().single();
+      if (error?.code === '23505') throw exists('CODE_TAKEN', `A room with the code ${session.code} already exists.`);
+      if (error) fail('importRoom')(error);
+      const sessionId = made.id;
+      try {
+        const cqIds = new Map();
+        if (classQuestions.length) {
+          const rows = unwrap('importRoom', await db.from('class_questions').insert(classQuestions.map((c) => ({
+            session_id: sessionId,
+            seq: c.seq,
+            question_id: c.questionId ?? null,
+            question_snapshot: c.questionSnapshot ?? {},
+            state: c.state,
+            revealed: c.revealed === true,
+            started_at: c.startedAt,
+            started_by: c.startedBy ?? null,
+            paused_at: c.pausedAt ?? null,
+            revote_at: c.revoteAt ?? null,
+            closed_at: c.closedAt ?? null,
+            closed_by: c.closedBy ?? null,
+          }))).select('id, seq')) ?? [];
+          const bySeq = new Map(rows.map((r) => [Number(r.seq), r.id]));
+          for (const c of classQuestions) cqIds.set(String(c.ref), bySeq.get(c.seq) ?? null);
+        }
+        for (const part of chunks(profiles)) {
+          unwrap('importRoom', await db.from('profiles').insert(part.map((p) => ({
+            session_id: sessionId,
+            roll_no: String(p.rollNo),
+            name: p.name ?? '',
+            levels: p.levels ?? {},
+            working_level: p.workingLevel,
+            reason: p.reason ?? '',
+            history: p.history ?? [],
+            served_id: p.served?.questionId ?? null,
+            served_at: p.served?.at ?? null,
+            served_why: p.served?.reason ?? null,
+            served_tries: p.served?.tries ?? 0,
+            served_last: p.served?.last || null,
+            integrity: p.integrity ?? [],
+            account_id: p.accountId ?? null,
+            account_verified: p.accountVerified === true,
+            updated_at: new Date().toISOString(),
+          }))));
+        }
+        const ids = new Map();
+        for (const part of chunks(answers)) {
+          const rows = unwrap('importRoom', await db.from('answers').insert(part.map(({ classQuestionRef, ...a }) => ({
+            ...inAnswer({ ...a, sessionId, classQuestionId: classQuestionRef ? cqIds.get(String(classQuestionRef)) ?? null : null }),
+            // A review in force is part of the answer as it was kept: written
+            // with the row, as the room's own review route would have.
+            reviewed_by: a.reviewedBy ?? null,
+            reviewed_at: a.reviewedAt ?? null,
+            review_note: a.reviewNote ?? '',
+          }))).select('id, answer_key')) ?? [];
+          for (const r of rows) ids.set(r.answer_key, r.id);
+        }
+        for (const part of chunks(reviews)) {
+          unwrap('importRoom', await db.from('answer_reviews').insert(part.map((r) => ({
+            answer_id: ids.get(r.answerKey),
+            session_id: sessionId,
+            decision: r.decision,
+            correct: r.correct,
+            score: r.score,
+            note: r.note ?? '',
+            reviewed_by: r.reviewedBy ?? null,
+            reviewed_at: r.reviewedAt,
+          }))));
+        }
+        for (const part of chunks(attendance)) {
+          unwrap('importRoom', await db.from('attendance').insert(part.map((m) => inAttendance({ ...m, sessionId }))));
+        }
+        const { data: rec, error: recError } = await db.from('room_imports').insert({
+          source_room_id: String(record.sourceRoomId),
+          source_code: record.sourceCode,
+          source: record.source ?? {},
+          session_id: sessionId,
+          owner_id: record.ownerId ?? null,
+          imported_by: record.importedBy ?? null,
+          imported_at: record.importedAt,
+          archived_at: record.archivedAt ?? null,
+          bytes: record.bytes,
+          sha256: record.sha256,
+          summary: record.summary ?? {},
+          data: record.data,
+        }).select(ROOM_IMPORT_META).single();
+        if (recError?.code === '23505') throw exists('IMPORT_EXISTS', 'That room was already imported.');
+        if (recError) fail('importRoom')(recError);
+        return { session: outSession(made), record: outRoomImport(rec) };
+      } catch (err) {
+        const { error: undo } = await db.from('sessions').delete().eq('id', sessionId);
+        if (undo) console.error(`[supabase] importRoom: removing the half-made room ${session.code} failed: ${undo.message}`);
+        throw err;
+      }
+    },
+
+    async getRoomImportBySource(sourceRoomId) {
+      const { data, error } = await db.from('room_imports').select(ROOM_IMPORT_META)
+        .eq('source_room_id', String(sourceRoomId)).maybeSingle();
+      if (error) fail('getRoomImportBySource')(error);
+      return outRoomImport(data);
+    },
+
+    async getRoomImport(id) {
+      if (!isUuid(id)) return null;
+      const { data, error } = await db.from('room_imports').select('*').eq('id', id).maybeSingle();
+      if (error) fail('getRoomImport')(error);
+      return outRoomImport(data);
+    },
+
+    async listRoomImports() {
+      const rows = unwrap('listRoomImports', await db.from('room_imports').select(ROOM_IMPORT_META)
+        .order('imported_at', { ascending: false }).limit(1000));
+      return (rows ?? []).map(outRoomImport);
+    },
+
+    // See memoryRepo: by room id (0031's unique session_id is its index), never
+    // by listing every import. In pages of 100 ids, so a long list of rooms
+    // never makes a request line too long.
+    async listRoomImportsForSessions(sessionIds = []) {
+      const ids = [...new Set(sessionIds.map(String).filter(isUuid))];
+      const out = [];
+      for (let i = 0; i < ids.length; i += 100) {
+        const rows = unwrap('listRoomImportsForSessions', await db.from('room_imports').select(ROOM_IMPORT_META)
+          .in('session_id', ids.slice(i, i + 100)));
+        out.push(...(rows ?? []).map(outRoomImport));
+      }
+      return out;
+    },
+
+    async getRoomArchiveBySession(sessionId) {
+      if (!isUuid(sessionId)) return null;
+      const { data, error } = await db.from('room_archives').select(ARCHIVE_META).eq('session_id', sessionId).maybeSingle();
+      if (error) fail('getRoomArchiveBySession')(error);
+      return outArchive(data);
+    },
+
+    // ---- Phase 7: replay-safe teacher records (0032; see memoryRepo for the contract) ----
+    async getRecordWrite({ sessionId, writer, key }) {
+      if (!isUuid(sessionId)) return null;
+      const { data, error } = await db.from('record_writes').select('*')
+        .eq('session_id', sessionId).eq('writer', writer).eq('write_key', key).maybeSingle();
+      if (error) fail('getRecordWrite')(error);
+      return outRecordWrite(data);
+    },
+
+    // 23505 on record_writes_session_writer_key_key: the key is already held.
+    async addRecordWrite(doc) {
+      const { data, error } = await db.from('record_writes').insert({
+        session_id: doc.sessionId,
+        writer: doc.writer,
+        write_key: doc.key,
+        route: doc.route,
+        target: doc.target ?? '',
+        body_hash: doc.bodyHash,
+        status: doc.status,
+        reply: doc.reply ?? {},
+      }).select().single();
+      if (error?.code === '23505') return { write: await this.getRecordWrite(doc), duplicate: true };
+      if (error) fail('addRecordWrite')(error);
+      return { write: outRecordWrite(data), duplicate: false };
+    },
   };
 }
+
+// Phase 7 (0031): one import of a laptop's room archive, the archive itself only when selected.
+const outRoomImport = (r) =>
+  r && {
+    _id: r.id,
+    sourceRoomId: r.source_room_id,
+    sourceCode: r.source_code,
+    source: r.source ?? null,
+    sessionId: r.session_id ?? null,
+    ownerId: r.owner_id ?? null,
+    importedBy: r.imported_by ?? null,
+    importedAt: r.imported_at,
+    archivedAt: r.archived_at ?? null,
+    bytes: Number(r.bytes),
+    sha256: r.sha256,
+    summary: r.summary ?? {},
+    ...(r.data !== undefined ? { data: r.data } : {}),
+  };
+const ROOM_IMPORT_META = 'id, source_room_id, source_code, source, session_id, owner_id, imported_by, imported_at, archived_at, bytes, sha256, summary';
 
 /*
  * The schema the boot probe checks: every table the server writes, and every
@@ -2413,6 +2681,15 @@ export const ROOM_SCHEMA = Object.freeze([
   // Written with every question saved (insertQuestions), generated or written
   // by a professor: without it no question can be saved.
   ['questions', 'misconceptions', '0024_misconception_labels.sql'],
+  // Phase 7: written on every answer (recordAnswer) and with every question
+  // pack a phone takes (addQuestionPack), and read for every answer to a
+  // question that is not the one on the phone's screen: without them no answer
+  // can be saved at all, and no answer that waited on a phone can be marked.
+  ['answers', 'device_answered_at', '0030_offline_packs.sql'],
+  ['question_packs', null, '0030_offline_packs.sql'],
+  // Phase 7 (the review fixes): written with every profile (saveProfile), on
+  // every join and every question served: without it no phone can join.
+  ['profiles', 'served_log', '0030_offline_packs.sql'],
 ]);
 
 export const ROUTE_SCHEMA = Object.freeze([
@@ -2464,6 +2741,15 @@ export const ROUTE_SCHEMA = Object.freeze([
     'no feedback on a wrong option can be written, generated, approved or shown (answers are still saved and marked)'],
   ['hub_hint_views', null, '0029_hub_tutor.sql',
     'a hint cannot be opened, because each one opened must be recorded with the answer'],
+  // Phase 7: written only by the import of a laptop's room archive (routes/laptop.js),
+  // and read by the live loop when a phone asks to deliver to a closed room, where a
+  // missing table is read as "no import" (sockets/index.js), so rooms never need it.
+  ['room_imports', null, '0031_room_imports.sql', 'a room archive saved by a laptop in laptop mode cannot be imported'],
+  // Phase 7: read and written only by a teacher-record write that carries a
+  // replay key (routes/recordSync.js); a write without one never touches it.
+  ['record_writes', null, '0032_record_write_keys.sql',
+    'a teacher-record write sent with a replay key fails, so the console cannot send again what it saved offline; '
+      + 'writes sent without one work as before'],
 ]);
 
 /** One missing piece, as a sentence naming the file to apply. */

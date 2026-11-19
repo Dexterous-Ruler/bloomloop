@@ -212,7 +212,9 @@ async function phone(code, rollNo, name, plan) {
     if (!(q._id in plan)) throw new Error(`${rollNo} has no plan for ${q._id} in ${code}`);
     keyN += 1;
     const result = either(s, ['server:result', 'session:rejected']);
-    s.emit('student:answer', { questionId: q._id, response: plan[q._id], answerId: `attain-${String(keyN).padStart(4, '0')}` });
+    // Not "attain-...": since Phase 7 a reply names the phone's own answer id,
+    // and the privacy check below looks for that word in what phones received.
+    s.emit('student:answer', { questionId: q._id, response: plan[q._id], answerId: `att-${String(keyN).padStart(4, '0')}` });
     const r = await result;
     if (r.name !== 'server:result') throw new Error(`${rollNo}'s answer in ${code} was refused: ${JSON.stringify(r.payload)}`);
     answered.push(q._id);

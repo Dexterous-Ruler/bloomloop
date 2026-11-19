@@ -4,7 +4,7 @@
 import {
   Content, Question, Session, Profile, Answer, RoomArchive, AnswerReview, Media, Class, ClassStudent, Attendance,
   Observation, WheelRound, WheelPick, HandTally, RoomActivity, InsightAction, ProjectorLink,
-  CourseOutcome, OutcomeTopic, QuestionOutcomeOverride, AttainmentConfig, ClassQuestion,
+  CourseOutcome, OutcomeTopic, QuestionOutcomeOverride, AttainmentConfig, ClassQuestion, QuestionPack, RoomImport, RecordWrite,
 } from '../models/index.js';
 // Phase 6: the hub's content backbone (0025).
 import { ClassUnit, ClassChapter, ChapterTopic, TopicLink } from '../models/hubBackbone.js';
@@ -105,6 +105,11 @@ export function createMongoRepo() {
       await ProjectorLink.deleteMany({ sessionId: String(id) });
       // Its class questions (0023), archived with it first.
       await ClassQuestion.deleteMany({ sessionId: String(id) });
+      // Its question packs (0030), which say what was sent and are not archived:
+      // every answer row keeps when its question was served.
+      await QuestionPack.deleteMany({ sessionId: String(id) });
+      // Its replay keys (Phase 7, 0032): receipts, not records, so not archived.
+      await RecordWrite.deleteMany({ sessionId: String(id) });
       await Answer.deleteMany({ sessionId: id });
       await Profile.deleteMany({ sessionId: id });
       await Session.findByIdAndDelete(id);
@@ -925,5 +930,135 @@ export function createMongoRepo() {
         },
       };
     })(),
+    // ---- Phase 7: question packs ----
+    // See memoryRepo for the contract (question_packs, 0030). Written once.
+
+    async addQuestionPack(doc) {
+      const issuedAt = doc.issuedAt ?? new Date().toISOString();
+      if (!(Date.parse(doc.expiresAt) > Date.parse(issuedAt))) {
+        throw Object.assign(new Error('A question pack expires after it is sent.'), { status: 400 });
+      }
+      try {
+        return lean(await QuestionPack.create({
+          sessionId: String(doc.sessionId),
+          rollNo: String(doc.rollNo),
+          questionIds: (doc.questionIds ?? []).map(String),
+          issuedAt,
+          expiresAt: doc.expiresAt,
+        }));
+      } catch (err) {
+        if (err?.name === 'ValidationError') throw Object.assign(new Error('A question pack holds 1 to 20 questions.'), { status: 400 });
+        throw err;
+      }
+    },
+    async listQuestionPacks(sessionId, rollNo) {
+      return lean(await QuestionPack.find({ sessionId: String(sessionId), rollNo: String(rollNo) })
+        .sort({ issuedAt: 1, _id: 1 }).lean()) ?? [];
+    },
+
+    // ---- Phase 7: laptop mode and room imports ----
+    // See memoryRepo for the contract. Mongo has no transaction here and no
+    // cascade, so the room is written through this repo's own methods and, on
+    // any failure after the session, deleted again by deleteSession (which
+    // removes every row of a room). The import record is written last; its
+    // unique sourceRoomId is the guard against two imports of one room.
+
+    async importRoom({ record, session, classQuestions = [], profiles = [], answers = [], reviews = [], attendance = [] }) {
+      const exists = (code, message) => Object.assign(new Error(message), { code });
+      if (await RoomImport.exists({ sourceRoomId: String(record.sourceRoomId) })) {
+        throw exists('IMPORT_EXISTS', 'That room was already imported.');
+      }
+      if (await Session.exists({ code: String(session.code).toUpperCase() })) {
+        throw exists('CODE_TAKEN', `A room with the code ${session.code} already exists.`);
+      }
+      let made;
+      try {
+        made = await this.createSession(session);
+      } catch (err) {
+        if (err?.code === 11000) throw exists('CODE_TAKEN', `A room with the code ${session.code} already exists.`);
+        throw err;
+      }
+      const sessionId = String(made._id);
+      try {
+        const cqIds = new Map();
+        for (const { ref, ...doc } of classQuestions) {
+          const cq = await this.addClassQuestion({ ...doc, sessionId });
+          cqIds.set(String(ref), String(cq._id));
+        }
+        for (const p of profiles) await this.saveProfile({ ...p, sessionId });
+        const ids = new Map();
+        for (const { classQuestionRef, ...doc } of answers) {
+          const { answer } = await this.recordAnswer({
+            ...doc, sessionId, classQuestionId: classQuestionRef ? cqIds.get(String(classQuestionRef)) ?? null : null,
+          });
+          ids.set(answer.answerKey, String(answer._id));
+        }
+        for (const { answerKey, ...doc } of reviews) await this.addAnswerReview({ ...doc, answerId: ids.get(answerKey), sessionId });
+        if (attendance.length) await this.saveAttendance(attendance.map((m) => ({ ...m, sessionId })));
+        let rec;
+        try {
+          rec = (await RoomImport.create({ ...record, sessionId })).toObject();
+        } catch (err) {
+          if (err?.code === 11000) throw exists('IMPORT_EXISTS', 'That room was already imported.');
+          throw err;
+        }
+        const { data, ...meta } = lean(rec);
+        return { session: made, record: meta };
+      } catch (err) {
+        await this.deleteSession(sessionId);
+        throw err;
+      }
+    },
+
+    async getRoomImportBySource(sourceRoomId) {
+      const rec = lean(await RoomImport.findOne({ sourceRoomId: String(sourceRoomId) }, { data: 0 }).lean());
+      return rec && withRoomNow(rec);
+    },
+
+    async getRoomImport(id) {
+      const rec = lean(await RoomImport.findById(id).lean().catch(() => null));
+      return rec && withRoomNow(rec);
+    },
+
+    async listRoomImports() {
+      const rows = lean(await RoomImport.find({}, { data: 0 }).sort({ importedAt: -1 }).limit(1000).lean()) ?? [];
+      const live = new Set((await Session.find({ _id: { $in: rows.map((r) => r.sessionId).filter(Boolean) } }, { _id: 1 }).lean())
+        .map((s) => String(s._id)));
+      return rows.map((r) => (live.has(String(r.sessionId)) ? r : { ...r, sessionId: null }));
+    },
+
+    // See memoryRepo: by room id, never by listing every import.
+    async listRoomImportsForSessions(sessionIds = []) {
+      const ids = [...new Set(sessionIds.map(String))];
+      if (!ids.length) return [];
+      const rows = lean(await RoomImport.find({ sessionId: { $in: ids } }, { data: 0 }).lean()) ?? [];
+      const live = new Set((await Session.find({ _id: { $in: rows.map((r) => r.sessionId) } }, { _id: 1 }).lean())
+        .map((s) => String(s._id)));
+      return rows.filter((r) => live.has(String(r.sessionId)));
+    },
+
+    async getRoomArchiveBySession(sessionId) {
+      return lean(await RoomArchive.findOne({ sessionId: String(sessionId) }, { data: 0 }).lean());
+    },
+
+    // ---- Phase 7: replay-safe teacher records (0032; see memoryRepo for the contract) ----
+    async getRecordWrite({ sessionId, writer, key }) {
+      return lean(await RecordWrite.findOne({ sessionId: String(sessionId), writer, key }).lean());
+    },
+    async addRecordWrite(doc) {
+      try {
+        return { write: lean(await RecordWrite.create({ ...doc, sessionId: String(doc.sessionId) })), duplicate: false };
+      } catch (err) {
+        if (err?.code !== 11000) throw err;
+        return { write: await this.getRecordWrite(doc), duplicate: true };
+      }
+    },
   };
+}
+
+// Phase 7: an imported room deleted since names no room, as 0031's ON DELETE SET NULL has it.
+async function withRoomNow(rec) {
+  if (!rec.sessionId) return rec;
+  const live = await Session.exists({ _id: rec.sessionId }).catch(() => null);
+  return live ? rec : { ...rec, sessionId: null };
 }

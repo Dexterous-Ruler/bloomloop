@@ -40,6 +40,16 @@ export function createMemoryRepo() {
   const attainmentConfigs = [];
   // Class questions (0023), keyed by _id.
   const classQuestions = new Map();
+  // Question packs (0030, Phase 7): written once, in the order sent.
+  const questionPacks = [];
+  // Phase 7: rooms imported from laptop mode (0031), keyed by _id. An imported
+  // room deleted since reads as naming no room, as 0031's ON DELETE SET NULL has it.
+  const roomImports = new Map();
+  const importedNow = (rec) => (sessions.has(String(rec.sessionId)) ? rec : { ...rec, sessionId: null });
+  // Phase 7 (0032): the replay keys of teacher-record writes, append-only,
+  // keyed `${sessionId}\u0000${writer}\u0000${key}`, as the unique constraint is.
+  const recordWrites = new Map();
+  const writeKeyOf = (d) => `${d.sessionId}\u0000${d.writer}\u0000${d.key}`;
 
   // Unique on (classId, code) among outcomes not archived, as Postgres's partial
   // unique index course_outcomes_class_code_key is.
@@ -216,10 +226,10 @@ export function createMemoryRepo() {
       for (const [k, mark] of attendance) {
         if (mark.sessionId === key) attendance.delete(k);
       }
-      for (const list of [observations, insightActions]) {
+      for (const list of [observations, insightActions, questionPacks]) {
         for (let i = list.length - 1; i >= 0; i -= 1) if (list[i].sessionId === key) list.splice(i, 1);
       }
-      for (const map of [wheelRounds, wheelPicks, tallies, activities, projectorLinks, classQuestions]) {
+      for (const map of [wheelRounds, wheelPicks, tallies, activities, projectorLinks, classQuestions, recordWrites]) {
         for (const [id, rec] of map) if (rec.sessionId === key) map.delete(id);
       }
       return sessions.delete(key);
@@ -294,6 +304,8 @@ export function createMemoryRepo() {
         // 0023: the class question and round a vote was given in; null for every other answer.
         classQuestionId: null,
         round: null,
+        // 0030: when the phone says it was answered; for the record only.
+        deviceAnsweredAt: null,
         answeredAt: new Date().toISOString(),
         ...clone(doc),
         sessionId: String(doc.sessionId),
@@ -1545,5 +1557,151 @@ export function createMemoryRepo() {
         },
       };
     })(),
+    // ---- Phase 7: question packs ----
+    // A pack of the questions a phone would be served next, for use while its
+    // connection is down (services/offline.js; question_packs, 0030). Written
+    // once: a new pack is a new record. Deleted only with its room.
+
+    async addQuestionPack(doc) {
+      const ids = (doc.questionIds ?? []).map(String);
+      // As 0030's checks refuse them: 1 to 20 questions, an expiry after the issue.
+      if (ids.length < 1 || ids.length > 20) {
+        throw Object.assign(new Error('A question pack holds 1 to 20 questions.'), { status: 400 });
+      }
+      const issuedAt = doc.issuedAt ?? new Date().toISOString();
+      if (!(Date.parse(doc.expiresAt) > Date.parse(issuedAt))) {
+        throw Object.assign(new Error('A question pack expires after it is sent.'), { status: 400 });
+      }
+      const rec = {
+        _id: oid(),
+        sessionId: String(doc.sessionId),
+        rollNo: String(doc.rollNo),
+        questionIds: ids,
+        issuedAt,
+        expiresAt: doc.expiresAt,
+      };
+      questionPacks.push(rec);
+      return clone(rec);
+    },
+
+    /** One phone's packs in one room, oldest first (in the order sent, for one instant). */
+    async listQuestionPacks(sessionId, rollNo) {
+      return clone(questionPacks
+        .filter((p) => p.sessionId === String(sessionId) && p.rollNo === String(rollNo))
+        .sort((a, b) => Date.parse(a.issuedAt) - Date.parse(b.issuedAt)));
+    },
+
+    // ---- Phase 7: laptop mode and room imports ----
+    // A room archive from laptop mode made into a closed room here
+    // (services/roomImport.js), and the record of the import (0031): the
+    // laptop's room id, unique, and the archive as uploaded.
+
+    /**
+     * Make the whole room at once: the session, its class questions, profiles,
+     * answers (inserted, never updated), reviews and attendance, then the import
+     * record. Each row keeps the times it carries. `ref` on a class question and
+     * `classQuestionRef` on a vote are the archive's ids, turned into this
+     * store's here; a review names its answer by `answerKey`. A room id or a
+     * code already held throws `IMPORT_EXISTS` or `CODE_TAKEN` before anything
+     * is written; any later failure removes the room again, as Postgres's
+     * cascade does.
+     */
+    async importRoom({ record, session, classQuestions: asked = [], profiles: students = [], answers: rows = [], reviews: decisions = [], attendance: marks = [] }) {
+      const exists = (code, message) => Object.assign(new Error(message), { code });
+      if ([...roomImports.values()].some((r) => r.sourceRoomId === String(record.sourceRoomId))) {
+        throw exists('IMPORT_EXISTS', 'That room was already imported.');
+      }
+      if ([...sessions.values()].some((s) => s.code === String(session.code).toUpperCase())) {
+        throw exists('CODE_TAKEN', `A room with the code ${session.code} already exists.`);
+      }
+      const made = await this.createSession(session);
+      const sessionId = made._id;
+      try {
+        const cqIds = new Map();
+        for (const { ref, ...doc } of asked) {
+          const cq = await this.addClassQuestion({ ...doc, sessionId });
+          cqIds.set(String(ref), cq._id);
+        }
+        for (const p of students) await this.saveProfile({ ...p, sessionId });
+        const ids = new Map();
+        for (const { classQuestionRef, ...doc } of rows) {
+          const { answer } = await this.recordAnswer({
+            ...doc, sessionId, classQuestionId: classQuestionRef ? cqIds.get(String(classQuestionRef)) ?? null : null,
+          });
+          ids.set(answer.answerKey, answer._id);
+        }
+        for (const { answerKey, ...doc } of decisions) await this.addAnswerReview({ ...doc, answerId: ids.get(answerKey), sessionId });
+        if (marks.length) await this.saveAttendance(marks.map((m) => ({ ...m, sessionId })));
+        const rec = { _id: oid(), ...clone(record), sessionId };
+        roomImports.set(rec._id, rec);
+        const { data, ...meta } = rec;
+        return { session: clone(sessions.get(sessionId)), record: clone(meta) };
+      } catch (err) {
+        await this.deleteSession(sessionId);
+        throw err;
+      }
+    },
+
+    /** The import of the laptop room `sourceRoomId`, without its archive, or null. */
+    async getRoomImportBySource(sourceRoomId) {
+      const rec = [...roomImports.values()].find((r) => r.sourceRoomId === String(sourceRoomId));
+      if (!rec) return null;
+      const { data, ...meta } = importedNow(rec);
+      return clone(meta);
+    },
+
+    /** One import with the archive as uploaded. */
+    async getRoomImport(id) {
+      const rec = roomImports.get(String(id));
+      return clone(rec ? importedNow(rec) : null);
+    },
+
+    /** Newest first, without the archives. */
+    async listRoomImports() {
+      return clone([...roomImports.values()]
+        .map((rec) => { const { data, ...meta } = importedNow(rec); return meta; })
+        .sort((a, b) => (a.importedAt < b.importedAt ? 1 : -1)));
+    },
+
+    /**
+     * The imports that made these rooms, without the archives: one per room at
+     * most (0031's unique session_id), in no order. A room no import made is
+     * simply absent. Read by room id, never by listing every import: the live
+     * loop asks it for one closed room, the staff routes for the rooms they show.
+     */
+    async listRoomImportsForSessions(sessionIds = []) {
+      const ids = new Set(sessionIds.map(String));
+      return clone([...roomImports.values()]
+        .filter((rec) => ids.has(String(rec.sessionId)) && sessions.has(String(rec.sessionId)))
+        .map((rec) => { const { data, ...meta } = rec; return meta; }));
+    },
+
+    /** A deleted room's archive by the room's id, without its data, or null. */
+    async getRoomArchiveBySession(sessionId) {
+      const rec = [...archives.values()].find((a) => a.sessionId === String(sessionId));
+      if (!rec) return null;
+      const { data, ...meta } = rec;
+      return clone(meta);
+    },
+
+    // ---- Phase 7: replay-safe teacher records (0032; routes/recordSync.js) ----
+
+    /** The write a key was first used for in a room, by this writer, or null. */
+    async getRecordWrite({ sessionId, writer, key }) {
+      return clone(recordWrites.get(writeKeyOf({ sessionId: String(sessionId), writer, key })) ?? null);
+    },
+
+    /**
+     * Keep a key with the write's reply. Append-only, and one per (room, writer,
+     * key), as record_writes_session_writer_key_key is: a key already held is
+     * not replaced, and comes back with `duplicate: true`, as recordAnswer does.
+     */
+    async addRecordWrite(doc) {
+      const k = writeKeyOf({ ...doc, sessionId: String(doc.sessionId) });
+      if (recordWrites.has(k)) return { write: clone(recordWrites.get(k)), duplicate: true };
+      const rec = { _id: oid(), target: '', createdAt: new Date().toISOString(), ...clone(doc), sessionId: String(doc.sessionId) };
+      recordWrites.set(k, rec);
+      return { write: clone(rec), duplicate: false };
+    },
   };
 }

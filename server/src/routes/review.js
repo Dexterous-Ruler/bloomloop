@@ -37,6 +37,7 @@ import { isRecordId } from '../ids.js';
 import { applyReview, sessionSettings } from '../services/mastery.js';
 import { PASS_MARK } from '../questionTypes.js';
 import { lockProfile, broadcastGrid, roomDeleting } from '../sockets/index.js';
+import { importedRooms } from '../services/roomImport.js';
 
 const router = express.Router();
 
@@ -95,13 +96,18 @@ function cursorFrom(raw) {
 /**
  * One queue item. Everything a professor needs to decide without opening
  * anything else: who, which room, the question as the student saw it, what they
- * wrote, what the machine made of it, and what is in force now.
+ * wrote, what the machine made of it, and what is in force now. `importedFrom`
+ * on the room only for a room imported from a file laptop mode saved (Phase 7):
+ * its marks are as the file gave them.
  */
-function toItem(answer, session, name) {
+function toItem(answer, session, name, importedFrom = null) {
   const snap = answer.questionSnapshot ?? {};
   return {
     answerId: String(answer._id),
-    room: { code: session?.code ?? null, title: session?.title ?? '', status: session?.status ?? null },
+    room: {
+      code: session?.code ?? null, title: session?.title ?? '', status: session?.status ?? null,
+      ...(importedFrom ? { importedFrom } : {}),
+    },
     student: { rollNo: answer.rollNo, name: name ?? '' },
     topic: answer.topic ?? '',
     bloom: answer.bloom,
@@ -325,9 +331,12 @@ router.get('/', async (req, res, next) => {
       const profiles = await repo.listProfiles(id);
       names.set(id, new Map(profiles.map((p) => [String(p.rollNo), p.name ?? ''])));
     }
+    // The page's rooms imported from laptop mode (Phase 7), in one read.
+    const imported = await importedRooms(repo, [...new Set(page.map((a) => String(a.sessionId)))].map((id) => byId.get(id)).filter(Boolean));
 
     res.json({
-      items: page.map((a) => toItem(a, byId.get(String(a.sessionId)), names.get(String(a.sessionId))?.get(String(a.rollNo)))),
+      items: page.map((a) => toItem(a, byId.get(String(a.sessionId)), names.get(String(a.sessionId))?.get(String(a.rollNo)),
+        imported.get(String(a.sessionId)))),
       status,
       limit,
       hasMore,
@@ -343,11 +352,12 @@ router.get('/:answerId', async (req, res, next) => {
   try {
     const { answer, session } = await loadAnswer(req.params.answerId, req.viewer);
     const repo = getRepo();
-    const [profile, log] = await Promise.all([
+    const [profile, log, imported] = await Promise.all([
       repo.getProfile(answer.sessionId, answer.rollNo),
       repo.listAnswerReviews({ answerId: answer._id }),
+      importedRooms(repo, [session]),
     ]);
-    res.json({ item: toItem(answer, session, profile?.name), log: log.map(toLog) });
+    res.json({ item: toItem(answer, session, profile?.name, imported.get(String(session._id))), log: log.map(toLog) });
   } catch (err) {
     next(err);
   }
@@ -395,8 +405,9 @@ router.post('/:answerId', async (req, res, next) => {
     }
 
     const log = await repo.listAnswerReviews({ answerId: answer._id });
+    const imported = await importedRooms(repo, [session]);
     res.json({
-      item: toItem(outcome.answer, session, outcome.name),
+      item: toItem(outcome.answer, session, outcome.name, imported.get(String(session._id))),
       changed: Boolean(outcome.logged) || outcome.profile.adjusted,
       logged: Boolean(outcome.logged),
       profile: outcome.profile,
