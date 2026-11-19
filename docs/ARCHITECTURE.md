@@ -22,9 +22,9 @@ and is sent `projector:*` events only.
 | Boot | `index.js`, `app.js`, `config.js` | `app.js` mounts the routes; `index.js` picks the store (`repo/index.js`) and prints the console link |
 | Auth | `auth.js`, `teacherAuth.js`, `ownership.js` | Two ways in: a Supabase bearer token (an HOD, professor or student account), or the v1 shared `TEACHER_KEY`. `ownership.js` holds the single read/write rule; every route and the socket use it. Anything the caller may not read answers 404, the same as something that does not exist |
 | Live loop | `sockets/index.js` | Join, serve, answer, retry, poll, pause, teacher watch. Scoring happens here, from the stored item. Every attempt is written to `answers` before the profile changes. Every profile write, from the socket or from a review, first takes an in-process lock per student (`lockProfile`), because each one reads the whole row and writes it back |
-| Review | `routes/review.js` | The queue of written answers. A professor confirms or overrides the machine's mark; each decision is a row in `answer_reviews`, and the student's numbers follow (`applyReview` in `services/mastery.js`) |
+| Review | `routes/review.js` | The queue of written answers, and since Batch 9 of drawings, which can only be marked, never confirmed. A professor confirms or overrides the machine's mark; each decision is a row in `answer_reviews`, and the student's numbers follow (`applyReview` in `services/mastery.js`) |
 | Adaptive engine | `services/mastery.js`, `services/selector.js` | The level ladder (promote at 70%, demote at 40%, a window of 5), the room's mastery goal, retries and redemption, and question choice. `servableFor` in `selector.js` is what a room may serve: approved questions, and only its question set's when it has one (`sessions.question_ids`, `0015`); the live loop's bank and the image rule both read it |
-| Signals | `services/integrity.js` | Behavioural signals such as tab-away, too-fast and `level-jump`. Each is phrased as a prompt to look, never a finding. Since 19 Nov 2026 (decision 8, `0022`) none is recorded or shown for a student their class roster marks under 18: the live loop asks `signalsOff` in `services/roster.js` only when a signal is about to be recorded, and the grid, the trail, the room's CSV and the archive hide what was recorded before the mark |
+| Signals | `services/integrity.js` | Behavioural signals such as tab-away, too-fast and `level-jump`. Each is phrased as a prompt to look, never a finding. Since 19 Nov 2026 (decision 8, `0022`) none is recorded or shown for a student their class roster marks under 18: the live loop asks `signalsOff` in `services/roster.js` only when a signal is about to be recorded, and the grid, the trail, the room's CSV and the archive hide what was recorded before the mark. Batch 9 adds an exam room's kinds and the per-kind `counts` and `latest` on every summary (see "Exam mode" below) |
 | Supports | `accommodations.js` | The seven accommodations. Only the rendering switches reach the phone |
 | Content and questions | `services/extract.js`, `ocr.js`, `generate.js`, `plan.js`, `edits.js`, `checks.js`, `questionTypes.js` | Turning a pptx or pasted syllabus into topics, then a question bank. Generation uses Gemini when a key is set and offline templates otherwise; offline questions are labelled as such. Since Phase 2 every generated question is a `draft` that no room serves until a professor approves it (`routes/bank.js`), carrying the model that wrote it, the slides its topic came from and the rule checks (`checks.js`, advice only). The plan (`plan.js`) also divides each level over several kinds of that level's own set, never changing a count |
 | Stimuli | `routes/media.js`, `services/media.js` | Images a professor uploads for a question stimulus: PNG, JPEG or WebP by their bytes, at most 500 KB (`config.media.maxBytes`), with the metadata a camera writes (Exif GPS and the like) taken out without re-encoding (`withoutMetadata`), stored in the database (`media`, `0014`) and served at `/api/media/<id>`. That GET is open at the mount, because a phone's `<img>` carries no credential: a teacher who may read the chapter always gets the image, anyone else only while a room runs on the chapter and an approved question shows it (`servedToPhones`). A passage is text on the question (at most 4000 characters, an optional `sourceRef` citation kept from the phone). Questions share a stimulus by each carrying an equal copy; `POST /api/bank/bulk` with `action: 'stimulus'` attaches one to many |
@@ -48,7 +48,9 @@ and is sent `projector:*` events only.
 | Lessons and languages (Phase 6) | `routes/hubLessons.js`, `routes/hubLanguages.js`, `services/hubLessons.js`, `hubLanguages.js`, `hubAttemptBridge.js`; `0027` | A lesson per topic from the professor's own slides, a draft until approved. Hindi and Marathi versions of what a student reads, shown only when approved and current. A lesson's answers go through `hubAttemptBridge.js` into practice's `hub_attempts` |
 | Get Ready, self-tests, goals and the hub home (Phase 6) | `routes/hubPaths.js`, `services/hubRuns.js`, `hubGetReady.js`, `hubExam.js`, `hubHeld.js`, `hubGoals.js`; `0028` | Get Ready checks and refresher paths (`hubGetReady.js`), self-tests (`hubExam.js`) with the hold-back rule (`hubHeld.js`), and a student's goals and hub home (`hubGoals.js`). A check or a self-test is a run (`hub_runs`); its answers are hub attempts carrying its id |
 | Tutor (Phase 6, H13) | `routes/hubTutor.js`, `services/hubTutor.js`, `hubHintHook.js`; `0029` | Approved hint ladders and feedback on wrong options, written by the professor or drafted on their button. No live model call. Hints open in practice, review sets and lessons only, and each one opened is a `hub_hint_views` row |
-| Closed questions (Phase 6) | `services/hubClosed.js` | Which questions are closed to a student for now: being asked in a room, on one of their open self-tests, or the one an open Get Ready check of theirs is asking. Read by practice, lessons, the tutor, Get Ready, the self-test result and the error log. Nothing stored |
+| Closed questions (Phase 6) | `services/hubClosed.js` | Which questions are closed to a student for now: in the question set of a room not yet closed (Batch 9, E1; before it, only a question being asked), on one of their open self-tests, or the one an open Get Ready check of theirs is asking. Read by practice, lessons, the tutor, Get Ready, the self-test result and the error log. Nothing stored |
+| Drawings (Batch 9) | `services/drawings.js`; `handleDrawing` in `sockets/index.js`; the drawing rule in `routes/media.js`; `0037` | A student's whiteboard answer: a PNG or WebP kept as a `media` row owned by its room and roll number, or by a hub account; never machine-marked; staff-only to read. See "The hub during a class, drawings and exam mode" below |
+| Exam mode (Batch 9) | `services/examGuard.js`, `sockets/examGuard.js`, `routes/examGuard.js`; the exam kinds in `services/integrity.js`; `0038` | A room's opt-in exam setting, what phones are told to enforce, the signal rate, Safe Exam Browser, screen pictures held in memory, and the collusion check. See below |
 | Offline answers and packs (Phase 7) | `services/offline.js` (pure), `handlePack` / `packOnce`, `handleAnswer` and `handleJoin` in `sockets/index.js`; `0030` | A phone's question pack (up to 5 keyless questions, recorded before it is sent), answers marked in the order they arrive (each takes its student's lock the moment it arrives), the profile's log of serves, the grace window after a close, the deliver join, and the three kinds of kept-not-counted answer. See "Offline-first (Phase 7)" below |
 | Laptop mode (Phase 7) | `laptop.js`, `services/laptopArchive.js`, the `--laptop` wiring in `index.js`, the wrong-key counter in `teacherAuth.js`, `saveRoomsOnClose` and `GET /api/laptop` in `routes/laptop.js` | The same server on a professor's laptop with no internet: every network service off, LAN origins, a long teacher key with a lock-out for wrong ones, and every room written to the laptop's disk as its archive |
 | Room imports (Phase 7) | `services/roomImport.js`, `POST`/`GET /api/imports/rooms` in `routes/laptop.js`, `repo.importRoom`; `0031` | A room file laptop mode saved, checked for its shape and made into a closed room the importer owns, idempotent by the laptop's room id; `importedRooms` marks it on every staff view |
@@ -872,10 +874,12 @@ Practice, a lesson and the tutor show a question's answer, explanation and hints
 anyone who may be served it. So a question that is otherwise practisable is
 **closed** to a student while:
 
-- a room on its chapter that is not closed is asking it: a phone there was served it
-  and has not finished it, or it is the room's class question and that is not closed.
-  Any phone counts, not only this student's: rooms are account-free (decision 7), so a
-  phone may be this student under any roll number;
+- it is in the question set of a room on its chapter that is not closed (open, waiting
+  or paused): the room's `question_ids`, or every question of the chapter the room can
+  serve when it has none (Batch 9, E1; before it, only a question a phone there had been
+  served, or the running class question). Every student counts, not only those in the
+  room: rooms are account-free (decision 7), so a phone may be anyone under any roll
+  number;
 - it is on one of the student's open self-tests (`openSelfTestQuestions`);
 - one of their open Get Ready checks is asking it.
 
@@ -884,14 +888,19 @@ the reply says so); an answer to it in practice, a review set or a lesson is ref
 with 409 before anything is stored, saying why, so the device can keep it and send it
 later; no hint opens on it (409), and the next question's hints say 0 with the reason;
 a Get Ready check skips one closed by a room or a self-test and refuses an answer to
-it; and a self-test's result (`held`, `heldNote`) and the error log (`keyHeld`) keep
-back the key and explanation of a question a room is asking now. Nothing is written:
-the set is worked out from the rooms, self-tests and checks on every request.
+it; a self-test built while a room holds a question leaves it out; a resent practice
+answer to it keeps back its key (`held`, `heldNote`), and hints already opened are not
+shown again; and a self-test's result (`held`, `heldNote`) and the error log
+(`keyHeld`) keep back the key and explanation of a question a room holds. Nothing is
+written: the set is worked out from the rooms, self-tests and checks on every request
+(one indexed read of the chapter's rooms, and the chapter's questions only for a running
+room on the whole bank), with no cache, so a question opens the moment its room closes.
 
 What it does not close: rooms and the hub share one bank, and practice shows a
-question's key after one try, so a student can see before class the key of a question
-a graded room will ask later. Only a question being asked now is closed; the rest is
-the owner's decision (`docs/PRODUCT_DECISIONS.md`). A Get Ready check cannot be
+question's key after one try, so a student can see, before a room is opened, the key of
+a question it will ask. From the room's opening to its close the whole set is closed;
+before the opening, the rooms-only switch is the professor's way to keep a question out
+of the hub (`docs/PRODUCT_DECISIONS.md`, Batch 8 and Batch 9). A Get Ready check cannot be
 abandoned, so the question an open check is asking stays closed until it is answered.
 
 ### Model calls
@@ -1161,6 +1170,105 @@ page (`routes/figures.js`) has no answers.
   figure steps. The figure is never written by the model and is sent once.
 - `/sw.js` is served `no-cache` (`app.js`); answer and vote replies echo `answerId`
   (`sockets/index.js`); `services/evidence.js` puts `answerKey` on staff answer items.
+
+## The hub during a class, drawings and exam mode (Batch 9)
+
+Built on branch `batch9` (`0037`, `0038`). Shapes: `docs/API.md`, "Batch 9".
+
+**Hub closure (E1).** `services/hubClosed.js` `roomLiveQuestions` now returns, for the
+chapters in hand, every id in the set of each room not closed (`roomRunning`):
+`roomQuestionIds(room)`, or `servableFor(room, bank)` for a room on the whole bank.
+Every hub reader already consults the closed set (above, "Closed questions"), so
+widening it there widened practice, lessons, the tutor, Get Ready, self-tests and the
+error log at once. `services/hubExam.js` also drops such questions when a self-test is
+built.
+
+**Written answers (E3).** `questionTypes.js` holds the rule in one place: `OPEN_LENGTHS`
+(60 and 600 words, 15 characters a word), `openLength(q)` (absent is short),
+`wordCount` (invisible joiners count as gaps, the zero-width joiner and non-joiner do
+not), `responseProblem` and `lengthProblem`, and `kindLabel` for every staff label.
+`MAX_RESPONSE_CHARS` (20,000 as JSON) caps any answer of any kind. The live loop asks
+`lengthProblem` on its own: on the question on the phone's screen in an open room an
+over-limit answer is refused (`server:refused`), so the student can shorten it; one
+the phone cannot shorten (an outbox or pack answer, or after the close: `oneGo`) is
+kept with `final` false and `OVER_LIMIT_DETAIL`, one of the kept-not-counted details
+every report already leaves out (`services/offline.js`). `length` and `allowText` are
+left out of `keyBasis` (`services/checks.js`), so no stored check went stale.
+
+**Drawings (E4).** A drawing never travels inside an answer in a room: the phone sends
+it first as `student:drawing`, taken under the student's lock, accepted only for the
+question pinned on that phone or in its pack, of the room's chapter and set.
+`services/drawings.js` decides what a drawing is (`readDrawing`: PNG or WebP by its own
+bytes, at most 400 KB, `withoutMetadata`), the caps (10 per roll number per question,
+1,500 and 100 MB per room, 12 a minute per connection, every one checked before
+decoding), and whose it is (`keepRoomDrawing`, idempotent by the phone's `answerId`
+through `0037`'s unique key; `drawingRefusal`: an answer may name only its own sender's
+drawing for that question in that room). The answer `{ mediaId, text? }` is stored
+`final`, `provisional`, with no mark (`AWAITING_DETAIL`), and the profile gets
+`recordAwaiting` (`services/mastery.js`): a history entry marked `ungraded` and
+`awaitingReview`, so the selector does not serve the question again and nothing that
+reasons about ability reads it. When a professor marks it in the review queue,
+`applyReview` turns it into a graded entry and the level tallies take it. Until then
+`awaitingMark` keeps it out of attainment, item statistics, confidence counts and
+topic reports. The image route serves a drawing by its own rule (`mayReadDrawing`):
+staff who may read its room, or for a hub drawing its chapter's staff and the student
+who drew it; `servedToPhones` and `withUpload` both refuse a drawing. In the hub the
+picture travels inside the practice attempt (`keepHubDrawing`, by attempt id), and the
+attempt is stored with `correct` and `score` null (`0037` allows this for a drawing
+only). Laptop mode leaves drawing questions out of the bank (`loadBank`) and refuses
+`student:drawing`, because its archive cannot carry the pictures.
+
+**Exam mode (E5, E7).** Three files, each with one job:
+- `services/examGuard.js` decides, and is pure where it can be: the setting
+  (`examModeFrom` checks, `examModeOf` re-reads a stored value through the same rules
+  and turns off the watching parts for a room without a class, `examModeProblem`), what
+  a phone is told (`phoneExamMode`, `publicExamMode`, the consent `notice`), the help
+  text (`EXAM_HELP`), Safe Exam Browser (`sebConfigKeyHash`, `handshakeUrl`,
+  `joinPageOk`, `sebCheck`), the signal rate (`allowSignal`: a sliding 60 seconds), the
+  screen pictures (`snapshotFrom`, `wholeJpeg`, `createSnapshotStore`, `snapshotOverdue`,
+  `snapshotExpired`) and the collusion rule (`collusionPairs`).
+- `sockets/examGuard.js` is the live loop's half: the join's refusal and exam state,
+  `student:screen`, `student:snapshot` and `student:exam-consent`, `teacher:integrity`,
+  `exam:mode` pushes (`pushExamMode` on a setting change, `pushUnder18` on a roster
+  change), and a ticker every 5 seconds (unref'd) that notes overdue pictures and, every
+  12th tick, sweeps old ones. `sockets/index.js` stays the owner of every connection
+  and calls in at the join, on a signal, before an answer (the screen-share gate, after
+  any stored answer is replayed) and after every save (`saveWithSignals` pushes a new
+  signal live).
+- `routes/examGuard.js`, mounted at `/api/session` and gated per route by
+  `requireTeacher`: the setting, its students' signals, one student's newest picture
+  and the collusion list.
+
+Signals use the existing machinery: `profiles.integrity`, `record`, `summarise`, the
+under-18 check `signalsOff`. In an exam room the exam kinds are accepted, the older
+`hidden`, `blurred` and `fullscreen-exit` are recorded under their exam names (so one
+event sent both ways is one kind inside a second, which the rate drops), and the
+observed `too-fast` and `second-socket` become `timing_anomaly` (with the passage's
+reading time counted on the first question served from it only) and `second_device`.
+A phone already in the room when exam mode is turned on records only the older kinds
+until it sends `student:exam-consent`.
+
+**Screen pictures and their purge.** Personal data, so never written to any store. One
+in-process `snapshots` store holds the newest JPEG per student per room, with 64 MB in
+all and 24 MB per room; past a cap a new picture is refused and nothing kept is pushed
+out. When each student's last picture arrived is kept apart from the bytes (`lastAt`),
+so one the store could not keep never reads as `snapshot_missing`. Purged:
+- by the sweep (every minute), every picture two hours old whatever its room's state,
+  and every picture of a room closed two hours ago or gone;
+- at once when the room is deleted (`DELETE /api/session/:code`);
+- on any restart (memory only).
+A second server process holds its own store and shares none of it: a console reaching a
+different process from the phone's would see no picture.
+
+**Who sees what.** A phone gets only what it must enforce and the notice; the open room
+route the same before joining; never a Safe Exam Browser key. Staff get signals and
+picture times live on `teacher:integrity` in the room's teacher room, and the bytes only
+over the staff route, `no-store`. The projector gets none of it. No picture and no Safe
+Exam Browser key reaches the archive, the CSV or any export; the signals themselves go
+where they always went (the profile's `integrity` in a deleted room's archive, the
+summary's sentences in the CSV's signals column, both empty for a student marked under
+18). Students marked under 18 are asked for nothing that watches, and nothing is
+recorded about them; their phones still apply the copy guard and watermark.
 
 ## Client (`client/src`)
 

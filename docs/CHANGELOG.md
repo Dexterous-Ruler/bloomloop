@@ -10,7 +10,57 @@ indicators and the review fixes) are committed as `2f4fd2b`, the Phase 5 follow-
 `646b4e6`**, and its docs in the commit after it. **Phase 7, offline-first (`0030` to
 `0032`), is committed as `46bf6f9`** on top of the Phase 6 docs, and its docs in the
 commit after it. **Batch 8 (`0033` to `0035`) is committed as `ba0f59d`**, and
-its docs in the commit after it.
+its docs in the commit after it. **Batch 9 (`0037`, `0038`) is committed on branch
+`batch9`** (`e95b90b`, `46221a6`, merged as `648bea2`, fixed as `b6af63e`), and its
+docs in the commit after it.
+
+## Unreleased: Batch 9, the hub during a class, written and drawn answers, exam mode (20 November 2026)
+
+Server and database only, on branch `batch9`: built in two parallel branches (answer
+kinds `e95b90b`; exam integrity `46221a6`), merged (`648bea2`), reviewed and fixed
+(`b6af63e`). Decided under the owner's delegation (`docs/PRODUCT_DECISIONS.md`, Batch
+9). Shapes: `docs/API.md`, "Batch 9"; the contract's side: `CONTRACT.md` Amendment 9.
+**No screen is part of it**, and nothing ran against a model, Supabase, Mongo, a real
+phone or a real browser.
+
+- **The hub during a class (E1).** While a room is open, waiting or paused, every
+  question of its set is closed in the Learning Hub for every student (no practice,
+  key, explanation or hint), not only the one on a phone. It opens when the professor
+  closes the room. A resent practice answer and hints already opened are held back too.
+- **Short and long written answers (E3).** `open` questions take `length: 'short' |
+  'long'` (60 or 600 words, with a character cap of 15 a word). **Every existing written
+  question is a short answer of at most 60 words**: an answer over the limit is now
+  refused before marking, or kept and not counted when the phone cannot shorten it.
+  A written answer must be a string; no answer over 20,000 characters is stored.
+  Labels "Short answer" and "Long answer"; the generator may ask for either.
+- **Whiteboard answers (E4).** A new kind, `drawing` (22 kinds), at Apply to Create,
+  in no default mix. The phone sends a PNG or WebP over the room socket
+  (`student:drawing`, at most 400 KB, metadata stripped, kept as a room's upload,
+  `0037`), then answers `{ mediaId, text? }`. Never machine-marked: it waits in the
+  review queue, can only be marked (not confirmed), and counts on the ladder and in
+  attainment once marked. Staff-only picture; caps per question, per room and per
+  minute; not in laptop mode; the archive keeps the reference, not the picture. Hub
+  practice takes one inside the attempt, unmarked.
+- **Exam mode (E5, E7).** An opt-in room setting (`0038`): copy guard and watermark;
+  fullscreen, whole-screen sharing and low-resolution screen pictures for a room opened
+  for a class; Safe Exam Browser's Config Key (and optionally Browser Exam Key) check.
+  New signal kinds, screenshot shortcuts among them, rate-limited and pushed live to the
+  room's staff as `teacher:integrity`; a staff-only collusion check of matching wrong
+  answers ("signals worth a look, not proof"). Screen pictures are held in memory only
+  and purged two hours after the close. Students marked under 18 are asked for nothing
+  that watches and have nothing recorded. The help says no website can stop
+  screenshots or Google Lens, or truly lock a tab.
+- **Smaller:** closing a room whose archive is near 1 MiB says so; drawings are served
+  `no-store`; two new settings, `PUBLIC_ORIGIN` and `TRUST_PROXY`.
+
+Tests: new `scripts/answerkinds.mjs` (86 checks), `scripts/examguard.mjs` (119), unit
+files `test/answerkinds.test.js` (25), `test/examguard.test.js` (27) and
+`test/b9review.test.js` (28), and new checks in `lessons.mjs`, `roundtrip.mjs` (the
+22nd kind) and `migrations.mjs` (`0037`, `0038`); `practice.mjs`, `hubFixes.test.js`
+and `hubPractice.test.js` follow the wider rule, and `paths.mjs` closes its room before
+using the hub.
+The docs run: unit 1362 / 1362,
+migrations 1954 / 1954, and every other suite passed (`docs/TESTING.md`, "Batch 9").
 
 ## Unreleased: Batch 8, figures, interaction kinds and the design-zip server gaps (19 November 2026)
 

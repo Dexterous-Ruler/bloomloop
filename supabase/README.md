@@ -155,7 +155,24 @@ the whole set (`0000` to `0035`) is the simple way. Two checks the probe cannot 
 wheel pick set to `verbal` needs `0034`, and ending a Get Ready check early needs
 `0035`. None has run anywhere but PGlite (`npm run migrations`, 1708 of 1708 on 19
 November 2026); nothing was run against the hosted project. The server also needs
-`HUB_SERVE_TOKEN_SECRET` set in a deployment (`docs/API.md`, "Batch 8").
+`SERVER_SECRET` set in a deployment (`docs/API.md`, "Batch 8"). `0036` (Batch 8's review
+fix, `hub_attempts.unproven`) is route-only too.
+
+**Batch 9 adds two files, and rooms need neither.** Apply `0037` (whiteboard answers:
+the drawing columns on `media`, and a hub drawing's attempt with no mark), then `0038`
+(`sessions.exam_mode`). Both are route-only: the boot probe checks them in
+`ROUTE_SCHEMA`, so a missing one is a boot-log line naming its file and what fails until
+it is applied (no drawing can be kept; no room can be opened in exam mode), Supabase is
+still used and every room runs. Apply them before or after the server, in number order;
+re-running the whole set (`0000` to `0038`) is the simple way. One check the probe cannot
+see: a hub practice drawing is saved with no mark, which needs `0037`'s loosened
+`hub_attempts.correct` and `score`. Neither changes an existing row: every upload reads as
+no drawing and every room as no exam mode. Screen pictures get no table on purpose: they
+are personal data, held in the server's memory only and purged. None has run anywhere
+but PGlite (`npm run migrations`, 1954 passed, 0 failed, on 20 November 2026); nothing
+was run against the hosted project. A deployment whose rooms require Safe Exam Browser
+also needs `PUBLIC_ORIGIN` (and `TRUST_PROXY=1` behind a proxy that ends TLS)
+(`docs/API.md`, "Batch 9").
 
 **`0030` (Phase 7: question packs and the phone's own answer time) must be applied
 before the server that writes it is deployed.** It adds the `question_packs` table (the

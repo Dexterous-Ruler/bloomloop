@@ -9,15 +9,30 @@ Every table has row level security **on with no policies**. Only the server's
 service role key, which bypasses RLS, can read or write; the anon key sees nothing.
 The server is the only place authorization is decided.
 
-Last revised 19 November 2026, after Batch 8: slide pictures (`0033`), the live room's
-suggestions, the wheel's question draws and a verbal ask (`0034`), and rooms-only
-questions, the hub's concept panel and ending a Get Ready check early (`0035`). Before
-them came Phase 7, offline-first (`0030` to `0032`, 1457 migration checks). The run for
-the Batch 8 docs gave 1708 of 1708 on PGlite, offline with every network setting blank.
-Nothing has been run against the hosted Supabase project. The next free number is
-`0036`.
+Last revised 20 November 2026, after Batch 9: whiteboard answers kept as uploads and an
+unmarked hub drawing (`0037`), and a room's exam mode (`0038`). Before them came Batch
+8's review fix (`0036`, a hub answer kept without proof it was served) and Batch 8
+(`0033` to `0035`, 1708 migration checks). The run for the Batch 9 docs gave 1954
+passed, 0 failed on PGlite, offline with every network setting blank. Nothing has been
+run against the hosted Supabase project. The next free number is `0039`.
 
-**Applying everything: `0000` to `0035`, in number order.** The numbering has no gap.
+**Applying everything: `0000` to `0038`, in number order.** The numbering has no gap.
+
+**Applying Batch 9: `0037`, then `0038`. Rooms need neither.** Both are route-only
+(`ROUTE_SCHEMA`): a missing one is a boot-log line naming its file, Supabase is still
+used and every room runs. Safe before or after the server, in number order.
+- `0037`: without it no drawing can be kept, in a room or in the hub, so drawing
+  questions cannot be answered (the phone keeps the drawing and sends it again); every
+  other kind, upload and answer works as before. The probe cannot see the loosened
+  `hub_attempts.correct` and `score`; without them a hub drawing's unmarked attempt is
+  refused.
+- `0038`: without it no room can be opened in exam mode or have its exam mode changed.
+  A room opened without exam mode never writes the column, so it opens as before.
+
+Neither rewrites a row, narrows a check or drops anything; each re-runs over data
+unchanged. Screen pictures get no table on purpose: they are held in the server's memory
+only (`docs/ARCHITECTURE.md`, Batch 9). `0036` (Batch 8's review fix,
+`hub_attempts.unproven`) is route-only too.
 
 **Applying Batch 8: `0033`, `0034`, `0035`, in order. Rooms need none of them.** All
 three are route-only (`ROUTE_SCHEMA`): a missing one is a boot-log line naming its file,
@@ -128,11 +143,11 @@ rewrites no row; every existing question reads as having no labels. Run on PGlit
 (`npm run migrations`, 752 of 752 on 19 November 2026).
 
 **The boot probe, since 19 November 2026**, checks the tables and columns the server
-writes from `0000` to `0035`, each named with its file (not the columns of `0003` to
+writes from `0000` to `0038`, each named with its file (not the columns of `0003` to
 `0007`, nor `0011`'s index or `0012`'s triggers, which it does not look for;
 `supabase/README.md` lists which file it checks). What rooms need (`0000` to
 `0018`, `0022` to `0024`, and `0030`) stops Supabase being used when missing; what only some routes
-need (`0019`, `0020`, `0021`'s `attendance.roll_no`, `0025` to `0029`, `0031` to `0035`) is logged at boot, one line
+need (`0019`, `0020`, `0021`'s `attendance.roll_no`, `0025` to `0029`, `0031` to `0038`) is logged at boot, one line
 per missing piece, naming the file to apply and what fails until it is, and Supabase
 is still used (`ROOM_SCHEMA`, `ROUTE_SCHEMA` in `server/src/repo/supabaseRepo.js`).
 Before this, `0019` to `0021` were not checked at all.
@@ -197,8 +212,25 @@ printable pages read what these tables and the Phase 1 to 3 tables already hold.
 | `0033_figures.sql` | Batch 8, figures: `media.slide_no` (null for a picture uploaded on its own, else at least 1, `media_slide_no_check`), `contents.slide_pictures` (jsonb object or null; null is a chapter from before, or typed, `contents_slide_pictures_check`) and the partial index `media_content_slide_idx`. Route-only. Changes no row | new (Batch 8) |
 | `0034_zip_gaps_live_wheel.sql` | Batch 8, live room and wheel: `teaching_moves` (AI suggestions with their counts-only `basis`; append-only through `teacher_records_guard`, trigger `teaching_moves_keep`), `wheel_question_draws` (unique `(pick_id, draw_order)`, trigger `wheel_question_draws_same_room`, append-only `wheel_question_draws_keep`), `room_activities.suggestion_id` (composite foreign key to `teaching_moves(session_id, id)`); `wheel_picks_ask_check` widened to `verbal` (also in `0017`). Route-only. Changes no row | new (Batch 8) |
 | `0035_bank_share_and_concept_panel.sql` | Batch 8, shared bank and concept panel: `questions.rooms_only` (boolean, not null, default false), `topic_lessons.sections` (jsonb, null or an object only when `source = 'llm'`, `topic_lessons_sections_check`); `hub_runs_end_check` lets a `getready` run end `ended` (also in `0028`). Route-only. Changes no row | new (Batch 8) |
+| `0036_hub_attempt_proof.sql` | Batch 8's review fix: `hub_attempts.unproven` (boolean, not null, default false): a practice or lesson answer kept without proof the hub served its question, counted nowhere. Route-only. Changes no row | new (Batch 8 review) |
+| `0037_answer_kinds.sql` | Batch 9, whiteboard answers: `media.drawing` (boolean, not null, default false), `session_id` (references `sessions(id)` on delete cascade), `roll_no`, `account_id` (references `accounts(id)` on delete cascade), `question_id` (no foreign key), `answer_key`; `media_drawing_check`; unique `media_room_drawing_key` and `media_hub_drawing_key`, index `media_session_idx`; trigger `media_drawing_written_once`; `hub_attempts.correct` and `score` nullable, with `hub_attempts_mark_check` (null only, and always, for a drawing). Route-only. Changes no row | new (Batch 9) |
+| `0038_exam_integrity.sql` | Batch 9, exam mode: `sessions.exam_mode` (jsonb, null for none) with `sessions_exam_mode_check` (null or an object). No table for screen pictures, on purpose. Route-only. Changes no row: every room reads as no exam mode | new (Batch 9) |
 
 The SQL of every moved file is unchanged; only header comments were updated.
+
+What the migration test holds `0037` and `0038` to (Batch 9; 1954 checks in all). `0037`:
+a room's drawing and a hub drawing written as `createDrawing` sends them and read back;
+a JPEG, a drawing for no question, a bad device id, a room's drawing with no roll
+number, one belonging to both or neither a room and an account, and drawing columns on
+an upload that is not a drawing refused by `media_drawing_check`; a second drawing under
+one device id refused by the unique keys; who drew it and what for refused a change by
+the trigger, and its bytes by `0014`'s; a room's delete taking its drawings; a hub drawing's
+attempt read back with no mark, any other kind with none, a mark without a score and a
+drawing with a mark refused by `hub_attempts_mark_check`; applied over existing uploads
+(a JPEG slide photo included) and hub answers changing no row. `0038`: a room with none
+(null), an exam mode written and read back key by key, a non-object refused; applied
+over open, closed and waiting rooms changing nothing else. Both survive the re-run over
+data with their checks still holding. Run on PGlite only.
 
 What the migration test holds `0033` to `0035` to (Batch 8; 1708 checks in all, 1457
 before them). Each builds fresh, re-runs over its own rows, and is applied over existing
@@ -516,7 +548,7 @@ leaves the status, the approval and the checks as they were. An edit or a retag 
 rewords or removes a labelled option, or makes it a right answer, writes the shorter
 list with the edit. `0024` changed no row.
 
-### sessions (0000, 0001, 0005, 0007, 0015, 0016, 0018)
+### sessions (0000, 0001, 0005, 0007, 0015, 0016, 0018, 0038)
 
 A room.
 
@@ -541,6 +573,7 @@ A room.
 | `start_level` | text | not null, default `understand`; one of the six levels (`0018`) |
 | `questions_per_student` | smallint | null (no cap), or 1 to 500 (`0018`) |
 | `time_per_question` | smallint | null (none), or 10 to 600 seconds. Sent to phones; no answer is refused for being late (`0018`) |
+| `exam_mode` | jsonb | null (no exam mode, which every room before `0038` keeps), or an object (`sessions_exam_mode_check`): `{ on, fullscreen, screenShare, snapshotSeconds (0, 30 or 60), seb: { required, configKeyHashes, browserExamKeys? } }`. The shape and values are checked by the server (`examModeFrom` in `services/examGuard.js`) before it is written, and a stored value is read through the same rules. Written only when on, at the opening or by `PATCH /api/session/:code/exam` (`setSessionExamMode`). The Safe Exam Browser keys are staff-only: never sent to a phone or the open room route (`0038`) |
 
 Written by: repo `createSession` from `routes/session.js` (the settings, the
 question set, the class and how the room runs are written here only, never updated); `updateSession` (status, title,
@@ -814,9 +847,10 @@ an archive written before `0022`, still hides them; the stored row is not rewrit
 Since `0023` an archive carries `classQuestions` (each class question's state,
 `revealed`, times and the question as asked) and keeps every vote among its answers.
 
-### media (0014)
+### media (0014, 0033, 0037)
 
-One image a professor uploaded to hang a question off, served at
+One image a professor uploaded to hang a question off (or, since `0037`, a student's
+drawing given as an answer: see the columns at the end of the table), served at
 `/api/media/<id>` (`server/src/routes/media.js`; the rule for who may load it is
 `servedToPhones` in `server/src/services/media.js`, and `docs/API.md` says it in
 full). The bytes are in the row, so all three stores take uploads with no new
@@ -833,9 +867,30 @@ service.
 | `data` | bytea | not null. PostgREST reads and writes it as text, `\x` and hex; the repo converts. The upload with its metadata (Exif, XMP, text chunks, comments) taken out by the server before it is written, the JPEG orientation kept; rows written before that change hold the bytes as sent |
 | `alt` | text | not null and not blank (`media_alt_check`). Copied onto a question that shows the image with no alt text of its own |
 | `created_at` | timestamptz | not null, default now() |
+| `drawing` | boolean | not null, default false (`0037`). True for a student's drawing given as an answer; false for every professor's picture and every row before `0037` |
+| `session_id` | uuid | null; references `sessions(id)` on delete cascade (`0037`). The room a phone drew it in; the drawing goes with the room |
+| `roll_no` | text | null (`0037`). The roll number of the phone that sent it, with `session_id` |
+| `account_id` | uuid | null; references `accounts(id)` on delete cascade (`0037`). The student a hub practice drawing belongs to |
+| `question_id` | uuid | null, no foreign key (`0037`). The question it answers; outlives an edit or delete of the question, as an answer's snapshot does |
+| `answer_key` | text | null (`0037`). The device's own id for it, 8 to 64 letters, digits, `-` or `_`; a resend finds the drawing already kept |
+
+`media_drawing_check` (`0037`): a row that is not a drawing has none of the five drawing
+columns; a drawing has a question and a device id, is PNG or WebP, is no slide picture,
+and belongs to exactly one room and non-blank roll number, or exactly one account.
 
 Indexes: `media_content_idx` (`content_id`); `media_owner_idx` (`owner_id`, where
-not null, for the foreign key). RLS on, no policies.
+not null, for the foreign key); since `0037`, unique `media_room_drawing_key`
+(`session_id, roll_no, answer_key` where a room's drawing), unique
+`media_hub_drawing_key` (`account_id, answer_key` where a hub drawing) and
+`media_session_idx` (`session_id` where not null, for the room's delete). RLS on, no
+policies.
+
+Trigger `media_drawing_written_once` (`0037`), `before update`: refuses (23001) any
+change to `drawing`, `session_id`, `roll_no`, `account_id`, `question_id` or
+`answer_key`. Who drew what, where and for which question is evidence. A drawing is
+written by `createDrawing` (`services/drawings.js`), read by `getDrawing`,
+`getDrawingByKey` and `listDrawings`, and served only to staff of its room or chapter
+and, for a hub drawing, to the student who drew it (`routes/media.js`).
 
 Trigger `media_bytes_written_once` (function `media_bytes_written_once()`), `before
 update`: refuses (23001) any change to `data`, `mime`, `bytes`, `sha256` or
@@ -1360,7 +1415,7 @@ error log and spaced review are worked out from these rows when asked for
 (`services/hubElo.js`, `hubErrors.js`, `hubReview.js`); nothing derived is stored.
 RLS on, no policies, on both.
 
-#### hub_attempts (0026, 0028, 0029)
+#### hub_attempts (0026, 0028, 0029, 0036, 0037)
 
 One row per attempt a signed-in student makes in the hub, every one kept.
 **Append-only evidence**, guarded as `0012` guards answers.
@@ -1380,8 +1435,8 @@ One row per attempt a signed-in student makes in the hub, every one kept.
 | `question_snapshot` | jsonb | not null, default `{}`. The question as asked, answer key included: staff and server data, like `answers.question_snapshot` |
 | `question_source` | text | not null, default `llm`; no check |
 | `response` | jsonb | null; what the student sent |
-| `correct` | boolean | not null |
-| `score` | numeric(4,3) | not null; 0 to 1 (`hub_attempts_score_check`) |
+| `correct` | boolean | not null until `0037`; now null for a drawing only, which the machine never marks (`hub_attempts_mark_check`: both `correct` and `score` set and the kind not `drawing`, or the kind `drawing` and both null) |
+| `score` | numeric(4,3) | 0 to 1 (`hub_attempts_score_check`); null for a drawing only (`0037`, as above) |
 | `detail` | text | not null, default `''` |
 | `review_status` | text | not null, default `auto`; `auto`, or `provisional` for a written answer's machine mark (`hub_attempts_review_status_check`). `confirmed` and `overridden` are refused |
 | `mode` | text | not null; `practice`, `exam` (a self-test), `getready`, `review` or `lesson` (`hub_attempts_mode_check`) |
@@ -1390,6 +1445,7 @@ One row per attempt a signed-in student makes in the hub, every one kept.
 | `time_taken_ms` | integer | null, or 0 to 86400000, a day (`hub_attempts_time_taken_check`). As the device reported it; never used for marking or ordering |
 | `created_at` | timestamptz | not null, default now(). The server's clock (the repo sends it), the only one used for ordering, sessions and due dates |
 | `run_id` | uuid | null (`0028`); references `hub_runs(id)`, no delete action (`hub_attempts_run_id_fkey`). The Get Ready check or self-test the attempt was given in; null for practice, review and lessons, and for every attempt before `0028` |
+| `unproven` | boolean | not null, default false (`0036`). True for a practice or lesson answer kept without proof the hub served its question; counted nowhere, and its reply shows no mark or key |
 
 Indexes: the unique `(account_id, client_attempt_id)`; `hub_attempts_account_idx` on
 `(account_id, created_at)` (a student's own reads); `hub_attempts_topic_idx` on
@@ -1915,6 +1971,20 @@ suggestion); `questions.rooms_only` and `topic_lessons.sections` (`0035`). Widen
 `questions.payload`, and a generated finding in `questions.checks` may carry a `basis`
 fingerprint.
 
+### Batch 9 additions (0037, 0038)
+
+No new table. New columns: `media.drawing`, `session_id`, `roll_no`, `account_id`,
+`question_id`, `answer_key` (`0037`; under "media" above) and `sessions.exam_mode`
+(`0038`; under "sessions" above). Loosened: `hub_attempts.correct` and `score` may be
+null, for a drawing only (`hub_attempts_mark_check`). The short and long written
+answers (E3) and the drawing kind's own fields (`length`, `allowText`, the reviewer's
+optional `rubric`) need no migration: they live in `questions.payload`, and a question
+without `length` is a short answer. A room's drawing answer is an ordinary `answers` row
+whose `response` is `{ mediaId, text? }`, stored with no mark and `review_status`
+`provisional`; its review is an ordinary `answer_reviews` row. Exam signals are entries
+in `profiles.integrity` (`0005`), unchanged. **Screen pictures are not in the database**:
+the server holds them in memory and purges them (`docs/ARCHITECTURE.md`, Batch 9).
+
 ## Types, functions and triggers
 
 - **`public.app_role`**: enum `hod`, `professor`, `student`. Used by `accounts.role`
@@ -1991,6 +2061,12 @@ plpgsql, `search_path = ''`.
   `session_id`, `owner_id` or `imported_by` (`restrict_violation`).
 - **`record_writes_append_only`**, `before update or delete on record_writes` (`0032`),
   runs `0017`'s `teacher_records_guard()` with no changeable column.
+
+Batch 9 (`0037`); plpgsql, `search_path = ''`.
+- **`public.media_drawing_written_once()`** with trigger of the same name, `before
+  update on media` (`0037`): a drawing's who, where and what for (`drawing`,
+  `session_id`, `roll_no`, `account_id`, `question_id`, `answer_key`) are written once
+  (`restrict_violation`). `0038` adds no function.
 
 ## Reconstructed from code
 

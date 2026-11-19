@@ -22,7 +22,9 @@ commit after it. **Commit `46bf6f9` holds Phase 7, offline-first, on the server 
 offline-first"); its docs are the commit after it. **Commit `ba0f59d` holds Batch 8** (figures,
 interaction kinds and the design-zip server gaps, `0033` to `0035`; checklist at the
 end: "Batch 8"), on top of the UI session's Batch 8 screens (`4384844`); its
-reviewers' fixes follow it. Every suite passes through the
+reviewers' fixes follow it. **Batch 9 is built on branch `batch9`, on the server only**
+(the hub closing a running room's set, short and long written answers, whiteboard
+answers and exam mode, `0037` and `0038`; checklist at the end: "Batch 9"). Every suite passes through the
 offline runner after Phase 7 (the test table below). Phase 4, as committed:
 - course outcomes, their mappings and coverage, and the roster from CSV (`0019`);
 - configurable attainment and the marks register (`0020`);
@@ -2386,3 +2388,104 @@ Design-zip gaps
 - [ ] Every new repo method against a real Supabase or Mongo. **Not tested** (`0033` to
   `0035` ran on PGlite only)
 - [ ] Every Batch 8 screen on a real phone or projector. **Built, not tested**
+
+### Batch 9: the hub during a class, written and drawn answers, exam mode: server done, every screen unticked
+
+Built on branch `batch9` (`e95b90b`, `46221a6`, merged as `648bea2`, the review's fixes
+`b6af63e`; `0037`, `0038`), decided under the owner's delegation, 20 Nov 2026
+(`docs/PRODUCT_DECISIONS.md`, Batch 9). Endpoints: `docs/API.md`, "Batch 9". A box is
+ticked only when an end-to-end script covers it (`answerkinds.mjs`, `examguard.mjs`,
+`lessons.mjs`: HTTP and Socket.io on the real server, in-process store, scripted
+phones). **No screen is built by this batch, so none is ticked.** Nothing ran against
+a model, Supabase, Mongo, a real phone, a laptop browser or Safe Exam Browser.
+
+The run for the Batch 9 docs: unit 1362 / 1362, migrations 1954 / 1954, `answerkinds`
+86, `examguard` 119 (`refusedOffMachine` 0), and every older suite passed
+(`docs/TESTING.md`, "Batch 9").
+
+**Deploying.** Rooms need neither file: both are route-only. Apply `0000` to `0038` in
+order. Set `PUBLIC_ORIGIN` (and `TRUST_PROXY=1` behind a proxy that ends TLS) before any
+room requires Safe Exam Browser.
+
+The hub during a class (E1)
+- [x] Every question of a room not yet closed (its set, or the chapter's servable set)
+  is closed in the hub for every student before any phone is served; paused it stays
+  closed; closing the room opens it (`answerkinds.mjs`)
+- [x] Practice never serves it, an answer is refused with the sentence, a self-test
+  built meanwhile leaves it out (`answerkinds.mjs`)
+- [x] A resent practice answer keeps back the key and explanation, and the hints opened
+  before stay hidden, while the room runs (`answerkinds.mjs`)
+- [ ] Get Ready, lessons and the tutor under the widened rule, each end to end. **Not
+  tested on their own**: they read the same closed set, which `hubFixes.test.js` checks
+
+Short and long written answers (E3)
+- [x] A phone is told the length and the word limit, never the rubric; over the limit
+  is refused before marking; within it is provisional, by the rubric, as before; a list
+  in place of words is refused (`answerkinds.mjs`)
+- [x] The same in the hub, and in a lesson (`answerkinds.mjs`, `lessons.mjs`)
+- [x] Over the limit after the close is kept and not counted, and a resend is told the
+  same (`answerkinds.mjs`)
+- [x] `length` saved and refused when wrong; "Short answer" / "Long answer"; the key
+  fingerprint unchanged; invisible spaces and the character cap; the 20,000-character
+  ceiling (unit tests)
+- [x] The generator's `length`, from fixture replies through the real parser (unit
+  tests)
+- [ ] A live model choosing a length. **Not tested**
+
+Whiteboard answers (E4)
+- [x] Upload over the room socket: kept as a PNG with its metadata gone, idempotent by
+  `answerId`, over the cap refused; the answer waits unmarked (`answerkinds.mjs`)
+- [x] Staff read the picture and nobody else does; the professor cannot confirm it but
+  marks it, and only then do the level and attainment count it (`answerkinds.mjs`)
+- [x] Hub practice drawing inside the attempt, unmarked, resent once; over the cap and
+  words on a drawing-only question refused (`answerkinds.mjs`)
+- [x] The archive keeps the reference and says the pictures are not in it; laptop mode
+  serves no drawing question and refuses a drawing (`answerkinds.mjs`)
+- [x] A lesson never asks a drawing and refuses an answer to one (`lessons.mjs`)
+- [x] A drawing in a screen-share exam room, end to end (`examguard.mjs`)
+- [x] JPEG and SVG refused; another phone can neither keep a drawing for a question not
+  on its screen nor answer with a classmate's (`answerkinds.mjs`)
+- [x] Room-wide caps and the per-connection rate counted before decoding, practice
+  leaving out a capped drawing (unit tests)
+- [ ] 400 KB drawings over a real phone's connection, and a real whiteboard. **Not
+  tested**
+
+Exam mode (E5, E7)
+- [x] The setting: opened, changed, checked, off by default, stored only when on; no
+  watching parts without a class (`examguard.mjs`)
+- [x] Phones told what to enforce and the consent notice, never the Safe Exam Browser
+  keys; the open route the same (`examguard.mjs`)
+- [x] Exam signal kinds, the rate, observed kinds refused from a phone, one leave sent
+  both ways is one signal (`examguard.mjs`)
+- [x] `teacher:integrity` live to staff, counts and the latest signal, never to a phone
+  or the projector (`examguard.mjs`)
+- [x] No answer before a whole-screen share; a declined share noted once; a stopped one
+  a signal; answers already held replayed before the gate (`examguard.mjs`)
+- [x] Screen pictures: one per interval, JPEG by bytes, size cap, staff only, overdue
+  noted once per gap, the full store refusing, purged two hours after the close and at
+  once on delete, never in the archive or the CSV (`examguard.mjs`)
+- [x] `second_device`, and `timing_anomaly` with a passage counted once (`examguard.mjs`)
+- [x] Under 18: nothing watched, asked or recorded; a mark made mid-room is not held
+  for a share (`examguard.mjs`)
+- [x] Safe Exam Browser: header and JavaScript value let a phone in, other browsers
+  refused, turned on mid-room turns away phones not in it (`examguard.mjs`); the join
+  page and Browser Exam Key rules (unit tests)
+- [x] Consent: a phone in the room when exam mode is turned on is recorded as before
+  until `student:exam-consent` (`examguard.mjs`)
+- [x] Collusion: pairs in roll order, under 18 left out, exam rooms only
+  (`examguard.mjs`); outbox timing, drawings and long answers (unit tests)
+- [x] `screenshot_attempt` with `method: 'printscreen'` reaches the console and the grid
+  (`examguard.mjs`); `snip_shortcut` and an unknown method stored as `other` are
+  unit-tested only, and no test sends `mac_shortcut`
+- [ ] Safe Exam Browser itself, behind a real proxy, with `PUBLIC_ORIGIN`. **Not tested**
+- [ ] Fullscreen, screen sharing, the copy guard and screenshot keys in a real browser.
+  **Not tested** (no screen exists)
+- [ ] The picture store and the ticker under a full class's load. **Not measured**
+
+Every part
+- [ ] `0037` and `0038` against a real Supabase, and the new repo methods against Mongo.
+  **Not tested** (PGlite and the in-process store only)
+- [ ] Every Batch 9 screen: phone (consent, copy guard, fullscreen, screen share and
+  pictures, short and long answers, whiteboard), console (exam settings, live signals,
+  picture viewer, collusion list, drawing review), bank editor, hub. **Not built**
+- [ ] A lawyer's confirmation that screen pictures may be taken (decision 8). **Open**

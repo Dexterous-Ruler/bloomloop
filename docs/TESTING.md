@@ -18,7 +18,8 @@ export SUPABASE_URL= SUPABASE_SERVICE_ROLE_KEY= SUPABASE_ANON_KEY= MONGO_URI= GE
 cd server; npm test; npm run migrations; cd ..
 for s in liveloop security review evidence resume integrity roundtrip bank kinds media \
          items roster records modes insights outcomes attainment acceptance4 decisions classquestion \
-         misconceptions honesty keysafety hub practice paths lessons tutor offline laptop recordsync; do node server/scripts/$s.mjs; done
+         misconceptions honesty keysafety hub practice paths lessons tutor offline laptop recordsync \
+         figures figkinds zipgaps1 zipgaps2 answerkinds examguard; do node server/scripts/$s.mjs; done
 ```
 
 It writes each suite's output to its own file and a summary of exit codes. To run one
@@ -30,7 +31,7 @@ The rules that go with it:
 
 - **A new end-to-end script also blanks the settings itself**, as `bank.mjs`,
   `roster.mjs`, `records.mjs`, `modes.mjs`, `insights.mjs`, the three Phase 4
-  scripts (`outcomes.mjs`, `attainment.mjs`, `acceptance4.mjs`), `decisions.mjs`, `classquestion.mjs`, `misconceptions.mjs`, `honesty.mjs`, `keysafety.mjs`, the five Phase 6 scripts (`hub.mjs`, `practice.mjs`, `paths.mjs`, `lessons.mjs`, `tutor.mjs`) and the three Phase 7 scripts (`offline.mjs`, `laptop.mjs`, `recordsync.mjs`; `laptop.mjs` also starts its laptop process with every network setting blank and its fetch refused) do (they set
+  scripts (`outcomes.mjs`, `attainment.mjs`, `acceptance4.mjs`), `decisions.mjs`, `classquestion.mjs`, `misconceptions.mjs`, `honesty.mjs`, `keysafety.mjs`, the five Phase 6 scripts (`hub.mjs`, `practice.mjs`, `paths.mjs`, `lessons.mjs`, `tutor.mjs`) and the three Phase 7 scripts (`offline.mjs`, `laptop.mjs`, `recordsync.mjs`; `laptop.mjs` also starts its laptop process with every network setting blank and its fetch refused) and the two Batch 9 scripts (`answerkinds.mjs`, `examguard.mjs`) do (they set
   `config.supabase.url`, `serviceKey`, `anonKey`, `config.mongoUri` and
   `config.gemini.apiKey` to `''` before the store starts), and **is added to the
   runner's list**. `resume.mjs` and `integrity.mjs` do not blank them yet, which is
@@ -39,7 +40,7 @@ The rules that go with it:
   the development servers on ports 5050 and 5173.
 - **Signed-in callers without Supabase.** `roster.mjs`, `records.mjs`, `modes.mjs`,
   `insights.mjs`, `outcomes.mjs`, `attainment.mjs`, `acceptance4.mjs`, `decisions.mjs`,
-  `classquestion.mjs`, `misconceptions.mjs`, `honesty.mjs`, `keysafety.mjs`, the five Phase 6 scripts and the three Phase 7 scripts point the server at `http://supabase.invalid`, a name that never
+  `classquestion.mjs`, `misconceptions.mjs`, `honesty.mjs`, `keysafety.mjs`, the five Phase 6 scripts, the three Phase 7 scripts and the two Batch 9 scripts point the server at `http://supabase.invalid`, a name that never
   resolves, answer the server's three Auth calls (whose token, that account, the
   HOD's department) inside the script, and refuse and count any other request that
   would leave the machine. Each ends with a check that the count is 0.
@@ -83,6 +84,8 @@ The rules that go with it:
 | Packs, outbox answers and the grace window (Phase 7) | `node server/scripts/offline.mjs` | On a moved clock, with scripted phones: packs, a class question leaving them, three offline answers sent in one burst, deliveries to a closed room inside and past the window, long interruptions, the cap, a key scan over every phone event, the archive; and the review fixes. 79 checks. Described under "Phase 7: offline-first" below. Unit: `test/offline.test.js` |
 | Laptop mode and imports (Phase 7) | `node server/scripts/laptop.mjs` | The real server started with `--laptop` as its own process (three runs), and a cloud server in the script: the banner, origins, the key rules, a class on the laptop, its file at the close and on the interval, a killed process, the import and every report read back, refusals, the Phase 7 parts together. 79 checks. Described below. Unit: `test/laptop.test.js`, `test/roomImport.test.js` |
 | The console's records sent again (Phase 7) | `node server/scripts/recordsync.mjs` | An offline console's outbox of every kind of record, sent once, then again in order, in reverse and all at once; keys with other details; no key; `basedOn` against changes from another screen; who may; the room's deletion. 38 checks. Described below. Unit: `test/recordSync.test.js` |
+| The hub during a class, written and drawn answers (Batch 9) | `node server/scripts/answerkinds.mjs` | E1: a running room's whole set closed in the hub; E3: short and long answers, their limits and labels; E4: drawings uploaded, answered, reviewed, read by staff only, in the hub, the archive and laptop mode. 86 checks. Described under "Batch 9" below. Unit: `test/answerkinds.test.js`, `test/b9review.test.js`, `test/hubFixes.test.js` |
+| Exam mode (Batch 9) | `node server/scripts/examguard.mjs` | The setting, signals, screen share, screen pictures and their purge, a second device, under 18, Safe Exam Browser, collusion, a drawing in an exam room, the review's fixes, and nothing reaching a phone, the projector, the archive or the CSV. 119 checks. Described under "Batch 9" below. Unit: `test/examguard.test.js`, `test/b9review.test.js` |
 
 ## Results on 19 November 2026
 
@@ -994,8 +997,8 @@ anything is read.
   the reply says so.
 - **A room's live question** (the review fix): a phone with a typed roll number in an
   open room is served a question; practising it, and a hint on it, are 409 for every
-  signed-in student, saying it is being asked in class, with no key or mark and nothing
-  stored.
+  signed-in student, saying it is part of a class that is still running (the Batch 9
+  wording), with no key or mark and nothing stored.
 - **Nothing else moves**: the room's answers and profiles, attainment, the student
   report and the register are byte-identical before and after all the hub practice,
   and no hub attempt became a room answer.
@@ -1480,6 +1483,52 @@ known**: rerun `node server/scripts/offline.mjs` before relying on it.
 
 **Not run:** anything against Supabase, Mongo or a model; a real phone; any screen.
 `scripts/smoke.mjs` was not run.
+
+## Batch 9: the hub during a class, written and drawn answers, exam mode (20 November 2026)
+
+Two new end-to-end scripts, each over HTTP and Socket.io on the production `createApp`
+and `attachSockets` with the in-process store, every network setting blank, signed-in
+callers answered in-process (`http://supabase.invalid`) and any other request off the
+machine refused and counted:
+
+| Script | Covers |
+|---|---|
+| `scripts/answerkinds.mjs` | **E1:** a room not yet closed closes every question of its set in the hub before any phone is served one: practice never serves it, an answer is refused with the sentence, a self-test built then leaves it out, a resent answer keeps its key back and hints stay hidden; paused it stays closed; closed, it opens. **E3:** `length` written, edited and refused; the labels; a phone told the length and limit, never the rubric; over the limit refused before marking, a list in place of words refused, within it provisional and queued; the same in the hub; over the limit after the close kept and not counted. **E4:** a drawing uploaded (PNG, metadata gone), JPEG, SVG, oversize and off-screen refused, resent under its id; the answer waiting unmarked; another phone unable to use it; staff read it, nobody else does; confirm refused, a mark counted by the level and attainment; a hub practice drawing; the archive's note; laptop mode refusing drawings; a near-full room's close warning |
+| `scripts/examguard.mjs` | The setting, checked and stored only when on; the open route and the join telling a phone what to enforce, never a key; live `teacher:integrity`; exam kinds refused outside exam rooms, the rate, observed kinds refused from a phone; no answer before a whole-screen share, a declined share once, a stopped one a signal; pictures one per interval, by bytes, capped, staff only, overdue once per gap, purged on a forwarded clock two hours after the close and at once on delete; `second_device`; under 18; Safe Exam Browser by header and by JavaScript value, and turned on mid-room; collusion; a drawing in a screen-share room; the review's fixes (no watching parts without a class, consent mid-room, the full store, one leave sent both ways, a passage counted once, collusion in exam rooms only); nothing on a phone, the projector, the archive or the CSV; staff routes refusing phones and outsiders |
+
+New unit files: `test/answerkinds.test.js` (25 tests), `test/examguard.test.js` (27,
+including the Safe Exam Browser hash on one fixed vector worked from SEB's documented
+formula, not one taken from Safe Exam Browser itself) and
+`test/b9review.test.js` (28, one block per review finding fixed). `lessons.mjs` gained
+two checks (a lesson holds written answers to their limit and refuses a drawing);
+`roundtrip.mjs` covers 22 kinds; `migrations.mjs` covers `0037` and `0038`
+(`docs/DATABASE_SCHEMA.md`). **`scripts/test-offline.sh` in the repository does not yet
+list `answerkinds` and `examguard`**: run them by hand, prefixed as above, until it does.
+
+### The run for the Batch 9 docs
+
+Every suite run once through the offline runner on the `batch9` tree at `b6af63e`, with
+no code change. The figures are what each run printed:
+
+| Suite | Result |
+|---|---|
+| Unit (`npm test`) | 1362 / 1362, 327 suites |
+| Migrations | 1954 passed, 0 failed |
+| `liveloop`, `security`, `review`, `evidence` | 41, 13, 83, 37: all passed |
+| Resume, integrity | 7 and 6 mandated steps, 0 failures |
+| Question kinds round trip | 22 kinds, 88 checks, 0 failures |
+| `bank`, `kinds`, `media`, `items` | 73, 43, 67, 49: all passed |
+| `roster`, `records`, `modes`, `insights` | 80, 97, 101, 66: all passed |
+| `outcomes`, `attainment`, `acceptance4`, `decisions` | 87, 73, 76, 79: all passed |
+| `classquestion`, `misconceptions`, `honesty`, `keysafety` | 76, 54, 66, 43: all passed |
+| `hub`, `practice`, `paths`, `lessons`, `tutor` | 78, 78, 89, 102, 84: all passed |
+| `offline`, `laptop`, `recordsync` | 94, 79 (`refusedOffMachine` 0), 38: all passed |
+| `figures`, `figkinds`, `zipgaps1`, `zipgaps2` | 51, 58, 63, 67: all passed |
+| `answerkinds`, `examguard` | 86, 119 (`refusedOffMachine` 0): all passed |
+
+**Not run:** anything against Supabase, Mongo or a model; a real phone, laptop browser,
+proxy or Safe Exam Browser; any screen (none exists for this batch); the picture store
+and the ticker under a full class's load. `scripts/smoke.mjs` was not run.
 
 ## Checked by hand in the browser
 

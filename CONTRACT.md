@@ -92,6 +92,41 @@ Installed and available: `express`, `cors`, `socket.io`, `mongoose`, `multer`, `
 >   `answerId` has the server's key shape, so an outbox matches every reply by key. New
 >   staff event `teacher:teaching-move`; the model behind it runs only on the
 >   professor's press, from the room's counts (rule 2 holds for the live loop itself).
+>
+> **Amendment 9 (20 Nov 2026, Batch 9, decided under the owner's delegation; decisions 7
+> and 8 and "Batch 9", E1 to E7, in `docs/PRODUCT_DECISIONS.md`).** Additive for a client
+> that sends none of the new fields, except where marked. Shapes: `docs/API.md`, "Batch
+> 9". Migrations `0037` and `0038`.
+> - **Section 3: the written answer's `length`.** `kind: 'open'` may carry `length:
+>   'short' | 'long'` (60 or 600 words); none is short. **Changed:** an answer over the
+>   limit, or one that is not a string, is refused before marking; every existing
+>   written question is a short answer.
+> - **Sections 3 and 5: a 22nd kind, `drawing`,** never marked by the machine. Its
+>   reviewer's `rubric` never reaches a phone. New phone event `student:drawing
+>   { questionId, image, answerId }` (a PNG or WebP), answered by `drawing:stored
+>   { mediaId }`, `drawing:refused { message }` or `drawing:rejected { reason }`, each
+>   echoing `questionId` and `answerId`; the answer's `response` is `{ mediaId, text? }`,
+>   and its `server:result` carries `correct: null`, `score: null` and `awaitingReview:
+>   true`. A drawing is read only by staff, never by a phone or the projector.
+> - **Section 4: exam mode.** `POST /api/session` takes an optional `examMode`; new
+>   staff routes under `/api/session/:code/exam` (the setting, one student's newest
+>   screen picture, the collusion check). `GET /api/session/:code` adds `exam` only for
+>   a room in exam mode, and still never carries `contentId`, nor any Safe Exam Browser
+>   key.
+> - **Section 5: exam mode's events.** `student:join` may carry `seb`;
+>   `session:accepted` adds `examMode` in an exam room; new phone events
+>   `student:screen`, `student:snapshot` and `student:exam-consent` (each acknowledged)
+>   and server events `exam:mode` and `exam:screen-needed`; `student:signal` takes the
+>   exam kinds, `screenshot_attempt` with a `method` among them, in an exam room only;
+>   `session:rejected` may come mid-room when Safe Exam Browser is turned on. New staff
+>   event `teacher:integrity`, never to a phone or the projector. **Changed:** in a
+>   screen-share room no answer is taken before the whole screen is shared.
+> - **Section 6: the honesty rule.** No website can stop a screenshot, Google Lens or a
+>   photo from another device, or truly lock a tab; every exam signal is "a signal, not
+>   proof". Screen pictures are held in memory only, never stored, archived or exported,
+>   and a lawyer must confirm them (decision 8). Students marked under 18 are asked for
+>   nothing that watches and have nothing recorded. The Learning Hub closes every
+>   question of a room not yet closed (E1). No new dependency.
 
 ---
 

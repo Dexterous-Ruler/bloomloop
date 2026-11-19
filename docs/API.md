@@ -1,5 +1,11 @@
 # API reference: Phases 1 to 7
 
+**Batch 9** (20 Nov 2026; `0037`, `0038`) is one part, "Batch 9: the hub during a class,
+written and drawn answers, exam mode", just before "Known open issues": the hub closing
+a running room's whole set, short and long written answers, whiteboard answers, exam
+mode (its routes, phone and staff events, Safe Exam Browser, screen pictures and the
+collusion check), and what each screen needs. Batch 8 sits just before it.
+
 **Phase 7** (committed as `46bf6f9`; `0030` to `0032`) is one part, "Phase 7:
 offline-first", just before "Known open issues": an index of every new and changed
 endpoint and socket event, question packs, which reply to an outbox answer means what,
@@ -5239,36 +5245,37 @@ attempt id was used for another answer. Send this one with a new id." (practice 
 lessons; the practice route keeps its older sentence for a self-test's id, "That
 answer belongs to a self-test; its result comes when the self-test is handed in.").
 
-**Closed questions** (the fix after the review, `services/hubClosed.js`). A question
-is closed to a student while (a) any phone in a room on its chapter that is not
-closed (open, paused or waiting) has been served it and has not finished it, or the
-room's class question on it is still running (any phone counts: rooms need no
-sign-in, decision 7); (b) it is on one of
+**Closed questions** (the fix after the review, `services/hubClosed.js`; (a), the
+sentences about a room and the resend rule corrected for Batch 9, E1). A question
+is closed to a student while (a) it is in the question set of a room on its chapter
+that is not closed (open, paused or waiting), or, for a room with no set, among the
+chapter's questions that room can serve (every student, not only those in the room:
+rooms need no sign-in, decision 7); (b) it is on one of
 the student's open self-tests; or (c) one of their open Get Ready checks is asking it.
 While it is closed:
 - `GET /practice/next` never serves it; with nothing else left, `question: null` and
-  the message "Every question you could practise here is closed for now: being asked
-  in class, on a self-test you have not handed in, or the one your Get Ready check is
-  asking. Come back once that is done.";
+  the message "Every question you could practise here is closed for now: part of a
+  class that is still running, on a self-test you have not handed in, or the one your
+  Get Ready check is asking. Come back once that is done.";
 - an answer to it in practice, a review set or a lesson is a **409** with one of three
   sentences, and **nothing is stored** (the device keeps it and sends it later):
-  "That question is being asked in class right now, so it stays closed here until the
-  class has moved on.", "That question is on a self-test you have not handed in yet,
+  "That question is part of a class that is still running, so it stays closed here. It
+  opens when your professor closes the class.", "That question is on a self-test you have not handed in yet,
   so it stays closed here until you hand it in." or "That question is the one your Get
   Ready check is asking now, so it stays closed here until you answer it there.";
 - a hint on it is the same **409**, and the next question's `hints` say
   `available: 0` with the sentence;
 - Get Ready skips questions closed by a room or a self-test (with none left on the
   topic, `question: null` and a `waiting` sentence) and refuses an answer to one;
-- a self-test result item, and an error-log entry, whose question a room is asking
-  now holds back its key and explanation (`held: true` / `keyHeld`, with "This question
-  is being asked in class right now, so what was right, and why, is shown here once
-  the class has moved on.").
+- a self-test result item, and an error-log entry, whose question a running room
+  holds keep back its key and explanation (`held: true` / `keyHeld`, with "This question
+  is part of a class that is still running, so what was right, and why, is shown here
+  once your professor closes the class.").
 
-A resent **practice** attempt id (same question, practice mode) is still answered
-with the stored key even if the question has closed since: the student was shown it
-when it was first stored. Captured, practice on a question of the student's open
-self-test:
+A resent **practice** attempt id (same question, practice mode) whose question has
+closed since keeps its earlier mark but, since Batch 9, not its key: `solution`,
+`explanation` null, `optionFeedback` `[]`, with `held: true` and `heldNote`. Captured
+(before Batch 9), practice on a question of the student's open self-test:
 
 ```json
 POST /api/hub/practice/attempts   409
@@ -6679,6 +6686,286 @@ only, never on a real phone. What they must keep doing:
 - **Phone outbox:** match replies by `answerId`, including every refusal above.
 - **Student card and attainment:** show `practisedNote` as a neutral note, never as a
   label on the student.
+
+## Batch 9: the hub during a class, written and drawn answers, exam mode
+
+Built on branch `batch9`: `e95b90b` (E1, E3, E4), `46221a6` (E5, E7), merged as
+`648bea2`, the review's fixes as `b6af63e`; migrations `0037` and `0038`
+(`docs/DATABASE_SCHEMA.md`). Decided under the owner's delegation, 20 Nov 2026
+(`docs/PRODUCT_DECISIONS.md`, Batch 9). The room contract's side is `CONTRACT.md`
+Amendment 9. How it works: `docs/ARCHITECTURE.md`, "The hub during a class, drawings and
+exam mode (Batch 9)".
+
+Additive for a client that sends none of the new fields, **except three behaviour
+changes**: the hub now closes every question of a running room's set, not only the one
+on a phone (E1); a written answer over its word limit is refused, and every existing
+`open` question is a short answer of at most 60 words (E3); and a written answer must
+be a string.
+
+**Tested, and not.** Over HTTP and Socket.io on the real `createApp` and
+`attachSockets`, in-process store, scripted phones, console and projector, by
+`server/scripts/answerkinds.mjs` (86 checks) and `examguard.mjs` (119), plus
+`test/answerkinds.test.js`, `test/examguard.test.js` and `test/b9review.test.js`
+(`docs/TESTING.md`). **No model, Supabase, Mongo, real phone, laptop, browser or Safe
+Exam Browser was used.** Fullscreen, screen sharing, the copy guard and the screenshot
+keys were driven only as the events a phone would send.
+
+### The hub closes a running room's whole set (E1)
+
+While a room is not closed (open, waiting or paused), **every** question of its set
+(`sessions.question_ids`, or every question of the chapter it can serve when it has
+none) is closed in the Learning Hub for every student, from the room's opening until
+the professor closes it. Before, only the question a phone had been served, or the
+class question, was closed. Worked out on each request, so a question opens the moment
+its room closes. Where a closed question meets the hub, nothing new is added to a
+reply; the existing closed behaviour applies ("Closed questions" under Phase 6, above),
+with new words:
+
+| Where | What happens |
+|---|---|
+| `GET /api/hub/practice/next`, review sets | not served; with nothing else left, `message` is `ALL_CLOSED` ("...closed for now: part of a class that is still running, ...") |
+| `POST /api/hub/practice/attempts`, lesson answers | 409, nothing stored: "That question is part of a class that is still running, so it stays closed here. It opens when your professor closes the class." |
+| A **resent** practice attempt (one already stored) whose question is now closed | 200 with its earlier mark, and `solution: null`, `explanation: null`, `optionFeedback: []`, `held: true`, `heldNote` |
+| Hint reads | no hint opens (409, as before); the hints shown for the question are `[]` with `held: true` and `note`, those opened before included |
+| Get Ready | skips it; `CHECK_WAITS` reworded the same way |
+| Self-tests | one built while a room runs leaves the room's questions out; a result and the error log keep the key back with `ROOM_HELD_NOTE` ("...once your professor closes the class") |
+
+### Short and long written answers (E3)
+
+The `open` kind takes `length: 'short' | 'long'`. No `length` is short, so no stored
+question changed and marking is unchanged (the rubric matcher reads words, not the box).
+
+| Length | Words | Characters | Label |
+|---|---|---|---|
+| `short` (default) | 60 | 900 | "Short answer" |
+| `long` | 600 | 9000 | "Long answer" |
+
+- **Bank.** `POST /api/bank/:contentId/questions` and `PATCH /api/bank/question/:id`
+  accept `length`; any other value is a 400 (`open length must be short or long`). The
+  bank reply's `kinds` adds `openLengths` (`{ short: { maxWords, maxChars, label },
+  long: {...} }`). Every staff question payload (bank, review queue, tutor, labels)
+  carries `kindLabel`: "Short answer", "Long answer" or a kind's label. `length` is left
+  out of `keyBasis`, so no saved check went stale.
+- **Generation.** `POST /api/generate` (and `/preview`): the model may set `length` on
+  an `open` question; the professor changes it in the editor. Tested with fixture
+  replies only.
+- **Phone** (`server:question`, packs, hub practice): an `open` question adds `length`,
+  `maxWords` and `maxChars`. Never the rubric.
+- **Words** are runs of non-space; a zero-width space, word joiner, BOM or U+180E counts
+  as a gap (a zero-width joiner and non-joiner do not: Devanagari uses them inside
+  words). **Characters** are counted after trimming and folding white space.
+- **Refusals, before anything is marked or stored** (room: `server:refused
+  { questionId, answerId, message }`; hub: 400):
+  - over the word or character limit: "Your answer has N words, and this question
+    takes at most M. Shorten it and send it again; nothing was saved." (or "...N
+    characters long...");
+  - not a string: "This question is answered in words. ...";
+  - any answer, of any kind, over 20,000 characters as JSON: "That answer is too long
+    to take, so nothing was saved. ...".
+- **Kept, not counted.** An over-limit written answer the phone cannot shorten (from
+  its outbox, a pack, or after the close) is kept with `final` false and `detail`
+  `OVER_LIMIT_DETAIL`, and the phone gets `server:kept { questionId, answerId, counted:
+  false, message, late? }`. Attainment explains it in its own note.
+
+### Whiteboard answers: the `drawing` kind (E4)
+
+Twenty-two kinds now. `drawing`: `text`, an optional `stimulus`, an optional `rubric`
+(up to 5 points, the reviewer's guide, never matched by the machine) and an optional
+`allowText` (words beside the drawing). Allowed at Apply, Analyse, Evaluate and Create;
+in no default mix (a plan's `kindMix` may name it). Label "Draw your answer". **Never
+marked by the machine.**
+
+**In a room** (Socket.io):
+
+| Event | Direction | Payload |
+|---|---|---|
+| `server:question` | to phone | the base fields and `allowText`; with `allowText`, `maxWords` 600 and `maxChars` 9000. Never the rubric |
+| `student:drawing` | phone | `{ questionId, image, answerId }`. `image` is a PNG or WebP as a data URL, base64 or binary; `answerId` is the id the answer itself will carry. Only for the question pinned on this phone or packed for it |
+| `drawing:stored` | to phone | `{ questionId, answerId, mediaId }`: kept, or already kept under this `answerId` (idempotent) |
+| `drawing:refused` | to phone | `{ questionId, answerId?, message }`: refused for good (not PNG or WebP by its bytes, an SVG, over 400 KB, not this phone's question, no `answerId`, an `answerId` used for another question, 10 already for this question, the room full, laptop mode). Sending it again will not help |
+| `drawing:rejected` | to phone | `{ questionId, answerId?, reason }`: not saved this time (more than 12 a minute on this connection, the room being deleted, a server error). Send it again |
+| `student:answer` | phone | `response: { mediaId, text? }`, naming a drawing this phone stored for this question in this room; otherwise `server:refused` with one sentence. `text` only when `allowText` (else "This question asks for a drawing only, ..."), within 600 words |
+| `server:result` | to phone | `{ correct: null, score: null, provisional: true, awaitingReview: true, note, solution: null, detail: 'waits for your professor', kind, workingLevel, reason, levelChanged: false, profile, questionId, answerId }` |
+
+A room keeps at most 1,500 drawings and 100 MB; every cap is checked before the picture
+is decoded. The picture's metadata is stripped. Laptop mode serves no drawing question.
+The answer sits in the student's history but counts nowhere until reviewed.
+
+**Review.** `GET /api/review` holds `open` and `drawing` answers. Each item adds
+`kindLabel`; a written one `length` and `maxWords`; a drawing `drawing: { mediaId, url }`
+(or null) and `text`. `POST /api/review/:answerId` with `decision: 'confirm'` on a
+drawing is a 409 ("A drawing has no machine mark to confirm: give it a mark of your
+own."); an override marks it, and only then do the ladder and attainment count it. Item
+statistics, confidence counts and topic reports leave unmarked drawings out.
+Attainment's note: "Not counted yet: a drawing, ...".
+
+**The picture** is read at `GET /api/media/:id` by staff who may read its room (bearer
+or teacher key), and for a hub drawing by staff of its chapter or the student who drew
+it (bearer). Never by a phone's `<img>` or the projector; served `Cache-Control:
+no-store, private`. A drawing can never be attached as a question's stimulus (the same
+404 as an unknown upload).
+
+**In the hub.** `POST /api/hub/practice/attempts` for a drawing takes `response: {
+image, text? }` (same caps; 413 over 400 KB, 415 not PNG or WebP, 429 at 10 for the
+question, 409 an attempt id used for another question). The reply adds `notMarked:
+true` and `note`, with `correct: null` and `score: null`. A picture sent for any other
+kind is a 400. Practice stops serving a drawing the student has sent 10 times
+(`message` `DRAWINGS_DONE` when only such remain). Self-tests, Get Ready and lessons
+never ask a drawing; a lesson answer to one is a 409 ("This question is answered with a
+drawing now, ...").
+
+**Archive.** A deleted room's archive keeps `{ mediaId, text }` on each drawing answer,
+never the bytes, and adds `drawings: { answers, picturesKept: false, note }`; a laptop
+copy says the pictures stay on the server that ran the room.
+
+### Exam mode (E5, E7)
+
+An opt-in room setting, off by default. The help text says plainly: **no website can
+stop screenshots, Google Lens or a photo taken with another phone, and no website can
+truly lock a tab.** Every signal is "a signal, not proof"; nothing ranks or labels a
+student.
+
+**The setting** `examMode`:
+
+```
+{ on, fullscreen, screenShare, snapshotSeconds: 0 | 30 | 60,
+  seb: { required, configKeyHashes: [64 hex], browserExamKeys?: [64 hex] } }
+```
+
+Checked, never clamped: pictures need `screenShare`; `seb.required` needs at least one
+Config Key; at most 5 keys of each. A Teacher-led room cannot be in exam mode (400).
+**Fullscreen, screen sharing and pictures need a class** (only a class list can mark a
+student under 18): without one they are a 400, and a stored row runs without them; the
+copy guard and signals work in any room.
+
+| Route | Who | What |
+|---|---|---|
+| `POST /api/session` | owner | optional `examMode`, checked before a room code is spent, stored only when on. Reply adds `examMode` (as stored; off for none) and `examHelp` |
+| `GET /api/session` | staff | each row adds `examMode`: `{ on, fullscreen, screenShare, snapshotSeconds, seb: { required, keys, browserKeys } }`, counts only, no key |
+| `GET /api/session/:code` (open, phones) | anyone with the code | adds `exam` only in an exam room: `{ on, copyGuard, watermark, fullscreen, screenShare, snapshotSeconds, snapshotMaxBytes, sebRequired, notice }`. Never a key |
+| `GET /api/session/:code/exam` | read rule (owner, HOD) | `{ room { code, title, status }, examMode (keys included), help, students, honesty, privacy }`; `students` is null while off, else every student not marked under 18, in roll order: `{ rollNo, name, summary, snapshotAt }` |
+| `PATCH /api/session/:code/exam` | owner only (HOD 403) | body `{ examMode }`, checked as at the opening. 409 for a closed room. Reply `{ room, examMode, help }`. Every phone in the room gets `exam:mode`; the console gets a full `teacher:integrity` |
+| `GET /api/session/:code/exam/snapshots/:roll` | read rule | the newest screen picture, `image/jpeg`, `Cache-Control: no-store, private`, `X-Snapshot-At`. 404 "There is no screen picture for that student." when none, purged or under 18 |
+| `GET /api/session/:code/exam/collusion` | read rule | `{ room, rule { minMatches, closeSeconds, commonShare, commonFloor, sentence }, pairs, note, privacy }`. 409 unless the room is in exam mode |
+| `GET /api/session/:code/students/:roll/card` | read rule | adds `integrity` (the summary; null for under 18 or never joined), `integrityNote`, and in an exam room `exam: { snapshotAt }` |
+| `PATCH /api/classes/:id/students/:studentId` | owner | changing `under18` pushes `exam:mode` to that student's phone in a running exam room at once |
+| `POST /api/session/:code/close` | owner | reply may add `archiveWarning` and `archiveBytes` when the room's archive is over 90% of 1 MiB (long answers can pass it) |
+| `DELETE /api/session/:code` | owner | also purges the room's pictures at once |
+
+Every exam route is `requireTeacher` (a phone gets 401, a student account 403) and
+answers the same 404 for "not yours" and "not there".
+
+**The signal summary** (grid rows, `teacher:integrity`, the card, the integrity trail)
+adds `counts` (`{ kind: n }`) and `latest` (`{ kind, at, src, method?, questionId? }`),
+in every room. Its `notes` gain one sentence per exam kind, worded as what was seen
+("Left fullscreen 2 times.", "Page left: possibly Google Lens, a screenshot tool or
+another app. A notification or a message does the same.").
+
+**Phone events.**
+
+| Event | Direction | Payload |
+|---|---|---|
+| `student:join` | phone | optional `seb: { url, configKeyHash, browserExamKeyHash? }`, read from Safe Exam Browser's JavaScript API |
+| `session:accepted` | to phone | in an exam room adds `examMode: { on, copyGuard, watermark, fullscreen, screenShare, snapshotSeconds, snapshotMaxBytes, sebRequired, watched, notice }`. `watched` false (under 18): nothing that watches is asked, and `notice` says so without the reason |
+| `session:rejected` | to phone | `{ reason }`: Safe Exam Browser required and not shown, at the join or when the owner turns it on mid-room (then disconnected) |
+| `exam:mode` | to phone | `{ examMode }` (null when turned off): after `PATCH .../exam`, an under-18 change, or the answer path finding the student now under 18 |
+| `student:exam-consent` | phone | `{}`, ack `{ ok }`. A phone **already in the room** when exam mode is turned on sends it after showing the new `notice`; until then its signals are recorded as any room's. A phone that joins an exam room counts as having seen the notice: show it before joining |
+| `student:signal` | phone | in an exam room also takes `fullscreen_exit`, `copy_attempt`, `context_menu`, `focus_lost`, `visibility_hidden`, `screenshare_stopped` and `screenshot_attempt` with `method` (`printscreen`, `snip_shortcut`, `mac_shortcut`; anything else is stored as `other`). The older `hidden`, `blurred` and `fullscreen-exit` are recorded under the exam names. At most 30 in any 60 seconds and one per kind a second; silent as ever. Dropped in other rooms |
+| `student:screen` | phone | `{ state: 'started' \| 'stopped' \| 'declined', surface? }`, ack `{ ok, asked?, message? }`. `started` counts only with `surface: 'monitor'` (else `ok: false` and "Share your whole screen, not a window or a tab, ..."). `stopped` after a start is a signal; `declined` is recorded once per join as `screenshare_not_started` and nothing more |
+| `exam:screen-needed` | to phone | `{ message, questionId, answerId }`: in a screen-share room an answer before the whole screen is shared is **not taken**; keep it and send it again after sharing. Answers the server already holds are replayed first |
+| `student:snapshot` | phone | `{ jpeg }` (base64, data URL or binary), ack `{ ok, reason? }`; `reason` is `not-asked`, `not-sharing`, `too-soon`, `size`, `type`, `shape`, `full` or `error`. A whole JPEG by its bytes, at most 80 KB, one per interval less 2 seconds, metadata stripped. `full`: arrived but not kept (the store is at its cap); keep sending at the interval |
+
+**Staff event** `teacher:integrity`, to the room's staff screens only: `{ code, full,
+students: [{ rollNo, name?, summary?, snapshotAt? }], examMode?, honesty?, privacy? }`.
+`full: true` on `teacher:watch` in an exam room and after every setting change (every
+student not under 18, roll order, with `examMode` as the room list's summary, no key);
+`full: false` carries the students that changed,
+and a picture moves `snapshotAt` alone. Never picture bytes, never to a phone or the
+projector.
+
+**Observed kinds** (never accepted from a phone): `timing_anomaly` (an answer sooner
+than its text, options and, once per student, its passage could be read at 25
+characters a second, never under 0.9 s; in an exam room it replaces `too-fast`),
+`second_device` (replaces `second-socket`), `snapshot_missing` (two intervals and 10
+seconds without a picture while sharing; once per gap; never for a picture that arrived
+but was not kept).
+
+**Safe Exam Browser.** The server accepts either the
+`X-SafeExamBrowser-ConfigKeyHash` header of the socket's opening request, checked as
+SHA-256 of that request's URL plus a listed Config Key, or the join's `seb` value,
+whose `url` must be this room's own join page (`/join` or `/join/<CODE>`) on the
+server's origin. When the room lists Browser Exam Keys, the matching
+`X-SafeExamBrowser-RequestHash` or `browserExamKeyHash` is needed too. Set
+`PUBLIC_ORIGIN` (for example `https://bloomloop.example`) on a deployment; behind a
+proxy that ends TLS, `TRUST_PROXY=1` lets `X-Forwarded-Proto` and `X-Forwarded-Host` be
+believed. The help says it is a deterrent, not a lock: anyone holding the configuration
+file can compute the value, and a value seen once can be replayed.
+
+**Screen pictures.** Held only in the server's memory: the newest per student, 64 MB in
+all and 24 MB per room (past either a new picture is refused, never another pushed
+out). Purged two hours after the room closes, two hours after arrival whatever the
+room's state, at once on delete, and on restart. Never in a table, the archive, the CSV
+or any export.
+
+**Collusion.** A pair is listed when both gave the same wrong answer to at least 3
+questions, each within 60 seconds (timed by the earlier of the phone's answer time and
+arrival). A wrong answer given by half or more of the students who got the question
+wrong (when at least 5 did) is a common misconception and not counted. Final graded
+answers only: no polls, class questions, kept-not-counted rows, right answers,
+arrangements or drawings. Each pair: `{ students: [{ rollNo, name }, { rollNo, name }],
+matches, sameWrong, questions: [{ questionId, topic, bloom, gapSeconds }] }`, in roll
+order, never ranked, under-18 students left out. `note`: "Signals worth a look, not
+proof. ...".
+
+**Under 18** (decision 8): no signal recorded or shown, no fullscreen, screen share or
+picture asked; the copy guard and watermark still apply.
+
+### What the screens need
+
+None of these screens is built by this batch (the server only). Grouped by screen:
+
+- **Phone, before joining:** read `exam` from the open room route and show `notice`
+  before the join. Safe Exam Browser: send `seb` from its JavaScript API, or rely on its
+  header.
+- **Phone, copy guard** (`copyGuard`): block the context menu, selection, copy, cut,
+  drag and the iOS long-press callout **on the question only**, leaving the answer box
+  and the whiteboard working; blur the question on focus or visibility loss; draw the
+  faint `watermark` (roll number and room code). Send the matching `student:signal`.
+  Screenshot keys (PrintScreen, Win+Shift+S, Cmd+Shift+3/4/5) send `screenshot_attempt`
+  with `method` and blur at once.
+- **Phone, fullscreen:** on a laptop ask for fullscreen before answering, pause on exit
+  and send `fullscreen_exit`. A phone browser cannot be held in fullscreen.
+- **Phone, screen share and pictures:** `getDisplayMedia` for the whole screen; send
+  `student:screen` with the track's `displaySurface`; on `exam:screen-needed` keep the
+  answer and resend after sharing; every `snapshotSeconds` send a low-resolution JPEG
+  under `snapshotMaxBytes`, shrinking on `size`.
+- **Phone, mid-room changes:** on `exam:mode`, apply the new rules, show the notice and
+  send `student:exam-consent`; on `session:rejected`, show `reason`.
+- **Phone, short and long answers:** size the box by `length`, count words live against
+  `maxWords` (and `maxChars`), and keep the answer on a refusal so it can be shortened.
+- **Phone, whiteboard:** pen, eraser, colours, undo; export PNG or WebP under 400 KB;
+  send `student:drawing` with the answer's own `answerId`, then `student:answer` with
+  `{ mediaId, text? }`; keep the drawing in the outbox until `drawing:stored`; resend on
+  `drawing:rejected`, stop on `drawing:refused`; show `note` from `server:result`, never
+  a mark.
+- **Console, room settings:** the exam mode controls with `examHelp` beside each, the
+  pictures interval only with screen share, the three watching parts only for a room
+  opened for a class, Safe Exam Browser keys; change it live with `PATCH`.
+- **Console, live signals:** listen for `teacher:integrity` (merge partial updates by
+  `rollNo`), show counts and the latest signal with `honesty`, in roll order, never as a
+  ranking or a verdict.
+- **Console, snapshot viewer:** load `/exam/snapshots/:roll` with credentials when
+  `snapshotAt` moves; never cache it.
+- **Console, collusion list:** show pairs with `rule.sentence` and `note`; hide the
+  button outside exam mode.
+- **Console, drawing review:** the review queue shows the picture from `drawing.url`
+  (with credentials) and `text`, offers marking only (no confirm), and a written
+  answer's `kindLabel` and word limit.
+- **Bank editor:** a Short / Long choice for written answers from `kinds.openLengths`;
+  the drawing kind with `allowText` and an optional rubric.
+- **Hub:** say the question is part of a class still running (the server's sentence);
+  on a resent answer with `held`, show `heldNote` and the mark, never a key; a practice
+  drawing sends `response: { image, text? }` and shows `note`, never a mark.
 
 ## Known open issues
 

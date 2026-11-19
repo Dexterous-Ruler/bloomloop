@@ -38,6 +38,12 @@ items left for the owner. Phase 7 made Amendment 7 (dated): the new socket event
 fields (packs, `server:kept`, `server:refused`, deliver joins) and the
 `Idempotency-Key` header.
 
+The Batch 9 decisions (the owner's asks of 20 Nov 2026: E1 to E7) were taken under the
+same delegation that day, and are recorded from "Batch 9 in brief" on, with what a
+website cannot do, the DPDP note on screen pictures, the defaults chosen and the items
+left for the owner. Batch 9 made Amendment 9 (dated): the drawing kind, the written
+answer's `length`, and exam mode's socket events and fields.
+
 | # | Decision | Status |
 |---|---|---|
 | 1 | Generated teaching content in the Hub | **Decided under the owner's delegation, 19 Nov 2026**: as recommended; contract amended; Phase 6's lessons, explanations, hints and translations are built under it |
@@ -47,7 +53,7 @@ fields (packs, `server:kept`, `server:refused`, deliver joins) and the
 | 5 | AI calls for professor-triggered actions | **Decided under the owner's delegation, 19 Nov 2026**: as recommended; Phase 6's AI buttons follow it, and no live chat tutor is built |
 | 6 | Six levels or three bands by default | **Decided under the owner's delegation, 19 Nov 2026**: as recommended (server already returns both) |
 | 7 | Hub identity: accounts or roll number | **Decided under the owner's delegation, 19 Nov 2026**: rooms account-free; a link only by a signed-in phone (built, `0022`); the Hub needs an account (built, Phase 6, H1) |
-| 8 | DPDP role and students under 18 | **Decided under the owner's delegation, 19 Nov 2026, as a working posture. Not a legal decision: a lawyer must confirm it before any college signs or before 13 May 2027.** The under-18 mark is built (`0022`) |
+| 8 | DPDP role and students under 18 | **Decided under the owner's delegation, 19 Nov 2026, as a working posture. Not a legal decision: a lawyer must confirm it before any college signs or before 13 May 2027.** The under-18 mark is built (`0022`). Exam mode's screen pictures (Batch 9, E5) join the list the lawyer must confirm |
 | 9 | What deleting a room does to the evidence | **Decided by owner, 18 Nov 2026** |
 
 ---
@@ -406,6 +412,21 @@ is deleted with the student's account, while room answers keep their roll number
 legal review should confirm this. None of the notice, consent, export, erasure, retention
 or audit pieces above was built in Phase 6 (open items, "Phase 6: open items for the
 owner").
+
+**Batch 9 (20 Nov 2026).** Exam mode (E5) can take low-resolution pictures of a laptop's
+shared screen. **Screen pictures are personal data under the DPDP Act, and join this
+decision's list: a lawyer must confirm them before any college signs or uses them.**
+Until then the server keeps them as narrowly as it can: in memory only, the newest per
+student, to the room's staff only, purged two hours after the room closes (or after
+arrival, whatever the room's state), at once when the room is deleted, and on any
+restart; never in a table, the archive, the CSV or any export. Students marked under 18
+are asked for no fullscreen, screen share or picture, and no exam signal is recorded or
+shown about them. A room opened without a class has no list to mark anyone under 18,
+so it cannot ask for fullscreen, screen sharing or pictures at all. The phone shows a
+consent notice before joining an exam room, and a phone already in a room when exam
+mode is turned on is recorded as before until it says it has shown the new notice.
+Whether that notice is enough consent, and who gives it (the college as fiduciary), is
+for the lawyer.
 
 ---
 
@@ -1664,6 +1685,10 @@ dependencies" is amended for these three (Amendment 6). No client dependency was
 
 ### Phase 6: closed questions (the review fix)
 
+**Widened by Batch 9's E1 (20 Nov 2026):** a room not yet closed now closes its whole
+question set, not only the question a phone is on ("Batch 9: E1 to E7", below). The
+rest of this section still holds.
+
 Decided under the owner's delegation, 19 Nov 2026, in the review fixes, within H9, H10,
 H13 and H14 and the room's own rule that a question's answer is never shown while it is
 being asked. Practice, a lesson and the tutor show a question's key, explanation and
@@ -2051,3 +2076,147 @@ a phone.
 - Teaching moves and wheel draws are not in a deleted room's archive or a laptop import.
 - Not tested: a live model, Supabase, Mongo, a real phone or a low-end Android device,
   and Hindi or Marathi diagram boxes on a device.
+
+### Batch 9 in brief: the hub during a class, written and drawn answers, exam mode
+
+The owner asked, on 20 Nov 2026: where a student finds the Learning Hub after a room;
+whether the hub stays shut until every student has finished and the room is closed; for
+questions that cannot be copied, right-clicked, screenshotted or read by Google Lens;
+for a better wheel; for short and long written answers and a whiteboard; and for a
+locked tab, screen sharing on laptops and live cheating signals. Every answer below was
+**decided under the owner's delegation, 20 Nov 2026** (E1 to E7). The server is built
+on branch `batch9` (`0037`, `0038`); E2 and E6, and every screen, are the client's and
+are not part of it. Shapes: `docs/API.md`, "Batch 9".
+
+### Batch 9: E1 to E7, as decided and built
+
+- **E1, the hub during a class.** The hub is never shut as a whole, and it does not wait
+  for every student to finish. While a room is open, waiting or paused, **every question
+  of its set** (its question set, or the chapter's servable questions for a room on the
+  whole bank) is closed in the hub for every student: not served in practice, lessons,
+  self-tests or Get Ready, and no key, explanation or hint. It opens when the professor
+  closes the room. This replaces the narrower rule of the question on screen now. The
+  sentence: "That question is part of a class that is still running, so it stays closed
+  here. It opens when your professor closes the class." Built.
+- **E2, after a room.** The phone's finish screen links to the Learning Hub for a
+  signed-in student, and tells a student who was not signed in, in one line, that
+  signing in keeps a history and opens the hub. **Client only; not built here.**
+- **E3, short and long written answers.** The written kind gains `length`: short (at
+  most 60 words, a small box) or long (at most 600 words, a large editor with a word
+  count). No `length` is short, so no stored question changes and marking is as before:
+  rubric-marked, provisional, human-reviewed. The generator may ask for either; the
+  professor picks in the editor. Labels "Short answer" and "Long answer". Built.
+- **E4, whiteboard answers.** A new kind, `drawing`: the student draws (pen, eraser,
+  colours, undo) and may add words. The phone sends a PNG or WebP through the room's own
+  socket, size-capped with its metadata stripped, and answers `{ mediaId, text }`.
+  **Never machine-marked**: it goes to the professor's review queue, and attainment
+  counts it only once a professor has marked it. The archive keeps the reference, never
+  the picture, within its 1 MiB. Allowed at Apply, Analyse, Evaluate and Create (Create
+  most of all), never at Remember or Understand. Built (the whiteboard itself is the
+  client's).
+- **E5, exam integrity.** An opt-in room setting `examMode`, off by default: a copy
+  guard, blur and watermark (always, with exam mode); fullscreen on laptops; whole-screen
+  sharing on laptops with optional low-resolution pictures every 30 or 60 seconds; new
+  signals (fullscreen exit, copy or menu attempts, focus or visibility lost, sharing
+  stopped, a missing picture, a second device, answer timing); a staff-only collusion
+  check worded "signals worth a look, not proof"; a live `teacher:integrity` feed;
+  optional Safe Exam Browser (free, MPL). Under 18: nothing that watches, no signal;
+  the copy guard and watermark still apply. Built on the server.
+- **E6, the wheel.** Rebuilt by the client as a real SVG wheel with segments, a smooth
+  ease and a pointer, in the Forest style, with reduced motion. **Client only; not built
+  here.**
+- **E7, screenshot attempts.** On a laptop, PrintScreen, the snipping shortcut and the
+  Mac shortcuts are recorded as `screenshot_attempt` with how (`printscreen`,
+  `snip_shortcut`, `mac_shortcut`) and the question blurs at once; on a phone, Lens,
+  Circle to Search, the assistant or the app switcher make the page lose focus, recorded
+  as such and worded "Page left: possibly Google Lens, a screenshot tool or another
+  app". Same rules as every signal: staff-only, a signal not proof, none for under 18,
+  rate-limited. Built on the server; the key listeners are the client's.
+
+### Batch 9: what a website cannot do, said plainly
+
+Every help text and notice says it, and nothing in the product claims otherwise:
+- **No website can stop a screenshot or Google Lens.** A phone's hardware buttons, any
+  screenshot on an iPhone, a screen recording started outside the page and a photo
+  taken with a second device cannot be seen at all. The faint roll number and room code
+  across the question are the deterrent, and the trace on any photo that circulates.
+- **No website can truly lock a tab.** Fullscreen, screen sharing and the copy guard are
+  enforced by the student's own browser: a browser someone has changed can skip them,
+  claim a share it never started and send pictures of anything, without leaving a
+  signal.
+- **Safe Exam Browser is a strong deterrent, not a lock.** Its values are worked out
+  from the page address and a key, so anyone holding the configuration file can compute
+  one, and a value seen once can be sent again from another browser. A fresh
+  configuration per exam, and a Browser Exam Key, narrow this.
+- **A signal is a prompt to look, never proof.** A notification, a slow connection or a
+  sleeping laptop leaves the same trace as cheating; students who sit and revise
+  together share wrong answers honestly. Nothing ranks, labels or scores a student on
+  signals.
+
+### Batch 9: screen pictures and the DPDP Act
+
+Screen pictures are personal data. They join decision 8's list: **a lawyer must confirm
+them before any college signs or uses them**, along with the consent notice that covers
+them. What the server does until then is under decision 8, "Batch 9".
+
+### Batch 9: the defaults chosen while building
+
+- **Limits.** Written answers: 60 and 600 words, and 15 characters a word as a cap
+  beside each; any answer at most 20,000 characters as JSON. Drawings: PNG or WebP only
+  (JPEG smears thin pen lines, and a drawing has no photograph's reason to be one), at
+  most 400 KB, 10 per student per question, 1,500 and 100 MB per room, 12 a minute per
+  connection. Screen pictures: a whole JPEG of at most 80 KB (the decision said about
+  60 KB; the cap leaves room), one per interval less 2 seconds, the newest per student,
+  64 MB in all and 24 MB per room, past which a new picture is refused rather than one
+  of another room's pushed out.
+- **Signals.** At most 30 in any 60 seconds and one of a kind a second per student. A
+  missing picture after two intervals and 10 seconds, once per gap. An answer is too
+  quick when it arrives before its text could be read at 25 characters a second (never
+  under 0.9 s), counting a passage only on the first question a student is served from
+  it. One screenshot shortcut, or three of the other reported exam kinds, puts a student
+  at "note"; a declined share is recorded once and raises nothing, because declining is
+  the student's choice.
+- **Collusion** lists a pair with the same wrong answer to at least 3 questions, each
+  within 60 seconds (by the earlier of the phone's answer time and its arrival); a wrong
+  answer given by half or more of those who got the question wrong, when at least 5 did,
+  is a common misconception and not counted. Exam rooms only, because only their
+  students were told their answers might be compared. Roll order, never ranked.
+- **Where exam mode may run.** Not in a Teacher-led room (no phone joins one).
+  Fullscreen, screen sharing and pictures only in a room opened for a class, because
+  only a class list can mark a student under 18. The setting can change while the room
+  is not closed; turning Safe Exam Browser on mid-room turns away phones not in it.
+- **Consent.** A phone joining an exam room has seen the notice (the screen shows it
+  before the join); a phone already in the room when exam mode is turned on is recorded
+  as any room records it until it says it has shown the new notice.
+- **Answers the phone cannot shorten.** An over-limit written answer from an outbox, a
+  pack or after the close is kept and not counted, never refused, so nothing a student
+  wrote offline is lost. On the question on screen in an open room it is refused, so
+  the student can shorten it there.
+- **Drawings** can only be marked in the review queue, never confirmed (there is no
+  machine mark). Laptop mode does not serve them, because its archive cannot carry the
+  pictures. Lessons, self-tests and Get Ready never ask one.
+
+### Batch 9: open items
+
+- **A lawyer must confirm screen pictures and the consent notice** before any college
+  uses exam mode's pictures (decision 8).
+- **Every existing written question is now a short answer of at most 60 words.**
+  Answers students used to give at greater length are refused on screen until a
+  professor marks such questions long. The owner may want existing questions reviewed.
+- **No screen is built**: E2, E6 and every Batch 9 screen are the client's.
+- **Safe Exam Browser** was never run: whether it sends its header on the socket's
+  opening request is not known (its JavaScript value is the fallback), and
+  `PUBLIC_ORIGIN` must be set on a deployment.
+- **Screen pictures live in one process.** A second server process has its own store; a
+  console reaching another process sees no picture.
+- **Long answers and the archive.** A full class of long answers can take a room's
+  archive past its 1 MiB; such a room is kept, closed, and can be exported as CSV, but
+  not deleted or imported until the owner decides how the limit should change. The
+  close says so when a room is near it.
+- **Before a room opens**, practice can still show a question's key; the rooms-only
+  switch is the professor's tool for that.
+- The repository's offline runner (`scripts/test-offline.sh`) and the README do not yet
+  list the two Batch 9 scripts and migrations `0037` and `0038`.
+- Not tested: Supabase, Mongo, a model, a real phone, a laptop browser, a proxy, Safe
+  Exam Browser, the picture store under a full class's load; `mac_shortcut` is sent by
+  no test.
