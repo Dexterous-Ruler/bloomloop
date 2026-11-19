@@ -30,6 +30,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Button, Empty, Icon, Note, Panel, Segmented } from '../ui/index.jsx';
 import ReportWindow, { NO_WINDOW, windowParams } from './ReportWindow.jsx';
+import { ImportedRoomsNote, ImportedTag } from '../teach/imported.jsx';
 
 const list = (v) => (Array.isArray(v) ? v : []);
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -296,6 +297,7 @@ function RoomHead({ room }) {
         {ROOM_STATUS[room.status] && <span className="rg-room-st">{ROOM_STATUS[room.status]}</span>}
       </span>
       {room.title && <span className="rg-room-title" title={room.title}>{room.title}</span>}
+      <ImportedTag from={room.importedFrom} code={room.code} />
     </th>
   );
 }
@@ -573,6 +575,8 @@ export function RegisterView({
     <div className="rg" aria-busy={reading || undefined}>
       {bar}
       {fileLine}
+      {/* Phase 7: rooms imported from a laptop, named, or said to be left out. */}
+      <ImportedRoomsNote rooms={rooms} window={data.window} />
       {rooms.length === 0 ? (
         <section className="card rg-state">
           <Empty
@@ -650,13 +654,13 @@ export default function Register({ classId }) {
     );
   };
 
-  const narrowed = Boolean(win.from || win.to || list(win.rooms).length);
+  const narrowed = Boolean(win.from || win.to || list(win.rooms).length || win.imported);
   return (
     <RegisterView
       data={data}
       error={error}
       reading={reading}
-      filter={<ReportWindow classId={classId} value={win} onChange={setWin} />}
+      filter={<ReportWindow classId={classId} value={win} onChange={setWin} offerImported />}
       narrowed={narrowed}
       onClearWindow={() => setWin(NO_WINDOW)}
       onRetry={read}

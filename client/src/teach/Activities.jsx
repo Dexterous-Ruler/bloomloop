@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { api } from '../lib/api.js';
+import { record, shownOf, useSynced } from '../lib/consoleOutbox.js';
 import { Button, Empty, Field, Icon, Note, Segmented } from '../ui/index.jsx';
 import { toast } from '../ui/toast.jsx';
 import { Privacy, ReadFailed, clock } from './Wheel.jsx';
@@ -175,7 +176,9 @@ function Recorded({
         <div className="rc-act-top">
           <h3>{activity.label}</h3>
           <time className="mono t-meta">{clock(activity.createdAt)}</time>
-          {canControl && !editing && <Button size="sm" variant="ghost" icon="edit" onClick={onEdit} aria-label={`Change ${activity.label} at ${clock(activity.createdAt)}`} />}
+          {/* Recorded offline: the server gives it its id, so it can be changed once it has it. */}
+          {activity.sync === 'new' && <span className="t-meta"><Icon name="clock" size={12} /> Waiting to sync</span>}
+          {canControl && !editing && activity.sync !== 'new' && <Button size="sm" variant="ghost" icon="edit" onClick={onEdit} aria-label={`Change ${activity.label} at ${clock(activity.createdAt)}`} />}
         </div>
         {editing ? (
           <Composer
@@ -371,39 +374,54 @@ export default function Activities({ code, canControl, onTab, closed, onProject 
   }, [code]);
 
   useEffect(() => { read(); }, [read]);
+  // Records kept on this laptop have reached the server: read them again.
+  useSynced(code, read);
   // Linked counts are named in the record, so read the tallies once if any is linked.
   useEffect(() => {
     if (tallies.status === 'idle' && data?.activities?.some((a) => a.tallyId)) readTallies();
   }, [data, tallies.status, readTallies]);
 
+  /** An activity as recorded here, before the server has it: groups carry their result's label. */
+  const drawn = (a) => ({
+    ...a,
+    groups: (a.groups ?? []).map((g) => ({ ...g, result: data?.results?.find((r) => r.id === g.gotIt)?.label ?? g.gotIt })),
+  });
+
+  // Through the console outbox: kept on this laptop until the server has it.
   async function create(body) {
     setBusy('create');
     setError({ for: '', message: '' });
-    try {
-      const reply = await api.createActivity(code, body);
-      setData((d) => d && { ...d, activities: [...d.activities, reply.activity] });
-      return true;
-    } catch (err) {
-      setError({ for: 'create', message: err.message });
-      return false;
-    } finally {
-      setBusy('');
-    }
+    const label = data?.kinds?.find((k) => k.id === body.kind)?.label ?? body.kind;
+    const out = await record('activityCreate', { code, body }, { label: `${label}${body.outcome ? `: ${body.outcome}` : ''}` });
+    setBusy('');
+    if (out.refused) { setError({ for: 'create', message: out.error }); return false; }
+    const made = out.ok
+      ? out.reply.activity
+      : drawn({ id: `waiting-${Date.now()}`, kind: body.kind, label, outcome: body.outcome ?? '', groups: body.groups, tallyId: body.tallyId ?? null, createdAt: new Date().toISOString(), sync: 'new' });
+    setData((d) => d && { ...d, activities: [...d.activities, made] });
+    return true;
   }
 
   async function update(id, patch) {
+    const before = data?.activities?.find((a) => a.id === id);
     setBusy(`update:${id}`);
     setError({ for: '', message: '' });
-    try {
-      const reply = await api.updateActivity(code, id, patch);
-      setData((d) => d && { ...d, activities: d.activities.map((a) => (a.id === id ? reply.activity : a)) });
-      return true;
-    } catch (err) {
-      setError({ for: id, message: err.message });
+    const out = await record('activityEdit', { code, activityId: id, patch }, {
+      label: `${before?.label ?? 'Activity'} changed${patch.outcome ? `: ${patch.outcome}` : ''}`,
+      shown: before && !before.sync ? shownOf.activity(before) : undefined,
+    });
+    setBusy('');
+    if (out.refused) {
+      setError({ for: id, message: out.error });
+      // Stale: the reply holds the activity as it stands.
+      if (out.stale && out.current?.id) setData((d) => d && { ...d, activities: d.activities.map((a) => (a.id === id ? out.current : a)) });
       return false;
-    } finally {
-      setBusy('');
     }
+    setData((d) => d && {
+      ...d,
+      activities: d.activities.map((a) => (a.id !== id ? a : out.ok ? out.reply.activity : drawn({ ...a, ...patch, sync: 'edit' }))),
+    });
+    return true;
   }
 
   /** The check's question on the wall, as the projector's own control puts a tally up. */

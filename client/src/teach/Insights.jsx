@@ -28,6 +28,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { api } from '../lib/api.js';
+import { record, useSynced } from '../lib/consoleOutbox.js';
 import { Button, Icon, Level, Note, Num, Panel, Segmented, Spark } from '../ui/index.jsx';
 
 const list = (v) => (Array.isArray(v) ? v : []);
@@ -497,10 +498,26 @@ export function InsightsView({ data, error, onRetry, canControl = false, sort, o
   );
 }
 
+/**
+ * Actions kept on this laptop, drawn on their cards until the server has them:
+ * a dismissed card reads as dismissed, an acted one says when (`local`).
+ */
+function withKept(data, kept) {
+  if (!data || !Object.keys(kept).length || !Array.isArray(data.cards)) return data;
+  return {
+    ...data,
+    cards: data.cards.map((c) => {
+      const k = kept[c.flagId];
+      return k ? { ...c, dismissed: k.action === 'dismissed', lastAction: k } : c;
+    }),
+  };
+}
+
 /** The live insights for one room: the pushed body when there is one, else read here. */
 export default function Insights({ code, insights, canControl = false, sort, onSort, onAct, onOpenStudent }) {
   const [own, setOwn] = useState(null);
   const [error, setError] = useState('');
+  const [kept, setKept] = useState({});
   const req = useRef(0);
 
   const read = useCallback(() => {
@@ -516,25 +533,31 @@ export default function Insights({ code, insights, canControl = false, sort, onS
   useEffect(() => { setOwn(null); setError(''); }, [insights, code]);
   // With nothing pushed yet, read once.
   useEffect(() => { if (!insights) read(); }, [code]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Actions kept on this laptop have reached the server: its cards are the truth again.
+  useSynced(code, () => { setKept({}); read(); });
 
+  // Through the console outbox, with basedOn the time of the card's last action.
   async function onAction(card, kind, note) {
-    let failed = null;
-    try {
-      await api.insightAction(code, card.flagId, kind, note || undefined);
+    const out = await record('insight', { code, flagId: card.flagId, action: kind, note: note || undefined }, {
+      label: `${card.title}: ${kind === 'dismissed' ? 'dismissed' : 'acted on'}`,
+      shown: card.lastAction?.local ? undefined : card.lastAction?.actedAt ?? null,
+    });
+    if (out.ok || out.stale) {
       // The server pushes fresh insights to every teacher screen; reading once
-      // here moves this one at once.
+      // here moves this one at once (after a stale refusal too: another action
+      // on the card was recorded meanwhile).
       read();
-    } catch (err) {
-      failed = err;
+    } else if (out.kept) {
+      setKept((k) => ({ ...k, [card.flagId]: { action: kind, note: note ?? '', actedAt: new Date().toISOString(), local: true } }));
     }
     // Acting is the teacher's call: it goes ahead even if the record failed.
     if (kind === 'acted' && card.action) onAct?.(card.action);
-    if (failed) throw failed;
+    if (out.refused) throw Object.assign(new Error(out.error), { status: out.status });
   }
 
   return (
     <InsightsView
-      data={own ?? insights}
+      data={withKept(own ?? insights, kept)}
       error={error}
       onRetry={read}
       canControl={canControl}

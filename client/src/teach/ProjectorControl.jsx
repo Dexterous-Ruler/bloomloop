@@ -34,6 +34,7 @@ import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
 import { KIND_LABEL } from '../lib/kinds.js';
 import { Button, Chip, Icon, Level, Note, Segmented, Switch } from '../ui/index.jsx';
+import { useLaptop, wallSearch } from './laptop.jsx';
 import { WallScreen, countsHeld } from './Wall.jsx';
 
 const MODE_LABEL = { question: 'Question', diagram: 'Diagram', progress: 'Progress' };
@@ -648,6 +649,10 @@ export default function ProjectorControl({ code, canControl, info, askLevel }) {
   const [picker, setPicker] = useState('bank');
   const [level, setLevel] = useState(askLevel || 'all');
   const seq = useRef(0); // the newest request wins, so a slow poll cannot undo a change
+  // Phase 7: on the laptop at localhost, the wall is given the laptop's network
+  // address for its link and QR (or told there is none yet). The console asked
+  // once already; this reads that reply.
+  const lap = useLaptop(true);
   const busyRef = useRef('');
   busyRef.current = busy;
 
@@ -763,7 +768,7 @@ export default function ProjectorControl({ code, canControl, info, askLevel }) {
     const n = ++seq.current;
     try {
       const { token, ...rest } = await api.createProjectorLink(code);
-      win.location.replace(`${window.location.origin}/wall#${token}`);
+      win.location.replace(`${window.location.origin}/wall${wallSearch(lap.data)}#${token}`);
       apply(rest, n);
       // The wall connects a moment later; read again so "watching" counts it.
       setTimeout(() => { if (!busyRef.current) load(); }, 2500);

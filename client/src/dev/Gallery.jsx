@@ -45,6 +45,16 @@ const AREAS = {
   register: { title: 'Marks register and roster import', line: 'Marks by room in roll order, and a roster from a CSV file. Staff only.' },
   miscon: { title: 'Misconceptions', line: 'Which wrong options students chose, linked to the misunderstanding behind them. Counts only. Staff only.' },
   ask: { title: 'Class questions and confidence', line: 'Put one question to the class, pause to discuss, re-vote. Counts only, no names. Staff only.' },
+  hubhome: { title: 'Learning Hub: home and progress', line: 'A signed-in student’s own hub: the notice, reviews due, goals, paths, the weeks and the mastery map.' },
+  hubmap: { title: 'Learning Hub: the topic map', line: 'A class’s units, chapters and topics, a topic’s prerequisites drawn from data, reviews due and the error log.' },
+  hubtopic: { title: 'Learning Hub: topics, lessons and practice', line: 'A topic’s lesson in a reviewed language, retrieval questions, and practice with hints.' },
+  hubpractice: { title: 'Learning Hub: self-test and Get Ready', line: 'A self-test with results at the end, and a short check before a topic.' },
+  hubstaff: { title: 'Learning Hub, staff: units, topics and links', line: 'A professor places chapters in units, keeps topic records and confirms prerequisite links. An HOD reads only.' },
+  hubqueues: { title: 'Learning Hub, staff: review queues', line: 'Explanations, hints and option feedback, lessons and translations waiting for a professor.' },
+  hubprogress: { title: 'Learning Hub, staff: progress', line: 'A class by topic state in roll order, and one student’s hub, read-only. Never a rank.' },
+  phone7: { title: 'Offline phone: packs and late answers', line: 'Questions packed for a lost connection, answers kept, refused or saved but not counted.' },
+  sync: { title: 'Console outbox', line: 'Teacher records kept on the laptop until the server has them, and a record someone changed meanwhile.' },
+  imports: { title: 'Imported rooms and laptop mode', line: 'Rooms run on a laptop and imported later, and the console running on the laptop itself.' },
   auth: { title: 'Auth', line: 'Sign in, sign up and the profile.' },
 };
 
@@ -161,7 +171,7 @@ export default function Gallery() {
         aria-label="Gallery screen"
         value={entry.id}
         onChange={(e) => navigate(e.target.value ? `/__gallery/${e.target.value}` : '/__gallery')}
-        style={{ position: 'fixed', left: 12, bottom: 12, zIndex: 200, font: '12px/1 var(--mono)', padding: 4, borderRadius: 6, background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--line-2)' }}
+        style={{ position: 'fixed', left: 12, bottom: 12, maxWidth: 'calc(100vw - 24px)', zIndex: 200, font: '12px/1 var(--mono)', padding: 4, borderRadius: 6, background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--line-2)' }}
       >
         <option value="">All screens</option>
         {GROUPS.map((g) => (

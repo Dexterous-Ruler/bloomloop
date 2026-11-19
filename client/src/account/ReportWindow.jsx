@@ -3,9 +3,13 @@
  * class's rooms. Shared by the attainment report and the marks register, so
  * both say the same thing about what is counted.
  *
- *   value     { from, to, rooms }: dates as YYYY-MM-DD ('' for open), rooms
- *             as an array of codes ([] for every room in the dates)
+ *   value     { from, to, rooms, imported }: dates as YYYY-MM-DD ('' for open),
+ *             rooms as an array of codes ([] for every room in the dates),
+ *             imported 'leave-out' to leave out rooms imported from a laptop
+ *             (Phase 7; '' counts them like any room)
  *   onChange  (value) => void
+ *   offerImported  show "Leave out imported rooms" when the class has any
+ *             (a report whose server reply honours imported=leave-out)
  *
  * The room list is the class's rooms this caller may read (GET /api/session,
  * filtered by `classId`), not the report's own `rooms`, which lists only the
@@ -17,17 +21,20 @@ import { useEffect, useState } from 'react';
 
 import { api } from '../lib/api.js';
 import { Button, Chip, Dialog } from '../ui/index.jsx';
+import { ImportedTag, LeaveOutImported } from '../teach/imported.jsx';
 
 const list = (v) => (Array.isArray(v) ? v : []);
 const DAY = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' });
 const dayOf = (iso) => { const d = iso ? new Date(iso) : null; return d && !Number.isNaN(d.getTime()) ? DAY.format(d) : ''; };
 
-export const NO_WINDOW = { from: '', to: '', rooms: [] };
+export const NO_WINDOW = { from: '', to: '', rooms: [], imported: '' };
 
 /** The report query for a window: empty parts are left out by the api. */
-export const windowParams = (w = NO_WINDOW) => ({ from: w.from || '', to: w.to || '', rooms: list(w.rooms).join(',') });
+export const windowParams = (w = NO_WINDOW) => ({
+  from: w.from || '', to: w.to || '', rooms: list(w.rooms).join(','), imported: w.imported === 'leave-out' ? 'leave-out' : '',
+});
 
-export default function ReportWindow({ classId, value = NO_WINDOW, onChange }) {
+export default function ReportWindow({ classId, value = NO_WINDOW, onChange, offerImported = false }) {
   const [rooms, setRooms] = useState(null);
   const [error, setError] = useState('');
   const [picking, setPicking] = useState(false);
@@ -51,7 +58,8 @@ export default function ReportWindow({ classId, value = NO_WINDOW, onChange }) {
   const chosen = list(value.rooms);
   const set = (patch) => onChange?.({ ...NO_WINDOW, ...value, ...patch });
   const roomsLabel = chosen.length === 0 ? 'Every room in these dates' : chosen.length === 1 ? `Room ${chosen[0]}` : `${chosen.length} rooms`;
-  const any = value.from || value.to || chosen.length > 0;
+  const any = value.from || value.to || chosen.length > 0 || value.imported === 'leave-out';
+  const importedN = list(rooms).filter((r) => r.importedFrom).length;
 
   return (
     <div className="rwin" role="group" aria-label="Rooms this report reads">
@@ -66,6 +74,13 @@ export default function ReportWindow({ classId, value = NO_WINDOW, onChange }) {
       <Button size="sm" icon="rooms" onClick={() => { setDraft(chosen); setPicking(true); }} disabled={!rooms?.length}>
         {roomsLabel}
       </Button>
+      {offerImported && (importedN > 0 || value.imported === 'leave-out') && (
+        <LeaveOutImported
+          value={value.imported === 'leave-out'}
+          onChange={(on) => set({ imported: on ? 'leave-out' : '' })}
+          count={importedN}
+        />
+      )}
       {any && <Button size="sm" variant="ghost" icon="undo" onClick={() => onChange?.(NO_WINDOW)}>All rooms</Button>}
       {error && <span className="rwin-err">The room list did not load: {error}</span>}
 
@@ -95,6 +110,7 @@ export default function ReportWindow({ classId, value = NO_WINDOW, onChange }) {
                   <span className="mono">{r.code}</span>
                   <span className="clip">{r.title || 'Untitled room'}</span>
                   <span className="t-meta">{dayOf(r.startedAt)}</span>
+                  <ImportedTag plain from={r.importedFrom} code={r.code} />
                   {r.status !== 'closed' && <Chip>{r.status === 'waiting' ? 'Waiting' : r.status === 'paused' ? 'Paused' : 'Open'}</Chip>}
                 </label>
               </li>

@@ -26,13 +26,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
-import { api } from '../lib/api.js';
+import { api, teacherKey } from '../lib/api.js';
 import AccountShell from '../shell/AccountShell.jsx';
 import { useViewer } from '../shell/viewer.js';
 import { Button, Chip, Dialog, Empty, Field, Icon, Menu, Note, Segmented, Tip } from '../ui/index.jsx';
+import { ImportedTag, LeaveOutImported } from '../teach/imported.jsx';
+import { useLaptop } from '../teach/laptop.jsx';
 import {
   dayParts, plural, Rate, roomLink, RoomState, roomWhen, sizeOf, stampOf,
 } from './dashParts.jsx';
+import ImportRooms from './ImportRooms.jsx';
 
 /* Each filter carries its own test, so its count and the rows it shows cannot
    drift apart. */
@@ -144,6 +147,8 @@ function RoomRow({ room: r, busy, onPause, onResume, onAskClose, onAskDelete }) 
             </span>
           )}
           {!r.canControl && <span className="ac-set is-ro">Read only</span>}
+          {/* Phase 7: a room run in laptop mode and imported, said as such. */}
+          <ImportedTag long from={r.importedFrom} code={r.code} />
           {r.banded > 0 && <span className="ac-room-band">{r.banded} in the support band</span>}
         </span>
       </span>
@@ -318,11 +323,14 @@ export function RoomsView({
   busy, actionError, notice, onDismiss,
   onPause, onResume, onClose, onDelete,
   archives, onReloadArchives, onDownload,
+  onImport,
 }) {
   const { account } = useViewer();
 
   const [filter, setFilter] = useState('all');
   const [query, setQuery] = useState('');
+  // Phase 7: rooms imported from a laptop, left out of what is shown.
+  const [noImported, setNoImported] = useState(false);
   // The destructive step in progress, as { kind: 'close' | 'delete', code }.
   // Held by code, so the dialog always describes the room as the server last
   // reported it - and lets go by itself if that room is no longer there.
@@ -333,8 +341,10 @@ export function RoomsView({
   const shown = useMemo(() => {
     const match = (FILTERS.find((f) => f.id === filter) ?? FILTERS[3]).match;
     const q = query.trim().toLowerCase();
-    return list.filter((r) => match(r) && (!q || `${r.code ?? ''} ${r.title ?? ''}`.toLowerCase().includes(q)));
-  }, [list, filter, query]);
+    return list.filter((r) => match(r) && !(noImported && r.importedFrom)
+      && (!q || `${r.code ?? ''} ${r.title ?? ''}`.toLowerCase().includes(q)));
+  }, [list, filter, query, noImported]);
+  const importedN = list.filter((r) => r.importedFrom).length;
 
   // The rows as days: the list is newest first, so the days are too.
   const days = useMemo(() => {
@@ -379,6 +389,7 @@ export function RoomsView({
       <Tip label="Read the rooms again">
         <Button variant="ghost" className="ac-tap" icon="refresh" busy={reading} aria-label="Read the rooms again" onClick={onReload} />
       </Tip>
+      {onImport && <Button className="ac-tap" icon="fileUp" onClick={onImport}>Import from a laptop</Button>}
       {/* With no rooms yet, the empty state below carries this. */}
       {list.length > 0 && <Link className="btn btn-primary ac-tap" to="/"><Icon name="plus" />Open a new room</Link>}
     </span>
@@ -462,6 +473,7 @@ export function RoomsView({
             options={FILTERS.map((f) => ({ id: f.id, label: f.label, count: list.filter(f.match).length }))}
           />
         </div>
+        {importedN > 0 && <LeaveOutImported value={noImported} onChange={setNoImported} count={importedN} />}
         <label className="search">
           <Icon name="search" />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a room by code or chapter" aria-label="Find a room by code or chapter" />
@@ -493,7 +505,7 @@ export function RoomsView({
           <Empty
             icon="search"
             title="No room matches"
-            action={<Button className="ac-tap" onClick={() => { setFilter('all'); setQuery(''); }}>Clear the filter</Button>}
+            action={<Button className="ac-tap" onClick={() => { setFilter('all'); setQuery(''); setNoImported(false); }}>Clear the filter</Button>}
           >
             Nothing you can see answers to that. The rooms themselves have not changed.
           </Empty>
@@ -642,6 +654,12 @@ export function RoomsView({
 
 export default function Rooms() {
   const { account, loading: accountLoading } = useViewer();
+  // Phase 7: rooms run in laptop mode come in here. Not for an HOD (who
+  // imports nothing), and not on the laptop itself.
+  const [importing, setImporting] = useState(false);
+  const role = account?.role;
+  const lap = useLaptop(!accountLoading && role !== 'student' && Boolean(account || teacherKey.get()));
+  const canImport = !accountLoading && role !== 'hod' && role !== 'student' && !lap.laptop;
 
   // null means "not read yet", which is what the skeleton waits on. An empty
   // array is a real answer and gets the empty state instead.
@@ -776,6 +794,7 @@ export default function Rooms() {
   });
 
   return (
+    <>
     <RoomsView
       loading={accountLoading || (rooms === null && !error)}
       error={error}
@@ -794,6 +813,9 @@ export default function Rooms() {
       archives={archives}
       onReloadArchives={loadArchives}
       onDownload={(archive) => api.downloadRoomArchive(archive._id)}
+      onImport={canImport ? () => setImporting(true) : undefined}
     />
+    {canImport && <ImportRooms open={importing} onOpenChange={setImporting} onImported={() => load({ silent: true })} />}
+    </>
   );
 }

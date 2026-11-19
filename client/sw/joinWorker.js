@@ -5,7 +5,11 @@
    It does one job: a phone that reloads with no network still opens. The /join
    page and the files it needs to start are kept, per build. Nothing the server
    says is kept: /api and /socket.io always go to the network, and the answers
-   a phone is holding live in its own outbox (lib/outbox.js), not here. */
+   a phone is holding live in its own outbox (lib/outbox.js), not here. The one
+   exception (Phase 7, "Next"): the pictures of packed questions, which the
+   page itself keeps in the `bloomloop-media` cache while online, are served
+   from there, so a question answered offline still shows its image. A picture
+   at /api/media/<id> never changes its bytes. */
 
 const VERSION = '__VERSION__';
 const SHELL = __SHELL__;
@@ -48,6 +52,10 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api/media/')) {
+    event.respondWith(caches.match(request, ANY).then((kept) => kept || fetch(request)));
+    return;
+  }
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/socket.io/')) return;
 
   // The page: the network first, so a phone online always gets today's build;

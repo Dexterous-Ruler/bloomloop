@@ -24,6 +24,7 @@ import { supabase } from '../lib/auth.js';
 import { ROLE_LABEL } from '../lib/routes.js';
 import AccountShell from '../shell/AccountShell.jsx';
 import { useViewer } from '../shell/viewer.js';
+import { useLaptop } from '../teach/laptop.jsx';
 import { Avatar, Button, Chip, Empty, Icon, Note, Panel, Section } from '../ui/index.jsx';
 
 const ROLE_BLURB = {
@@ -435,6 +436,8 @@ export default function Profile() {
 
   const role = account?.role;
   const usingKey = !loading && !account && Boolean(teacherKey.get());
+  // Phase 7: a laptop in laptop mode has no accounts to sign in to.
+  const lap = useLaptop(usingKey);
 
   // /api/classroom/status is teacher-gated, so a student's token is refused.
   // Do not make the call at all for one: it used to leave the row waiting for
@@ -514,7 +517,7 @@ export default function Profile() {
       canSee={canSee}
       loading={loading}
       usingKey={usingKey}
-      canSignIn={Boolean(supabase)}
+      canSignIn={Boolean(supabase) && !lap.laptop}
       classroom={canUseClassroom ? classroom : undefined}
       link={isStudent ? link : undefined}
       connecting={connecting}

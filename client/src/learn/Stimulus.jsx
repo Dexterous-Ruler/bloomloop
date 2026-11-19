@@ -14,8 +14,10 @@
 import { useId, useState } from 'react';
 
 import { Icon } from '../ui/index.jsx';
+import { rt } from './parts.jsx';
 
-export default function Stimulus({ stimulus }) {
+/** `html`: the passage as the server built it (`question.rich.passage`), when it holds a formula or code. */
+export default function Stimulus({ stimulus, html }) {
   const [open, setOpen] = useState(true);
   // An image that never arrived: hall wifi, a host that is down. The alt text
   // is then the only evidence on screen, which is why the server refuses an
@@ -60,7 +62,7 @@ export default function Stimulus({ stimulus }) {
             ? (broken
               ? <p>{stimulus.alt}</p>
               : <img src={stimulus.url} alt={stimulus.alt ?? ''} onError={() => setBroken(true)} />)
-            : <p>{stimulus.text}</p>}
+            : <p {...rt(html, stimulus.text)} />}
         </div>
       )}
     </section>

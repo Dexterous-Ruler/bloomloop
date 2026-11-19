@@ -20,11 +20,8 @@
 import { Fragment, useContext, useEffect, useRef, useState } from 'react';
 
 import { clearDraft, readDraft, saveDraft } from '../lib/draft.js';
-// One definition. The passage arrives with its markers still in it, so the
-// phone must split on the same token the server's validator counted.
-import { BLANK_MARK } from '../lib/kinds.js';
 import { Button, Icon, Note } from '../ui/index.jsx';
-import { Dock, Held } from './parts.jsx';
+import { Dock, Held, pieces, rt } from './parts.jsx';
 
 const KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
@@ -42,8 +39,8 @@ const SLOP = 8;
  * So `i` here is the SHOWN POSITION, and the positions sent back are exactly
  * what the server expects to translate.
  */
-const asShown = (list) =>
-  (Array.isArray(list) ? list : []).map((it, i) => ({ t: typeof it === 'string' ? it : it?.t ?? '', i }));
+const asShown = (list, rich) =>
+  (Array.isArray(list) ? list : []).map((it, i) => ({ t: typeof it === 'string' ? it : it?.t ?? '', i, h: rich?.[i] }));
 
 const moveAt = (list, from, to) => {
   const next = list.slice();
@@ -103,6 +100,7 @@ function SortList({ items, seq, locked, hint, onSeq }) {
   const [said, setSaid] = useState('');
 
   const textOf = (pos) => items.find((it) => it.i === pos)?.t ?? '';
+  const htmlOf = (pos) => items.find((it) => it.i === pos)?.h;
 
   const put = (from, to) => {
     if (locked || to < 0 || to >= seq.length || to === from) return;
@@ -169,7 +167,7 @@ function SortList({ items, seq, locked, hint, onSeq }) {
         {seq.map((pos, n) => (
           <li key={pos} data-row className="ln-row" data-lift={drag?.n === n ? 'true' : undefined} style={slide(n)}>
             <span className="ln-key">{n + 1}</span>
-            <span className="grow wrap-any">{textOf(pos)}</span>
+            <span className="grow wrap-any" {...rt(htmlOf(pos), textOf(pos))} />
             <button
               type="button"
               className="ln-grip"
@@ -213,6 +211,8 @@ function SortList({ items, seq, locked, hint, onSeq }) {
  */
 export default function Answer({ question, result, busy, sent, onSubmit }) {
   const kind = question.kind ?? 'mcq';
+  // The server's HTML for fields holding a formula or code (H15), by field.
+  const R = question.rich ?? {};
   const waiting = busy || (sent !== null && !result);
   const locked = Boolean(result) || waiting;
 
@@ -315,7 +315,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
                 {s === 'yes' ? <Icon name="check" size={14} /> : s === 'no' ? <Icon name="close" size={14} /> : KEYS[i]}
               </span>
               <span className="ln-opt-t">
-                <span className="wrap-any">{o}</span>
+                <span className="wrap-any" {...rt(R.options?.[i], o)} />
                 {s === 'yes' && <span className="ln-tag">Correct answer</span>}
                 {s === 'no' && <span className="ln-tag">Your answer</span>}
               </span>
@@ -388,7 +388,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
             >
               <span className="ln-key" aria-hidden="true">{KEYS[i]}</span>
               <span className="ln-opt-t">
-                <span className="wrap-any">{o}</span>
+                <span className="wrap-any" {...rt(R.options?.[i], o)} />
                 {result && sent === i && <span className="ln-tag">Your answer</span>}
               </span>
             </button>
@@ -430,7 +430,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
             >
               <Box tone={boxOf(i)} />
               <span className="ln-opt-t">
-                <span className="wrap-any">{o}</span>
+                <span className="wrap-any" {...rt(R.options?.[i], o)} />
                 {result && want.includes(i) && <span className="ln-tag">Correct answer</span>}
               </span>
             </button>
@@ -473,7 +473,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
             the teacher's wording, which is as likely to be a noun phrase. */}
         <div className="ln-crit">
           <span className="t-small muted">What to pick</span>
-          <b>{question.criterion ?? ''}</b>
+          <b {...rt(R.criterion, question.criterion ?? '')} />
         </div>
 
         {/* The sentence in its own order, never shuffled. Every word is its own
@@ -517,7 +517,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
   /* -------------------------------------------------------------- match --- */
   if (kind === 'match') {
     const left = question.left ?? [];
-    const right = asShown(question.right);
+    const right = asShown(question.right, R.right);
     const usedRight = new Set(Object.values(pairs));
     // Which item on the left a match is paired with: the letter it shows.
     const mateOf = (pos) => {
@@ -557,15 +557,15 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
                 <li key={li} className="ln-pair" data-tone={ok ? 'yes' : 'no'}>
                   <span className="ln-key">{KEYS[li]}</span>
                   <div className="ln-pair-t">
-                    <span className="strong wrap-any">{t}</span>
+                    <span className="strong wrap-any" {...rt(R.left?.[li], t)} />
                     <span className="ln-mate">
                       <Icon name={ok ? 'check' : 'close'} size={14} />
-                      <span className="wrap-any">{right[pairs[li]]?.t ?? 'No match chosen'}</span>
+                      <span className="wrap-any" {...rt(right[pairs[li]]?.h, right[pairs[li]]?.t ?? 'No match chosen')} />
                     </span>
                     {!ok && (
                       <span className="ln-mate ln-truth">
                         <Icon name="check" size={14} />
-                        <span className="wrap-any">{right[truthPos]?.t ?? ''}</span>
+                        <span className="wrap-any" {...rt(right[truthPos]?.h, right[truthPos]?.t ?? '')} />
                       </span>
                     )}
                   </div>
@@ -598,7 +598,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
                 onClick={() => tapLeft(li)}
               >
                 <span className="ln-key" aria-hidden="true">{KEYS[li]}</span>
-                <span className="wrap-any">{t}</span>
+                <span className="wrap-any" {...rt(R.left?.[li], t)} />
               </button>
             ))}
           </div>
@@ -616,7 +616,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
                   onClick={() => tapRight(r.i)}
                 >
                   <span className="ln-key" aria-hidden="true">{mate !== null ? KEYS[mate] : ''}</span>
-                  <span className="wrap-any">{r.t}</span>
+                  <span className="wrap-any" {...rt(r.h, r.t)} />
                 </button>
               );
             })}
@@ -635,7 +635,8 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
   /* --------------------------------------------------------- categorise --- */
   if (kind === 'categorise') {
     const groups = question.groups ?? [];
-    const items = asShown(question.items);
+    const items = asShown(question.items, R.items);
+    const group = (g) => rt(R.groups?.[g], groups[g]);
     // One group index per SHOWN item position, so it indexes straight.
     const truth = Array.isArray(solution) ? solution : null;
 
@@ -735,8 +736,8 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
           <button type="button" className="ln-item-t" disabled={locked} aria-pressed={held === it.i} onClick={() => tapItem(it.i)}>
             {tone && <Icon name={tone === 'yes' ? 'check' : 'close'} size={14} />}
             <span className="ln-opt-t">
-              <span className="wrap-any">{it.t}</span>
-              {tone === 'no' && <span className="ln-tag">Belongs in {groups[truth[it.i]]}</span>}
+              <span className="wrap-any" {...rt(it.h, it.t)} />
+              {tone === 'no' && <span className="ln-tag">Belongs in <span {...group(truth[it.i])} /></span>}
             </span>
           </button>
         </div>
@@ -767,7 +768,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
           {groups.map((g, gi) => (
             <section key={g} className="ln-bin" data-bin={gi} data-over={fly?.over === gi ? 'true' : undefined}>
               <button type="button" className="ln-bin-head" disabled={locked} onClick={() => tapBin(gi)}>
-                <span className="strong grow wrap-any">{g}</span>
+                <span className="strong grow wrap-any" {...group(gi)} />
                 {held !== null && !locked
                   ? <span className="ln-tag">Put it here</span>
                   : <span className="mono muted">{inGroup(gi).length}</span>}
@@ -783,9 +784,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
         {/* Follows the finger above it, not under it: a thumb covers the tile
             it is carrying, and nobody can aim what they cannot see. */}
         {fly && (
-          <div className="ln-flyer" style={{ left: fly.x, top: fly.y }} aria-hidden="true">
-            {textOf(fly.pos)}
-          </div>
+          <div className="ln-flyer" style={{ left: fly.x, top: fly.y }} aria-hidden="true" {...rt(items.find((it) => it.i === fly.pos)?.h, textOf(fly.pos))} />
         )}
 
         {/* With an item in hand the next thing to do is name its group, and on
@@ -796,7 +795,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
             <p className="t-small muted clip">Put {textOf(held)} in</p>
             <div className="ln-put" data-many={groups.length > 3 ? 'true' : undefined}>
               {groups.map((g, gi) => (
-                <Button key={g} size="lg" onClick={() => place(held, gi)}><span className="clip">{g}</span></Button>
+                <Button key={g} size="lg" onClick={() => place(held, gi)}><span className="clip" {...group(gi)} /></Button>
               ))}
             </div>
           </Dock>
@@ -814,7 +813,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
 
   /* -------------------------------------------------------- order / rank --- */
   if (kind === 'order' || kind === 'rank') {
-    const items = asShown(question.items);
+    const items = asShown(question.items, R.items);
     const rest = items.filter((it) => !seq.includes(it.i));
     const truth = Array.isArray(solution) ? solution : null;
     const criterion = kind === 'rank' ? (question.criterion ?? '') : '';
@@ -827,7 +826,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
         {criterion && (
           <div className="ln-crit">
             <span className="t-small muted">Rank by</span>
-            <b>{criterion}</b>
+            <b {...rt(R.criterion, criterion)} />
           </div>
         )}
 
@@ -838,7 +837,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
               {truth.map((t, n) => (
                 <li key={n} className="ln-row">
                   <span className="ln-key">{n + 1}</span>
-                  <span className="grow wrap-any">{t}</span>
+                  <span className="grow wrap-any" {...rt(items.find((it) => it.t === t)?.h, t)} />
                 </li>
               ))}
             </ol>
@@ -861,7 +860,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
                 {rest.map((it) => (
                   <button key={it.i} type="button" className="ln-tile" disabled={locked} onClick={() => setSeq((s) => [...s, it.i])}>
                     <span className="ln-key" aria-hidden="true"><Icon name="plus" size={14} /></span>
-                    <span className="wrap-any">{it.t}</span>
+                    <span className="wrap-any" {...rt(it.h, it.t)} />
                   </button>
                 ))}
               </div>
@@ -885,7 +884,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
 
   /* -------------------------------------------------------------- cloze --- */
   if (kind === 'cloze') {
-    const parts = String(question.text ?? '').split(BLANK_MARK);
+    const parts = pieces(question.text, R.text);
     const marks = parts.length - 1;
     // A passage whose markers went missing is still answerable: one box per
     // blank the server says it has, not a sentence with nowhere to type.
@@ -912,7 +911,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
             student reading a gap can see what has to fit in it. */}
         {marks > 0 ? (
           <p className="ln-passage">
-            {parts.map((part, i) => <Fragment key={i}>{part}{i < marks && box(i)}</Fragment>)}
+            {parts.map((part, i) => <Fragment key={i}><span {...part} />{i < marks && box(i)}</Fragment>)}
           </p>
         ) : (
           <div className="stack stack-2">{Array.from({ length: count }).map((_, i) => box(i))}</div>
@@ -940,7 +939,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
 
   /* ----------------------------------------------------------- dropdown --- */
   if (kind === 'dropdown') {
-    const parts = String(question.text ?? '').split(BLANK_MARK);
+    const parts = pieces(question.text, R.text);
     const marks = parts.length - 1;
     const gaps = Array.isArray(question.gaps) ? question.gaps : [];
     // Same fallback as cloze: missing markers become a stack of gaps.
@@ -983,7 +982,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
       <>
         {marks > 0 ? (
           <p className="ln-passage">
-            {parts.map((part, i) => <Fragment key={i}>{part}{i < marks && gap(i)}</Fragment>)}
+            {parts.map((part, i) => <Fragment key={i}><span {...part} />{i < marks && gap(i)}</Fragment>)}
           </p>
         ) : (
           <div className="stack stack-2">{Array.from({ length: count }).map((_, i) => gap(i))}</div>
@@ -993,7 +992,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
           <Key label="The word for each gap">
             {/* Positions turned back into words with the list this phone was
                 handed, so the key reads as the passage and not as numbers. */}
-            <ol className="ln-list">{truth.map((pos, i) => <li key={i}>{gaps[i]?.options?.[pos] ?? ''}</li>)}</ol>
+            <ol className="ln-list">{truth.map((pos, i) => <li key={i} {...rt(R.gaps?.[i]?.options?.[pos], gaps[i]?.options?.[pos] ?? '')} />)}</ol>
           </Key>
         )}
 
@@ -1046,7 +1045,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
             <thead>
               <tr>
                 <td />
-                {columns.map((c) => <th key={c} scope="col">{c}</th>)}
+                {columns.map((c, ci) => <th key={c} scope="col" {...rt(R.columns?.[ci], c)} />)}
               </tr>
             </thead>
             <tbody>
@@ -1146,13 +1145,13 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
             <thead>
               <tr>
                 <td />
-                {columns.map((c) => <th key={c} scope="col">{c}</th>)}
+                {columns.map((c, ci) => <th key={c} scope="col" {...rt(R.columns?.[ci], c)} />)}
               </tr>
             </thead>
             <tbody>
               {rows.map((r, ri) => (
                 <tr key={r}>
-                  <th scope="row">{r}</th>
+                  <th scope="row" {...rt(R.rows?.[ri], r)} />
                   {columns.map((c, ci) => (
                     <td key={c}>
                       <label className="ln-cellbox">

@@ -1,0 +1,54 @@
+/* The Learning Hub: shared pieces (prefix .hub-). Each screen's own rules are
+   in hub-home.css, hub-map.css, hub-topic.css and hub-practice.css. */
+
+.hub { display: flex; flex-direction: column; gap: 20px; }
+
+/* Server-built text: formulas as MathML, highlighted code. Drawn as given. */
+.hub-rich { font: 400 15px/1.6 var(--font); color: var(--text); overflow-wrap: anywhere; }
+.hub-rich > * + * { margin-top: 10px; }
+.hub-rich p { margin: 0; }
+.hub-rich math { font-size: 1.08em; }
+/* No `display` here: the browser's own `block math` lays the formula out; plain `block` would stack its parts. */
+.hub-rich math[display='block'] { margin: 12px 0; max-width: 100%; overflow-x: auto; }
+.hub-rich code { font: 500 0.92em/1.4 var(--mono); background: var(--sunk); border-radius: 5px; padding: 1px 5px; }
+.hub-rich pre, .hub-code {
+  margin: 12px 0 0; padding: 14px 16px; border-radius: 12px; overflow-x: auto;
+  background: var(--panel); color: var(--on-panel); border: 1px solid var(--panel-line);
+  font: 500 13px/1.6 var(--mono); tab-size: 2;
+}
+.hub-rich pre code, .hub-code code { background: none; padding: 0; font: inherit; color: inherit; }
+/* Code tokens, readable on the dark panel in both themes; no colour carries meaning alone. */
+.hub-code .tk-k { color: #9FD8B8; }
+.hub-code .tk-f { color: #E9D7A6; }
+.hub-code .tk-n { color: #A9CFE8; }
+.hub-code .tk-c { color: var(--on-panel-2); font-style: italic; }
+.hub-rich[lang='hi'], .hub-rich[lang='mr'] { line-height: 1.75; }
+
+/* The server's rich HTML (docs/API.md, Phase 6, "HTML fields"). A formula that
+   could not be read arrives as its escaped source in .rich-tex-error. */
+.rich-tex-error { font-family: var(--mono); font-size: 0.92em; color: var(--text-2); background: var(--sunk); border-radius: 4px; padding: 0 4px; }
+/* shiki sends both themes: light inline, dark through --shiki-dark. */
+.shiki { padding: 12px 14px; border-radius: 10px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.55; }
+:root[data-theme='dark'] .shiki, :root[data-theme='dark'] .shiki span { color: var(--shiki-dark) !important; background-color: var(--shiki-dark-bg) !important; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .shiki, :root:not([data-theme='light']) .shiki span { color: var(--shiki-dark) !important; background-color: var(--shiki-dark-bg) !important; }
+}
+
+/* A topic's state mark (hub/StateMark.jsx): the shape carries the state, the
+   colour only follows it. One set of rules for every hub screen. */
+.hub-mark { flex: none; --mk: var(--text-4); }
+.hub-mark .s { fill: none; stroke: var(--mk); stroke-width: 1.6; stroke-linecap: round; }
+.hub-mark .f { fill: var(--mk); }
+.hub-mark .k { fill: none; stroke: var(--surface); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.hub-mark[data-state='mastered'] { --mk: var(--ok-fill); }
+.hub-mark[data-state='in-progress'] { --mk: var(--primary); }
+.hub-mark[data-state='not-sure'] { --mk: var(--text-3); }
+.hub-mark[data-state='needs-review'] { --mk: var(--warn); }
+.hub-mark[data-state='earlier'] { --mk: var(--text-3); }
+.hub-mark[data-state='target'] { --mk: currentColor; }
+.on-panel .hub-mark { --mk: var(--on-panel-3); }
+.on-panel .hub-mark .k { stroke: var(--panel); }
+.on-panel .hub-mark[data-state='mastered'] { --mk: var(--mint); }
+.on-panel .hub-mark[data-state='in-progress'] { --mk: #A9CFE8; }
+.on-panel .hub-mark[data-state='not-sure'] { --mk: var(--on-panel-2); }
+.on-panel .hub-mark[data-state='needs-review'] { --mk: var(--warn-fill); }

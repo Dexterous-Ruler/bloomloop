@@ -12,7 +12,7 @@ import Mark from '../fx/Mark.jsx';
 import { Button, Icon, Ladder, Level } from '../ui/index.jsx';
 import Answer from './Answer.jsx';
 import Stimulus from './Stimulus.jsx';
-import { Dock, Held, NextUp, SaveState, Sure } from './parts.jsx';
+import { Dock, Held, NextUp, SaveState, Sure, pieces, rt } from './parts.jsx';
 
 const VERDICT = {
   yes: { mark: 'check', word: 'Correct' },
@@ -30,6 +30,8 @@ const VERDICT = {
  * @param readAloud  the student's professor turned on the read-aloud support
  * @param sure   the confidence tap: { choices, value, onChange }, or null for none
  * @param save   where this question's answer is in the outbox: { state, note }, or null
+ * @param onward with no result to move on from (offline, or an answer the server
+ *               kept or refused), the way to the next question, or null
  *
  * The page arrives block by block, six at most, so this renders no more than
  * that: the answer is one block however many pieces its kind has.
@@ -111,7 +113,7 @@ export function Provenance({ question }) {
 
 export default function Question({
   item, result, awaiting, sent, level, trail, auto, foot, onSubmit, onNext,
-  retry = null, triesLeft = 1, readAloud = false, timer = null, paused = false, sure = null, save = null,
+  retry = null, triesLeft = 1, readAloud = false, timer = null, paused = false, sure = null, save = null, onward = null,
 }) {
   const question = item?.question;
 
@@ -163,7 +165,9 @@ export default function Question({
       <article className="ln-card" aria-label={`Question ${item.index}`}>
         <div className="ln-head">
           <Level level={question.bloom} size="lg" solid />
-          <span className="ln-qn num">Q{item.index}</span>
+          {/* A packed question answered offline has no number on the server's
+              count yet, so it says where it is in the pack instead. */}
+          <span className="ln-qn num">{item.tag || `Q${item.index}`}</span>
           {/* This student's own path: one bar per question served, as tall as
               its level, so a step up or down shows here before it is
               announced. */}
@@ -181,7 +185,7 @@ export default function Question({
         {/* Above the question, and remounted with it: the fold belongs to the
             question being asked, so the next item on the same reading opens
             expanded. */}
-        <Stimulus key={`stim:${question._id}`} stimulus={question.stimulus} />
+        <Stimulus key={`stim:${question._id}`} stimulus={question.stimulus} html={question.rich?.passage} />
 
         <div className="ln-ask">
           <span className="ln-kind">
@@ -194,15 +198,20 @@ export default function Question({
               it: the passage IS the interaction, and Answer renders it with the
               gaps in place. Printing it here too would show it twice. */}
           {kind !== 'cloze' && kind !== 'dropdown' && (
-            <h1 className="ln-text wrap-any" data-long={String(question.text ?? '').length > 160 ? 'true' : undefined}>
-              {/* A blank's marker is drawn as the gap it stands for, not printed
-                  as four underscores. */}
-              {kind === 'blank'
-                ? String(question.text ?? '').split(BLANK_MARK).map((part, i) => (
-                  <Fragment key={i}>{i > 0 && <span className="ln-blank" role="img" aria-label="blank" />}{part}</Fragment>
-                ))
-                : question.text}
-            </h1>
+            <h1
+              className="ln-text wrap-any"
+              data-long={String(question.text ?? '').length > 160 ? 'true' : undefined}
+              /* The server's HTML when the text holds a formula or code. A
+                 blank's marker is drawn as the gap it stands for, not printed
+                 as four underscores. */
+              {...(kind === 'blank'
+                ? {
+                  children: pieces(question.text, question.rich?.text).map((part, i) => (
+                    <Fragment key={i}>{i > 0 && <span className="ln-blank" role="img" aria-label="blank" />}<span {...part} /></Fragment>
+                  )),
+                }
+                : rt(question.rich?.text, question.text))}
+            />
           )}
           <Provenance question={question} />
           {readAloud && <ReadAloud question={question} />}
@@ -234,8 +243,9 @@ export default function Question({
         )}
 
         <div className="ln-answer">
-          {/* Held on this phone: the answer is given, so its Submit goes. */}
-          <Held.Provider value={save?.state === 'queued'}>
+          {/* Held on this phone, or kept or refused by the server: the answer
+              is given, so its Submit goes. */}
+          <Held.Provider value={['queued', 'held', 'uncounted', 'refused'].includes(save?.state)}>
             <Answer key={`ans:${question._id}`} question={question} result={result} busy={awaiting} sent={sent} onSubmit={onSubmit} />
           </Held.Provider>
         </div>
@@ -252,6 +262,14 @@ export default function Question({
         )}
         {foot}
       </div>
+
+      {!result && onward && (
+        <Dock>
+          <Button variant="primary" size="xl" block onClick={onward}>
+            Next question <Icon name="forward" />
+          </Button>
+        </Dock>
+      )}
 
       {result && (
         <Dock>

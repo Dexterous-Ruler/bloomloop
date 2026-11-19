@@ -32,6 +32,7 @@ import {
   Cell, MarksTable, StudentSheet, bySourceLine, list, mk, num, plural, pctOf, typesFrom,
 } from './StudentAttainment.jsx';
 import { dateOf } from './dashParts.jsx';
+import { ImportedRoomsNote } from '../teach/imported.jsx';
 
 /* ----------------------------------------------------------------- helpers */
 
@@ -49,7 +50,7 @@ function periodOf(w) {
   return dates ? `Rooms ${dates}` : 'Every room of the class';
 }
 
-const hasWindow = (w) => Boolean(w?.from || w?.to || String(w?.rooms ?? ''));
+const hasWindow = (w) => Boolean(w?.from || w?.to || String(w?.rooms ?? '') || w?.imported === 'leave-out');
 
 /* --------------------------------------------------------------- skeleton */
 
@@ -115,7 +116,11 @@ function Brief({ r, busy }) {
             ].join('; ')}
           </span>
           {sources && <><b>Written by</b><span>{sources}</span></>}
-          <b>Left out</b><span>Deleted rooms and rooms not opened for this class</span>
+          <b>Left out</b>
+          <span>
+            Deleted rooms and rooms not opened for this class
+            {r.window?.imported === 'leave-out' ? ', and rooms imported from a laptop' : ''}
+          </span>
         </div>
         <span className="cluster">
           <Button
@@ -587,6 +592,8 @@ export function AttainmentView({
       {head}
       {report.error && <Note tone="bad" role="alert">The report below is the last one that loaded: {report.error}</Note>}
       {config?.error && !config?.data && <Note tone="bad">The formula settings did not load: {config.error}</Note>}
+      {/* Phase 7: rooms imported from a laptop, named, or said to be left out. */}
+      <ImportedRoomsNote rooms={r.rooms} window={r.window} />
       <Brief r={r} busy={report.loading} />
       <Outcomes r={r} openFirst={openFirst} />
       <Bloom r={r} first={first} />
@@ -688,7 +695,7 @@ export default function Attainment({ classId }) {
       <AttainmentView
         report={report}
         config={config}
-        windowBar={<ReportWindow classId={classId} value={win} onChange={setWin} />}
+        windowBar={<ReportWindow classId={classId} value={win} onChange={setWin} offerImported />}
         onReload={() => { report.reload(); config.reload(); }}
         files={files}
         onCsv={csv}

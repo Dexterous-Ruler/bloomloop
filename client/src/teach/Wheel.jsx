@@ -24,6 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
+import { offlineNow, record, shownOf, useOutbox, useSynced } from '../lib/consoleOutbox.js';
 import { gsap, reduced } from '../lib/motion.js';
 import { Button, Icon, Level, Note, Segmented, Switch } from '../ui/index.jsx';
 
@@ -512,6 +513,7 @@ export function WheelView({
   selectedId, onSelect, onDraw, onRound, onSetting, onPick, onRetry,
   outcome = {}, pickError = {}, markAbsent = true, onMarkAbsent, questions,
   prefs = PREFS, onPref, think = null, thinkQ = null, onThinkQ, onSkip, onCancel,
+  drawWaiting = false,
 }) {
   const drawBtn = useRef(null);
   const refocus = useRef(false);
@@ -579,13 +581,19 @@ export function WheelView({
                       size="lg"
                       icon={thinking ? 'forward' : 'draw'}
                       busy={busy === 'draw'}
-                      disabled={thinking ? false : blocked || !pool.left}
+                      disabled={thinking ? false : blocked || drawWaiting || !pool.left}
                       onClick={keep(thinking ? onSkip : onDraw)}
                     >
                       {thinking ? 'Skip to draw' : spinning ? 'Drawing' : 'Draw'}
                     </Button>
                     {thinking && <Button variant="ghost" onClick={keep(onCancel)}>Cancel</Button>}
                   </div>
+                  {drawWaiting && (
+                    <p className="rc-proj" role="status">
+                      <Icon name="clock" size={14} />
+                      <span>A draw is waiting to be sent. The server draws when this laptop reconnects, and the pick goes on the projector then.</span>
+                    </p>
+                  )}
                   <p className="rc-proj">
                     <Icon name="projector" size={14} />
                     <span>Each draw goes on the projector by itself, as the roll number and first name. Nothing else about a pick is shown there.</span>
@@ -704,6 +712,36 @@ export function WheelView({
 
 /* ------------------------------------------------------------- the screen */
 
+// The server draws, so a draw is never kept for later the way a record is.
+const OFFLINE_DRAW = 'The server makes each draw, so Draw needs the connection. Everything else you record meanwhile is kept on this device.';
+
+/** A pick as filled in on this screen, before the server has it (`local`). */
+function localPick(p, patch, wheel, questions) {
+  const next = { ...p, local: true };
+  if (patch.ask !== undefined) {
+    next.ask = patch.ask;
+    next.askLabel = wheel?.asks?.find((a) => a.id === patch.ask)?.label ?? patch.ask;
+    if (patch.ask !== 'bank') { next.questionId = null; next.question = null; }
+  }
+  if (patch.questionId !== undefined) {
+    const q = (questions?.list ?? []).find((x) => x.questionId === patch.questionId);
+    next.questionId = patch.questionId;
+    next.question = q ? { text: q.text, bloom: q.bloom, kind: q.kind } : null;
+  }
+  if (patch.status !== undefined) {
+    next.status = patch.status;
+    next.statusLabel = wheel?.statuses?.find((s) => s.id === patch.status)?.label ?? patch.status;
+  }
+  return next;
+}
+
+/** One line for the sync dialog: what changed on the pick. */
+function pickLine(patch, wheel) {
+  if (patch.status !== undefined) return wheel?.statuses?.find((s) => s.id === patch.status)?.label ?? patch.status;
+  if (patch.ask !== undefined) return `asked: ${wheel?.asks?.find((a) => a.id === patch.ask)?.label ?? patch.ask}`;
+  return 'question from the bank chosen';
+}
+
 export default function Wheel({ code, canControl, closed, classRoom, signal, questions }) {
   const [wheel, setWheel] = useState(null);
   const [load, setLoad] = useState({ status: 'loading', error: '' });
@@ -729,64 +767,102 @@ export default function Wheel({ code, canControl, closed, classRoom, signal, que
   }, [code]);
 
   useEffect(() => { read(); }, [read, signal]);
+  // Records kept on this laptop have reached the server: read the wheel again.
+  useSynced(code, read);
+  const { items } = useOutbox();
+  const drawWaiting = items.some((i) => i.kind === 'draw' && i.code === String(code).toUpperCase() && i.status !== 'refused');
 
   // A different pick in the editor starts with Absent marking attendance again.
   useEffect(() => { setMarkAbsent(true); }, [selectedId]);
 
   /** `questionId`: the one everyone thought about, saved on the new pick. */
   async function draw(questionId = null) {
-    if (busy || spin || !wheel) return;
+    if (busy || spin || !wheel || drawWaiting) return;
+    if (offlineNow()) { setError(OFFLINE_DRAW); return; }
     const ring = ringOf(wheel);
-    let drawn = null;
     setBusy('draw');
     setError('');
-    try {
-      const { pick: made, ...rest } = await api.wheelDraw(code);
+    // A draw whose reply was lost goes again with its key, so it is drawn once.
+    // If it lands later, the pick is shown without the spin.
+    const late = (o) => {
+      if (o.refused) { setError(o.error); return; }
+      const { pick: made, ...rest } = o.reply;
       setWheel(rest);
-      if (made) {
-        drawn = made;
-        setSelectedId(made.id);
-        setSpin({ ring, pick: made });
-      }
-    } catch (err) {
+      if (!made) return;
+      setSelectedId(made.id);
+      if (questionId) { setThinkQ(null); pick(made.id, { ask: 'bank', questionId }, made); }
+    };
+    const out = await record('draw', { code }, { label: 'A draw', onSettle: late });
+    setBusy('');
+    if (out.kept) return;
+    if (out.refused) {
       // An empty wheel is a 409 with the reason: say it as it came.
-      setError(err.message);
+      setError(out.error);
       read();
-    } finally {
-      setBusy('');
+      return;
     }
-    if (drawn && questionId) {
+    const { pick: made, ...rest } = out.reply;
+    setWheel(rest);
+    if (!made) return;
+    setSelectedId(made.id);
+    setSpin({ ring, pick: made });
+    if (questionId) {
       setThinkQ(null);
-      await pick(drawn.id, { ask: 'bank', questionId });
+      await pick(made.id, { ask: 'bank', questionId }, made);
     }
   }
 
-  async function act(kind, call) {
-    setBusy(kind);
+  /** A new round or a setting, through the outbox. `local` draws a kept change. */
+  async function act(busyKey, kind, settings, label, local) {
+    setBusy(busyKey);
     setError('');
-    try {
-      setWheel(await call());
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy('');
-    }
+    const out = await record(kind, { code, settings }, { label });
+    setBusy('');
+    if (out.ok) setWheel(out.reply);
+    else if (out.refused) setError(out.error);
+    else if (local) setWheel((w) => w && local(w));
   }
 
-  async function pick(id, patch) {
+  /** `known`: the pick when this screen has not drawn it yet (just drawn). */
+  async function pick(id, patch, known = null) {
+    const current = known ?? wheel?.picks?.find((p) => p.id === id) ?? null;
+    // Absent also marks attendance, as a separate attendance record queued
+    // right behind the pick's, with the attendance stale check: a pick's own
+    // markAttendance has none, and a pick may be sent long after it was made.
+    const absent = classRoom && patch.status === 'absent' && patch.markAttendance && current?.classStudentId;
     setBusy(`pick:${id}`);
     setPickError({});
-    try {
-      const reply = await api.wheelPick(code, id, patch);
-      if (reply.pick) setWheel((w) => w && { ...w, picks: w.picks.map((p) => (p.id === id ? reply.pick : p)) });
-      setOutcome((o) => ({ ...o, [id]: reply.attendance ?? null }));
-      // Marked absent: they are no longer present, so the wheel may have changed.
-      if (reply.attendance?.marked) read();
-    } catch (err) {
-      setPickError({ id, message: err.message });
-    } finally {
+    const out = await record('pick', { code, pickId: id, patch: absent ? { ...patch, markAttendance: false } : patch }, {
+      label: `${current?.rollNo ?? 'A pick'}: ${pickLine(patch, wheel)}`,
+      shown: current && !current.local ? shownOf.pick(current) : undefined,
+    });
+    if (out.refused) {
       setBusy('');
+      setPickError({ id, message: out.error });
+      // Stale: the reply holds the pick as it stands.
+      if (out.stale && out.current?.id) setWheel((w) => w && { ...w, picks: w.picks.map((p) => (p.id === id ? out.current : p)) });
+      return;
     }
+    if (out.kept) setWheel((w) => w && { ...w, picks: w.picks.map((p) => (p.id === id ? localPick(p, patch, w, questions) : p)) });
+    else if (out.reply.pick) setWheel((w) => w && { ...w, picks: w.picks.map((p) => (p.id === id ? out.reply.pick : p)) });
+    if (!absent) {
+      setBusy('');
+      setOutcome((o) => ({ ...o, [id]: out.reply?.attendance ?? null }));
+      return;
+    }
+    // The attendance's stamp is the last attendance read's (lib/consoleOutbox.js, noteAttendance).
+    const att = await record('attendance', { code, marks: [{ studentId: current.classStudentId, status: 'absent' }] }, {
+      label: `${current.rollNo}${current.name ? ` ${current.name}` : ''}: Absent, from the wheel`,
+    });
+    setBusy('');
+    setOutcome((o) => ({
+      ...o,
+      [id]: att.ok ? { marked: true, status: 'absent' }
+        : att.kept ? { marked: false, reason: 'Kept on this device. The attendance mark goes with it when the laptop reconnects.' }
+        : { marked: false, reason: att.error },
+    }));
+    // Marked absent: they are no longer present, so the wheel may have changed.
+    if (att.ok) read();
   }
 
   return (
@@ -810,9 +886,16 @@ export default function Wheel({ code, canControl, closed, classRoom, signal, que
       onThinkQ={setThinkQ}
       onSkip={think.skip}
       onCancel={think.cancel}
-      onRound={() => act('round', () => api.wheelNewRound(code))}
-      onSetting={(key, value) => act(key, () => api.wheelSettings(code, { [key]: value }))}
-      onPick={pick}
+      onRound={() => act('round', 'round', undefined, 'New round')}
+      onSetting={(key, value) => act(
+        key,
+        'wheel',
+        { [key]: value },
+        `${key === 'presentOnly' ? 'Present only' : 'No repeats'} ${value ? 'on' : 'off'}`,
+        (w) => ({ ...w, round: { ...w.round, [key]: value } }),
+      )}
+      onPick={(id, patch) => pick(id, patch)}
+      drawWaiting={drawWaiting}
       onRetry={read}
       outcome={outcome}
       pickError={pickError}

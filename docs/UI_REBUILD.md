@@ -53,6 +53,10 @@ shell have a new composition; the data layer (`client/src/lib/*`) is untouched.
 
   `shell/ThemeToggle.jsx` is a separate file so `/join` does not download the
   frame.
+- `hub/` is a student's Learning Hub (`/hub`) and `hubstaff/` a professor's or
+  HOD's (`/hubs`). Both call the server only through `hub/hubApi.js`. Their
+  gallery samples are real replies, kept in `hub/samples/` and imported by
+  galleries only.
 - `dev/*.gallery.jsx` are the sample-data views at `/__gallery` (dev only).
   `learn.gallery.jsx` shows the student phone in the states that are hard to
   reach by hand: retry, marked right and wrong, level up and down, paused, and
@@ -632,6 +636,210 @@ reads only. Server sentences are shown as they come.
   sentence for a vote set aside because the student had answered that
   question alone.
 
+### Phase 6: the Learning Hub, wired to the API (19 Nov)
+
+A signed-in student's own place to learn between rooms, from the zip's hub (H1
+to H13 in `docs/UI_ZIP_AUDIT.md`), now on the real Phase 6 replies (`docs/API.md`,
+"Phase 6: the Learning Hub", "What the screens need").
+
+- **One adapter, `hub/hubApi.js`:**
+  - Every route, student (`hub`) and staff (`staffHub`), through
+    `http` in `lib/api.js` with the account's bearer token. Replies come back
+    as the server sends them, and every refusal's sentence is shown as it is.
+  - `newId()` makes the device ids (attemptId, clientRunId, runId), with a
+    fallback where `crypto.randomUUID` is missing (http on a LAN).
+    `untilDone()` polls a background run.
+  - A student screen never calls `/api/content`, `/api/classes` or
+    `/api/bank`. The one staff picker that lists a professor's chapters uses
+    `/api/content`.
+- **Answers kept on the device (`hub/pending.js`):** practice, lesson, Get
+  Ready and self-test answers are saved before they are sent, and dropped
+  once the server has them (201, or 200 for a resend of the same id). After
+  no reply or a 5xx they stay and are resent with the same id and body, on
+  the hub's next load and when the browser is back online. A 409 that says
+  the question "stays closed" (asked in class, on an open self-test, the one
+  a Get Ready check is asking) is kept too; every other refusal is final.
+- **Language (`hub/lang.js`, `hub/Language.jsx`):** the server keeps the
+  choice (`GET` and `PUT /api/hub/language`). The switch sits in every
+  student hub header, each name in its own script. A change reloads what is
+  open. Translated text carries `lang="hi"` or `lang="mr"`. The choice belongs
+  to the signed-in account, so another student signing in on the same tab
+  reads their own.
+- **Routes:**
+  - `/hub`: home.
+  - `/hub/goals`: goals.
+  - `/hub/c/:classId`: a class.
+  - `/hub/t/:topicId` (`?tab=`, `?step=`): a topic and its lesson.
+  - `/hub/t/:topicId/practice`: practice.
+  - `/hub/practice?topicIds=&mode=review`: a review set.
+  - `/hub/review`: reviews due.
+  - `/hub/errors`: the error log.
+  - `/hub/exam` and `/hub/exam/:examId`: self-tests.
+  - `/hub/ready`, `/hub/ready/:topicId` and `/hub/ready/check/:checkId`: Get
+    Ready.
+- **Home (`hub/Home.jsx`):**
+  - `notice` (the professor can see your progress) near the top.
+  - Reviews due, with "Start a review set".
+  - Goals and refresher paths.
+  - Four weeks as a calendar, with practised days, rest days and the note,
+    and never a streak.
+  - The mastery map: classes, units, chapters and topics, then "Other
+    chapters". Each topic shows its state in words with a shape, a
+    provisional marker, the sentence, "Based on N answers" and when its
+    review comes.
+  - `empty`, and each part's `unavailable` sentence.
+- **Goals (`hub/Goals.jsx`):**
+  - Add, edit and remove a goal. The title has an 80-character counter, the
+    exam date must be today or later, and the topic picker holds up to 60 of
+    the student's own topics, searchable by chapter.
+  - The 10-goal limit, and "Only you see your goals."
+- **A class (`hub/ClassMap.jsx`):** units, chapters and topics with their
+  states (the class view joined to `/hub/progress`), the next step, this
+  class's reviews over seven days and the states' key.
+- **A topic (`hub/Topic.jsx`, `hub/Prereqs.jsx`, `hub/MapGraph.jsx`):**
+  - Prerequisites nearest first. Those from earlier material are marked and
+    not linked. The chain is drawn with the layered map, laid out from `via`
+    and `depth`.
+  - The lesson in order: a cited slide chunk, a worked example, then
+    retrieval questions, grouped as "Step N of M", with `lesson.label` and
+    the language note.
+  - Clean empty states for the introduction, facts, code example, common
+    mistakes and the Visual (batch 8).
+  - A lesson question that is `closed` shows its note and no answer box.
+  - Never an AI-draft label, a model, a warning or a draft to a student.
+- **Questions (`hub/QuestionCard.jsx`):**
+  - `rich` first, then provenance, `why` and the language note.
+  - Choose-one, true-or-false and choose-all are drawn in the card; every
+    other kind uses the phone's own `learn/Answer.jsx`, which now draws
+    `rich` too.
+  - Hints one step at a time (`step` = shown + 1). The first carries `why`.
+    The ladder stops at `remaining: 0` or `hint: null`, and the button goes
+    once the answer is sent. After a reload, the hints already opened come
+    back with the same attempt id.
+  - After the reply only: right or wrong, the answer, feedback on the option
+    chosen, the explanation with who wrote it, the provisional note, and the
+    topic's new state with N.
+- **Practice and review sets (`hub/Practice.jsx`):**
+  - One attempt id per question shown. `shown` and `timeTakenMs` are sent.
+  - An opaque `*Token` on the next question is passed back with the answer,
+    ready for batch 8's serve token.
+  - `question: null` shows the server's message.
+  - The page says how many answers are waiting on the device.
+- **Reviews and the error log (`hub/Review.jsx`, `hub/Errors.jsx`):**
+  - Reviews due and coming up, each with when, the rule, and "a short second
+    session soon after the first is part of learning".
+  - The error log with status and topic filters kept in the address. Each
+    entry shows the question, response, solution (or the held key's
+    sentence), explanation, prerequisites, where it came from and its
+    sentence.
+- **Self-test (`hub/Exam.jsx`):**
+  - Up to 20 topics from the student's own map, the levels, 1 to 30
+    questions, and an optional 1 to 180 minute limit.
+  - While open, only "saved", answered of total and the status. Every
+    change of answer is a new attempt; an older one still waiting on the
+    device is dropped so it cannot land after the newer one.
+  - The clock comes from `secondsLeft`; the server ends it.
+  - Results show the summary overall, by topic and by level, then each
+    question with its mark label, held note, late note, explanation and
+    feedback.
+- **Get Ready (`hub/GetReady.jsx`), "Skip what I know · short check":**
+  - The rule, each prerequisite's status, and the question with its `why`
+    and no hint button. `waiting` when nothing can be asked.
+  - Then the outcomes and the refresher path, with the next step marked, a
+    Practise link on each step and the target last.
+  - An open check on the same topic is carried on, not started twice.
+  - Past checks are listed.
+- **Refusals:** every screen says the same thing for the same status:
+  - 503 "The Learning Hub is not open on this server", with the server's
+    sentence, calm, nothing to retry;
+  - 401 "You are signed out", with Sign in;
+  - 403 "Not for this account", with the way to the right side;
+  - 404, like any missing page;
+  - anything else with Try again.
+- **One state mark (`hub/StateMark.jsx`):** a shape per state, so it reads
+  without colour. Its colours are in `styles/hub.css`.
+- **Linked:** "Learning Hub" in the student's menu (`/hub`) and in a
+  professor's or HOD's (`/hubs`), and on a class page for signed-in staff. It
+  is hidden in laptop mode. Dev builds use `dev/DevViewer.jsx` in place of
+  `RoleRoute` (see "Checks run").
+
+### Phase 6: the professor's Learning Hub (19 Nov)
+
+`/hubs`, for a professor and, read-only, the department's HOD. Built from the
+Phase 6 staff routes. When `canEdit` is false every control is hidden, and the
+page says it is read-only in one line.
+
+- **Routes:**
+  - `/hubs`: classes.
+  - `/hubs/c/:classId?tab=structure|progress|states`: a class.
+  - `/hubs/c/:classId/s/:rosterId`: one student, read-only.
+  - `/hubs/ch/:contentId?tab=topics|explanations|hints|translations|languages`:
+    a chapter.
+  - `/hubs/t/:topicId?tab=links|lessons`: a topic.
+  - `/hubs/links`: proposed links.
+
+  Tabs are kept in the address and move with the arrow keys.
+- **Structure (`hubstaff/ClassStructure.jsx`):**
+  - Units can be added, renamed, removed and reordered. Reordering works by
+    drag, or from the keyboard with the grip focused and the up and down
+    arrows; each move is announced.
+  - Chapters are placed from `available`, moved within or between units,
+    and taken off.
+  - The page redraws from each reply's `hub`.
+  - "Preview as a student" opens a side sheet (`?view=student`).
+- **A chapter's topics (`hubstaff/ChapterTopics.jsx`):**
+  - Slides, approved and draft questions, and links in and out. Retired
+    topics are greyed and listed last.
+  - The slides note, "Make topic records" when the chapter has topics not
+    yet recorded, and how many questions match no topic.
+- **Links (`hubstaff/TopicLinks.jsx`, `hubstaff/LinkQueue.jsx`):**
+  - Every state, with confirm, reject and remove.
+  - A link added by hand in either direction. A loop's 409 is shown as given
+    (it names the chain).
+  - The chain students see.
+  - "Suggest prerequisites": a device-made `runId` and a polled run. The
+    proposals are AI drafts, "not used until confirmed", with what was left
+    out and why. Offline, the note says nothing was proposed.
+  - The queue counts proposed, confirmed and rejected links.
+- **Review queues:**
+  - **Explanations** (`hubstaff/Explanations.jsx`): write, edit, approve or
+    remove, and "Draft explanations".
+  - **Hints and feedback** (`hubstaff/Hints.jsx`):
+    - three step slots per question, and feedback for each wrong option;
+    - the server's 400 when a hint gives the answer away, shown under the
+      box with the text kept;
+    - "Approve drafts", with refusals and their reasons;
+    - "Draft hints with AI", and "no longer shown".
+  - **Lessons** (`hubstaff/Lessons.jsx`):
+    - the lesson serving, drafts and history;
+    - "Make a lesson", off while one is being written;
+    - Approve and Discard, with the reply's message;
+    - a preview as a student in English, Hindi and Marathi;
+    - each retrieval question links to approving it in the console's bank.
+  - **Translations** (`hubstaff/Translations.jsx`):
+    - English and the translation side by side, with findings split into
+      "to fix" (blocking) and "to check" (flags);
+    - a 409 for flags turns the button into "Approve: I checked them", which
+      resends with `confirmFlags`;
+    - write by hand, edit and discard, "Translate", and out-of-date notes;
+    - each kind of item is labelled.
+  - **Language statistics** (`hubstaff/Languages.jsx`) use Phase 5's
+    `TranslationLine`.
+  - Every background run shows its sentence, progress and error. With no
+    model, the server's offline note is shown plainly.
+- **Progress (`hubstaff/ClassProgress.jsx`, `ClassStates.jsx`,
+  `StudentProgress.jsx`):**
+  - A roll-order matrix of students by topic. Each cell shows the state
+    mark and word, N, provisional and open errors. Roster rows with no
+    account show their note.
+  - Each topic's students by state in roll order, with no-account rows
+    apart.
+  - One student: activity as counts over 7 and 30 days by mode, hints used,
+    their topics, their error log with question ids, and their Get Ready
+    checks and paths.
+  - Never a ranking, a sort by score, an average beside a name, or a
+    student's goals.
+
 ### The design zip's gaps, client only, and the server follow-ups of 4c1df09 (19 Nov)
 
 The client-only gaps the roadmap chose from `docs/UI_ZIP_AUDIT.md`; each ID is
@@ -749,6 +957,100 @@ its row there.
     a written answer, a poll, a retry) and "Marked" (the result came back).
   - Nothing says right or wrong before the server has marked it. The phone
     holds no keys.
+
+### Phase 7, stages 2 and 3, and F1: packs, late answers, the console outbox, imports and laptop mode (19 Nov)
+
+From `docs/API.md`, "Phase 7: offline-first", and the roadmap's note of 19 Nov.
+That note wins where it differs from the builders' notes.
+
+- **The phone: question packs (`learn/LearnApp.jsx`, `lib/outbox.js`):**
+  - After each join, once the outbox has drained, the phone asks for a pack
+    (`student:pack`) and keeps it in IndexedDB (a `packs` store) with
+    `issuedAt` and `expiresAt`.
+  - It asks again after `class:question`, after `class:closed`, and after
+    live answers in a room that limits questions per student.
+  - The images of packed questions are cached while online (`bloomloop-media`
+    in the service worker).
+  - Offline, after the question on screen, "Next question" opens the pack in
+    order, one go each, never skipped or reordered. Each shows its reason
+    sentence and "Offline n/N". Each answer is "Saved, will be marked when
+    you reconnect"; never a mark, key or right or wrong.
+  - The pack stops at `expiresAt` or when used up, with one sentence.
+  - After an offline reload the phone offers "Answer the questions kept on
+    this phone".
+- **The phone: replies by `answerId`:**
+  - `server:result`: marked, with the late message when there is one.
+  - `server:kept`: saved, does not count. The message shows for the visit,
+    and the item is dropped. Never a mark.
+  - `server:refused`: refused for good (including the cap of 100 kept
+    answers). Kept, shown, and never resent.
+  - Matching by order remains only for replies that carry no id.
+- **The phone: closed rooms:**
+  - With unsent answers the phone joins with `deliver: true`, and rejoins
+    that way after "That session has already been closed.".
+  - With `deliverOnly` it sends only and shows the message and
+    `deliverUntil`, or "saved but does not count" after it. It never shows a
+    question.
+  - An imported room's refusal marks the items refused, shows them with
+    "Show these answers to your teacher", and stops retrying.
+- **The phone: `rich`:**
+  - The phone now draws the server's HTML (MathML, shiki) for every field
+    the server sends it for, in live, class and packed questions, through
+    one helper (`rt` in `learn/parts.jsx`). Otherwise it draws the plain
+    field.
+  - A dropdown gap's choices stay plain, because a native `<select>` cannot
+    hold HTML; they show rich in the result.
+- **The phone: http on a LAN:** the service worker is not registered (no
+  secure context). During an outage the offline line adds "Do not reload
+  while the Wi-Fi is down; your answers are kept on this phone".
+- **Console outbox, F1 (`lib/consoleOutbox.js`, `teach/SyncStatus.jsx`):**
+  - Every teacher-record and attendance write (observations, attendance,
+    the wheel, the tally, activities, insight actions) goes through an
+    IndexedDB outbox kept per account or key.
+  - Each item has one UUID `Idempotency-Key`. Its body, `basedOn` included,
+    is fixed at the first send.
+  - `basedOn` chains from the server's last stamp, in the write's own field
+    names; a tally sends `counts`.
+  - Items are sent one at a time, oldest first:
+    - a 2xx (replayed or not) is done;
+    - a 5xx or no reply is retried with the same key;
+    - any 4xx is kept and shown;
+    - a stale 409 shows `error` beside `current` (and `newer`), and can be
+      resent only as a new item with a new key, or discarded in two steps;
+    - 401 and 429 are held, never retried by themselves.
+  - The header pill reads "Synced", "Offline · N waiting" or "Syncing". The
+    "Sync status" dialog lists waiting and refused items.
+  - Toasts say "Saved on this device · will sync" and "All records synced",
+    and a staff offline banner shows while offline.
+  - A draw is not queued offline: the server makes the pick and it goes on
+    the projector, so a late one would surprise the room. "Absent" on a pick
+    is two writes (the pick, then its own attendance mark).
+- **Imported rooms (`teach/imported.jsx`, `account/ImportRooms.jsx`):**
+  - "Imported from a laptop" with its date and run on the rooms list.
+    `importedFrom.note` on the live room, review, attainment, the register,
+    the report window and a class's rooms.
+  - "Leave out imported rooms" sends `imported=leave-out` on attainment and
+    the register; on the rooms list it filters on screen.
+  - Item statistics say "Asked on the laptop, not in this chapter's bank".
+  - Kept answers show in the live room's answer list with no mark and the
+    server's sentence.
+  - The import screen opens from the rooms list. It reads files in the
+    browser and sends them one at a time. It asks for a chapter or a class
+    when the server needs one (told apart by what was sent). "Already
+    imported" is not an error. It is not offered to an HOD or on the laptop.
+- **Laptop mode (`teach/laptop.jsx`):**
+  - `GET /api/laptop` once per page.
+  - A banner with the folder, the interval, the last write and the last
+    error, and what is unavailable.
+  - No sign-in, and no hub.
+  - With the console at localhost, the projector and wall build the join
+    link and QR from the laptop's network address, with a chooser when
+    there are several. With no address, they say phones cannot reach it yet.
+  - With the console at any other address, the banner says every device on
+    the Wi-Fi can reach it, to use it on this laptop only and to lock it.
+    `docs/API.md` and the roadmap's note disagreed here; this does both.
+  - The 429 lock-out sentence is shown at the gate as it is, never retried
+    by itself.
 
 ## References and what they shaped
 
@@ -954,6 +1256,85 @@ Against the current server tree on the in-memory store (shared key), restarted
 - **Galleries:** all 305 entries render with no script error. The new states
   are at 1280 and 390, light and dark, with contrast measured at AA or better.
 
+## Checks run: the Learning Hub wired, and Phase 7 stages 2 and 3
+
+- **Where:** a local harness (`tools/hubserver.mjs` in the UI session's
+  scratchpad, not in the repository). It runs the server code of this working
+  tree on the in-process store, with a stand-in for Supabase Auth answered
+  in-process, no model, and nothing leaving the machine (0 requests refused).
+  It seeds through the real API:
+  - an HOD, a professor and four students, plus a roster row with no account;
+  - two units, three chapters and 55 approved questions with formulas and
+    code;
+  - confirmed, proposed and rejected links;
+  - explanations, hints and feedback, lessons, and Hindi and Marathi
+    translations;
+  - a student's activity in all five topic states, backdated.
+
+  A cookie chooses the account in dev; `dev/DevViewer.jsx` stands in for
+  `RoleRoute` in dev builds only.
+- **Bundles:** the build passes. `/join` is 165.5 KiB gzip (162.1 before):
+  +2.2 for packs and replies, +0.6 for `rich`, the rest from shared code.
+  Its CSS is 22.3 KiB. The hub (42.7 KiB) and the staff hub (34.8 KiB) are
+  their own lazy chunks.
+- **Routes, headless Chrome, at 1280 (the main ten of each side again at
+  390):**
+  - as a student: 17 hub routes, including an open and an ended self-test,
+    an open and a complete Get Ready check, a review set and a missing topic;
+  - as the professor and as the HOD: 15 staff routes and the class page,
+    including every tab, a student, a no-account roster row and the preview;
+  - no console error, no blank page and no sideways scroll. Wrong-role pages
+    show their refusal.
+- **503:** the memory server (no accounts) behind a second dev server: every
+  student and staff route shows "The Learning Hub is not open on this
+  server" with the server's sentence.
+- **Galleries:** 532 entries (the hub's 156 among them) at 1280 and 390: no
+  console error or warning, none blank, no sideways scroll.
+- **Builders' checks, live on the harness:**
+  - practice with hints, a hint restored after a reload, a lesson answer,
+    the 409 "closed for now" kept on the device, and Hindi with a reload on
+    switching;
+  - goals added, edited and removed, and the 400 for a past date;
+  - a 10-question self-test over nine kinds with a changed answer, a reload
+    and resume, and a one-minute timed test locking at zero;
+  - a Get Ready check to its path;
+  - units reordered by keyboard and by drag, the loop 409, a hint's leak 400,
+    a Marathi translation through the flags 409, and Make a lesson then
+    Discard;
+  - an HOD seeing no controls on every staff page;
+  - scripted AA in both themes on every new screen.
+- **Phase 7, live:**
+  - The phone, as a production build in headless Chrome against the Phase 7
+    server, with the server stopped to make the outage:
+    - a pack answered offline, including a reload partway, with images from
+      the cache; all marked once on reconnect, none stored twice, and a
+      fresh pack after;
+    - a packed question put to the class came back kept and was dropped;
+    - a room closed while offline: its answers delivered late, with no
+      question shown;
+    - a LAN address with no service worker showed the hint;
+    - formulas in light and dark at 390.
+  - The console outbox, with offline switched off by an in-page fetch
+    switch:
+    - chained observations and attendance;
+    - stale 409s for attendance, a pick and a tally, resent with a new key;
+    - a lost reply replayed under the same key;
+    - a 503 retried until 201;
+    - items surviving a reload.
+  - Imports and laptop mode:
+    - a real import as the professor: the chapter 400, the class 400, 201,
+      then "already imported";
+    - that room marked across the live room, attainment, the register and
+      the class;
+    - a laptop-mode server: banner, no hub or sign-in, the projector's
+      network chooser, and ten wrong keys reaching the 429.
+- **Fixed in integration:**
+  - one state mark, and the same refusal wording on every hub screen;
+  - only the "stays closed" 409 is kept on the device (an id used for
+    another answer was being kept for good);
+  - the language choice follows the signed-in account;
+  - staff `/hubs` no longer reads a class view when a student opens it.
+
 ## Checks run: the zip gaps and the follow-ups
 
 Against 4c1df09 on the in-memory store, restarted and reseeded 19 Nov.
@@ -1078,6 +1459,36 @@ Nov, with labels added to seven questions of the seeded chapter.
   - A server refusal of a class question live (the console disables the
     button when the room's state rules it out).
   - The 400 for a formula that counts re-votes (no control sends it).
+- **Learning Hub, not run:**
+  - Supabase, a real sign-in, Mongo or a model: every check used the
+    harness's stand-in accounts. AI drafts were written into the store, and
+    lessons are slides-only.
+  - A screen reader, reduced motion emulated, and MathML on a low-end
+    Android.
+  - An offline retry of a hub answer against a dropped connection (only a
+    harness restart mid-answer was seen kept).
+  - Marathi on a student screen (no approved Marathi exists in the seed).
+  - Approving the seeded AI drafts (explanation, hints, lesson, a
+    translation after confirming flags): gallery only.
+- **Learning Hub, wanted from the server:**
+  - Question text keeps its line breaks: `services/edits.js` collapses
+    whitespace in a hand-written question's `text`, so a fenced code block
+    arrives on one line, `rich` is `{}`, and every screen shows raw
+    backticks. Inline backticks are not turned into code either.
+  - `textHtml` / `optionHtml` on the staff queue views (explanations, hints,
+    translations): they send plain text, so `$...$` shows as source there.
+  - Per-level figures on `/api/hub/home`, to bring back the student's own
+    Bloom levels against a month ago (the zip's H12).
+  - The student's earlier answers on a lesson reply: after a reload the
+    lesson's questions show unanswered again.
+  - `onYourClasses` on error-log prerequisites, so earlier material can be
+    marked there too.
+  - Docs: `optionFeedback[].option` is the option's text, not an index; and
+    an explanation's and feedback's `language` is an object while a hint's
+    is a string.
+  - The console has no link to one question in the bank (a lesson's
+    retrieval question lands on the chapter's bank, the error log's question
+    on the chapter's explanations).
 - **Zip gaps, not run:**
   - The Overview and Department pages live (they need a sign-in): gallery
     only.
@@ -1104,6 +1515,20 @@ Nov, with labels added to seven questions of the seeded chapter.
     server, so that waits for the question pack ("Next").
   - Refused items stay on the phone for good. A later stage should age them
     out.
+- **Phase 7 stages 2 and 3, not run:**
+  - A real phone or iOS, and Chrome's own offline switch (the server was
+    stopped instead).
+  - The pack request after live answers in a capped room, pack expiry, and
+    `server:refused` or an imported room's refusal on a live phone (gallery
+    only).
+  - An insight action through the outbox (a room with no answers has no
+    cards), and the outbox draining outside the console: `/rooms` and the
+    other account pages do not mount it.
+  - A wall opened through `?join=`, and a kept answer from a real late phone
+    in the console (gallery only).
+  - The staff analytics answer list carries no `detail`, so kept answers
+    cannot be marked there. The misconceptions report has no leave-out
+    option (its rooms carry no `importedFrom`).
 - **Wanted from the server:**
   - `answerId` echoed in `server:result`, `server:exhausted` and
     `session:rejected`, so the outbox matches a reply by key, not by order

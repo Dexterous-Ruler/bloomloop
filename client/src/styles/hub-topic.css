@@ -1,0 +1,303 @@
+/* Learning Hub: the topic screens (prefix .hub-topic-) and the question card
+   (prefix .hub-q-). A reading column, with the one forest brief beside it on a
+   wide screen and above it on a narrow one. */
+
+/* ------------------------------------------------------------------ frame */
+
+.hub-topic-layout {
+  display: grid; grid-template-columns: minmax(0, 1fr) 340px; grid-template-areas: 'main side';
+  gap: 20px; align-items: start;
+}
+.hub-topic-layout > * { grid-area: main; min-width: 0; }
+.hub-topic-layout > .hub-topic-brief, .hub-topic-layout > .hub-topic-skelbrief { grid-area: side; position: sticky; top: 24px; }
+@media (max-width: 1180px) {
+  .hub-topic-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'side' 'main'; }
+  .hub-topic-layout > .hub-topic-brief, .hub-topic-layout > .hub-topic-skelbrief { position: static; }
+  /* Practice: the question first; the brief follows it. */
+  .hub-topic-layout[data-first='main'] { grid-template-areas: 'main' 'side'; }
+}
+
+.hub-topic-crumb { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.hub-topic-crumb a { color: var(--text-3); border-radius: 4px; transition: color var(--t-1) var(--ease); }
+.hub-topic-crumb a:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+/* A name or title from the server's HTML, drawn at the size of whatever holds it (a title, a crumb, a heading). */
+.hub-rich.hub-inherit { display: inline; font: inherit; color: inherit; letter-spacing: inherit; }
+
+.hub-topic-meta { font: 400 12.5px/1.5 var(--font); color: var(--text-3); }
+.hub-topic-eyebrow { font: 600 11px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.hub-topic-src { font: 500 11.5px/1.4 var(--mono); color: var(--text-3); }
+.hub-topic-linkbtn { border: 0; background: none; padding: 0; cursor: pointer; font: inherit; font-weight: 700; }
+
+/* A refusal (503, 401, 403, 404, anything else): calm, centred, the server's sentence. */
+.hub-topic-trouble { padding: 28px 16px; }
+.hub-topic-trouble .empty p { max-width: 52ch; margin-inline: auto; }
+
+/* ------------------------------------------------------------ the brief */
+
+.hub-topic-brief { display: flex; flex-direction: column; gap: 12px; padding: 22px 22px 20px; }
+.hub-topic-brief .brief { padding-top: 14px; border-top: 1px solid var(--panel-line); }
+.hub-topic-brief .cluster { margin-top: 4px; }
+
+.hub-topic-where { display: flex; flex-direction: column; gap: 6px; }
+.hub-topic-statebig { display: flex; align-items: center; gap: 10px; font: 700 22px/1.2 var(--font); letter-spacing: -0.02em; color: #FFFFFF; }
+.hub-topic-n { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font: 500 12.5px/1.4 var(--font); color: var(--on-panel-2); }
+.hub-topic-prov {
+  display: inline-flex; align-items: center; height: 19px; padding: 0 7px; border-radius: 5px;
+  border: 1px dashed var(--on-panel-3); font: 600 10.5px/1 var(--font); letter-spacing: 0.04em; color: var(--on-panel-2);
+}
+.hub-topic-sentence { font: 400 14px/1.55 var(--font); color: var(--on-panel-2); }
+.hub-topic-review { display: flex; gap: 8px; align-items: flex-start; font: 400 13px/1.5 var(--font); color: var(--on-panel-2); }
+.hub-topic-review svg { flex: none; margin-top: 3px; color: var(--mint); }
+.hub-topic-keptline { display: flex; gap: 8px; align-items: flex-start; padding-top: 12px; border-top: 1px solid var(--panel-line); font: 500 13px/1.5 var(--font); color: var(--on-panel); }
+.hub-topic-keptline svg { flex: none; margin-top: 3px; color: var(--warn-fill); }
+
+/* A review set's topics, each with its state. */
+.hub-topic-setlist { display: flex; flex-direction: column; gap: 10px; }
+.hub-topic-setlist li { display: flex; flex-direction: column; gap: 2px; }
+.hub-topic-setlist b { font: 600 14px/1.4 var(--font); color: var(--on-panel); }
+.hub-topic-setlist span { display: inline-flex; align-items: center; gap: 6px; font: 400 12.5px/1.4 var(--font); color: var(--on-panel-2); }
+
+/* A state's mark: shape first, colour second. */
+
+/* ----------------------------------------------------- the lesson, tabs */
+
+.hub-topic-lesson { display: flex; flex-direction: column; gap: 22px; padding: 4px 28px 28px; }
+
+.hub-topic-tabs {
+  position: relative; display: flex; gap: 26px; margin: 0 -28px; padding: 0 28px;
+  border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none;
+}
+.hub-topic-tabs::-webkit-scrollbar { display: none; }
+.hub-topic-tabs > button {
+  flex: none; height: 50px; padding: 0 1px; border: 0; background: none; cursor: pointer;
+  font: 600 14px/1 var(--font); color: var(--text-3); transition: color var(--t-1) var(--ease);
+}
+.hub-topic-tabs > button:hover, .hub-topic-tabs > button[aria-selected='true'] { color: var(--text); }
+.hub-topic-tabs > button:focus-visible { outline-offset: -4px; border-radius: 6px; }
+/* Slid between tabs by lib/motion.js (slideTo); it is the tab's own box, drawn as an underline. */
+.hub-topic-thumb { position: absolute; left: 0; top: 0; opacity: 0; pointer-events: none; }
+.hub-topic-thumb::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; border-radius: 2px; background: var(--primary); }
+
+.hub-topic-panel { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.hub-topic-panel[hidden], .hub-topic-step[hidden] { display: none; }
+.hub-topic-panel:focus-visible { outline-offset: 8px; border-radius: 6px; }
+.hub-topic-panel > .empty { padding: 36px 12px; }
+
+/* The outline on Introduction. */
+.hub-topic-outline { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.hub-topic-outline li { border-bottom: 1px solid var(--line); }
+.hub-topic-outline button {
+  display: flex; align-items: center; gap: 14px; width: 100%; padding: 13px 8px; margin: 2px 0;
+  border: 0; border-radius: 10px; background: none; text-align: left; cursor: pointer; color: var(--text);
+  transition: background var(--t-1) var(--ease);
+}
+.hub-topic-outline button:hover { background: var(--hover); }
+.hub-topic-outline button > svg { color: var(--text-3); }
+.hub-topic-outline b { display: block; font: 600 14px/1.4 var(--font); }
+.hub-topic-outline small { display: block; font: 400 12.5px/1.45 var(--font); color: var(--text-3); }
+.hub-topic-num {
+  width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 8px;
+  background: var(--raised); border: 1px solid var(--line); font: 500 12px/1 var(--mono); color: var(--text-2);
+}
+
+.hub-topic-before { display: flex; flex-direction: column; gap: 12px; padding-top: 20px; border-top: 1px solid var(--line); }
+
+/* What is coming later: a dashed outline, never a faked figure. */
+.hub-topic-later { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: 12px; border: 1px dashed var(--line-2); }
+.hub-topic-later-ic { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 9px; background: var(--raised); color: var(--text-3); }
+.hub-topic-later b { display: block; font: 600 13.5px/1.4 var(--font); color: var(--text); }
+.hub-topic-later p { margin-top: 2px; font: 400 13px/1.5 var(--font); color: var(--text-3); }
+
+/* ------------------------------------------------------- a lesson step */
+
+.hub-topic-step { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.hub-topic-stephead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; border-radius: 6px; }
+.hub-topic-stephead:focus { outline: none; }
+.hub-topic-stephead:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
+.hub-topic-count { display: inline-flex; align-items: center; gap: 12px; font: 600 11px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.hub-topic-ticks { display: inline-flex; gap: 4px; }
+.hub-topic-ticks i { width: 18px; height: 4px; border-radius: 2px; background: var(--line-2); transition: background var(--t-2) var(--ease); }
+.hub-topic-ticks i[data-on] { background: var(--primary); }
+
+.hub-topic-slide {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px; border-radius: 6px;
+  background: var(--raised); border: 1px solid var(--line); font: 500 11.5px/1 var(--mono); color: var(--text-2);
+}
+.hub-topic-slide svg { color: var(--text-3); }
+
+.hub-topic-text { font-size: 16px; line-height: 1.65; max-width: 68ch; white-space: pre-line; }
+.hub-topic-text[lang='hi'], .hub-topic-text[lang='mr'] { font-size: 16.5px; line-height: 1.85; }
+
+.hub-topic-example { margin: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px 14px; border-radius: 14px; background: var(--raised); border: 1px solid var(--line); min-width: 0; }
+.hub-topic-exsteps { display: flex; flex-direction: column; gap: 8px; padding-left: 0; counter-reset: exstep; }
+.hub-topic-exsteps li { position: relative; padding-left: 30px; counter-increment: exstep; }
+.hub-topic-exsteps li::before {
+  content: counter(exstep); position: absolute; left: 0; top: 2px; width: 20px; height: 20px; display: grid; place-items: center;
+  border-radius: 6px; background: var(--surface); border: 1px solid var(--line); font: 500 11px/1 var(--mono); color: var(--text-2);
+}
+.hub-topic-exans { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+.hub-topic-example figcaption { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 14px; font: 400 12.5px/1.5 var(--font); color: var(--text-3); }
+
+.hub-topic-check { display: flex; flex-direction: column; gap: 14px; padding-top: 18px; border-top: 1px solid var(--line); }
+.hub-topic-check-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.hub-topic-check-head h4 { font: 700 15px/1.3 var(--font); }
+
+.hub-topic-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+
+/* The Practice tab. */
+.hub-topic-go { display: flex; flex-direction: column; gap: 16px; }
+.hub-topic-rules { display: flex; flex-direction: column; gap: 10px; }
+.hub-topic-rules li { display: flex; align-items: center; gap: 10px; font: 400 14px/1.5 var(--font); color: var(--text-2); }
+.hub-topic-rules svg { color: var(--primary); }
+
+/* ------------------------------------------------------------ practice */
+
+.hub-topic-run { display: flex; flex-direction: column; gap: 14px; }
+.hub-topic-slot { border-radius: var(--r-4); }
+.hub-topic-slot:focus { outline: none; }
+.hub-topic-slot:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
+.hub-topic-run .hub-q { padding: 24px 26px; background: linear-gradient(180deg, var(--glass), color-mix(in srgb, var(--glass) 80%, transparent)); border-color: var(--glass-line); box-shadow: var(--sh-2), var(--glass-in); }
+.hub-topic-next { display: flex; justify-content: flex-end; }
+
+/* ----------------------------------------------------------- skeletons */
+
+.hub-topic-skeltitle { display: inline-block; width: 240px; max-width: 70%; height: 30px; vertical-align: middle; }
+.hub-topic-skelbrief { height: 300px; border-radius: var(--r-5); }
+.hub-topic-skelcard { display: flex; flex-direction: column; gap: 12px; padding: 24px; }
+.hub-topic-skellesson { display: flex; flex-direction: column; gap: 12px; }
+
+/* ====================================================== the question card */
+
+.hub-q {
+  display: flex; flex-direction: column; gap: 14px; min-width: 0; padding: 20px 22px;
+  border-radius: var(--r-4); background: var(--surface); border: 1px solid var(--line); box-shadow: var(--sh-1);
+}
+.hub-q-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.hub-q-kind { font: 600 11px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.hub-q-label { margin-left: auto; font: 500 12px/1.3 var(--mono); color: var(--text-3); }
+.hub-q-eyebrow { font: 600 11px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.hub-q-text .hub-rich, .hub-q-stem { font: 600 16.5px/1.5 var(--font); letter-spacing: -0.005em; }
+.hub-q-stem[lang='hi'], .hub-q-stem[lang='mr'] { line-height: 1.75; }
+
+.hub-q-passage { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--raised); border: 1px solid var(--line); max-height: 320px; overflow: auto; }
+
+/* Who wrote it, and the language note: one quiet line, never a warning. */
+.hub-q-prov { display: flex; flex-direction: column; gap: 2px; margin-top: -6px; font: 400 12.5px/1.5 var(--font); color: var(--text-3); }
+.hub-q-langnote { display: block; font: 400 12.5px/1.5 var(--font); color: var(--text-3); }
+
+.hub-q-closed { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: var(--raised); border: 1px dashed var(--line-2); font: 400 14px/1.5 var(--font); color: var(--text-2); }
+.hub-q-closed svg { flex: none; margin-top: 3px; color: var(--text-3); }
+
+.hub-q-opts { display: grid; gap: 8px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.hub-q-opts[data-kind='truefalse'] { grid-template-columns: 1fr 1fr; }
+@media (min-width: 560px) { .hub-q-opts[data-cols='2'] { grid-template-columns: 1fr 1fr; } }
+
+.hub-q-opt {
+  position: relative; display: flex; align-items: center; gap: 12px; min-height: 50px; padding: 9px 14px 9px 10px;
+  border-radius: 12px; background: var(--surface); border: 1px solid var(--line-2); color: var(--text);
+  font: 500 14.5px/1.45 var(--font); cursor: pointer;
+  transition: background var(--t-1) var(--ease), border-color var(--t-1) var(--ease), box-shadow var(--t-2) var(--ease), transform var(--t-2) var(--ease), color var(--t-1) var(--ease);
+}
+/* The real input stays in the page for the keyboard and the screen reader; the row draws it. */
+.hub-q-opt input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+.hub-q-opt:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
+.hub-q-opts[data-locked] .hub-q-opt { cursor: default; }
+@media (hover: hover) {
+  .hub-q-opts:not([data-locked]) .hub-q-opt:hover { border-color: var(--field-line); transform: translateY(-1px); box-shadow: 0 8px 18px -12px rgba(20, 22, 26, 0.35); }
+}
+.hub-q-opt[data-state='pick'] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.hub-q-opt[data-state='yes'] { border-color: var(--ok-fill); box-shadow: inset 0 0 0 1px var(--ok-fill); background: var(--ok-soft); }
+.hub-q-opt[data-state='no'] { border-color: var(--bad-fill); box-shadow: inset 0 0 0 1px var(--bad-fill); background: var(--bad-soft); }
+.hub-q-opt[data-state='miss'] { border-color: var(--ok-fill); border-style: dashed; }
+.hub-q-opt[data-state='dim'] { color: var(--text-3); border-color: var(--line); }
+.hub-q-opt .hub-rich { font: inherit; color: inherit; }
+
+.hub-q-key {
+  width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 8px;
+  background: var(--raised); border: 1px solid var(--line); color: var(--text-2); font: 500 12.5px/1 var(--mono);
+  transition: background var(--t-1) var(--ease), color var(--t-1) var(--ease);
+}
+.hub-q-opts[data-kind='multi'] .hub-q-key { border-radius: 6px; }
+[data-state='pick'] > .hub-q-key { background: var(--ink); color: var(--on-ink); border-color: transparent; }
+[data-state='yes'] > .hub-q-key { background: var(--ok-fill); color: #FFFFFF; border-color: transparent; }
+[data-state='no'] > .hub-q-key { background: var(--bad-fill); color: #FFFFFF; border-color: transparent; }
+[data-state='miss'] > .hub-q-key { border: 1.5px dashed var(--ok-fill); color: var(--ok); }
+
+.hub-q-opt-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.hub-q-tag { font: 600 12px/16px var(--font); color: var(--text-2); }
+[data-state='yes'] .hub-q-tag, [data-state='miss'] .hub-q-tag { color: var(--ok); }
+[data-state='no'] .hub-q-tag { color: var(--bad); }
+
+/* The phone's own answer kinds, inside a card on a wide screen. */
+.hub-q-answer { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.hub-q-answer .ln-match, .hub-q-answer .ln-sort, .hub-q-answer .ln-bins, .hub-q-answer .ln-tray, .hub-q-answer .ln-pool { max-width: 720px; }
+/* Its Submit arrives through the phone's dock slot: here a plain button in the card's foot. */
+.hub-q-dock { margin-left: auto; display: flex; }
+.hub-q-dock:empty { display: none; }
+.hub-q-dock .btn-xl { height: 40px; padding: 0 18px; font-size: 14px; border-radius: 10px; }
+.hub-q-dock .btn-block { width: auto; }
+.hub-q-dock .ln-put { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* The hints: each step, labelled, in the order it was opened. */
+.hub-q-hints { display: flex; flex-direction: column; gap: 8px; }
+.hub-q-hintwhy { font: 400 13px/1.5 var(--font); color: var(--text-2); }
+.hub-q-hints ol { display: flex; flex-direction: column; gap: 8px; }
+.hub-q-hints li {
+  display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; border-radius: 0 10px 10px 0;
+  border-left: 2px solid var(--primary); background: var(--primary-soft);
+}
+.hub-q-hints li .hub-rich { font-size: 14px; line-height: 1.55; }
+.hub-q-hint-n { font: 600 11px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
+
+.hub-q-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.hub-q-foot > .btn-ghost.hub-q-hintbtn { margin-left: -10px; }
+.hub-q-hintnote { flex-basis: 100%; }
+.hub-q-meta { font: 400 12.5px/1.5 var(--font); color: var(--text-3); }
+.hub-q-check { margin-left: auto; }
+.hub-q-said { margin-top: -4px; font: 400 13px/1.5 var(--font); color: var(--text-3); }
+
+.hub-q-err { display: flex; gap: 8px; align-items: flex-start; font: 400 13px/1.5 var(--font); color: var(--bad); }
+.hub-q-err svg { flex: none; margin-top: 3px; }
+
+/* The result. Its live region is in the page from the start, empty, so the
+   verdict is announced when it lands; the gap is taken back while it is empty. */
+.hub-q-result { display: flex; flex-direction: column; gap: 12px; animation: rise var(--t-3) var(--ease); }
+.hub-q-result:empty { margin-top: -14px; }
+.hub-q-kept { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: var(--warn-soft); font: 400 14px/1.5 var(--font); color: var(--text); }
+.hub-q-kept svg { flex: none; margin-top: 3px; color: var(--warn); }
+.hub-q-kept b { font-weight: 600; }
+.hub-q-verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font: 400 14px/1.4 var(--font); color: var(--text-2); }
+.hub-q-verdict b { font: 700 16px/1.3 var(--font); color: var(--text); }
+.hub-q-disc { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border-radius: var(--r-full); color: #FFFFFF; background: var(--ok-fill); }
+[data-tone='no'] > .hub-q-disc { background: var(--bad-fill); }
+[data-tone='part'] > .hub-q-disc { background: var(--warn-fill); color: var(--on-mint); }
+.hub-q-why { display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 14px 16px; border-radius: 12px; background: var(--raised); }
+.hub-q-why > div { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 4px 14px; }
+.hub-q-why dt { font: 600 12px/1.75 var(--font); color: var(--text-3); }
+.hub-q-why dd { margin: 0; font: 400 14px/1.55 var(--font); color: var(--text); min-width: 0; }
+.hub-q-why dd .hub-rich { font-size: 14px; line-height: 1.55; }
+.hub-q-ans { display: block; font-weight: 600; }
+.hub-q-ans .hub-rich { font-weight: 600; }
+.hub-q-src { display: block; margin-top: 6px; font: 500 11.5px/1.4 var(--font); color: var(--text-3); }
+
+/* The topic's state after the answer, in the server's words. */
+.hub-q-after { display: flex; flex-direction: column; gap: 4px; padding-top: 12px; border-top: 1px solid var(--line); }
+.hub-q-after > p:first-child { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font: 400 14px/1.5 var(--font); }
+.hub-q-after b { font-weight: 700; }
+.hub-q-aftersay { font: 400 14px/1.55 var(--font); color: var(--text-2); }
+
+/* ------------------------------------------------------------- narrow */
+
+@media (max-width: 640px) {
+  .hub-topic-lesson { padding: 2px 16px 20px; gap: 18px; }
+  .hub-topic-tabs { gap: 20px; margin: 0 -16px; padding: 0 16px; }
+  .hub-topic-text { font-size: 15px; }
+  .hub-topic-text[lang='hi'], .hub-topic-text[lang='mr'] { font-size: 15.5px; }
+  .hub-topic-brief { padding: 20px 18px 18px; }
+  .hub-q, .hub-topic-run .hub-q { padding: 16px; }
+  .hub-q-why > div { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .hub-topic-nav .hub-topic-meta { display: none; }
+  .hub-q-dock, .hub-q-check { flex: 1 1 100%; margin-left: 0; }
+  .hub-q-dock .btn { flex: 1; }
+  .hub-q-check { justify-content: center; }
+}

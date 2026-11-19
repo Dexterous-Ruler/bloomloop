@@ -14,6 +14,8 @@ import {
   Shuffle, SlidersHorizontal, Sparkles, Split, Trash2, TrendingDown, TrendingUp, Type, Undo2,
   Upload, User, UserPlus, Users, Volume2, Wifi, WifiOff, ZoomIn,
   Printer,
+  // Phase 7: laptop mode and rooms imported from it.
+  FileUp, Laptop,
 } from 'lucide-react';
 
 import { addIcons } from './Icon.jsx';
@@ -35,4 +37,5 @@ addIcons({
   gauge: Gauge, share: Share2, announce: Megaphone, path: Map, attendance: ClipboardCheck,
   idea: Lightbulb, ask: MessageSquare, hash: Hash,
   print: Printer,
+  laptop: Laptop, fileUp: FileUp,
 });

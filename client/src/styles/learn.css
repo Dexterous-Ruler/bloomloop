@@ -593,3 +593,16 @@ ul.ln-list { list-style: disc; }
 .ln-mastered li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); font: 400 13.5px/1.5 var(--font); color: var(--text-2); }
 .ln-mastered li:first-child { border-top: 0; padding-top: 2px; }
 .ln-mastered .lv { margin-top: 1px; }
+
+/* A question's fields as the server built them (question.rich): formulas as
+   MathML, code highlighted by shiki. Copied from hub.css, which the phone does
+   not load. A formula that could not be read arrives as its escaped source. */
+.rich-tex-error { font-family: var(--mono); font-size: 0.92em; color: var(--text-2); background: var(--sunk); border-radius: 4px; padding: 0 4px; }
+/* An outbox label names its question; a code block in it would bury the list. */
+.ln-kept-t pre { display: none; }
+/* shiki sends both themes: light inline, dark through --shiki-dark. */
+.shiki { padding: 12px 14px; border-radius: 10px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.55; }
+:root[data-theme='dark'] .shiki, :root[data-theme='dark'] .shiki span { color: var(--shiki-dark) !important; background-color: var(--shiki-dark-bg) !important; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .shiki, :root:not([data-theme='light']) .shiki span { color: var(--shiki-dark) !important; background-color: var(--shiki-dark-bg) !important; }
+}

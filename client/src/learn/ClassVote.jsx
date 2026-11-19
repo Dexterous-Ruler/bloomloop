@@ -15,7 +15,7 @@ import { KIND_LABEL } from '../lib/kinds.js';
 import { Button, Icon, Note, Panel } from '../ui/index.jsx';
 import { Provenance } from './Question.jsx';
 import Stimulus from './Stimulus.jsx';
-import { Dock, Sure } from './parts.jsx';
+import { Dock, Sure, rt } from './parts.jsx';
 
 /* A vote is sent in the terms `student:answer` would use for the kind: an
    option's position, the positions ticked for `multi`, true or false. On screen
@@ -160,15 +160,17 @@ export default function ClassVote({ q, end = null, mine = null, first = null, ke
       </Panel>
 
       <article className="ln-card" aria-label="The question put to the class">
-        <Stimulus key={`stim:${q?.id}`} stimulus={q?.question?.stimulus} />
+        <Stimulus key={`stim:${q?.id}`} stimulus={q?.question?.stimulus} html={q?.question?.rich?.passage} />
         <div className="ln-ask">
           <span className="ln-kind">
             {KIND_LABEL[kind] ?? kind}
             {q?.question?.topic ? <span>{` · ${q.question.topic}`}</span> : null}
           </span>
-          <h1 className="ln-text wrap-any" data-long={String(q?.question?.text ?? '').length > 160 ? 'true' : undefined}>
-            {q?.question?.text}
-          </h1>
+          <h1
+            className="ln-text wrap-any"
+            data-long={String(q?.question?.text ?? '').length > 160 ? 'true' : undefined}
+            {...rt(q?.question?.rich?.text, q?.question?.text)}
+          />
           <Provenance question={q?.question} />
         </div>
 
@@ -191,7 +193,7 @@ export default function ClassVote({ q, end = null, mine = null, first = null, ke
                 {/* The letter stays, so the class can still say "C". */}
                 <span className="ln-key" aria-hidden="true">{o.key}</span>
                 <span className="ln-opt-t">
-                  <span className="wrap-any"><span className="sr-only">{o.key}. </span>{o.label}</span>
+                  <span className="wrap-any"><span className="sr-only">{o.key}. </span><span {...rt(q?.question?.rich?.options?.[i], o.label)} /></span>
                   {t && <span className="ln-tag">{t}</span>}
                 </span>
               </button>

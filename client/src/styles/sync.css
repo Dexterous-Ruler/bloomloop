@@ -1,0 +1,99 @@
+/* The console's sync state (teach/SyncStatus.jsx): the header's pill, the
+   "Sync status" dialog and the offline banner. Quiet when synced; a tint only
+   when something waits or was refused, and then the words carry it. */
+
+/* ---------------------------------------------------------------- pill */
+
+.sync-pill {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; flex: none;
+  border-radius: var(--r-full); border: 1px solid var(--line); background: transparent;
+  color: var(--text-2); font: 600 11.5px/1 var(--font); white-space: nowrap; cursor: pointer;
+  transition: background var(--t-1) var(--ease), border-color var(--t-1) var(--ease);
+}
+.sync-pill:hover { background: var(--hover); }
+.sync-pill:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.sync-pill svg { flex: none; color: var(--text-3); }
+.sync-pill[data-tone='synced'] svg { color: var(--ok); }
+.sync-pill[data-tone='syncing'] { background: var(--primary-soft); border-color: transparent; color: var(--text); }
+.sync-pill[data-tone='syncing'] .spinner { color: var(--primary); }
+.sync-pill[data-tone='offline'] { background: var(--warn-soft); border-color: transparent; color: var(--text); }
+.sync-pill[data-tone='offline'] svg { color: var(--warn); }
+.sync-pill[data-tone='waiting'] { background: var(--raised); color: var(--text); }
+.sync-pill[data-tone='refused'] { background: var(--bad-soft); border-color: transparent; color: var(--text); }
+.sync-pill[data-tone='refused'] svg { color: var(--bad); }
+.sync-spin { width: 12px; height: 12px; border-width: 1.5px; }
+.sync-pill-n { display: none; }
+@media (max-width: 640px) {
+  .sync-pill { padding: 0 8px; gap: 5px; }
+  .sync-pill-t { display: none; }
+  .sync-pill-n { display: inline; }
+  .sync-pill[data-tone='synced'] { display: none; }
+}
+
+/* ---------------------------------------------------------------- dialog */
+
+.sync-dlg { display: flex; flex-direction: column; gap: 20px; }
+.sync-h {
+  display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px;
+  font: 600 11px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3);
+}
+.sync-h .mono { letter-spacing: 0; color: var(--text-2); }
+.sync-list { list-style: none; margin: 0; padding: 0; }
+.sync-row {
+  display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 4px 12px; align-items: start;
+  padding: 10px 0; border-top: 1px solid var(--line);
+}
+.sync-row:first-child { border-top: 0; }
+.sync-time { font-size: 12px; line-height: 20px; color: var(--text-3); white-space: nowrap; }
+.sync-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; font: 400 13px/1.5 var(--font); color: var(--text-2); }
+.sync-what > b { font-weight: 600; color: var(--text); }
+.sync-state {
+  display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: var(--r-1);
+  background: var(--raised); border: 1px solid var(--line); color: var(--text-2); font: 600 11px/1 var(--font);
+}
+.sync-state[data-state='sending'] { background: var(--primary-soft); border-color: transparent; color: var(--text); }
+.sync-state[data-state='sending'] .spinner { color: var(--primary); }
+
+.sync-refused { grid-template-columns: 64px minmax(0, 1fr); }
+.sync-why { display: flex; gap: 6px; align-items: flex-start; margin-top: 4px; color: var(--text); }
+.sync-why svg { flex: none; margin-top: 3px; color: var(--bad); }
+.sync-now {
+  display: flex; flex-direction: column; gap: 2px; margin-top: 6px; padding: 8px 10px;
+  border-left: 2px solid var(--line-2); background: var(--sunk); border-radius: 0 var(--r-1) var(--r-1) 0; color: var(--text);
+}
+.sync-hint { color: var(--text-3); font-size: 12.5px; margin-top: 4px; }
+.sync-acts { margin-top: 8px; }
+.sync-none { display: flex; align-items: center; gap: 8px; padding: 6px 0; color: var(--text-2); font: 400 13px/1.5 var(--font); }
+.sync-none svg { color: var(--ok); flex: none; }
+.sync-last { align-self: center; font: 400 12.5px/1.4 var(--font); color: var(--text-3); }
+
+/* ---------------------------------------------------------------- banner */
+
+.sync-banner {
+  display: flex; align-items: flex-start; gap: 10px; margin-bottom: 18px; padding: 10px 14px;
+  border-radius: var(--r-3); background: var(--warn-soft); color: var(--text); font: 400 13px/1.5 var(--font);
+}
+.sync-banner > svg { flex: none; margin-top: 2px; color: var(--warn); }
+.sync-banner[data-mode='syncing'] { background: var(--primary-soft); }
+.sync-banner[data-mode='syncing'] .spinner { margin-top: 3px; color: var(--primary); }
+.sync-banner p { flex: 1 1 240px; min-width: 0; }
+.sync-banner p b { font-weight: 700; margin-right: 6px; }
+.sync-banner-n {
+  flex: none; align-self: center; padding: 2px 0; border: 0; background: none; cursor: pointer;
+  font-size: 12px; color: var(--text-2); text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 3px;
+}
+.sync-banner-n:hover { color: var(--text); }
+.sync-banner-n:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 2px; }
+
+@media (max-width: 640px) {
+  .sync-banner { flex-wrap: wrap; }
+  .sync-banner > svg, .sync-banner > .spinner { position: absolute; }
+  .sync-banner { position: relative; padding-left: 40px; }
+  .sync-banner > svg { left: 14px; top: 12px; }
+  .sync-banner > .spinner { left: 15px; top: 13px; }
+  .sync-banner-n { align-self: flex-start; }
+  .sync-row, .sync-refused { grid-template-columns: 58px minmax(0, 1fr); }
+  .sync-row .sync-state { grid-column: 2; justify-self: start; }
+}
+
+@media (prefers-reduced-motion: reduce) { .sync-pill { transition: none; } }

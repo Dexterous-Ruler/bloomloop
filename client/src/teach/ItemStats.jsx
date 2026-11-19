@@ -32,6 +32,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { api } from '../lib/api.js';
 import { KIND_LABEL } from '../lib/kinds.js';
 import { Button, Chip, Empty, Icon, Level, Note } from '../ui/index.jsx';
+import { LAPTOP_QUESTION, laptopItems, useLaptopQuestionIds } from './imported.jsx';
 
 const list = (v) => (Array.isArray(v) ? v : []);
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -52,6 +53,8 @@ const STATUS = {
   discarded: 'Discarded',
   rejected: 'Rejected',
   deleted: 'No longer in the bank',
+  // Phase 7: asked in a room run in laptop mode and imported (teach/imported.jsx laptopItems).
+  laptop: LAPTOP_QUESTION,
 };
 
 // Kinds with nothing to choose from, said in words when there is no spread.
@@ -271,7 +274,7 @@ export function ItemDetail({ item, onCheckKey, thresholds }) {
   const versions = num(item.versions) ?? 1;
   const meanScore = num(item.meanScore);
   const needs = num(thresholds?.minAnswersForBand);
-  const gone = item.status === 'deleted';
+  const gone = item.status === 'deleted' || item.status === 'laptop';
   const band = bandOf(item);
   const basis = item.basis?.sentence || '';
   const warning = warningOf(item);
@@ -310,7 +313,13 @@ export function ItemDetail({ item, onCheckKey, thresholds }) {
           <Icon name="flag" />
           <div className="grow">
             <b>Worth a look.</b> {f.message}
-            {gone && <span className="it-flag-gone"> This question is no longer in the bank, so there is no key left to change.</span>}
+            {gone && (
+              <span className="it-flag-gone">
+                {item.status === 'laptop'
+                  ? ' This question was asked on the laptop and is not in this chapter’s bank, so there is no key here to change.'
+                  : ' This question is no longer in the bank, so there is no key left to change.'}
+              </span>
+            )}
           </div>
           {onCheckKey && !gone && (
             <Button size="sm" icon="key" onClick={() => onCheckKey(item.questionId)}>Check the key</Button>
@@ -482,13 +491,15 @@ export function StatsView({ contentId, questions, onCheckKey, stats, version }) 
   const own = useBankStats(stats ? null : contentId, version);
   const { data, error, loading, reload } = stats ?? own;
   const bank = useMemo(() => new Map(list(questions).map((q) => [q._id, q])), [questions]);
-  const items = useMemo(() => list(data?.items).map((i) => {
+  // Phase 7: the questions this chapter's imported rooms asked on the laptop.
+  const laptopIds = useLaptopQuestionIds(contentId);
+  const items = useMemo(() => laptopItems(data?.items, null, laptopIds).map((i) => {
     const q = bank.get(i.questionId);
     return q ? {
       ...i, text: q.text ?? i.text, bloom: q.bloom ?? i.bloom, topic: q.topic ?? i.topic, status: q.status ?? i.status,
       provenance: q.provenance ?? i.provenance, levelCheck: q.levelCheck ?? i.levelCheck,
     } : i;
-  }), [data, bank]);
+  }), [data, bank, laptopIds]);
 
   if (!data) {
     return (

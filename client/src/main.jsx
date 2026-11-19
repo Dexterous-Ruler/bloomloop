@@ -55,6 +55,15 @@ const RoleRoute = React.lazy(() => import('./shell/RoleRoute.jsx'));
 // Screens with sample data, for looking at them without a database. Dev only:
 // the import is behind the flag, so none of it reaches a production bundle.
 const Gallery = import.meta.env.DEV ? staff(() => import('./dev/Gallery.jsx')) : null;
+// The Learning Hub: a student's (/hub) and a professor's or HOD's (/hubs).
+const HubApp = staff(() => import('./hub/HubApp.jsx'));
+const HubStaffApp = staff(() => import('./hubstaff/HubStaffApp.jsx'));
+// Dev only: the local hub server signs calls in by a cookie, so there is no
+// Supabase session for RoleRoute to find; DevViewer asks the server instead.
+const DevViewer = import.meta.env.DEV ? React.lazy(() => import('./dev/DevViewer.jsx')) : null;
+const guarded = (allow, role, element) => (DevViewer
+  ? <DevViewer allow={allow} role={role}>{element}</DevViewer>
+  : <RoleRoute allow={allow}>{element}</RoleRoute>);
 
 // One root per page, kept across hot reloads so the dev server does not stack them.
 const host = document.getElementById('root');
@@ -90,6 +99,8 @@ root.render(
             <Route path="/classes/:id" element={<Classes />} />
             {/* The token rides in the hash, so it never reaches a server log. */}
             <Route path="/wall" element={<Wall />} />
+            <Route path="/hub/*" element={guarded(['student'], 'student', <HubApp />)} />
+            <Route path="/hubs/*" element={guarded(['professor', 'hod'], 'professor', <HubStaffApp />)} />
             {Gallery && <Route path="/__gallery/*" element={<React.Suspense fallback={null}><Gallery /></React.Suspense>} />}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

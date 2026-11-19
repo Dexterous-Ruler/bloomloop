@@ -18,13 +18,15 @@ const C = 2 * Math.PI * R;
 
 export default function Finish({ profile, ending, reason = '', led = null, linked = false, onLeave }) {
   // A Teacher-led room takes no answers on phones, so there is no set to show:
-  // only the server's sentence, and the way out.
-  if (ending === 'teacher-led') {
+  // only the server's sentence, and the way out. The same for a closed room
+  // that would not take what this phone kept (Phase 7): the sentence, and the
+  // answers listed under it.
+  if (ending === 'teacher-led' || ending === 'kept') {
     return (
       <>
         <Panel className="ln-done">
           <div className="stack stack-2">
-            <span className="tag-mint">Teacher-led</span>
+            <span className="tag-mint">{led?.tag || 'Teacher-led'}</span>
             <h1>{led?.title || 'Follow along in class'}</h1>
             <p>{led?.message}</p>
           </div>

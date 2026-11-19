@@ -25,12 +25,15 @@
  * @param mode        the room's settings.mode: devices | teacher-led | mixed
  * @param summary     the grid's `attendance`: { present, classSize, summary }
  * @param load        stands in for api.attendance (the dev gallery)
- * @param mark        stands in for api.markAttendance (the dev gallery)
+ * @param mark        stands in for the write (the dev gallery); left out, marks
+ *                    go through the console outbox (lib/consoleOutbox.js), so a
+ *                    mark made offline is kept on this laptop and drawn at once
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { api } from '../lib/api.js';
+import { noteAttendance, record, useSynced } from '../lib/consoleOutbox.js';
 import { Button, Icon, Note, Segmented } from '../ui/index.jsx';
 
 const STATUS = {
@@ -45,6 +48,18 @@ const ORDER = ['present', 'late', 'absent', 'unmarked'];
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const DATE = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' });
+
+/**
+ * Marks kept on this laptop, drawn on the last read until the server has them:
+ * each row's status (as `local`, with no stamp of the server's) and the counts.
+ */
+function withMarks(data, marks) {
+  const by = new Map(marks.map((m) => [m.studentId, m.status]));
+  const students = data.students.map((s) => (by.has(s.studentId) ? { ...s, status: by.get(s.studentId), source: 'teacher', local: true } : s));
+  const count = (k) => students.filter((s) => s.status === k).length;
+  const counts = { ...data.counts, present: count('present'), late: count('late'), absent: count('absent'), unmarked: count('unmarked') };
+  return { ...data, students, counts, summary: `${counts.present + counts.late} / ${counts.classSize} present` };
+}
 
 /** One line on how a student came by their mark. */
 function howMarked(s, phones) {
@@ -102,7 +117,7 @@ function Skeleton() {
 
 export default function Attendance({
   code, canControl = false, mode = 'devices', summary = null,
-  load = api.attendance, mark = api.markAttendance,
+  load = api.attendance, mark = null,
 }) {
   const [data, setData] = useState(null);
   // { message, status } of a read that failed. A 409 is a room with no class.
@@ -122,6 +137,7 @@ export default function Attendance({
     setReading(true);
     try {
       const r = await load(code);
+      if (!mark) noteAttendance(code, r);
       last.current = r.summary;
       setData(r);
       setError(null);
@@ -139,6 +155,8 @@ export default function Attendance({
     if (pushed && last.current === pushed) return;
     read();
   }, [read, pushed]);
+  // Marks kept on this laptop have reached the server: read the room again.
+  useSynced(code, read);
 
   const phones = mode !== 'teacher-led';
   const students = data?.students ?? [];
@@ -164,34 +182,64 @@ export default function Attendance({
   const cls = data.class ?? {};
   const allOn = shown.length > 0 && shown.every((s) => picked.has(s.studentId));
 
-  async function send(body, what, after) {
+  /** The write: the gallery's stand-in, or the console outbox with each mark's markedAt as shown. */
+  async function write(body, label) {
+    if (mark) return { reply: await mark(code, body) };
+    const shown = {};
+    for (const m of body.marks ?? []) {
+      const s = students.find((x) => x.studentId === m.studentId);
+      if (s && !s.local) shown[m.studentId] = s.markedAt ?? null;
+    }
+    const out = await record('attendance', { code, ...body }, { label, shown });
+    if (out.refused) throw Object.assign(new Error(out.error), { status: out.status, stale: out.stale, current: out.current });
+    return out.kept ? { kept: true } : { reply: out.reply };
+  }
+
+  async function send(body, what, label, after) {
     setBusy(what); setWriteError(''); setDone('');
     try {
-      const { changed, kept, ...rest } = await mark(code, body);
+      const out = await write(body, label);
+      if (out.kept) {
+        // Kept on this laptop: drawn now, written when it reconnects.
+        if (body.marks) setData((d) => withMarks(d, body.marks));
+        if (after) setDone(after(null));
+        return;
+      }
+      const { changed, kept, ...rest } = out.reply;
+      if (!mark) noteAttendance(code, rest);
       last.current = rest.summary;
       setData(rest);
-      if (after) setDone(after(changed ?? 0, kept ?? 0));
+      if (after) setDone(after({ changed: changed ?? 0, kept: kept ?? 0 }));
     } catch (err) {
       setWriteError(err.message);
+      // Stale: the reply holds the register as it stands, so the list shows what the sentence names.
+      if (err.stale && Array.isArray(err.current?.students)) {
+        last.current = err.current.summary;
+        setData(err.current);
+      }
     } finally {
       setBusy(null);
     }
   }
 
+  const who = (s) => `${s.rollNo}${s.name ? ` ${s.name}` : ''}`;
   const markOne = (s, status) => {
     if (s.status === status) return;
-    send({ marks: [{ studentId: s.studentId, status }] }, s.studentId, null);
+    send({ marks: [{ studentId: s.studentId, status }] }, s.studentId, `${who(s)}: ${STATUS[status]}`, null);
   };
   const markPicked = (status) => {
     const ids = students.filter((s) => picked.has(s.studentId)).map((s) => s.studentId);
     if (!ids.length) return;
-    send({ marks: ids.map((studentId) => ({ studentId, status })) }, `some:${status}`, (changed) => {
+    send({ marks: ids.map((studentId) => ({ studentId, status })) }, `some:${status}`, `${plural(ids.length, 'student')}: ${STATUS[status]}`, (r) => {
       setPicked(new Set());
-      return `${plural(changed, 'student')} marked ${STATUS[status].toLowerCase()}.`;
+      return r
+        ? `${plural(r.changed, 'student')} marked ${STATUS[status].toLowerCase()}.`
+        : `${plural(ids.length, 'student')} marked ${STATUS[status].toLowerCase()} on this device. The server gets the marks when it reconnects.`;
     });
   };
-  const markJoins = () => send({ fromJoins: true }, 'joins', (changed, kept) => (
-    `${plural(changed, 'mark')} written from the joins.${kept ? ` ${plural(kept, 'mark')} made by hand ${kept === 1 ? 'was' : 'were'} kept.` : ''}`
+  const markJoins = () => send({ fromJoins: true }, 'joins', 'Everyone who joined present, the rest absent', (r) => (r
+    ? `${plural(r.changed, 'mark')} written from the joins.${r.kept ? ` ${plural(r.kept, 'mark')} made by hand ${r.kept === 1 ? 'was' : 'were'} kept.` : ''}`
+    : 'Kept on this device. The marks are written from the joins when it reconnects, and the list is read again then.'
   ));
   const toggle = (id) => setPicked((prev) => {
     const next = new Set(prev);

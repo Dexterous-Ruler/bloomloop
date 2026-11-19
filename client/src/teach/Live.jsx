@@ -53,6 +53,7 @@ import ClassQuestions, { RoomConfidence } from './ClassQuestions.jsx';
 import { RoomMisconceptions } from './Misconceptions.jsx';
 import StudentCard from './StudentCard.jsx';
 import useRoomFeed from './useRoomFeed.js';
+import { ImportedNote, isKept, KeptTag, laptopItems } from './imported.jsx';
 
 const ZERO = { seen: 0, correct: 0 };
 const SHORT = ['Rem', 'Und', 'App', 'Ana', 'Eva', 'Cre'];
@@ -344,6 +345,8 @@ const partial = (score) => Number.isFinite(Number(score)) && Number(score) > 0 &
 
 /** The mark in force, as a glyph and as words. */
 function markOf(a) {
+  // Phase 7: stored after the room closed or past its cap, never counted.
+  if (isKept(a)) return { v: 'poll', label: 'Kept, not counted: no mark' };
   if (a.ungraded) return { v: 'poll', label: 'A poll: nothing to mark' };
   if (typeof a.correct !== 'boolean') return { v: 'poll', label: 'No mark recorded' };
   if (partial(a.score)) return { v: a.correct ? 'yes' : 'no', text: share(a.score), label: `${a.correct ? 'Counted as right' : 'Counted as wrong'}, ${share(a.score)} of the marks` };
@@ -456,7 +459,8 @@ function RoomAnswers({ code, roll, signature }) {
               const q = a.question || {};
               const key = keyOf(a.snapshot);
               const note = str(a.review?.note).trim();
-              const reading = str(a.auto?.detail || a.detail).trim();
+              const kept = isKept(a);
+              const reading = kept ? '' : str(a.auto?.detail || a.detail).trim();
               return (
                 <li key={a.answerId} className="lc-ans" data-final={a.final === false ? 'false' : undefined}>
                   <span className="lc-mark" data-v={m.v} data-prov={a.review?.status === 'provisional' ? 'true' : undefined} title={m.label}>
@@ -474,7 +478,8 @@ function RoomAnswers({ code, roll, signature }) {
                     </p>
                     <div className="lc-ans-meta">
                       {a.level && <span className="lc-ans-lv" data-level={a.level}><i className="swatch" />{LABEL[a.level] ?? a.level}</span>}
-                      <span>Attempt {a.attempt ?? 1}{a.final === false ? ', retried' : ''}</span>
+                      <span>Attempt {a.attempt ?? 1}{a.final === false && !kept ? ', retried' : ''}</span>
+                      {kept && <KeptTag detail={a.detail} />}
                       <time className="mono" dateTime={a.answeredAt}>{stamp(a.answeredAt)}</time>
                       {rv && (
                         <span className="lc-rv" data-tone={rv.tone} title={rv.say}>
@@ -501,7 +506,9 @@ function RoomAnswers({ code, roll, signature }) {
                         <dd>{key.length ? <ul>{key.map((line, i) => <li key={i}>{line}</li>)}</ul> : a.ungraded ? 'A poll has no key.' : 'No key was stored with this question.'}</dd>
                         <dt>Mark</dt>
                         <dd>
-                          {a.final === false
+                          {kept
+                            ? `${a.detail} It has no mark.`
+                            : a.final === false
                             ? 'Wrong, and followed by a retry: this attempt did not count.'
                             : a.ungraded ? 'Not marked. A poll counts towards nothing.' : `${m.label}.`}
                           {reading && <> The machine read it as {reading}.</>}
@@ -676,7 +683,7 @@ function RoomQuestions({ items, onRetry, closed, onCheckKey }) {
     );
   }
 
-  const all = list(data?.items);
+  const all = laptopItems(data?.items, data?.room?.importedFrom);
   const answers = Number(data?.counted?.answers) || 0;
   const read = at ? ` Read at ${CLOCK.format(at)}.` : '';
 
@@ -1198,6 +1205,9 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
           />
         </div>
       </div>
+
+      {/* Phase 7: a room run in laptop mode and imported is never shown as one this server ran. */}
+      <ImportedNote from={info?.importedFrom} code={code} />
 
       {(stopped && !closed) || (stale && !stopped) || rejoined || (wireError && !everLive && !stopped) || error || classroomError || posted ? (
         <div className="stack stack-2">

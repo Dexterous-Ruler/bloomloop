@@ -22,9 +22,11 @@ import Marbles from '../fx/Marbles.jsx';
 import { api } from '../lib/api.js';
 import { Button, Flow, Icon, Mark, Note, Num } from '../ui/index.jsx';
 import useRoomFeed from './useRoomFeed.js';
+import { chooseJoin, isLoopback, joinChoices, joinOrigin, NoNetworkWarning } from './laptop.jsx';
 import { SplitCode } from './Wall.jsx';
 
-export default function Projector({ session, content, activeCount, onLive }) {
+/** @param laptop  the GET /api/laptop reply (Phase 7), for the localhost warning */
+export default function Projector({ session, content, activeCount, onLive, laptop }) {
   const [qr, setQr] = useState('');
   const [copied, setCopied] = useState('');
   const [error, setError] = useState('');
@@ -35,8 +37,13 @@ export default function Projector({ session, content, activeCount, onLive }) {
   const { rows } = useRoomFeed(session.code);
 
   // Built from the browser's own origin, so it shows the address the phones
-  // actually need rather than "localhost".
-  const joinUrl = `${window.location.origin}/join/${session.code}`;
+  // actually need rather than "localhost". Phase 7: on the laptop with the
+  // console at localhost, from the laptop's network address instead; null
+  // while it has none, and then no link or QR is offered.
+  const [, setPicked] = useState('');
+  const origin = joinOrigin(laptop);
+  const networks = laptop?.laptop && isLoopback() ? joinChoices(laptop) : [];
+  const joinUrl = `${origin ?? window.location.origin}/join/${session.code}`;
   const shownUrl = joinUrl.replace(/^https?:\/\//, '');
   const base = shownUrl.slice(0, shownUrl.length - session.code.length);
   // After a mid-class reload the bank has not been fetched again, so the count
@@ -97,6 +104,9 @@ export default function Projector({ session, content, activeCount, onLive }) {
           <h1 className="clip">{chapter}</h1>
         </div>
 
+        {/* Phase 7: on the laptop at localhost with no network address yet. */}
+        {origin === null && !led && mode !== null && <NoNetworkWarning />}
+
         {mode === null ? null : led ? (
           <section className="pj-strip" aria-label="No code to show">
             <div className="pj-how">
@@ -107,29 +117,46 @@ export default function Projector({ session, content, activeCount, onLive }) {
         ) : (
           <section className="pj-strip" aria-label="How to join">
             <div className="pj-how">
-              <div className="pj-step">
-                <span className="pj-label">On any phone, go to</span>
-                <span className="pj-url">{base}<em>{session.code}</em></span>
-              </div>
+              {origin !== null && (
+                <div className="pj-step">
+                  <span className="pj-label">On any phone, go to</span>
+                  <span className="pj-url">{base}<em>{session.code}</em></span>
+                </div>
+              )}
+              {/* Phase 7: a laptop on more than one network; the class's is the one phones joined. */}
+              {networks.length > 1 && (
+                <label className="lp-net">
+                  <span>Phones are on</span>
+                  <select
+                    className="select input-sm"
+                    value={origin ?? ''}
+                    onChange={(e) => { chooseJoin(e.target.value); setPicked(e.target.value); }}
+                  >
+                    {networks.map((n) => <option key={n.origin} value={n.origin}>{n.network || n.origin.replace(/^https?:\/\//, '')}</option>)}
+                  </select>
+                </label>
+              )}
               <div className="pj-step">
                 <span className="pj-label">Room code</span>
                 <SplitCode code={session.code} className="pj-code" />
               </div>
               <div className="cluster">
                 <Button icon={copied === 'code' ? 'check' : 'copy'} onClick={() => copy(session.code, 'code')}>{copied === 'code' ? 'Copied' : 'Copy the code'}</Button>
-                <Button icon={copied === 'url' ? 'check' : 'link'} onClick={() => copy(joinUrl, 'url')}>{copied === 'url' ? 'Copied' : 'Copy the link'}</Button>
+                {origin !== null && <Button icon={copied === 'url' ? 'check' : 'link'} onClick={() => copy(joinUrl, 'url')}>{copied === 'url' ? 'Copied' : 'Copy the link'}</Button>}
               </div>
               {error && <Note tone="bad">{error}</Note>}
             </div>
 
             {/* A white card, not a bare image: the encoder is given no quiet zone,
                 so the padding is what makes the code scannable at all. */}
-            <div className="pj-qr">
-              <div className="pj-qr-card">
-                {qr ? <img src={qr} alt={`QR code for ${joinUrl}`} width={260} height={260} /> : <div className="pj-qr-wait" />}
+            {origin !== null && (
+              <div className="pj-qr">
+                <div className="pj-qr-card">
+                  {qr ? <img src={qr} alt={`QR code for ${joinUrl}`} width={260} height={260} /> : <div className="pj-qr-wait" />}
+                </div>
+                <span className="pj-label">or scan this</span>
               </div>
-              <span className="pj-label">or scan this</span>
-            </div>
+            )}
           </section>
         )}
 

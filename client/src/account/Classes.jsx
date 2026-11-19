@@ -38,6 +38,7 @@ import { dateOf, dayOf, plural, roomLink, stampOf, timeOf } from './dashParts.js
 import Outcomes from './Outcomes.jsx';
 import Register from './Register.jsx';
 import { ClassMisconceptions } from '../teach/Misconceptions.jsx';
+import { ImportedTag, useImportedRooms } from '../teach/imported.jsx';
 import RosterImport from './RosterImport.jsx';
 
 /* Phase 4 views beside the roster: the class's course outcomes, its
@@ -1067,6 +1068,9 @@ function Brief({ a, last, onLast, busy }) {
 
 function RoomsTable({ a }) {
   const rooms = list(a?.rooms);
+  // Phase 7: the class report does not say which rooms came from a laptop; the room list does.
+  const { preview } = useViewer();
+  const imported = useImportedRooms(!preview && rooms.length > 0);
   if (!rooms.length) return null;
   return (
     <section className="card ac-card" aria-labelledby="cl-rooms-h">
@@ -1093,6 +1097,7 @@ function RoomsTable({ a }) {
                   <span title={stampOf(r.startedAt) || undefined}>{dayOf(r.startedAt) || 'No date'}</span>
                   <span>{MODE[r.mode] ?? r.mode}</span>
                   {r.status !== 'closed' && <span className="cl-room-live" data-status={r.status}>{STATUS[r.status] ?? r.status}</span>}
+                  <ImportedTag from={r.importedFrom ?? imported.get(r.code)} code={r.code} />
                 </span>
               </span>
               <span className="cl-room-fig" data-label="Class accuracy">
@@ -1564,6 +1569,8 @@ export function ClassView({
   const [pasting, setPasting] = useState(Boolean(startPaste));
   const [importing, setImporting] = useState(false);
   const [editingClass, setEditingClass] = useState(false);
+  // The hub needs an account: the shared key (and laptop mode) has none.
+  const { account: viewer } = useViewer();
   const c = data?.class;
   const canEdit = Boolean(c?.canEdit);
   const crumbOf = (tail) => (
@@ -1605,6 +1612,9 @@ export function ClassView({
         <Button variant="ghost" icon="refresh" busy={reading} aria-label="Read the class again" onClick={onReload} />
       </Tip>
       {canEdit && <Button icon="edit" onClick={() => setEditingClass(true)}>Course and term</Button>}
+      {viewer && viewer.role !== 'student' && (
+        <Link className="btn" to={`/hubs/c/${classId}`}><Icon name="path" />Learning Hub</Link>
+      )}
     </span>
   );
   const roomsN = list(analytics?.data?.rooms).length;

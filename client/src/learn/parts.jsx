@@ -7,7 +7,24 @@ import { createContext, useContext, useId } from 'react';
 import { createPortal } from 'react-dom';
 
 import { LABEL, LEVELS } from '../lib/bloom.js';
+import { BLANK_MARK } from '../lib/kinds.js';
 import { Icon, Level } from '../ui/index.jsx';
+
+/**
+ * A field of a question as the server built it (`question.rich`, decision
+ * H15): the server's own escaped HTML, formulas as MathML and code already
+ * highlighted, drawn as given; else the plain field. Spread onto the element
+ * that holds the text. The plain field stays what is answered with, and what
+ * an aria label says. Only ever the server's `rich`: never anything typed.
+ */
+export const rt = (html, text) => (typeof html === 'string' && html ? { dangerouslySetInnerHTML: { __html: html } } : { children: text });
+
+/** A passage split at its blanks, each piece ready for rt(): the rich one only when its blanks line up with the plain one's. */
+export const pieces = (text, html) => {
+  const p = String(text ?? '').split(BLANK_MARK);
+  const h = typeof html === 'string' ? html.split(BLANK_MARK) : [];
+  return p.map((t, i) => rt(h.length === p.length && h[i], t));
+};
 
 /**
  * The bar fixed to the bottom of the screen. LearnApp owns the element; whoever
@@ -36,13 +53,22 @@ export const Held = createContext(false);
    says right or wrong: that is the server's, and only once it has marked. */
 const SAVE = {
   queued: ['clock', 'Saved on this phone'],
+  // The same, said while the connection is down (Phase 7, "Next").
+  held: ['clock', 'Saved, will be marked when you reconnect'],
   sending: [null, 'Saved on this phone, sending'],
   sent: ['send', 'Sent'],
-  // A vote the server kept and did not count: confirmed, with its sentence.
+  // An answer or vote the server kept and did not count: with its sentence,
+  // never a mark.
   uncounted: ['send', 'Sent, not counted'],
   marked: ['check', 'Marked'],
-  refused: ['info', 'Kept on this phone, not sent'],
+  // Refused for good, or never got through: kept here, never sent again.
+  refused: ['info', 'Kept on this phone, not taken'],
 };
+
+/** An outbox item's state in the words above. */
+export const saveState = (i, flying, offline) => (i.status === 'queued'
+  ? (flying === i.answerId ? 'sending' : offline ? 'held' : 'queued')
+  : i.counted === false ? 'uncounted' : i.status);
 
 export function SaveState({ state, note = '', live = false }) {
   const s = SAVE[state];
@@ -59,7 +85,7 @@ export function SaveState({ state, note = '', live = false }) {
 }
 
 /** The outbox, for the student: what is on this phone and where each item is. */
-export function Kept({ items, flying = '' }) {
+export function Kept({ items, flying = '', offline = false }) {
   if (!items?.length) return null;
   return (
     <section className="ln-kept" aria-label="On this phone" aria-live="polite">
@@ -67,8 +93,8 @@ export function Kept({ items, flying = '' }) {
       <ul>
         {items.map((i) => (
           <li key={i.answerId}>
-            <span className="ln-kept-t">{i.label}</span>
-            <SaveState state={i.status === 'queued' && flying === i.answerId ? 'sending' : i.counted === false ? 'uncounted' : i.status} note={i.note} />
+            <span className="ln-kept-t" {...rt(i.html, i.label)} />
+            <SaveState state={saveState(i, flying, offline)} note={i.note} />
           </li>
         ))}
       </ul>
@@ -76,12 +102,18 @@ export function Kept({ items, flying = '' }) {
   );
 }
 
-/** The connection line: calm, one sentence, never an error. */
-export function Offline() {
+/**
+ * The connection line: calm, one sentence, never an error. `noWorker`: this
+ * page has no service worker (plain http over a LAN is not a secure context),
+ * so a reload with the network down would open the browser's own error page.
+ */
+export function Offline({ noWorker = false }) {
   return (
     <p className="ln-off" role="status">
       <i aria-hidden="true" />
-      Offline: your answers are kept on this phone and will be sent when you reconnect
+      {noWorker
+        ? 'Offline. Do not reload while the Wi-Fi is down; your answers are kept on this phone'
+        : 'Offline: your answers are kept on this phone and will be sent when you reconnect'}
     </p>
   );
 }

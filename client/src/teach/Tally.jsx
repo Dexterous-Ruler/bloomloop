@@ -11,9 +11,10 @@
  * never go there.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { api } from '../lib/api.js';
+import { record, shownOf, useOutbox, useSynced } from '../lib/consoleOutbox.js';
 import { Button, Chip, Empty, Field, Icon, Note, Segmented } from '../ui/index.jsx';
 import { Privacy, QuestionPicker, ReadFailed, clock } from './Wheel.jsx';
 
@@ -212,6 +213,7 @@ function TallySkeleton() {
 /** The tally screen from its read. Pure, for the gallery. */
 export function TallyView({
   data, load, canControl, openId, onOpen, pending, busy = '', error = '', flash, onStep, onPatch, onCreate, onRetry, questions, composer,
+  asking = [],
 }) {
   if (load?.status === 'error') return <ReadFailed message={load.error} onRetry={onRetry} />;
   if (!data) return <TallySkeleton />;
@@ -223,6 +225,12 @@ export function TallyView({
   return (
     <div className={`rc-tally${canControl ? '' : ' is-read'}`}>
       <div className="stack stack-3 rc-tally-main">
+        {asking.length > 0 && (
+          <Note icon="clock">
+            Waiting to be sent: {asking.map((a) => `“${a.label}”`).join(', ')}. The server opens the count, so
+            {' '}{asking.length === 1 ? 'it appears' : 'they appear'} here, ready for hands, once this laptop reconnects.
+          </Note>
+        )}
         {open ? (
           <TallyCard tally={open} pending={pending} canControl={canControl} busy={busy} flash={flash} onStep={onStep} onPatch={onPatch} />
         ) : (
@@ -271,7 +279,6 @@ export default function Tally({ code, canControl, signal, questions }) {
   const [error, setError] = useState('');
   const [flash, setFlash] = useState(null);
   const [pending, setPending] = useState({});
-  const chain = useRef(Promise.resolve());
 
   const read = useCallback(async () => {
     try {
@@ -283,54 +290,73 @@ export default function Tally({ code, canControl, signal, questions }) {
   }, [code]);
 
   useEffect(() => { read(); }, [read, signal]);
+  // Counts kept on this laptop have reached the server: read them again.
+  useSynced(code, read);
+  // Questions asked aloud while offline: the server makes them, so they show
+  // here as waiting until it has.
+  const { items } = useOutbox();
+  const asking = items.filter((i) => i.kind === 'tallyCreate' && i.code === String(code).toUpperCase() && i.status !== 'refused');
 
   const put = (tally) => setData((d) => d && { ...d, tallies: d.tallies.map((t) => (t.id === tally.id ? tally : t)) });
 
-  // Taps go one at a time, in the order they were made, so a reply never
-  // lands on top of a later one.
+  // Each tap is one record in the console outbox, which sends them one at a
+  // time in the order they were made, so a reply never lands on top of a
+  // later one. The count shown is the server's plus the taps still on their way.
   function step(tally, key, dir) {
     const slot = `${tally.id}:${key}`;
     setPending((p) => ({ ...p, [slot]: (p[slot] ?? 0) + dir }));
-    chain.current = chain.current.then(async () => {
-      try {
-        const reply = await (dir > 0 ? api.tallyUp : api.tallyDown)(code, tally.id, key);
-        if (reply.tally) put(reply.tally);
-        setFlash(reply.clamped ? { id: tally.id, text: `${key} is already at 0, so nothing changed.` } : null);
-      } catch (err) {
-        setFlash({ id: tally.id, text: err.message, bad: true });
-      } finally {
-        setPending((p) => ({ ...p, [slot]: (p[slot] ?? 0) - dir }));
+    const settle = (o) => {
+      if (o.ok) {
+        if (o.reply.tally) put(o.reply.tally);
+        setFlash(o.reply.clamped ? { id: tally.id, text: `${key} is already at 0, so nothing changed.` } : null);
+      } else if (o.refused) {
+        setFlash({ id: tally.id, text: o.error, bad: true });
       }
-    });
+      if (!o.kept) setPending((p) => ({ ...p, [slot]: (p[slot] ?? 0) - dir }));
+    };
+    record('tallyStep', { code, tallyId: tally.id, option: key, dir }, {
+      label: `${key} ${dir > 0 ? 'one more hand' : 'one fewer hand'}: ${tally.text}`,
+      onSettle: settle,
+    }).then(settle);
   }
 
   async function patch(id, body) {
+    const tally = data?.tallies?.find((t) => t.id === id);
     setBusy(`patch:${id}`);
-    try {
-      const reply = await api.updateTally(code, id, body);
-      if (reply.tally) put(reply.tally);
-    } catch (err) {
-      setFlash({ id, text: err.message, bad: true });
-    } finally {
-      setBusy('');
+    const out = await record('tallyEdit', { code, tallyId: id, patch: body }, {
+      label: `${'revealed' in body ? (body.revealed ? 'Answer revealed' : 'Answer hidden') : `Correct option ${body.correct ?? 'cleared'}`}: ${tally?.text ?? ''}`,
+      shown: tally && !tally.local ? shownOf.tally(tally) : undefined,
+    });
+    setBusy('');
+    if (out.ok) { if (out.reply.tally) put(out.reply.tally); return; }
+    if (out.refused) {
+      setFlash({ id, text: out.error, bad: true });
+      // Stale: the reply holds the count as it stands.
+      if (out.stale && out.current?.id) put(out.current);
+      return;
+    }
+    // Kept on this laptop: drawn now, as the server would.
+    if (tally) {
+      const next = { ...tally, ...body, local: true };
+      if ('correct' in body) next.options = tally.options.map((o) => ({ ...o, correct: body.correct ? o.key === body.correct : null }));
+      put(next);
     }
   }
 
   async function create(body) {
     setBusy('create');
     setError('');
-    try {
-      const reply = await api.createTally(code, body);
-      setData((d) => d && { ...d, tallies: [...d.tallies, reply.tally] });
-      setOpenId(reply.tally.id);
+    const out = await record('tallyCreate', { code, body }, {
+      label: body.text ?? (questions?.list ?? []).find((q) => q.questionId === body.questionId)?.text ?? 'A question from the bank',
+    });
+    setBusy('');
+    if (out.refused) { setError(out.error); return false; }
+    if (out.ok) {
+      setData((d) => d && { ...d, tallies: [...d.tallies, out.reply.tally] });
+      setOpenId(out.reply.tally.id);
       setFlash(null);
-      return true;
-    } catch (err) {
-      setError(err.message);
-      return false;
-    } finally {
-      setBusy('');
     }
+    return true;
   }
 
   return (
@@ -349,6 +375,7 @@ export default function Tally({ code, canControl, signal, questions }) {
       onCreate={create}
       onRetry={read}
       questions={questions}
+      asking={asking}
     />
   );
 }

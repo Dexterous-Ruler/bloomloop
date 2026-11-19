@@ -5,7 +5,7 @@
  *
  *   <AccountShell current="rooms" crumb="All rooms" width="wide"> ... </AccountShell>
  *
- * `current` is one of: 'home' | 'rooms' | 'review' | 'analytics' | 'profile' | 'console'.
+ * `current` is one of: 'home' | 'rooms' | 'classes' | 'hub' | 'review' | 'analytics' | 'profile' | 'console'.
  */
 
 import { useNavigate } from 'react-router-dom';
@@ -13,6 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { teacherKey } from '../lib/api.js';
 import { signOut } from '../lib/auth.js';
 import { HOME_FOR, ROLE_LABEL } from '../lib/routes.js';
+import { LaptopBanner, useLaptop } from '../teach/laptop.jsx';
 import AppShell from './AppShell.jsx';
 import { useViewer } from './viewer.js';
 
@@ -28,6 +29,7 @@ export function navFor(role, hasKey) {
   if (role === 'student') {
     return [
       HOME_ITEM.student,
+      { id: 'hub', label: 'Learning Hub', icon: 'path', group: 'learn' },
       { id: 'analytics', label: 'Strengths and gaps', icon: 'analytics', group: 'learn' },
       { id: 'join', label: 'Join a room', icon: 'room', group: 'learn' },
       PROFILE,
@@ -38,6 +40,7 @@ export function navFor(role, hasKey) {
       HOME_ITEM[role],
       { id: 'rooms', label: 'Rooms', icon: 'rooms', group: 'overview' },
       { id: 'classes', label: 'Classes', icon: 'users', group: 'overview' },
+      { id: 'hub', label: 'Learning Hub', icon: 'path', group: 'overview' },
       { id: 'review', label: 'Review answers', icon: 'checklist', group: 'overview' },
       { id: 'analytics', label: 'Analytics', icon: 'analytics', group: 'overview' },
       { id: 'console', label: 'Teacher console', icon: 'material', group: 'teach' },
@@ -58,14 +61,19 @@ export function navFor(role, hasKey) {
 
 export default function AccountShell({ current, crumb, title, sub, actions, status, width, children }) {
   const navigate = useNavigate();
-  const { account } = useViewer();
+  const { account, preview } = useViewer();
   const role = account?.role;
   const hasKey = Boolean(teacherKey.get());
+  // Phase 7: on a professor's laptop in laptop mode there are no accounts and
+  // no hub. Asked once per page, by staff only (the route is staff only).
+  const lap = useLaptop(!preview && (account ? role !== 'student' : hasKey));
 
   const go = (id) => {
     if (id === 'home') navigate(HOME_FOR[role] ?? '/');
     else if (id === 'console') navigate('/');
     else if (id === 'join') navigate('/join');
+    // One item, two places: a student's own hub, and staff's view of theirs.
+    else if (id === 'hub') navigate(role === 'student' ? '/hub' : '/hubs');
     else navigate(`/${id}`);
   };
 
@@ -84,13 +92,14 @@ export default function AccountShell({ current, crumb, title, sub, actions, stat
           ? { id: 'out', label: 'Sign out', icon: 'logout', onSelect: () => signOut().then(() => navigate('/signin')) }
           : hasKey
             ? { id: 'lock', label: 'Lock the console', icon: 'lock', onSelect: () => { teacherKey.set(''); navigate('/'); } }
-            : { id: 'in', label: 'Sign in', icon: 'key', onSelect: () => navigate('/signin') },
+            : !lap.laptop && { id: 'in', label: 'Sign in', icon: 'key', onSelect: () => navigate('/signin') },
       ]}
-      nav={navFor(role, hasKey)}
+      nav={navFor(role, hasKey).filter((n) => !(lap.laptop && n.id === 'hub'))}
       current={current}
       onNav={go}
       width={width}
       enterKey={current}
+      banner={lap.laptop ? <LaptopBanner data={lap.data} onReread={lap.retry} reading={lap.reading} /> : null}
     >
       {children}
     </AppShell>

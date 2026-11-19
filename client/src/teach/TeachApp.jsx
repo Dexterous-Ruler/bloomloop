@@ -16,6 +16,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 
 import { api, teacherKey } from '../lib/api.js';
 import { signOut, useAccount } from '../lib/auth.js';
+import { useOutboxOwner } from '../lib/consoleOutbox.js';
 import { LEVELS } from '../lib/bloom.js';
 import { HOME_FOR, ROLE_LABEL } from '../lib/routes.js';
 import AppShell from '../shell/AppShell.jsx';
@@ -26,6 +27,8 @@ import Live from './Live.jsx';
 import Material from './Material.jsx';
 import Projector from './Projector.jsx';
 import Room from './Room.jsx';
+import { LaptopBanner, useLaptop } from './laptop.jsx';
+import SyncStatus, { SyncBanner } from './SyncStatus.jsx';
 
 const STEPS = [
   { id: 'content', label: 'Material', icon: 'material', why: null },
@@ -75,6 +78,9 @@ function Restoring() {
 export default function TeachApp() {
   const navigate = useNavigate();
   const { account } = useAccount();
+  // Records kept on this laptop are this account's (or the console key's), and
+  // are sent from here whichever step is open.
+  useOutboxOwner(account?.id ? `a:${account.id}` : 'key');
   const [health, setHealth] = useState(null);
   const [healthError, setHealthError] = useState('');
   const [unlocked, setUnlocked] = useState(Boolean(teacherKey.get()));
@@ -111,6 +117,10 @@ export default function TeachApp() {
   // landing on a console that can only fail. Not open, so nothing below fetches.
   const student = account?.role === 'student';
   const open = !student && (unlocked || Boolean(account));
+  // Phase 7: is this the professor's laptop in laptop mode? Asked once. On the
+  // key path it is also the first staff call, so a key refused (401) or a
+  // device shut out after too many wrong keys (429) lands here.
+  const lap = useLaptop(open);
 
   useEffect(() => {
     let alive = true;
@@ -229,7 +239,11 @@ export default function TeachApp() {
   }, []);
 
   if (student) return <Navigate to={HOME_FOR.student} replace />;
-  if (!open) return <Gate onUnlock={(v) => { teacherKey.set(v); setUnlocked(true); }} />;
+  const unlock = (v) => { teacherKey.set(v); setUnlocked(true); lap.retry(); };
+  if (!open) return <Gate onUnlock={unlock} laptop={lap.laptop} />;
+  if (!account && (lap.blocked || lap.refused)) {
+    return <Gate onUnlock={unlock} laptop={lap.laptop || lap.blocked} refused={lap.error} blocked={lap.blocked} />;
+  }
 
   // Approved questions are what a room serves; drafts wait for the teacher.
   const questions = bank?.questions ?? [];
@@ -263,6 +277,7 @@ export default function TeachApp() {
         content={content}
         activeCount={activeCount}
         onLive={() => setView('live')}
+        laptop={lap.data}
       />
     );
   }
@@ -286,7 +301,8 @@ export default function TeachApp() {
       { id: 'classes', label: 'Classes', icon: 'users', group: 'teach' },
       { id: 'review', label: 'Review answers', icon: 'checklist', group: 'teach' },
     ]),
-  ];
+  // Phase 7: no hub on the laptop (it needs student accounts).
+  ].filter((n) => !(lap.laptop && n.id === 'hub'));
 
   const go = (id) => {
     if (id === 'dashboard') navigate(HOME_FOR[role] ?? '/');
@@ -374,8 +390,10 @@ export default function TeachApp() {
       crumb={view === 'live' ? undefined : crumb}
       title={showHead ? head.title : undefined}
       sub={showHead ? head.sub : undefined}
+      banner={<><SyncBanner /><LaptopBanner data={lap.data} onReread={lap.retry} reading={lap.reading} /></>}
       status={
         <>
+          <SyncStatus />
           {healthError && <Chip tone="bad" icon="alert">Server unreachable</Chip>}
           {health?.gemini === 'fallback' && (
             <Tip label="No Gemini key on the server, so questions come from the offline template writer. Do not present these as model output.">

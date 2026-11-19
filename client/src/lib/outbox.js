@@ -14,9 +14,15 @@
 // IndexedDB, wrapped so that every way it can fail - private mode, storage
 // switched off, a browser that blocks it - is a quiet null. The session's own
 // copy in memory then carries the outbox for the life of the tab.
+//
+// Beside it (version 2), the pack (Phase 7, "Next"): the questions the server
+// would serve this student next, without keys, one per room and roll number,
+// for answering while the connection is down. Replaced whole by each new pack
+// and gone when a pack comes back empty or the room is gone.
 
 const DB = 'bloomloop-outbox';
 const STORE = 'items';
+const PACKS = 'packs';
 
 let opening = null;
 
@@ -24,9 +30,17 @@ function open() {
   if (!opening) {
     opening = new Promise((resolve) => {
       try {
-        const req = indexedDB.open(DB, 1);
-        req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath: 'answerId' }).createIndex('scope', 'scope');
-        req.onsuccess = () => resolve(req.result);
+        const req = indexedDB.open(DB, 2);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'answerId' }).createIndex('scope', 'scope');
+          if (!db.objectStoreNames.contains(PACKS)) db.createObjectStore(PACKS, { keyPath: 'scope' });
+        };
+        req.onsuccess = () => {
+          // A newer build in another tab wants to upgrade: let it.
+          req.result.onversionchange = () => req.result.close();
+          resolve(req.result);
+        };
         req.onerror = () => resolve(null);
         req.onblocked = () => resolve(null);
       } catch {
@@ -38,13 +52,13 @@ function open() {
 }
 
 /** One transaction; resolves with the request's result, or null on any failure. */
-async function run(mode, fn) {
+async function run(mode, fn, store = STORE) {
   const db = await open();
   if (!db) return null;
   return new Promise((resolve) => {
     try {
-      const t = db.transaction(STORE, mode);
-      const req = fn(t.objectStore(STORE));
+      const t = db.transaction(store, mode);
+      const req = fn(t.objectStore(store));
       t.oncomplete = () => resolve(req?.result ?? true);
       t.onerror = () => resolve(null);
       t.onabort = () => resolve(null);
@@ -74,3 +88,12 @@ export const dropConfirmed = (scope) => run('readwrite', (s) => {
   };
   return null;
 });
+
+/** An item the server has settled for good without a mark (server:kept): it goes from disk. */
+export const drop = (answerId) => run('readwrite', (s) => s.delete(answerId));
+
+/** The pack kept for this room and roll number: { scope, issuedAt, expiresAt, note, questions, ... }, or null. */
+export const readPack = (scope) => run('readonly', (s) => s.get(scope), PACKS).then((p) => (p?.questions ? p : null));
+
+/** Keep a pack (replacing the last), or with no questions, keep nothing. */
+export const keepPack = (scope, pack) => run('readwrite', (s) => (pack?.questions?.length ? s.put({ ...pack, scope }) : s.delete(scope)), PACKS);

@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '../lib/api.js';
+import { noteAttendance, record, useSynced } from '../lib/consoleOutbox.js';
 import { Button, Chip, Empty, Icon, Note, Segmented } from '../ui/index.jsx';
 import { Privacy, ReadFailed, clock } from './Wheel.jsx';
 
@@ -355,7 +356,9 @@ export default function Observe({ code, canControl, signal, classRoom }) {
   const readAttendance = useCallback(async () => {
     if (!classRoom) return;
     try {
-      setAttendance(await api.attendance(code));
+      const report = await api.attendance(code);
+      noteAttendance(code, report);
+      setAttendance(report);
     } catch (err) {
       setAttendance({ error: err.message });
     }
@@ -363,6 +366,8 @@ export default function Observe({ code, canControl, signal, classRoom }) {
 
   useEffect(() => { read(); }, [read, signal]);
   useEffect(() => { readAttendance(); }, [readAttendance, signal]);
+  // Marks kept on this laptop have reached the server: read the day again.
+  useSynced(code, () => { read(); readAttendance(); });
 
   // The counts are the server's. Read them again once no mark is on its way,
   // so the read includes every one of them.
@@ -373,31 +378,39 @@ export default function Observe({ code, canControl, signal, classRoom }) {
 
   const patchRow = (key, fn) => setData((d) => d && { ...d, students: d.students.map((x) => (keyOf(x) === key ? fn(x) : x)) });
 
+  // Through the console outbox: kept on this laptop until the server has it.
+  // A mark the screen drew itself (`local`) has no stamp of the server's, so
+  // the outbox chains it from the reply to the write before it.
   async function send(student, kind, note) {
     const key = keyOf(student);
     const before = student.current;
     const label = data?.kinds?.find((k) => k.id === kind)?.label ?? null;
-    patchRow(key, (x) => ({ ...x, current: kind ? { ...(x.current ?? {}), kind, label, note: note ?? '' } : null }));
+    patchRow(key, (x) => ({ ...x, current: kind ? { ...(x.current ?? {}), kind, label, note: note ?? '', local: true } : null }));
     setRowState((r) => ({ ...r, [key]: { busy: true, error: '' } }));
     inflight.current += 1;
-    try {
-      const body = {
-        ...(student.studentId ? { studentId: student.studentId } : { rollNo: student.rollNo }),
-        kind,
-        ...(kind && note ? { note } : {}),
-      };
-      const reply = await api.observe(code, body);
-      patchRow(key, (x) => ({ ...x, current: reply.current, history: reply.history ?? x.history }));
+    const out = await record('observe', {
+      code,
+      ...(student.studentId ? { studentId: student.studentId } : { rollNo: student.rollNo }),
+      kind,
+      ...(kind && note ? { note } : {}),
+    }, {
+      label: `${student.rollNo}${student.name ? ` ${student.name}` : ''}: ${label ?? 'mark cleared'}${kind && note ? ', with a note' : ''}`,
+      shown: before?.local ? undefined : before?.observedAt ?? null,
+    });
+    inflight.current -= 1;
+    if (out.ok) {
+      patchRow(key, (x) => ({ ...x, current: out.reply.current, history: out.reply.history ?? x.history }));
       setRowState((r) => ({ ...r, [key]: { busy: false, error: '' } }));
-      return true;
-    } catch (err) {
-      patchRow(key, (x) => ({ ...x, current: before }));
-      setRowState((r) => ({ ...r, [key]: { busy: false, error: err.message } }));
-      return false;
-    } finally {
-      inflight.current -= 1;
-      recount();
+    } else if (out.refused) {
+      // Stale: the reply holds the mark in force now, which the sentence names.
+      patchRow(key, (x) => ({ ...x, current: out.stale ? out.current : before }));
+      setRowState((r) => ({ ...r, [key]: { busy: false, error: out.error } }));
+    } else {
+      // Kept on this laptop: the mark stays as drawn; the counts wait for the server.
+      setRowState((r) => ({ ...r, [key]: { busy: false, error: '' } }));
     }
+    recount();
+    return !out.refused;
   }
 
   return (

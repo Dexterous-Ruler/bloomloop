@@ -28,6 +28,7 @@ import { api } from '../lib/api.js';
 import { KIND_LABEL } from '../lib/kinds.js';
 import AccountShell from '../shell/AccountShell.jsx';
 import { useViewer } from '../shell/viewer.js';
+import { ImportedNote, ImportedTag } from '../teach/imported.jsx';
 import {
   Avatar, Button, Chip, Dialog, Empty, Icon, Level, Note, Num, Panel, Segmented, Spark, Tip,
 } from '../ui/index.jsx';
@@ -306,6 +307,7 @@ function QueueItem({ item, active, open, showStatus, onPick }) {
         <div className="rv-meta">
           <span className="rv-code">{item.room?.code}</span>
           {item.room?.title && <span className="clip rv-meta-room">{item.room.title}</span>}
+          <ImportedTag plain from={item.room?.importedFrom} code={item.room?.code} />
           {item.topic && <span>{item.topic}</span>}
           <Level level={item.bloom} />
           <span>{kindLabel(item.kind)}</span>
@@ -542,6 +544,8 @@ function Detail({ item, entry, onRetryLog, role, readOnly, draft, onDraft, onSub
           )}
           {item.room?.status === 'closed' && <span>Closed room</span>}
         </div>
+        {/* Phase 7: its marks are as the laptop's file gave them. */}
+        <ImportedNote from={item.room?.importedFrom} code={item.room?.code} />
         <div className="rv-meta">
           <Level level={item.bloom} />
           {item.topic && <span>{item.topic}</span>}

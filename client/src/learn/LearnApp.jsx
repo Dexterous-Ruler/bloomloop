@@ -16,7 +16,7 @@ import '@fontsource/atkinson-hyperlegible/400.css';
 import '@fontsource/atkinson-hyperlegible/700.css';
 import { clearDraftsFor, setDraftScope } from '../lib/draft.js';
 import { useEnter } from '../lib/motion.js';
-import { dropConfirmed, keep, listFor, scopeOf } from '../lib/outbox.js';
+import { drop, dropConfirmed, keep, keepPack, listFor, readPack, scopeOf } from '../lib/outbox.js';
 import { connect, EV, stillTrying, tryNow } from '../lib/socket.js';
 import { Button, Dialog, Ladder, Mark, Note } from '../ui/index.jsx';
 import ClassVote from './ClassVote.jsx';
@@ -24,7 +24,7 @@ import Finish from './Finish.jsx';
 import Join from './Join.jsx';
 import LevelMove from './LevelMove.jsx';
 import Question from './Question.jsx';
-import { Climb, Conn, Dock, DockSlot, Hold, Kept, Offline } from './parts.jsx';
+import { Climb, Conn, Dock, DockSlot, Hold, Kept, Offline, saveState } from './parts.jsx';
 
 const STORE_KEY = 'bloomloop:student';
 
@@ -85,11 +85,35 @@ function accountToken() {
   return '';
 }
 
-/** What a join says: who, and the sign-in when there is one. Built per join, so a fresh sign-in counts on the next reconnect. */
-const joinPayload = (creds) => {
+/**
+ * What a join says: who, the sign-in when there is one, and (Phase 7) whether
+ * this phone holds answers it has not sent: then the server serves nothing at
+ * the join, the answers go first, and a closed room lets the phone in to send
+ * them. Built per join, so a fresh sign-in counts on the next reconnect.
+ */
+const joinPayload = (creds, deliver = false) => {
   const token = accountToken();
-  return token ? { ...creds, token } : creds;
+  return { ...creds, ...(token ? { token } : {}), ...(deliver ? { deliver: true } : {}) };
 };
+
+/* The pictures of packed questions, kept while online so they still draw with
+   the network down (the service worker serves /api/media/ from here). Only
+   this site's own, and only where the browser has the Cache API at all: a
+   page on plain http over a LAN has neither it nor a service worker. */
+const MEDIA = 'bloomloop-media';
+function keepImages(questions) {
+  try {
+    if (!window.caches) return;
+    const here = window.location.origin;
+    const urls = questions.map((q) => q.question.stimulus).filter((st) => st?.kind === 'image' && st.url)
+      .map((st) => new URL(st.url, here)).filter((u) => u.origin === here).map((u) => u.href);
+    if (urls.length) {
+      window.caches.open(MEDIA).then((c) => Promise.all(urls.map((u) => c.match(u).then((hit) => hit || c.add(u)).catch(() => {})))).catch(() => {});
+    }
+  } catch {
+    /* a picture is never worth a broken session */
+  }
+}
 
 /* The outbox's rules for the server's replies (Phase 7). A save that failed is
    worth sending again, a few times, spaced out; a socket that lost its student
@@ -384,11 +408,13 @@ export default function LearnApp() {
      A tap made while the wifi is down is still the student's answer, and so is
      one made just before a reload: both are on disk, under their answerId.
 
-     server:result names no answerId, so a reply is matched to its item by
-     order. The server answers one socket's answers in the order they arrive,
-     and only one item is ever out at a time, so the reply that comes back is
-     the reply to the item in flight. A resend of an answer the server already
-     holds is answered from the stored row and never counted twice. */
+     Every reply to an answer names its answerId (server:result, server:kept,
+     server:refused, server:exhausted), and settles that item wherever it is.
+     Only where a reply names none (a vote's class:vote, a refusal, a question
+     sent in place of a mark) is it matched by order: the server answers one
+     socket's answers in the order they arrive, and only one item is ever out
+     at a time. A resend of an answer the server already holds is answered
+     from the stored row and never counted twice. */
   const [box, setBox] = useState([]);
   const boxRef = useRef([]);
   const scopeRef = useRef('');
@@ -413,6 +439,28 @@ export default function LearnApp() {
   // settled: still shown, so the student sees them go through.
   const [recent, setRecent] = useState([]);
 
+  /* The pack and the connection (Phase 7, "Next"). `pack` is the last one the
+     server sent, as kept on disk: { issuedAt, expiresAt, timePerQuestion,
+     note, questions: [{ question, reason }] }. `packNote` is the server's
+     sentence when it sent none. `packOn` is the packed question on screen
+     while offline. `deliver` is a closed room taking what this phone kept:
+     { message, until }. `delivering`: an open room's rejoin, until the outbox
+     has gone and the question on screen is asked for again. */
+  const [pack, setPack] = useState(null);
+  const [packNote, setPackNote] = useState('');
+  const [packOn, setPackOn] = useState('');
+  const [deliver, setDeliver] = useState(null);
+  const [delivering, setDelivering] = useState(false);
+  // This connection: { deliver: the join said so, joined, only: a closed room,
+  // cap: questions per student, drained, question / result: one arrived,
+  // trail: a server:question may follow the last server:kept }.
+  const connRef = useRef({});
+
+  function putPack(p) {
+    setPack(p);
+    setPackNote('');
+  }
+
   function write(item) {
     boxRef.current = boxRef.current.filter((i) => i.answerId !== item.answerId).concat(item).sort((a, b) => a.seq - b.seq);
     setBox(boxRef.current);
@@ -427,6 +475,8 @@ export default function LearnApp() {
     scopeRef.current = scope;
     boxRef.current = [];
     setBox([]);
+    putPack(null);
+    readPack(scope).then((p) => { if (scopeRef.current === scope && p) setPack((was) => was || p); });
     loadingRef.current = listFor(scope).then((rows) => {
       if (scopeRef.current !== scope) return;
       const all = new Map(rows.map((r) => [r.answerId, r.status === 'queued' ? { ...r, waited: true } : r]));
@@ -435,6 +485,43 @@ export default function LearnApp() {
       setBox(boxRef.current);
     });
     return loadingRef.current;
+  }
+
+  // Join, or rejoin: once the outbox is read from disk, so a phone holding
+  // answers says so (`deliver`).
+  function sendJoin(socket) {
+    const c = credsRef.current;
+    if (!c) return;
+    loadBox(c.code, c.rollNo).then(() => {
+      if (!socket.connected || credsRef.current !== c) return;
+      const has = boxRef.current.some((i) => i.status === 'queued');
+      connRef.current = { deliver: has };
+      socket.emit(EV.studentJoin, joinPayload(c, has));
+    });
+  }
+
+  // The pack, asked for whenever it may have changed. Never in a closed room.
+  function askPack() {
+    const conn = connRef.current;
+    const socket = socketRef.current;
+    if (conn.joined && !conn.only && socket?.connected) socket.emit(EV.studentPack, {});
+  }
+
+  // The outbox has gone (or what is left waits for another connection). Once
+  // per connection: a closed room's confirmed items go from disk; an open
+  // room asks for the question on screen again (unless one came meanwhile),
+  // and for a fresh pack.
+  function drained() {
+    const conn = connRef.current;
+    if (conn.drained || !conn.joined) return;
+    conn.drained = true;
+    setDelivering(false);
+    if (conn.only) {
+      dropConfirmed(scopeRef.current);
+      return;
+    }
+    if (conn.deliver && !conn.question && !conn.result) requestNext(true);
+    askPack();
   }
 
   function release() {
@@ -461,7 +548,10 @@ export default function LearnApp() {
     const socket = socketRef.current;
     if (!socket?.connected) return;
     const next = boxRef.current.find((i) => i.status === 'queued' && !skipRef.current.has(i.answerId));
-    if (!next) return;
+    if (!next) {
+      drained();
+      return;
+    }
     const timer = window.setTimeout(() => timedOut(next.answerId), REPLY_MS);
     flightRef.current = { id: next.answerId, kind: next.kind, questionId: next.questionId ?? '', timer };
     setFlying(next.answerId);
@@ -529,9 +619,13 @@ export default function LearnApp() {
     write(item).then(pump);
   }
 
-  // The room is gone: what it confirmed goes from this phone. Unsent stays.
+  // The room is gone: what it confirmed goes from this phone, with its pack
+  // and the pack's pictures. Unsent stays.
   function roomGone() {
     dropConfirmed(scopeRef.current);
+    keepPack(scopeRef.current, null);
+    putPack(null);
+    window.caches?.delete(MEDIA).catch(() => {});
     boxRef.current = boxRef.current.filter((i) => i.status !== 'sent' && i.status !== 'marked');
     setBox(boxRef.current);
   }
@@ -546,7 +640,8 @@ export default function LearnApp() {
     // rejection, which throws the phone back to the join screen mid-session.
     // Nothing is lost by staying quiet: the rejoin re-serves the pinned
     // question anyway.
-    if (!socket?.connected) return;
+    // Nor in a closed room this phone is only sending its answers to.
+    if (!socket?.connected || connRef.current.only) return;
     awaitingRef.current = true;
     setAwaiting(true);
     socket.emit(EV.studentNext, {});
@@ -573,7 +668,7 @@ export default function LearnApp() {
         // in once already: a student who filled the form while the socket was
         // still opening is arriving, not returning.
         if (acceptedRef.current) silentRef.current = true;
-        socket.emit(EV.studentJoin, joinPayload(credsRef.current));
+        sendJoin(socket);
       }
     };
 
@@ -587,6 +682,7 @@ export default function LearnApp() {
       }
       readyRef.current = false;
       afterJoinRef.current = false;
+      connRef.current = {};
       // Down is not the same as given up, and the phone must not say the
       // second while the first is true. `stillTrying` is false only when
       // socket.io has genuinely stopped - which, with infinite attempts, means
@@ -622,7 +718,11 @@ export default function LearnApp() {
       setLinked(p.linked === true);
       setLinkNote(typeof p.linkNote === 'string' ? p.linkNote : '');
       // The outbox goes again once the join's own reply is in (the question,
-      // a pause, a wait), and at the latest after three seconds.
+      // a pause, a wait), and at the latest after three seconds. A join that
+      // said it holds answers gets no question, so they go at once.
+      const conn = connRef.current;
+      const only = p.deliverOnly === true;
+      Object.assign(conn, { joined: true, only, cap: Number(p.session?.settings?.questionsPerStudent) || 0 });
       release();
       readyRef.current = false;
       afterJoinRef.current = true;
@@ -633,6 +733,10 @@ export default function LearnApp() {
       loadBox(credsRef.current?.code || p.session?.code, credsRef.current?.rollNo || p.profile?.rollNo);
       window.clearTimeout(readyTimerRef.current);
       readyTimerRef.current = window.setTimeout(markReady, 3000);
+      setPackOn('');
+      setDelivering(Boolean(conn.deliver) && !only);
+      setDeliver(only ? { message: p.message || '', until: p.deliverUntil || '' } : null);
+      if (conn.deliver || only) markReady();
       // The class question this phone was showing, if any, is re-sent after
       // this when it is still running. Given a few seconds, then taken down.
       joinClassRef.current = true;
@@ -649,6 +753,16 @@ export default function LearnApp() {
       if (p.profile) {
         setProfile(p.profile);
         levelRef.current = p.profile.workingLevel || levelRef.current;
+      }
+      // A closed room, here only to take what this phone kept: no question,
+      // no pack, and the end of the room on screen with the sending under it.
+      if (only) {
+        keepPack(scopeRef.current, null);
+        putPack(null);
+        setKlass(null);
+        setEnding('closed');
+        setPhase('done');
+        return;
       }
       setPhase('question');
     };
@@ -671,11 +785,32 @@ export default function LearnApp() {
         }
         rejoinedRef.current.add(f.id);
         readyRef.current = false;
-        socket.emit(EV.studentJoin, joinPayload(credsRef.current));
+        sendJoin(socket);
         return;
       }
       release();
       readyRef.current = false;
+      // A closed room that will not take what this phone kept (no row of its
+      // own there, a room brought in from a laptop, a room deleted). Nothing
+      // goes: every unsent answer stays here, shown, for the teacher to see.
+      const conn = connRef.current;
+      // An ordinary join a closed room refused, with answers now waiting: again,
+      // as a delivery.
+      if (!f && !conn.deliver && !conn.joined && ROOM_GONE[0] === reason && boxRef.current.some((i) => i.status === 'queued')) {
+        sendJoin(socket);
+        return;
+      }
+      if (!f && conn.deliver && !conn.joined && reason !== 'Could not join - try again.') {
+        boxRef.current.filter((i) => i.status === 'queued').forEach((i) => write({ ...i, status: 'refused', note: '' }));
+        keepPack(scopeRef.current, null);
+        putPack(null);
+        credsRef.current = null;
+        setKlass(null);
+        setLed({ tag: 'Kept on this phone', title: 'Show these answers to your teacher', message: reason });
+        setEnding('kept');
+        setPhase('done');
+        return;
+      }
       if (ROOM_GONE.includes(reason)) roomGone();
       setJoining(false);
       const tried = credsRef.current;
@@ -701,12 +836,20 @@ export default function LearnApp() {
     };
 
     const onQuestion = (p = {}) => {
+      // Never a new question in a closed room.
+      if (connRef.current.only) return;
       const id = p.question?._id ? String(p.question._id) : '';
-      // The join's own question opens the outbox. Any other question while an
+      // The join's own question opens the outbox. One that follows a
+      // server:kept is that answer's (the server moves the phone on after an
+      // answer it kept with a class question). Any other question while an
       // answer is out is the server moving the phone on in place of marking
-      // it: the question was put to the class, or taken out of the room.
+      // it: the question is not one this room asks any more. A reply that
+      // names the answer later still settles it.
+      const conn = connRef.current;
+      conn.question = true;
       const f = flightRef.current;
       if (afterJoinRef.current) window.setTimeout(markReady, 0);
+      else if (conn.trail) conn.trail = false;
       else if (f?.kind === 'answer') settle(f.id, { status: 'refused', note: NOT_TAKEN.moved });
       roomHoldRef.current = false;
       window.setTimeout(pump, 0);
@@ -781,21 +924,27 @@ export default function LearnApp() {
     };
 
     const onResult = (p = {}) => {
-      // Whose result: the answer in flight, or (a reply the outbox gave up
-      // waiting for) the held answer to the question on screen. A graded mark
-      // is "Marked"; one a professor may review, a poll, or a retry is "Sent".
+      // Whose result: the answer it names (Phase 7); from a server that names
+      // none, the answer in flight or (a reply the outbox gave up waiting for)
+      // the held answer to the question on screen. A graded mark is "Marked";
+      // one a professor may review, a poll, or a retry is "Sent". Marked after
+      // the room closed, with the server's sentence saying it still counts.
+      const conn = connRef.current;
       const f = flightRef.current?.kind === 'answer' ? flightRef.current : null;
-      const held = f ? null : boxRef.current.find((i) => i.kind === 'answer' && i.status === 'queued' && i.questionId === shownIdRef.current);
-      const target = f ? { id: f.id, questionId: f.questionId } : held ? { id: held.answerId, questionId: held.questionId } : null;
+      const named = p.answerId ? boxRef.current.find((i) => i.answerId === p.answerId) : null;
+      const held = p.answerId || f ? null : boxRef.current.find((i) => i.kind === 'answer' && i.status === 'queued' && i.questionId === shownIdRef.current);
+      const target = named ? { id: named.answerId, questionId: named.questionId }
+        : p.answerId ? null : f ? { id: f.id, questionId: f.questionId } : held ? { id: held.answerId, questionId: held.questionId } : null;
       if (target) {
-        settle(target.id, { status: p.retry || p.provisional || p.ungraded ? 'sent' : 'marked' });
-        // Case B: an earlier question's result, for the outbox and not for the
-        // question on screen.
-        if (target.questionId && target.questionId !== shownIdRef.current) {
-          if (p.profile) setProfile(p.profile);
-          levelRef.current = p.workingLevel || levelRef.current;
-          return;
-        }
+        settle(target.id, { status: p.retry || p.provisional || p.ungraded ? 'sent' : 'marked', note: p.late ? p.message || '' : '' });
+      }
+      // Case B: an earlier question's result, for the outbox and not for the
+      // question on screen. In a closed room, never for the screen.
+      const about = target?.questionId || String(p.questionId ?? '');
+      if (conn.only || (about && about !== shownIdRef.current)) {
+        if (p.profile) setProfile(p.profile);
+        levelRef.current = p.workingLevel || levelRef.current;
+        return;
       }
       // The result is the server's acknowledgement of the submission, including
       // the one it replies to a resend with. Nothing is owed after this, so the
@@ -803,6 +952,10 @@ export default function LearnApp() {
       // and left on it would refuse the next question.
       awaitingRef.current = false;
       setAwaiting(false);
+      conn.result = true;
+      // A room with a number of questions per student resizes the pack after
+      // each answer.
+      if (conn.cap && conn.drained) askPack();
       if (p.retry) {
         // Wrong, with a go left. Nothing is marked and nothing is revealed: the
         // options reopen with the student's own working still in them.
@@ -821,10 +974,16 @@ export default function LearnApp() {
     };
 
     const onExhausted = (p = {}) => {
-      // To an answer, the room's cap: that answer is not taken, ever.
+      // To an answer, the room's cap: that answer is not taken, ever. One that
+      // follows a server:kept is that answer's (kept past the cap) and settles
+      // nothing more.
+      const conn = connRef.current;
       const f = flightRef.current;
+      const refuse = (id) => settle(id, { status: 'refused', note: p.reason || NOT_TAKEN.full });
       if (afterJoinRef.current) window.setTimeout(markReady, 0);
-      else if (f?.kind === 'answer') settle(f.id, { status: 'refused', note: p.reason || NOT_TAKEN.full });
+      else if (p.answerId) refuse(p.answerId);
+      else if (conn.trail) conn.trail = false;
+      else if (f?.kind === 'answer') refuse(f.id);
       if (p.profile) setProfile(p.profile);
       // Set when the student reached the room's questions-per-student cap.
       setEndReason(p.reason || '');
@@ -851,16 +1010,63 @@ export default function LearnApp() {
       setEnding('teacher-led');
       setPhase('done');
     };
-    // Closing the room closes its class question too, unrevealed. To an
-    // answer or vote in flight it is final: kept and shown, never sent again.
+    // Closing the room closes its class question too, unrevealed. An answer
+    // this phone has not sent yet still goes (Phase 7): it rejoins the closed
+    // room to send it, and the server says, answer by answer, what counts. An
+    // answer in flight is answered all the same, by its answerId.
     const onClosed = () => {
-      const f = flightRef.current;
-      if (f) settle(f.id, { status: 'refused', note: NOT_TAKEN.closed });
-      roomGone();
       setKlass(null);
+      // A vote never reaches a closed room: kept and shown, never sent again.
+      boxRef.current.filter((i) => i.kind === 'vote' && i.status === 'queued')
+        .forEach((i) => settle(i.answerId, { status: 'refused', note: NOT_TAKEN.closed }));
+      if (connRef.current.only) return;
+      if (boxRef.current.some((i) => i.status === 'queued')) {
+        release();
+        readyRef.current = false;
+        sendJoin(socket);
+        return;
+      }
+      roomGone();
       setEnding('closed');
       setPhase('done');
     };
+
+    /* The pack (Phase 7): kept on disk for this room and roll number, with
+       its pictures, or, empty, the server's sentence and nothing kept. */
+    const onPack = (p = {}) => {
+      const list = Array.isArray(p.questions) ? p.questions.filter((q) => q?.question?._id) : [];
+      const next = list.length ? {
+        issuedAt: p.issuedAt || '',
+        expiresAt: p.expiresAt || '',
+        timePerQuestion: Number(p.timePerQuestion) > 0 ? Number(p.timePerQuestion) : null,
+        note: p.note || '',
+        questions: list.map((q) => ({ question: q.question, reason: q.reason || '' })),
+      } : null;
+      keepPack(scopeRef.current, next);
+      putPack(next);
+      if (next) keepImages(next.questions);
+      else setPackNote(p.note || '');
+    };
+
+    /* Final replies, each naming its answer. Kept: saved and not counted, with
+       the server's sentence and never a mark; it goes from the outbox on disk
+       and stays on screen for this visit. Refused: refused for good, kept on
+       this phone and never sent again. A question that follows a kept answer
+       is its own (`trail`). */
+    const onFinal = (patch) => (p = {}) => {
+      const f = flightRef.current;
+      const id = p.answerId || (f?.kind === 'answer' ? f.id : '');
+      if (!id) return;
+      if (patch.counted === false && !connRef.current.only) connRef.current.trail = true;
+      if (boxRef.current.find((i) => i.answerId === id)?.questionId === shownIdRef.current) {
+        awaitingRef.current = false;
+        setAwaiting(false);
+      }
+      settle(id, { ...patch, note: p.message || '' });
+      if (patch.counted === false) drop(id);
+    };
+    const onKept = onFinal({ status: 'sent', counted: false });
+    const onRefused = onFinal({ status: 'refused' });
 
     // Paused or waiting, whether as the join's reply, a reply to an answer or
     // the room stopping: nothing is refused, and nothing goes until it runs.
@@ -936,6 +1142,9 @@ export default function LearnApp() {
         }
         return base;
       });
+      // The question is out of every pack now; which of this phone's it was,
+      // the server does not say.
+      askPack();
     };
 
     // This phone's own vote, back: what it sent, never whether it was right.
@@ -971,6 +1180,7 @@ export default function LearnApp() {
       }
       setKlass(null);
       if (ours) setKlassNote(p.message || '');
+      askPack();
     };
 
     socket.on('connect', onConnect);
@@ -989,6 +1199,9 @@ export default function LearnApp() {
     socket.on(EV.classQuestion, onClassQuestion);
     socket.on(EV.classVote, onClassVote);
     socket.on(EV.classClosed, onClassClosed);
+    socket.on(EV.pack, onPack);
+    socket.on(EV.kept, onKept);
+    socket.on(EV.refused, onRefused);
 
     // The wifi is back: try now, not at the end of the current wait.
     const onOnline = () => tryNow(socket);
@@ -1015,6 +1228,9 @@ export default function LearnApp() {
       socket.off(EV.classQuestion, onClassQuestion);
       socket.off(EV.classVote, onClassVote);
       socket.off(EV.classClosed, onClassClosed);
+      socket.off(EV.pack, onPack);
+      socket.off(EV.kept, onKept);
+      socket.off(EV.refused, onRefused);
       socket.disconnect();
     };
   }, []);
@@ -1044,11 +1260,12 @@ export default function LearnApp() {
   // Safety net: if the accept lands but no item follows, ask for one and do
   // not leave a phone on a skeleton.
   // Not while the room waits: the professor's start sends the question.
+  // Nor while a rejoin's outbox is going: it asks once it has gone.
   useEffect(() => {
-    if (paused || parked || waiting || phase !== 'question' || item || awaiting) return undefined;
+    if (paused || parked || waiting || delivering || phase !== 'question' || item || awaiting) return undefined;
     const t = setTimeout(() => requestNext(false), 1500);
     return () => clearTimeout(t);
-  }, [paused, parked, waiting, phase, item, awaiting, requestNext]);
+  }, [paused, parked, waiting, delivering, phase, item, awaiting, requestNext]);
 
   /* ---------------------------------------------------------------- signals */
 
@@ -1307,8 +1524,8 @@ export default function LearnApp() {
     setRefusedResume('');
     setJoining(true);
     const s = socketRef.current;
-    if (s?.connected) s.emit(EV.studentJoin, joinPayload(creds));
-  }, []);
+    if (s?.connected) sendJoin(s);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Drop this phone's claim to be this student.
      Nothing of theirs goes with it: the answers, the levels and the pinned
@@ -1359,10 +1576,15 @@ export default function LearnApp() {
     // unsent is ever thrown away, and it goes when they join again.
     release();
     readyRef.current = false;
+    connRef.current = {};
     scopeRef.current = '';
     boxRef.current = [];
     setBox([]);
     setRecent([]);
+    putPack(null);
+    setPackOn('');
+    setDeliver(null);
+    setDelivering(false);
     setLeaving(false);
     setJoining(false);
     setAwaiting(false);
@@ -1404,6 +1626,11 @@ export default function LearnApp() {
     setStatus('connecting');
   }, [forget, closeFocus]);
 
+  // What every answer carries besides itself: a fresh key, reused on every
+  // resend; the phone's own time, for the record only (Phase 7); and the tap
+  // when there is one, and only then.
+  const stamp = () => ({ answerId: newAnswerId(), deviceAnsweredAt: new Date().toISOString(), ...(sure ? { confidence: sure } : {}) });
+
   // One submit for every kind: the response is a number, an array, a string or
   // a map depending on the interaction, and the server scores it per kind.
   const submit = (response) => {
@@ -1417,16 +1644,24 @@ export default function LearnApp() {
     setKlassNote('');
     setRecent([]);
     // One key per attempt, kept with the outbox's copy so every resend of this
-    // attempt carries the same key and can never count twice. The tap goes
-    // with it when there is one, and only then.
-    const answer = { questionId: String(item.question._id), response, answerId: newAnswerId(), ...(sure ? { confidence: sure } : {}) };
+    // attempt carries the same key and can never count twice.
+    const answer = { questionId: String(item.question._id), response, ...stamp() };
     setRetry(null);
     // On this phone before it is sent, and kept until a reply comes back for
     // it. The tap that lands in the second the wifi drops is the one a student
     // would never forgive us for losing. Re-sending it later is safe because
     // the server answers a submission it already holds with the score it
     // recorded. Only ever sent over a live socket, after the rejoin.
-    enqueue('answer', answer, { questionId: answer.questionId, label: String(item.question.text ?? '').slice(0, 140) });
+    enqueue('answer', answer, { questionId: answer.questionId, label: String(item.question.text ?? '').slice(0, 140), html: item.question.rich?.text });
+  };
+
+  /* A packed question, answered offline (Phase 7): one go, in the pack's
+     order, never marked here. It goes as an ordinary answer, after the
+     rejoin, and is marked then. */
+  const submitPacked = (response) => {
+    if (!onPacked || box.some((i) => i.kind === 'answer' && i.questionId === packOn)) return;
+    setTold(true);
+    enqueue('answer', { questionId: packOn, response, ...stamp() }, { questionId: packOn, label: String(onPacked.question.text ?? '').slice(0, 140), html: onPacked.question.rich?.text });
   };
 
   /* A vote in the class question's open round. A fresh key for every vote: a
@@ -1461,34 +1696,6 @@ export default function LearnApp() {
   const code = session?.code || credsRef.current?.code || '';
   const rollNo = credsRef.current?.rollNo || profile?.rollNo || '';
 
-  const moved = phase === 'question' && Boolean(result?.levelChanged);
-  const view = phase === 'question' ? (moved ? 'move' : 'question') : phase;
-
-  const root = useRef(null);
-  const page = useRef(null);
-  const [dock, setDock] = useState(null);
-  // One arrival per screen and per question. The page's blocks are keyed by it
-  // too, so each arrival is new elements: a block carried over from the last
-  // screen could be left half-faded by the entrance it interrupted.
-  const arrival = `${view}:${view === 'question' ? item?.question?._id ?? '' : ''}`;
-  useEnter(page, arrival);
-
-  // The class question's own page, with its own arrival: each round and the
-  // close come in as new, while the parked page keeps its place.
-  const classPage = useRef(null);
-  useEnter(classPage, parked ? `${klass.q.id}:${klass.q.round}:${klass.q.state}:${klass.end ? 'end' : ''}` : '');
-
-  // The page ends above the dock however tall the dock is: a button alone, or
-  // a verdict and the server's sentence over it.
-  useEffect(() => {
-    if (!dock) return undefined;
-    const measure = () => root.current?.style.setProperty('--ln-dock', `${dock.offsetHeight}px`);
-    const ro = new ResizeObserver(measure);
-    ro.observe(dock);
-    measure();
-    return () => ro.disconnect();
-  }, [dock]);
-
   // The browser's own word on the network, and a first connection that has
   // been trying for a while (a reload with the server out of reach): either
   // way this phone is working offline, and says so in one calm line.
@@ -1510,6 +1717,48 @@ export default function LearnApp() {
     const t = setTimeout(() => setStalled(true), 4000);
     return () => clearTimeout(t);
   }, [status]);
+  const offline = status !== 'online' && status !== 'lost' && (status === 'offline' || stalled || !netOnline);
+
+  /* Offline with a pack (Phase 7, "Next"): once the question on screen is
+     answered, the packed ones, in the order sent, one go each, skipping only
+     those already answered, until the pack is used up or expires. Each answer
+     waits in the outbox like any other and is marked after the rejoin. */
+  const answered = new Set(box.filter((i) => i.kind === 'answer').map((i) => i.questionId));
+  const packLive = pack && !(Date.parse(pack.expiresAt) <= Date.now()) ? pack.questions : [];
+  const packLeft = packLive.filter((q) => !answered.has(String(q.question._id)));
+  const onPacked = offline && packOn ? packLive.find((q) => String(q.question._id) === packOn) ?? null : null;
+  const goPack = offline && packLeft.length ? () => { setSure(null); setPackOn(String(packLeft[0].question._id)); } : null;
+  const goNext = (force) => (goPack ? goPack() : requestNext(force));
+  const packView = Boolean(onPacked) && !parked && (phase === 'question' || phase === 'resume');
+
+  const moved = phase === 'question' && !packView && Boolean(result?.levelChanged);
+  const view = packView ? 'question' : phase === 'question' ? (moved ? 'move' : 'question') : phase;
+
+  const root = useRef(null);
+  const page = useRef(null);
+  const [dock, setDock] = useState(null);
+  // One arrival per screen and per question. The page's blocks are keyed by it
+  // too, so each arrival is new elements: a block carried over from the last
+  // screen could be left half-faded by the entrance it interrupted.
+  const arrival = `${view}:${view === 'question' ? (packView ? packOn : item?.question?._id ?? '') : ''}`;
+  useEnter(page, arrival);
+
+  // The class question's own page, with its own arrival: each round and the
+  // close come in as new, while the parked page keeps its place.
+  const classPage = useRef(null);
+  useEnter(classPage, parked ? `${klass.q.id}:${klass.q.round}:${klass.q.state}:${klass.end ? 'end' : ''}` : '');
+
+  // The page ends above the dock however tall the dock is: a button alone, or
+  // a verdict and the server's sentence over it.
+  useEffect(() => {
+    if (!dock) return undefined;
+    const measure = () => root.current?.style.setProperty('--ln-dock', `${dock.offsetHeight}px`);
+    const ro = new ResizeObserver(measure);
+    ro.observe(dock);
+    measure();
+    return () => ro.disconnect();
+  }, [dock]);
+
 
   // A phone picking itself back up shows its outbox before the server answers:
   // after a reload with no network, that is all there is to show.
@@ -1519,11 +1768,15 @@ export default function LearnApp() {
 
   // The phone's service worker (Phase 7): production builds only, and only
   // from here, so no staff screen ever has one. It keeps /join openable with
-  // no network; it never holds an answer or anything from /api.
+  // no network; it never holds an answer or anything from /api but the
+  // pictures of packed questions. Plain http over a LAN is not a secure
+  // context: there is no service worker there, and the offline line says not
+  // to reload.
+  const [noWorker] = useState(() => !window.isSecureContext || !('serviceWorker' in navigator));
   useEffect(() => {
-    if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
+    if (!import.meta.env.PROD || noWorker) return;
     navigator.serviceWorker.register('/sw.js', { scope: '/join', updateViaCache: 'none' }).catch(() => {});
-  }, []);
+  }, [noWorker]);
 
   if (phase === 'join') {
     return (
@@ -1592,16 +1845,26 @@ export default function LearnApp() {
      here gets red, an alert icon or a raised voice: leaving a page is not an
      error and must not be dressed as one. It sits on the two screens where a
      student is working and nowhere else. */
-  const offline = status !== 'online' && status !== 'lost' && (status === 'offline' || stalled || !netOnline);
-
   /* The outbox, as the student sees it. The question on screen carries its own
      answer's state under it; everything else on this phone is listed: what is
      waiting, what was refused, and what went through after waiting. */
-  const shownId = item?.question?._id ? String(item.question._id) : '';
+  const shownId = packView ? packOn : item?.question?._id ? String(item.question._id) : '';
   const own = shownId ? box.filter((i) => i.kind === 'answer' && i.questionId === shownId).pop() : null;
-  const ownState = own && (own.status === 'queued' ? (flying === own.answerId ? 'sending' : 'queued') : own.status);
+  const ownState = own && saveState(own, flying, offline);
+  // The answer on screen is given and nothing here will mark it: offline, or
+  // kept or refused by the server. The way on is the pack, or the next
+  // question.
+  const onward = own && (packView || (!result && (offline || own.status === 'refused' || own.counted === false)))
+    ? (offline ? goPack : () => requestNext(true)) : null;
+  // Offline with nothing left to answer: the server's sentence about the
+  // pack when it sent none, else the phone's own. On a packed question not yet
+  // answered: the pack's own sentence.
+  const offNote = offline && !goPack && (packView ? own : !item?.question || own || result)
+    ? packNote || 'There is nothing more to answer until you reconnect. Your answers are saved on this phone.'
+    : packView && !own ? pack.note : '';
   const others = box.filter((i) => i !== own && (i.status === 'queued' || recent.includes(i.answerId)));
   const unsent = box.filter((i) => i.status === 'queued' || i.status === 'refused' || recent.includes(i.answerId));
+  const deliverBy = Date.parse(deliver?.until);
   const voteKept = klass && box.filter((i) => i.kind === 'vote' && i.status === 'queued'
     && i.classQuestionId === String(klass.q.id) && i.round === (Number(klass.q.round) || 1)).pop();
 
@@ -1669,7 +1932,7 @@ export default function LearnApp() {
               <Button variant="ghost" size="sm" onClick={() => setLeaving(true)}>Not me</Button>
             )}
           </div>
-          {offline && <Offline />}
+          {offline && <Offline noWorker={noWorker} />}
         </header>
 
         {/* Where this student is working, across the top of every question. */}
@@ -1712,31 +1975,47 @@ export default function LearnApp() {
                     nothing. This is the session you left, not a new one.
                   </p>
                 </div>
-                <Kept items={unsent} flying={flying} />
+                <Kept items={unsent} flying={flying} offline={offline} />
                 {/* Acts at once, unlike the one in the bar: there is nothing on
                     this screen to lose, and making somebody confirm that they
                     are not the person named above is a gate with nothing behind
-                    it. */}
+                    it. Offline with a pack, the questions kept here come
+                    first. */}
                 <Dock>
-                  <Button size="xl" block icon="logout" onClick={leave}>Not me, join as someone else</Button>
+                  <div className="stack stack-2">
+                    {goPack && <Button variant="primary" size="xl" block onClick={goPack}>Answer the questions kept on this phone</Button>}
+                    <Button size="xl" block icon="logout" onClick={leave}>Not me, join as someone else</Button>
+                  </div>
                 </Dock>
               </>
             )}
 
+            {/* A closed room taking what this phone kept (Phase 7): the
+                server's sentence, until when an answer to a question given
+                before the close still counts, and each answer as it goes. */}
+            {view === 'done' && deliver && (
+              <Note icon="send" role="status">
+                {deliver.message}{' '}
+                {!(deliverBy > 0) ? '' : deliverBy > Date.now()
+                  ? `An answer to a question you were given before it closed counts if it reaches your teacher by ${new Date(deliverBy).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}; after that it is saved but does not count.`
+                  : 'It is more than 10 minutes since it closed, so these answers are saved but do not count.'}
+              </Note>
+            )}
+            {view === 'done' && deliver && <Kept items={unsent} flying={flying} offline={offline} />}
             {view === 'done' && <Finish profile={profile} ending={ending} reason={endReason} led={led} linked={linked} onLeave={leave} />}
-            {view === 'done' && <Kept items={unsent} flying={flying} />}
+            {view === 'done' && !deliver && <Kept items={unsent} flying={flying} offline={offline} />}
 
             {view === 'move' && (
               <>
                 {focusLeft}
-                <LevelMove result={result} busy={awaiting} onNext={() => requestNext(true)} />
+                <LevelMove result={result} busy={awaiting} onNext={() => goNext(true)} />
                 {focusLine}
               </>
             )}
 
             {view === 'question' && (
               <>
-                {(!told || focusLeft || (item?.resumed && !result) || (linkNote && !linkHidden) || klassNote) && (
+                {(!told || focusLeft || (item?.resumed && !result && !packView) || (linkNote && !linkHidden) || klassNote || offNote) && (
                   <div className="ln-notes">
                     {/* A sign-in was sent and could not be linked: the server's
                         one sentence, which never says which check failed. */}
@@ -1766,35 +2045,48 @@ export default function LearnApp() {
                         mid-question and came back to the same wording needs
                         telling it IS the same question, or being asked twice
                         reads as the app having lost count of them. */}
-                    {item?.resumed && !result && (
+                    {item?.resumed && !result && !packView && (
                       <Note icon="refresh" role="status">
                         This is the question you were already on. You are not being asked it twice, and everything you
                         answered before it still counts.
                       </Note>
                     )}
+                    {/* Offline (Phase 7): what the pack is for, or that there is
+                        nothing more until the connection is back. */}
+                    {offNote && <Note icon="info" role="status">{offNote}</Note>}
                   </div>
                 )}
-                <Kept items={others} flying={flying} />
+                <Kept items={others} flying={flying} offline={offline} />
                 <Question
-                  item={item}
-                  result={result}
-                  awaiting={awaiting}
-                  sent={picked}
+                  /* A packed question is drawn as a served one is: its own
+                     reason sentence, its place in the pack for a number, the
+                     room's time per question, and never a mark. */
+                  item={packView ? {
+                    question: onPacked.question,
+                    reason: onPacked.reason,
+                    index: 0,
+                    tag: `Offline ${packLive.indexOf(onPacked) + 1}/${packLive.length}`,
+                    timePerQuestion: pack.timePerQuestion,
+                  } : item}
+                  result={packView ? null : result}
+                  awaiting={!packView && awaiting}
+                  sent={packView ? own?.payload.response ?? null : picked}
                   level={level}
                   trail={trail}
-                  auto={Boolean(result) && !paused && !supports.noTimer}
-                  retry={retry}
-                  triesLeft={triesLeft}
+                  auto={!packView && Boolean(result) && !paused && !supports.noTimer}
+                  retry={packView ? null : retry}
+                  triesLeft={packView ? 1 : triesLeft}
                   readAloud={supports.readAloud}
                   // A support for more time, or none, is not shown a clock.
-                  timer={supports.noTimer || supports.extraTime ? null : item?.timePerQuestion}
+                  timer={supports.noTimer || supports.extraTime ? null : packView ? pack.timePerQuestion : item?.timePerQuestion}
                   // The clock stops while the question is parked.
                   paused={paused || parked}
                   sure={taps.length ? { choices: taps, value: sure, onChange: setSure } : null}
                   save={own ? { state: ownState, note: own.note } : null}
+                  onward={onward}
                   foot={focusLine}
-                  onSubmit={submit}
-                  onNext={requestNext}
+                  onSubmit={packView ? submitPacked : submit}
+                  onNext={goNext}
                 />
               </>
             )}

@@ -260,9 +260,11 @@ function ThemeButton() {
  * @param groups   labels for nav groups, beyond the defaults
  * @param commands extra command-palette actions: [{ id, label, icon, onSelect }]
  * @param width    'narrow' | 'wide' | undefined
+ * @param banner   a strip above the page head, such as the console's "Working
+ *                 offline" (teach/SyncStatus.jsx); it renders nothing when all is well
  */
 export default function AppShell({
-  crumb, title, sub, actions, status, who, menu = [], nav, groups, commands, current, onNav, width, enterKey, children,
+  crumb, title, sub, actions, status, who, menu = [], nav, groups, commands, current, onNav, width, enterKey, banner, children,
 }) {
   const page = useRef(null);
   const [drawer, setDrawer] = useState(false);
@@ -314,6 +316,7 @@ export default function AppShell({
 
         <div className="scroll">
           <main className={`page${width ? ` page-${width}` : ''}`} ref={page}>
+            {banner}
             {(title || crumb || actions) && (
               <div className="page-head">
                 <div className="ttl">

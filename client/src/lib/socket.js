@@ -109,4 +109,14 @@ export const EV = {
   classVote: 'class:vote',
   classClosed: 'class:closed',
   teacherClassQuestion: 'teacher:class-question',
+  // Phase 7. A pack: the few questions this phone would be served next,
+  // without keys, for answering while the connection is down. Asked for
+  // after every join, and again when a class question starts or ends.
+  studentPack: 'student:pack',
+  pack: 'server:pack',
+  // Final replies to an answer, each naming its answerId: saved and not
+  // counted (with the server's sentence, and never a mark), and refused for
+  // good (kept on the phone, never sent again).
+  kept: 'server:kept',
+  refused: 'server:refused',
 };

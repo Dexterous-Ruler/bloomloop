@@ -45,12 +45,16 @@ async function send(path, options = {}) {
   const res = await fetch(`/api${path}`, { ...options, headers });
   if (!res.ok) {
     let message = res.statusText;
+    let body = null;
     if ((res.headers.get('content-type') || '').includes('application/json')) {
-      message = (await res.json().catch(() => ({}))).error || message;
+      body = await res.json().catch(() => null);
+      message = body?.error || message;
     }
     // Carried so the console can tell "you are not unlocked" apart from a
-    // genuine failure and show the unlock panel instead of a red error.
-    throw Object.assign(new Error(message), { status: res.status });
+    // genuine failure and show the unlock panel instead of a red error. The
+    // body rides along for the replies that say more than a sentence (a stale
+    // record's `current`, a translation's flags).
+    throw Object.assign(new Error(message), { status: res.status, body });
   }
   return res;
 }
@@ -73,6 +77,41 @@ const json = (method) => (path, body) =>
     headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+
+/**
+ * Plain JSON calls with this browser's credentials, for modules that keep
+ * their own list of routes (the Learning Hub's). Paths start after /api.
+ */
+export const http = {
+  get: (path) => req(path),
+  post: json('POST'),
+  put: json('PUT'),
+  patch: json('PATCH'),
+  del: json('DELETE'),
+};
+
+// -- Phase 7: the console outbox (lib/consoleOutbox.js) -----------------------
+/**
+ * One record write with an Idempotency-Key, for the one caller that needs a
+ * reply's header: answers { body, replayed }, `replayed` being the server's
+ * Idempotent-Replayed (the stored first reply to this key). A refusal throws
+ * as every call here does (message, status, body); no reply, or `signal`
+ * aborting, throws with no status.
+ */
+export async function keyedWrite(method, path, body, key, signal) {
+  const res = await send(path, {
+    method,
+    signal,
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const ct = res.headers.get('content-type') || '';
+  return {
+    body: ct.includes('application/json') ? await res.json() : await res.text(),
+    replayed: res.headers.get('idempotent-replayed') === 'true',
+  };
+}
+// -- end of the console outbox's block ----------------------------------------
 
 /** A response saved as a file, under the name the server gave it. */
 async function saveResponse(res, fallback) {
@@ -523,4 +562,25 @@ export const api = {
       throw err;
     }
   },
+
+  // -- Phase 7: laptop mode and imported rooms (teach/laptop.jsx, teach/imported.jsx,
+  //    account/ImportRooms.jsx) ------------------------------------------------
+  // Staff only (a professor's or HOD's token, or the teacher key).
+  // { laptop: false } on every server but a professor's laptop in laptop mode;
+  // there { laptop: true, run, startedAt, archives: { folder, intervalSeconds,
+  // lastWriteAt, writes, rooms, lastError }, join: [{ network, url }],
+  // unavailable: [sentence] }. In laptop mode too many wrong keys from one
+  // device answer 429 with the lock-out sentence, on this and every staff route.
+  laptop: () => req('/laptop'),
+  // One room file laptop mode saved: { archive (the parsed .json), contentId?,
+  // classId? }. 201 { imported, room, import, importedFrom, message }; 200
+  // { alreadyImported: true, same, import, message } when that room came in
+  // before (nothing changed). The 400 asking for a chapter (sent without
+  // contentId) or a class (sent with one) carries `error` only; send again
+  // with the choice.
+  importRoom: ({ archive, contentId, classId }) => json('POST')('/imports/rooms', { archive, contentId, classId }),
+  // { imports: [{ id, room: { code, sessionId }, sourceRoomId, laptop: { run, startedAt },
+  // archivedAt, importedAt, importedBy, bytes, summary }], limitBytes }, newest first.
+  roomImports: () => req('/imports/rooms'),
+  // -- end of laptop mode and imported rooms -------------------------------------
 };

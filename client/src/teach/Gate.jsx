@@ -11,7 +11,7 @@ import { Link } from 'react-router-dom';
 import { LABEL, LEVELS } from '../lib/bloom.js';
 import { supabase } from '../lib/auth.js';
 import { ThemeToggle } from '../shell/AppShell.jsx';
-import { Button, Field, Flow, Mark } from '../ui/index.jsx';
+import { Button, Field, Flow, Mark, Note } from '../ui/index.jsx';
 
 /**
  * The split frame: the art on forest, the form on the page. `art` replaces
@@ -55,7 +55,13 @@ function GateFrame({ children, foot, art }) {
   );
 }
 
-export default function Gate({ onUnlock }) {
+/**
+ * @param refused  the server's sentence when the key in use was refused: a
+ *                 wrong key (401), or on the laptop a device shut out after
+ *                 too many wrong keys (429, `blocked`)
+ * @param laptop   laptop mode (Phase 7): there are no accounts to sign in to
+ */
+export default function Gate({ onUnlock, refused, blocked = false, laptop = false }) {
   const [draft, setDraft] = useState('');
   const ready = draft.trim().length > 0;
 
@@ -73,10 +79,16 @@ export default function Gate({ onUnlock }) {
           <p className="t-lead">Read a chapter, write the questions, open a room. The key keeps it yours.</p>
         </div>
 
+        {refused && (
+          <Note tone="bad" role="alert">
+            {blocked ? refused : <>That key was not accepted. {refused}</>}
+          </Note>
+        )}
+
         <Field
           label="Teacher key"
           htmlFor="key"
-          hint={supabase ? undefined : 'It is printed in the server window when BloomLoop starts.'}
+          hint={supabase && !laptop ? undefined : 'It is printed in the server window when BloomLoop starts.'}
         >
           {/* No placeholder: an example value here is either the real key or
               useless, and the real key in the bundle is readable by anyone. */}
@@ -93,7 +105,7 @@ export default function Gate({ onUnlock }) {
         </Field>
         <Button type="submit" variant="primary" size="xl" block disabled={!ready}>Open the console</Button>
 
-        {supabase && (
+        {supabase && !laptop && (
           <>
             <div className="or">or</div>
             <Link className="btn btn-lg btn-block" to="/signin">Sign in with your account</Link>

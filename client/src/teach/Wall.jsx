@@ -77,9 +77,28 @@ export function SplitCode({ code, className }) {
   );
 }
 
-/** The address a phone needs, from this browser's own origin. */
+/**
+ * Phase 7: on a laptop in laptop mode with the console at localhost, the
+ * console opens the wall with the laptop's network address (?join=), since a
+ * phone cannot reach localhost. Only a private network address is taken; and
+ * `?laptop=1` alone means the laptop has none yet.
+ */
+const PRIVATE = /^(10\.\d+|172\.(1[6-9]|2\d|3[01])|192\.168|169\.254)\.\d+\.\d+$/;
+function laptopJoin() {
+  const q = new URLSearchParams(window.location.search);
+  try {
+    const u = new URL(q.get('join') ?? '');
+    if (u.protocol === 'http:' && PRIVATE.test(u.hostname)) return { origin: u.origin, none: false };
+  } catch { /* no address given */ }
+  const h = window.location.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const loopback = h === 'localhost' || h === '::1' || /^127\./.test(h);
+  return { origin: window.location.origin, none: q.get('laptop') === '1' && loopback };
+}
+const LAPTOP_JOIN = typeof window === 'undefined' ? { origin: '', none: false } : laptopJoin();
+
+/** The address a phone needs, from this browser's own origin (or the laptop's, above). */
 function joinFor(code) {
-  const url = `${window.location.origin}/join/${code}`;
+  const url = `${LAPTOP_JOIN.origin}/join/${code}`;
   const shown = url.replace(/^https?:\/\//, '');
   return { url, base: shown.slice(0, shown.length - code.length) };
 }
@@ -88,6 +107,7 @@ function joinFor(code) {
 function JoinHero({ code, title, status }) {
   const [qr, setQr] = useState('');
   const { url, base } = joinFor(code);
+  const local = LAPTOP_JOIN.none;
 
   // The encoder is fetched only by a screen that shows a code.
   useEffect(() => {
@@ -124,6 +144,12 @@ function JoinHero({ code, title, status }) {
           <span className="wl-label">or scan this</span>
         </div>
       </div>
+      {local && (
+        <p className="wl-local" role="alert">
+          Phones cannot reach this laptop yet: it has no network address, and {window.location.host} opens on this laptop
+          only. Turn on the hotspot or join the travel router’s Wi-Fi, then open the projector again from the console.
+        </p>
+      )}
     </section>
   );
 }

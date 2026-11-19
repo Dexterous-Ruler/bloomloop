@@ -26,6 +26,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { api } from '../lib/api.js';
 import { Button, Chip, Dialog, Field, Icon, Note, Segmented } from '../ui/index.jsx';
+import { ImportedTag } from '../teach/imported.jsx';
 import { dateOf, dayOf } from './dashParts.jsx';
 import {
   COUNTABLE, Definitions, list, mk, num, plural, pctRule, typesFrom,
@@ -163,6 +164,7 @@ export function FormulaPart({
                     <span className="clip">{r.title || 'Untitled room'}</span>
                     <span className="t-meta">{dayLabel(r.day) || dayOf(r.startedAt)}</span>
                     <span className="t-meta">{STATUS[r.status] ?? r.status}{num(r.weight) && r.weight !== 1 ? `, weight ${mk(r.weight)}` : ''}</span>
+                    <ImportedTag from={r.importedFrom} code={r.code} />
                   </li>
                 ))}
               </ul>
