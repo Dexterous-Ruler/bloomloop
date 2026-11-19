@@ -432,7 +432,11 @@ async function settle(path, requestId, as = 'profA') {
 
 let move;
 {
-  const asked = await post(`${R2}/teaching-moves`, {});
+  // The topic is named here: which topic went worst in this room depends on the
+  // questions the selector dealt the phones, which it picks at random within a
+  // level, so leaving it to the server made this step pass or fail by luck.
+  // chooseTopic's own rule is pinned by its unit tests (test/zipgaps1.test.js).
+  const asked = await post(`${R2}/teaching-moves`, { topic: 'Traversals' });
   check('"Suggest a move": answered at once, the suggestion written in the background', asked.status === 202 && asked.body.state === 'running'
     && Boolean(asked.body.requestId) && asked.body.purpose === 'move' && asked.body.basis?.focus?.level, JSON.stringify(asked.body).slice(0, 300));
   const done = await settle(R2, asked.body.requestId);
