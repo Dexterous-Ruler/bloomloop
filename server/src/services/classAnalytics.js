@@ -84,6 +84,17 @@ export function levelViews(cells) {
   return { levels, levelBands };
 }
 
+/**
+ * The three level bands of a six-level report as the dashboards and analytics
+ * send it ({ level, seen, correct }), summed by levelViews, so every
+ * `levelBands` the server sends has one shape and one sum (decision 6).
+ */
+export function levelBandsOf(report = []) {
+  const by = new Map(report.map((r) => [r.level, r]));
+  return levelViews(Object.fromEntries(LEVELS.map((l) => [l, { answers: by.get(l)?.seen ?? 0, correct: by.get(l)?.correct ?? 0 }])))
+    .levelBands;
+}
+
 /** The first and last value of a trend, and the change between them, over the rooms that have one. */
 function trendOf(values) {
   const known = values.filter((v) => v !== null && v !== undefined);

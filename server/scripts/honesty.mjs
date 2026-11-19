@@ -376,6 +376,53 @@ const hodProf = hodDash.body.professors?.find((p) => String(p.id) === ID.profA);
 check('and an HOD\'s professor row says how many answers its accuracy rests on', Number.isInteger(hodProf?.answers) && hodProf.answers > 0,
   JSON.stringify(hodProf));
 
+// Phase 5 follow-up: decision 6's three level bands beside the six levels, for
+// staff only, each the sum of its two levels with the answers behind it.
+const asJson = (x) => JSON.stringify(x);
+const bandsAgree = (body) => {
+  const six = new Map((body?.bloom ?? []).map((r) => [r.level, r]));
+  const sum = (b, k) => b.levels.reduce((n, l) => n + (six.get(l)?.[k] ?? 0), 0);
+  return Array.isArray(body?.levelBands) && asJson(body.levelBands.map((b) => b.id)) === '["lower","middle","higher"]'
+    && body.levelBands.every((b) => b.answers === sum(b, 'seen') && b.correct === sum(b, 'correct') && /graded answer/.test(b.sentence ?? ''))
+    && body.levelBands.reduce((n, b) => n + b.answers, 0) === body.bloom.reduce((n, r) => n + r.seen, 0)
+    && body.levelBands.some((b) => b.answers > 0);
+};
+check('the professor\'s and the HOD\'s dashboards carry the three level bands beside the six levels, each summed with its answers',
+  bandsAgree(profDash.body) && bandsAgree(hodDash.body), asJson([profDash.body.levelBands, hodDash.body.levelBands]));
+check('a student\'s own dashboard does not', dash.status === 200 && !('levelBands' in dash.body));
+const anaList = await get('/api/analytics');
+const anaAsha = await get(`/api/analytics/${ID.asha}`);
+const anaHodList = await get('/api/analytics', 'hod');
+const anaProf = await get(`/api/analytics/${ID.profA}`, 'hod');
+check('so do staff analytics: a professor\'s student and an HOD\'s professor, in full and in the list',
+  bandsAgree(anaAsha.body) && bandsAgree(anaProf.body)
+  && asJson(anaList.body.subjects?.find((s) => s.id === ID.asha)?.levelBands) === asJson(anaAsha.body.levelBands)
+  && asJson(anaHodList.body.subjects?.find((s) => s.id === ID.profA)?.levelBands) === asJson(anaProf.body.levelBands),
+  asJson([anaAsha.body.levelBands, anaProf.body.levelBands]));
+const anaSelf = await get(`/api/analytics/${ID.asha}`, 'asha');
+const anaSelfList = await get('/api/analytics', 'asha');
+check('a student reading themself is sent no level bands', anaSelf.status === 200 && Array.isArray(anaSelf.body.bloom)
+  && !('levelBands' in anaSelf.body) && anaSelfList.status === 200 && !('levelBands' in (anaSelfList.body.detail ?? {})));
+
+// Phase 5 follow-up: students in roll order (the owner's rule); highest accuracy
+// first only when asked for.
+const byRollNo = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+const rolls = (anaProf.body.students ?? []).map((s) => s.rollNo);
+check('a professor\'s analytics lists their students in roll order by default', rolls.length >= 3
+  && asJson(rolls) === asJson([...rolls].sort(byRollNo)), rolls.join(','));
+const byAcc = await get(`/api/analytics/${ID.profA}?order=accuracy`, 'hod');
+const accRolls = (byAcc.body.students ?? []).map((s) => s.rollNo);
+const accs = (byAcc.body.students ?? []).map((s) => s.accuracy ?? -1);
+check('highest accuracy first only when asked, the same students', byAcc.status === 200
+  && asJson([...accRolls].sort(byRollNo)) === asJson(rolls) && accs.every((a, i) => i === 0 || accs[i - 1] >= a)
+  && asJson(accRolls) !== asJson(rolls), accRolls.join(','));
+const badOrder = await get(`/api/analytics/${ID.profA}?order=best`, 'hod');
+const outsider = await get(`/api/analytics/${ID.profA}?order=best`, 'hodOther');
+const nobody = await get('/api/analytics/e0000000-0000-4000-8000-0000000000ff', 'hodOther');
+check('any other order is a 400 in a sentence; someone who may not see the professor gets the same 404 as for nobody first',
+  badOrder.status === 400 && /roll order/.test(badOrder.body.error ?? '') && !/[?=]|order=/.test(badOrder.body.error ?? '')
+  && outsider.status === 404 && asJson(outsider.body) === asJson(nobody.body), asJson([badOrder.status, badOrder.body, outsider.status]));
+
 // ------------------------------------------------------------------- bank --
 
 console.log('\nthe bank: provenance, approval and uncertain levels, for staff only');

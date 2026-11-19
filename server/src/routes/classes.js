@@ -75,6 +75,10 @@ async function classBody(cls, viewer) {
     class: { ...classView(cls, roster), canEdit: await canWrite(viewer, cls.ownerId ?? null) },
     students: roster.filter((s) => !s.removedAt).map(studentView),
     removed: roster.filter((s) => s.removedAt).map(studentView),
+    // Decision 8's sentence whenever a student on the roster is marked, removed
+    // ones included (they are still the age they were), so a screen opened fresh,
+    // or an HOD's, says it as the write that set the mark did.
+    ...(roster.some((s) => s.under18 === true) ? { under18Note: UNDER_18_NOTE } : {}),
   };
 }
 

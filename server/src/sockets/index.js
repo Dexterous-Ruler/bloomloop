@@ -62,6 +62,7 @@ import {
   runningOf,
   startable,
   transition,
+  votesOf,
   votingRound,
   withoutAsked,
 } from '../services/classQuestions.js';
@@ -1252,24 +1253,57 @@ async function runningClassQuestion(session) {
 const signedInAs = (ctx, profile) => Boolean(ctx?.verifiedAccountId) && String(ctx.verifiedAccountId) === String(profile?.accountId ?? '');
 
 /**
- * One phone's view of the running class question, with its own vote in the
- * current round. Under a roll number a signed-in student's phone linked
- * (decision 7), a phone not signed in as her is sent only votes from phones not
- * signed in: a typed roll number proves nothing, and her vote and confidence
- * tap are hers.
+ * The votes under a roll number a phone may be sent back as its own. Under a
+ * roll number a signed-in student's phone linked (decision 7), a phone not
+ * signed in as her gets only votes from phones not signed in: a typed roll
+ * number proves nothing, and her vote and confidence tap are hers.
  */
+const votesShownTo = (ctx, profile, rows) => (profile?.accountVerified && !signedInAs(ctx, profile)
+  ? rows.filter((a) => a.accountVerified !== true)
+  : rows);
+
+/** One phone's view of the running class question, with its own vote in the current round. */
 async function sendClassState(socket, session, profile) {
   try {
     const cq = await runningClassQuestion(session);
     if (!cq) return;
     const { rollNo } = profile;
     const rows = await getRepo().listAnswers({ sessionId: session._id, rollNo, classQuestionId: String(cq._id) });
-    const seen = profile.accountVerified && !signedInAs(socket.data.student, profile)
-      ? rows.filter((a) => a.accountVerified !== true)
-      : rows;
-    socket.emit('class:question', phoneQuestion(cq, { mine: mineNow(cq, seen, rollNo) }));
+    socket.emit('class:question', phoneQuestion(cq, { mine: mineNow(cq, votesShownTo(socket.data.student, profile, rows), rollNo) }));
   } catch (err) {
     logError('class:question', err);
+  }
+}
+
+/**
+ * class:question to every phone in the room, each with its own vote in force in
+ * the current round, by sendClassState's rule: after the room is resumed and
+ * when the class question is paused. Sent to the room at once it could carry no
+ * phone's own vote, so a phone that reloaded during a pause showed none although
+ * the server held one. The room's votes and profiles are read once, not per phone.
+ */
+async function sendClassQuestionToEach(io, session, cq) {
+  const id = String(session._id);
+  const phones = [...io.sockets.sockets.values()].filter((s) => s.data.student?.sessionId === id && s.connected);
+  if (!phones.length) return;
+  const repo = getRepo();
+  let rows;
+  let profiles;
+  try {
+    [rows, profiles] = await Promise.all([votesOf(repo, cq), repo.listProfiles(id)]);
+  } catch (err) {
+    // Without the votes, the room is still told where the question stands, with
+    // no vote, as before: a phone must not keep voting in a round that has closed.
+    logError('class:question', err);
+    io.to(`session:${session.code}`).emit('class:question', phoneQuestion(cq));
+    return;
+  }
+  const byRoll = new Map(profiles.map((p) => [String(p.rollNo), p]));
+  for (const socket of phones) {
+    const ctx = socket.data.student;
+    const own = rows.filter((a) => String(a.rollNo) === String(ctx.rollNo));
+    const mine = mineNow(cq, votesShownTo(ctx, byRoll.get(String(ctx.rollNo)), own), ctx.rollNo);
+    socket.emit('class:question', phoneQuestion(cq, { mine }));
   }
 }
 
@@ -1346,11 +1380,17 @@ async function resumeAfterClass(io, session, cq) {
   }));
 }
 
-/** Every phone, the professor's screens and the wall, after a class question starts or changes. */
+/**
+ * Every phone, the professor's screens and the wall, after a class question
+ * starts or changes. A pause goes phone by phone, each with its own round 1
+ * vote; a start or a re-vote opens a round nobody has voted in yet, so it goes
+ * to the room at once.
+ */
 async function announceClassQuestion(io, session, cq) {
   if (!io) return;
   const phones = io.to(`session:${session.code}`);
   if (cq.state === 'closed') phones.emit('class:closed', phoneClosed(cq));
+  else if (cq.state === 'paused') await sendClassQuestionToEach(io, session, cq);
   else phones.emit('class:question', phoneQuestion(cq));
   await pushClassQuestion(io, session, cq);
   if (cq.state === 'closed') await resumeAfterClass(io, session, cq);
@@ -1439,12 +1479,16 @@ export async function closeClassQuestionWithRoom(io, session, { by = null } = {}
   if (updated) await pushClassQuestion(io, session, updated);
 }
 
-/** A room resumed from a pause: its phones are sent the running class question again, which the pause covered. */
+/**
+ * A room resumed from a pause: its phones are sent the running class question
+ * again, which the pause covered, each with its own vote (a phone that joined
+ * or reloaded during the pause was sent none at its join).
+ */
 export async function resendClassQuestion(io, session) {
   if (!io) return;
   try {
     const cq = await runningClassQuestion(session);
-    if (cq) io.to(`session:${session.code}`).emit('class:question', phoneQuestion(cq));
+    if (cq) await sendClassQuestionToEach(io, session, cq);
   } catch (err) {
     logError('class:question', err);
   }

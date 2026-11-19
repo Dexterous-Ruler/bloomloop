@@ -1,5 +1,7 @@
 // GET /api/analytics                the list this viewer may analyse
-// GET /api/analytics/:id            one of them, in full
+// GET /api/analytics/:id            one of them, in full; ?order=accuracy lists a
+//                                   professor's students highest accuracy first
+//                                   (roll order otherwise)
 // GET /api/analytics/:id/answers    one student's actual answers across rooms,
 //                                   ?limit=&offset=&topic=&level=&code=
 //
@@ -33,7 +35,7 @@ router.get('/', viewerOrKey, async (req, res, next) => {
 
 router.get('/:id', viewerOrKey, async (req, res, next) => {
   try {
-    res.json(await analyticsFor(req.viewer, req.params.id));
+    res.json(await analyticsFor(req.viewer, req.params.id, req.query));
   } catch (err) {
     next(err);
   }

@@ -252,6 +252,30 @@ describe('what the projector may show', () => {
     assert.deepEqual([next.mode, next.diagram], ['diagram', { questionId: String(mcq._id) }]);
   });
 
+  test('every refusal of a change says what to do in a professor\'s words, naming no field (Phase 5 follow-up)', async () => {
+    const { repo, session, mcq, tf } = await room();
+    const servable = await repo.listQuestions(session.contentId);
+    const now = screenOf(session);
+    const ctx = { servable, tallies: [{ _id: 't1', questionId: null }], picks: [{ _id: 'p1' }], classQuestions: [{ _id: 'c1' }] };
+    const nowhere = '0123456789abcdef01234567';
+    const bodies = [
+      {}, { mode: 'leaderboard' }, { revealed: 'yes' }, { showNames: 1 }, { showCounts: 'no' },
+      { question: { questionId: nowhere } }, { question: { tallyId: 'nope' } }, { question: { classQuestionId: 'nope' } },
+      { question: { questionId: String(mcq._id), tallyId: 't1' } }, { question: 5 },
+      { diagram: { questionId: nowhere } }, { diagram: { questionId: String(tf._id) } }, { pick: { pickId: 'nope' } },
+    ];
+    // A field is a camelCase name, a dotted path, or a sentence that opens on one
+    // of the body's keys; "Send" is the request's verb.
+    const FIELD = /\b[a-z]+[A-Z][A-Za-z]*\b|\b[a-z]+\.[a-z]+|^(mode|question|revealed|diagram|pick)\b|\bSend\b/;
+    for (const body of bodies) {
+      assert.throws(() => screenChangeFrom(body, now, ctx), (err) => {
+        assert.equal(err.status, 400, JSON.stringify(body));
+        assert.doesNotMatch(err.message, FIELD, `${JSON.stringify(body)}: ${err.message}`);
+        return true;
+      });
+    }
+  });
+
   test('a key never goes on the wall while a phone in the room could still be served the question', async () => {
     const { repo, session, mcq } = await room();
     const servable = await repo.listQuestions(session.contentId);

@@ -220,6 +220,13 @@ export function showPick(session, pickId) {
 
 const sameId = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
 
+/** The on-or-off switches of the screen, as a refusal names them to a professor (never by the field). */
+const SWITCHES = {
+  revealed: 'Showing the answer on the projector',
+  showNames: 'Showing the picked student\'s name',
+  showCounts: 'Showing a class question\'s counts',
+};
+
 /**
  * A professor's change to the screen, checked against the room, or an honest 400.
  *
@@ -251,13 +258,15 @@ export function screenChangeFrom(body = {}, current, {
   const next = { ...current };
   let touched = false;
   const bool = (key) => {
-    if (typeof body[key] !== 'boolean') throw fail(`${key} must be true or false.`, 400);
+    if (typeof body[key] !== 'boolean') throw fail(`${SWITCHES[key]} is either on or off.`, 400);
     next[key] = body[key];
     touched = true;
   };
 
   if (body.mode !== undefined) {
-    if (!PROJECTOR_MODES.includes(body.mode)) throw fail(`mode must be one of ${PROJECTOR_MODES.join(', ')}.`, 400);
+    if (!PROJECTOR_MODES.includes(body.mode)) {
+      throw fail('The projector shows a question, a diagram or the class\'s progress: choose one of those.', 400);
+    }
     next.mode = body.mode;
     touched = true;
   }
@@ -276,7 +285,9 @@ export function screenChangeFrom(body = {}, current, {
     if (body.diagram === null) next.diagram = null;
     else {
       const q = servable.find((x) => sameId(x._id, body.diagram?.questionId));
-      if (!q) throw fail('diagram.questionId is not a question this room serves: pick one of its approved questions.', 400);
+      if (!q) {
+        throw fail('That question is not one this room serves, so its diagram cannot be shown: pick one of its approved questions.', 400);
+      }
       if (!q.stimulus) throw fail('That question has no diagram or passage to show: pick one that carries a stimulus.', 400);
       next.diagram = { questionId: String(q._id) };
     }
@@ -288,12 +299,14 @@ export function screenChangeFrom(body = {}, current, {
     if (body.pick === null) next.pickId = null;
     else {
       const p = picks.find((x) => sameId(x._id, body.pick?.pickId));
-      if (!p) throw fail('pick.pickId is not a pick of this room\'s wheel.', 400);
+      if (!p) throw fail('That pick is not one of this room\'s wheel.', 400);
       next.pickId = String(p._id);
     }
     touched = true;
   }
-  if (!touched) throw fail('Send mode, question, revealed, diagram, showNames, showCounts or pick to change.', 400);
+  if (!touched) {
+    throw fail('Nothing was changed: choose what the projector shows, or switch the answer, names or counts on or off.', 400);
+  }
   if (next.revealed && next.question && mode !== 'teacher-led' && keyStillServable(next.question, tallies)) {
     throw fail('That key cannot go on the wall: this room\'s phones may still be served this question, and a phone '
       + 'that has not answered it yet would have been shown its answer. A bank question\'s key is revealed on the '
@@ -322,12 +335,12 @@ function questionRef(raw, { servable, tallies, classQuestions = [] }) {
   }
   if (raw?.questionId !== undefined) {
     const q = servable.find((x) => sameId(x._id, raw.questionId));
-    if (!q) throw fail('question.questionId is not a question this room serves: pick one of its approved questions.', 400);
+    if (!q) throw fail('That question is not one this room serves: pick one of its approved questions.', 400);
     return { source: 'bank', id: String(q._id) };
   }
   if (raw?.tallyId !== undefined) {
     const t = tallies.find((x) => sameId(x._id, raw.tallyId));
-    if (!t) throw fail('question.tallyId is not a question asked aloud in this room.', 400);
+    if (!t) throw fail('That question was not asked aloud in this room: choose one that was.', 400);
     return { source: 'tally', id: String(t._id) };
   }
   throw fail('Choose what the question screen shows: a question of the room, a question asked aloud, a class question, '

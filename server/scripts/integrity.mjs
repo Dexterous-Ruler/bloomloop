@@ -29,7 +29,8 @@ import http from 'node:http';
 import { Server } from 'socket.io';
 import { io as ioClient } from 'socket.io-client';
 
-const SRC = 'file:///C:/Users/tanis/wayground/server/src';
+// The source tree beside this script, so it tests the checkout it lives in.
+const SRC = new URL('../src', import.meta.url).href;
 const { initStore, getRepo, closeStore } = await import(`${SRC}/repo/index.js`);
 const { createApp } = await import(`${SRC}/app.js`);
 const { attachSockets, isOnline } = await import(`${SRC}/sockets/index.js`);

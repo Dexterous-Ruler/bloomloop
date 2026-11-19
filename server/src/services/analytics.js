@@ -22,6 +22,8 @@ import { hydrate, overallAccuracy, isSlowLearner, totals, MIN_EVIDENCE } from '.
 import {
   allAnswers, topicReport, listStudentAnswers, pageFrom, levelFrom, rollKey, verifiedKeys, verifiedView,
 } from './evidence.js';
+import { levelBandsOf } from './classAnalytics.js';
+import { byRoll } from './roster.js';
 
 const deny = (message, status) => Object.assign(new Error(message), { status });
 
@@ -131,9 +133,19 @@ export async function subjectsFor(viewer) {
   return [];
 }
 
+/**
+ * How a professor's students are listed: in roll order, the owner's rule, unless
+ * `?order=accuracy` asks for highest accuracy first.
+ */
+function studentOrderFrom(raw) {
+  if (raw === undefined || raw === '' || raw === 'roll') return 'roll';
+  if (raw === 'accuracy') return 'accuracy';
+  throw deny('Students are listed in roll order, or by accuracy when asked for: choose one of the two.', 400);
+}
+
 /* --------------------------------------------------------- one professor -- */
 
-async function professorAnalytics(subject, viewer) {
+async function professorAnalytics(subject, viewer, { order = 'roll' } = {}) {
   const repo = getRepo();
   const sessions = await sessionsFor([subject.id]);
 
@@ -201,12 +213,14 @@ async function professorAnalytics(subject, viewer) {
       })(),
     },
     bloom: report,
+    // Decision 6: a summary of a professor's classes reads in three level bands first.
+    levelBands: levelBandsOf(report),
     ...extremes(report),
     topics: topicBreakdown(history).slice(0, 12),
     timeline,
     students: [...students.values()]
       .map((s) => ({ ...s, accuracy: s.answered ? s.correct / s.answered : null }))
-      .sort((a, b) => (b.accuracy ?? -1) - (a.accuracy ?? -1)),
+      .sort(order === 'accuracy' ? (a, b) => (b.accuracy ?? -1) - (a.accuracy ?? -1) : byRoll),
   };
 }
 
@@ -255,6 +269,9 @@ async function studentAnalytics(subject, viewer) {
     topicLevels: topicReport(),
     timeline: [],
   };
+  // Decision 6's three level bands, for staff only: a student reading themself
+  // keeps the six-level detail view.
+  if (!self) base.levelBands = levelBandsOf(base.bloom);
 
   if (!rollNo) {
     base.reason =
@@ -310,6 +327,7 @@ async function studentAnalytics(subject, viewer) {
 
   const report = levelReport(tally);
   base.bloom = report;
+  if (!self) base.levelBands = levelBandsOf(report);
   Object.assign(base, extremes(report));
 
   // Topics are mined from the evidence store: final, graded answers in these
@@ -366,6 +384,7 @@ export async function analyticsOverview(viewer) {
         best: detail.best?.level ?? null,
         weakest: detail.weakest?.level ?? null,
         confident: detail.confident,
+        levelBands: detail.levelBands,
       };
     }),
   );
@@ -376,15 +395,18 @@ export async function analyticsOverview(viewer) {
 /**
  * One subject in full.
  * Throws 404 for a subject outside the viewer's scope - the same answer as one
- * that does not exist, so this cannot be used to enumerate ids.
+ * that does not exist, so this cannot be used to enumerate ids. `query.order`
+ * (roll or accuracy) is read only after that, so an outsider learns nothing
+ * from a 400.
  */
-export async function analyticsFor(viewer, subjectId) {
+export async function analyticsFor(viewer, subjectId, query = {}) {
   const subjects = await subjectsFor(viewer);
   const subject = subjects.find((s) => String(s.id) === String(subjectId));
   if (!subject) throw deny('No such person, or not one you can see.', 404);
+  const order = studentOrderFrom(query.order);
 
   return subject.kind === 'professor'
-    ? professorAnalytics(subject, viewer)
+    ? professorAnalytics(subject, viewer, { order })
     : studentAnalytics(subject, viewer);
 }
 

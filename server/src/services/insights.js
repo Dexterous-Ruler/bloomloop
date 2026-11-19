@@ -654,7 +654,10 @@ export async function roomInsights(repo, session) {
       notEnough: count(null),
       students: students.length,
     },
-    sort: { keys: SORT_KEYS, orders: sortOrders(students) },
+    // `students` come in roll order (every store lists a room's profiles that
+    // way), the owner's rule for any list of students; the other two orders are
+    // a professor's choice, never the default (19 Nov 2026, under the delegation).
+    sort: { keys: SORT_KEYS, orders: sortOrders(students), default: 'roll' },
     cards,
     ...(figures.teacherLed
       ? { cardsNote: 'A Teacher-led room takes no answers on phones, so it has no band, card or digital figure. '

@@ -33,7 +33,7 @@ import {
   supportCard,
   withActions,
 } from '../src/services/insights.js';
-import { LEVEL_BANDS, classAnalytics, levelViews, roomReport, windowFrom } from '../src/services/classAnalytics.js';
+import { LEVEL_BANDS, classAnalytics, levelBandsOf, levelViews, roomReport, windowFrom } from '../src/services/classAnalytics.js';
 
 const LEVELS = ['remember', 'understand', 'apply', 'analyse', 'evaluate', 'create'];
 
@@ -374,6 +374,24 @@ describe('class analytics', () => {
     assert.deepEqual(levelBands.map((b) => [b.id, b.answers, b.correct]), [['lower', 2, 1], ['middle', 2, 2], ['higher', 1, 0]]);
     assert.equal(levels.reduce((n, l) => n + l.answers, 0), levelBands.reduce((n, b) => n + b.answers, 0));
     assert.deepEqual(levels.map((l) => l.level), LEVELS);
+  });
+
+  test('a dashboard\'s six-level report as the same three bands, the same shape and sums as class analytics (Phase 5 follow-up)', () => {
+    const report = [
+      { level: 'remember', seen: 4, correct: 3, accuracy: 0.75 }, { level: 'understand', seen: 2, correct: 0, accuracy: 0 },
+      { level: 'apply', seen: 0, correct: 0, accuracy: null }, { level: 'analyse', seen: 5, correct: 5, accuracy: 1 },
+      { level: 'evaluate', seen: 0, correct: 0, accuracy: null }, { level: 'create', seen: 0, correct: 0, accuracy: null },
+    ];
+    const bands = levelBandsOf(report);
+    assert.deepEqual(bands.map((b) => [b.id, b.label, b.levels, b.answers, b.correct, b.accuracy]), [
+      ['lower', 'Remember and Understand', ['remember', 'understand'], 6, 3, 0.5],
+      ['middle', 'Apply and Analyse', ['apply', 'analyse'], 5, 5, 1],
+      ['higher', 'Evaluate and Create', ['evaluate', 'create'], 0, 0, null],
+    ]);
+    assert.deepEqual(bands.map((b) => b.sentence), ['Based on 6 graded answers.', 'Based on 5 graded answers.', 'No graded answers yet.']);
+    const cells = Object.fromEntries(report.map((r) => [r.level, { answers: r.seen, correct: r.correct, withdrawn: 0 }]));
+    assert.deepEqual(bands, levelViews(cells).levelBands, 'one summation for every levelBands the server sends');
+    assert.deepEqual(levelBandsOf([]).map((b) => b.answers), [0, 0, 0], 'an empty report is three empty bands');
   });
 
   test('a room\'s report: accuracy, participation, attendance and bands, each with what it rests on', () => {

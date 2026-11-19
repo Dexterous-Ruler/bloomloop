@@ -1083,8 +1083,15 @@ router.post('/:code/close', requireTeacher, async (req, res, next) => {
 
       const io = req.app.get('io');
       // A class question still running closes with the room, its key not
-      // revealed (Phase 5): no vote can come any more.
-      await closeClassQuestionWithRoom(io, written ?? session, { by: req.viewer?.id ?? null });
+      // revealed (Phase 5): no vote can come any more. The room is already
+      // closed when this runs, so a store error here is logged and the close
+      // goes on: answering 500 would leave the phones and the projector untold
+      // of a room that has closed. The class question can be closed by hand.
+      try {
+        await closeClassQuestionWithRoom(io, written ?? session, { by: req.viewer?.id ?? null });
+      } catch (err) {
+        console.error('[close] closing the class question failed:', err);
+      }
       if (io) {
         io.to(`session:${session.code}`).emit('session:closed', {});
         io.to(`teacher:${session.code}`).emit('teacher:status', { code: session.code, status: 'closed' });

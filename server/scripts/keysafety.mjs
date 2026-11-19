@@ -18,7 +18,10 @@
 //   early vote   a vote for a round not yet open is kept, says so, not "late"
 //   signed in    a phone typing a signed-in student's roll number is not sent
 //                her vote, and its vote never displaces hers; her own phone is
-//   paused room  a vote while the room is paused is kept and not counted
+//   paused room  a vote while the room is paused is kept and not counted; on
+//                the resume, and when the class question is paused, each phone
+//                is sent its own vote by the same rule (Phase 5 follow-up), a
+//                phone that reloaded during the room's pause included
 //   knew the key the professor is told how many phones answered the question on
 //                their own before it was put to the class (and saw its answer)
 //   sentences    the class question and projector refusals name no field
@@ -337,6 +340,8 @@ console.log('\na vote for a round that has not opened');
 console.log('\na phone typing a signed-in student\'s roll number');
 
 let impostor;
+let back;
+let guest;
 {
   const ack = await vote(ASHA, cqId, 1, 3, { confidence: 'sure', answerId: 'ks-asha-vote-0001' });
   check('Asha\'s own vote is counted', ack.counted === true);
@@ -359,11 +364,11 @@ let impostor;
   // Asha's phone drops and comes back, signed in: her own vote, as it stands.
   ASHA.s.disconnect();
   await wait(100);
-  const back = await join(code, '21CS01', { token: TOKENS.asha, expectClass: true });
+  back = await join(code, '21CS01', { token: TOKENS.asha, expectClass: true });
   check('her own phone, back signed in, is sent her vote in force', same(back.classState?.mine, { response: 3, confidence: 'sure' }),
     JSON.stringify(back.classState?.mine));
   // A guest roll number nobody signed in to votes as always.
-  const guest = await join(code, '21CS20', { expectClass: true });
+  guest = await join(code, '21CS20', { expectClass: true });
   const g = await vote(guest, cqId, 1, 1, { answerId: 'ks-guest-vote-0001' });
   const g2 = await vote(guest, cqId, 1, 2, { answerId: 'ks-guest-vote-0002' });
   check('a roll number no phone signed in to votes and changes its vote as before', g.counted === true && g2.counted === true
@@ -387,8 +392,27 @@ console.log('\na vote while the room is paused');
   const earlier = await repo.getAnswerByKey(sessionId, 'ks-votekey-p2-0001');
   check('the vote is stored, not in force; the phone\'s earlier vote still is', row?.final === false && /paused/.test(row.detail ?? '')
     && earlier?.final === true, JSON.stringify([row?.detail, earlier?.final]));
+
+  // Phase 5 follow-up: the guest's phone reloads while the room is paused. Its
+  // join stops at session:paused, so it is sent no class question until the resume.
+  guest.s.disconnect();
+  await wait(100);
+  const reloaded = await connect();
+  sockets.push(reloaded);
+  const toldPaused = next(reloaded, 'session:paused');
+  reloaded.emit('student:join', { code, rollNo: '21CS20', name: 'Student 21CS20' });
+  await toldPaused;
+  guest = { ...guest, s: reloaded };
+  const onResume = [back, impostor, guest, P1, P2, P3].map((p) => next(p.s, 'class:question').catch(() => ({ timedOut: true })));
   const resumed = await post(`/api/session/${code}/resume`, {});
   check('resumed', resumed.status === 200);
+  const got = await Promise.all(onResume);
+  check('on the resume each phone is sent the class question with its own vote in force: hers to her signed-in phone, '
+    + 'none of hers to the phone typing her roll number, the reloaded phone its own, and none to a phone with no vote counted',
+  got.every((g) => g.id === cqId && g.state === 'open') && same(got.map((g) => g.mine), [
+    { response: 3, confidence: 'sure' }, null, { response: 2, confidence: null }, { response: 0, confidence: 'guessing' },
+    { response: 2, confidence: 'sure' }, null,
+  ]), JSON.stringify(got.map((g) => g.timedOut ? 'timeout' : g.mine)));
 }
 
 // ------------------------------------------------ after a close without reveal --
@@ -396,7 +420,15 @@ console.log('\na vote while the room is paused');
 console.log('\nafter a close without the key revealed');
 
 {
+  const onPause = [back, impostor, guest, P1, P2, P3].map((p) => next(p.s, 'class:question', (g) => g.state === 'paused')
+    .catch(() => ({ timedOut: true })));
   const paused = await post(`/api/session/${code}/class-questions/${cqId}/pause`, {});
+  const told = await Promise.all(onPause);
+  check('when the professor pauses the class question each phone is told so with its own vote, by the same rule',
+    told.every((g) => g.id === cqId && g.voting === false) && same(told.map((g) => g.mine), [
+      { response: 3, confidence: 'sure' }, null, { response: 2, confidence: null }, { response: 0, confidence: 'guessing' },
+      { response: 2, confidence: 'sure' }, null,
+    ]), JSON.stringify(told.map((g) => g.timedOut ? 'timeout' : g.mine)));
   const r1 = paused.body.rounds?.[0];
   check('round 1 counts: Asha\'s D, not the other phone\'s A; the guest\'s latest; the paused vote not counted',
     paused.status === 200 && same(r1?.distribution?.options?.map((o) => [o.key, o.votes]), [['A', 1], ['B', 0], ['C', 2], ['D', 1]])

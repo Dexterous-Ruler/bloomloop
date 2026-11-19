@@ -8,6 +8,31 @@ owner's decisions of 19 November (`0022`) are uncommitted, and so are Phase 5's
 confidence tap and class question (`0023`), its misconception labels (`0024`), its
 honest indicators and the fixes from its review (no migration).
 
+## Unreleased: Phase 5 follow-ups (19 November 2026)
+
+Server only, no migration; after `2f4fd2b`. `docs/API.md`, "Phase 5 follow-ups".
+
+- **`under18Note` on a class's read.** `GET /api/classes/:id` (and every reply carrying
+  the class body) has the decision 8 sentence whenever a student on the roster is
+  marked under 18, so a fresh load or an HOD's read shows it.
+- **`levelBands` on the staff dashboards and analytics** (`GET /api/dashboard`,
+  `GET /api/analytics`, `GET /api/analytics/:id`): decision 6's three bands summed from
+  the six levels by the attainment report's `LEVEL_BANDS`, each with its answers and a
+  sentence. Not for a student reading themself; `bloom` unchanged.
+- **Each phone's own `mine`** on `class:question` after a room is resumed and when a
+  class question is paused, by the decision 7 rule a join uses; a phone that reloaded
+  during a pause now shows the vote the server holds.
+- **A room's close survives a store error** while closing its class question: logged,
+  and the close still answers 200 and tells the phones and the projector (the Phase 5
+  review finding).
+- **Seven projector refusals** reworded so none names a field.
+- **Students in roll order** in a professor's analytics; `?order=accuracy` for highest
+  accuracy first; the insights read names `roll` as its default order. The room CSV's
+  "Slow Learner" column is unchanged. Decided under the owner's delegation.
+- **No machine path in the repository:** `CONTRACT.md` no longer names a home folder,
+  and `integrity.mjs`, `resume.mjs` and `roundtrip.mjs` import the source tree beside
+  them instead of a fixed `C:/Users/...` path.
+
 ## Unreleased: Phase 5 docs pass and contract amendments (19 November 2026)
 
 - **`CONTRACT.md` Amendment 5**, dated and marked as decided under the owner's

@@ -4073,9 +4073,10 @@ against the roster as it stands). A room opened without a class has no roster, s
 mark does not reach it.
 
 The roster read of a class (`GET /api/classes/:id`) carries each student's `under18`
-but **not** `under18Note`: the sentence comes only in the reply to a write that sets
-the mark (an add, the import, the student edit). A screen opened fresh, or an HOD's,
-does not get it from the server yet (the UI session asked for it; not built).
+and, since the Phase 5 follow-ups, `under18Note` whenever a student on the roster is
+marked, so a screen opened fresh, or an HOD's, has the sentence too ("Phase 5
+follow-ups", below). The writes that set the mark (an add, the import, the student
+edit) carry it as before.
 
 ### A student's own history, inside a linked room (the decision 7 fix)
 
@@ -4275,10 +4276,11 @@ counts instead." Every methodology paragraph now says so.
 | `PATCH …/projector`, a class question of another room | "question.classQuestionId is not a class question of this room." | "That class question was not asked in this room: choose one that was." |
 | `PATCH …/projector`, a shape it cannot read | "question must be { questionId }, { tallyId }, { classQuestionId } or null." | "Choose what the question screen shows: a question of the room, a question asked aloud, a class question, or nothing." |
 
-Two older projector refusals (Phase 3) still name a field, untouched by the review:
+Two older projector refusals (Phase 3) still named a field, untouched by the review:
 "question.questionId is not a question this room serves: pick one of its approved
 questions." and "question.tallyId is not a question asked aloud in this room."
-(`services/projector.js`; open, below).
+(`services/projector.js`). They and five more were reworded in the Phase 5 follow-ups
+(below).
 
 **7. Outside the class question.** The decision 7 fix to a student's own history
 ("A student's own history, inside a linked room", above); a deleted room's archive
@@ -4489,8 +4491,9 @@ re-vote; to a phone that joins or reconnects while one runs (after its own
 - `state`: `open` (round 1, `voting` true), `paused` (`voting` false; "Talk it over with
   the people around you."), `revote` (round 2, `voting` true).
 - `mine` is the phone's own vote in force in the current round,
-  `{ response, confidence }`, sent only when it joins or reconnects; `null` otherwise
-  (the phone keeps its own).
+  `{ response, confidence }`, sent when it joins or reconnects and, since the Phase 5
+  follow-ups, when the room is resumed and when the class question is paused (each
+  phone its own); `null` at the start and the re-vote, when nobody has voted yet.
 
 `student:vote` (phone to server):
 
@@ -4609,13 +4612,10 @@ changed and late ones included.
   (since the review fixes it is also `question._id`); never send it as an answer.
 - On `class:closed`: show the answer only when `revealed`, then return to the parked
   screen. A `server:question` straight after replaces the parked question.
-- On `session:resumed`, expect `class:question` again if one is running. Its `mine`
-  is `null` there (it goes to the whole room at once, not phone by phone), so a phone
-  keeps the vote it last sent and shows that. A phone that joins or reloads while the
-  room is paused is sent no class question then (the join stops at `session:paused`),
-  and on resume gets it with `mine: null`: it cannot show the vote the server holds
-  until it reconnects again. Sending each phone its own `mine` on resume was asked
-  for and is not built.
+- On `session:resumed`, expect `class:question` again if one is running, with this
+  phone's own `mine` (since the Phase 5 follow-ups). A phone that joins or reloads
+  while the room is paused is sent no class question then (the join stops at
+  `session:paused`); on the resume it gets it with the vote the server holds.
 
 **The professor's console (Live).**
 - Pick an approved `mcq`, `truefalse`, `poll` or `multi` question of the room and put it
@@ -5017,6 +5017,95 @@ open issues below.
 
 **The projector.** Nothing.
 
+## Phase 5 follow-ups (19 Nov 2026)
+
+Server only, no migration; every change is a field or a query option added, a default
+order, a sentence reworded, or the room close going on past a store error. Checked end
+to end on the in-process store by `decisions.mjs`, `honesty.mjs`, `insights.mjs`,
+`keysafety.mjs` and `classquestion.mjs`, and by unit tests in `test/insights.test.js`
+and `test/modes.test.js`. Nothing was run against Supabase, Mongo, a real Auth token or
+a model.
+
+| Route or event | What changed |
+|---|---|
+| `GET /api/classes/:id` (and the class body `PATCH /api/classes/:id` and `POST /api/classes` answer with) | `under18Note` whenever a student on the roster is marked under 18, removed students included |
+| `GET /api/dashboard` (an HOD, a professor) | `levelBands` beside `bloom` |
+| `GET /api/analytics` (an HOD, a professor) | Each subject row: `levelBands` |
+| `GET /api/analytics/:id` (an HOD reading a professor, a professor reading a student) | `levelBands` beside `bloom`. A professor's `students` in roll order; `?order=accuracy` for highest accuracy first (new); any other `order` is a 400 |
+| `GET /api/session/:code/insights`, `teacher:insights` | `sort.default: 'roll'`; `students` in roll order, as before |
+| `class:question` | Sent phone by phone, each with its own `mine`, when the room is resumed and when the class question is paused (to the room at once with `mine: null` if the votes cannot be read) |
+| `POST /api/session/:code/close` | A store error while closing the running class question is logged; the close still answers and the phones and the projector are still told |
+| `PATCH /api/session/:code/projector` | Seven refusals reworded so none names a field |
+
+**`under18Note` on a class read.** The sentence the writes already carried
+("Integrity signals are neither recorded nor shown for a student marked under 18, …
+a lawyer must confirm it before any college signs or before 13 May 2027.") now comes
+with every class body whose roster holds a student marked under 18, so a screen opened
+fresh and an HOD's read show it. A class with no marked student has no `under18Note`,
+as before. A removed student counts: they are still the age they were, and their
+signals stay hidden. The replies to the roster writes are unchanged.
+
+**`levelBands` on the staff dashboards and analytics.** Decision 6's three level
+bands, summed from the six-level `bloom` beside them by the `LEVEL_BANDS` the class
+analytics and attainment reports use (`levelBandsOf` in
+`services/classAnalytics.js`), in the shape class analytics sends them. `bloom` is
+unchanged. Not sent to a student reading their own dashboard or analytics, whose
+detail view stays six levels.
+
+```json
+"levelBands": [
+  { "id": "lower", "label": "Remember and Understand", "levels": ["remember", "understand"], "answers": 6, "correct": 3, "accuracy": 0.5, "sentence": "Based on 6 graded answers." },
+  { "id": "middle", "label": "Apply and Analyse", "levels": ["apply", "analyse"], "answers": 5, "correct": 5, "accuracy": 1, "sentence": "Based on 5 graded answers." },
+  { "id": "higher", "label": "Evaluate and Create", "levels": ["evaluate", "create"], "answers": 0, "correct": 0, "accuracy": null, "sentence": "No graded answers yet." }
+]
+```
+
+`answers` is the number of answers behind the band: the sum of its two levels' `seen`
+in `bloom`, as `correct` is of their `correct`.
+
+**Students in roll order.** `GET /api/analytics/:id` for a professor (an HOD's read)
+lists `students` in roll order, numerically ('2' before '10'), where it listed highest
+accuracy first. `?order=accuracy` gives the old order; `?order=roll` or none, roll
+order; anything else is a 400 ("Students are listed in roll order, or by accuracy when
+asked for: choose one of the two."), after the subject's 404, so an outsider learns
+nothing from it. The insights' `students` were already in roll order (every store lists
+a room's profiles that way); `sort.default` now says so, and `sort.keys` and
+`sort.orders` are unchanged, "By band" and "Lowest first" included. Decided under the
+owner's delegation (`docs/PRODUCT_DECISIONS.md`, honest indicators, question 1).
+
+**Each phone's own `mine`.** `class:question` used to go to the whole room at once
+with `mine: null` after `POST /api/session/:code/resume` and when the professor paused
+the class question, so a phone that reloaded during a pause could not show the vote
+the server held. Both now send it phone by phone, each with its own vote in force in
+the current round (round 1 while paused), by the rule a join uses: under a roll number
+a signed-in student's phone linked, a phone not signed in as her is sent `mine` only
+from votes of phones not signed in (decision 7). The room's votes and profiles are
+read once, not per phone; if that read fails, the error is logged and the room is sent
+the question at once with `mine: null`, as before, so no phone keeps voting in a round
+that has closed. The start and the re-vote still go to the room at once, with
+`mine: null`, since nobody has voted in a round that has just opened.
+
+**A room's close when the store fails.** `POST /api/session/:code/close` writes the
+room closed, then closes its running class question. A store error in that step
+(reading or updating the class question) is now logged (`[close] closing the class
+question failed`) and the close goes on: `200` with the closed room, `session:closed` to
+the phones, `teacher:status` to the professor's screens and `projector:closed` to the
+projector. The class question is then left as the store had it, and can still be
+closed by hand. Before, the step's error answered `500` for a room already closed and
+nobody was told.
+
+**Projector refusals in a professor's words** (`PATCH /api/session/:code/projector`):
+
+| When | Before | Now |
+|---|---|---|
+| `revealed`, `showNames` or `showCounts` not true or false | "showNames must be true or false." | "Showing the picked student's name is either on or off." (and likewise "Showing the answer on the projector …", "Showing a class question's counts …") |
+| An unknown screen | "mode must be one of question, diagram, progress." | "The projector shows a question, a diagram or the class's progress: choose one of those." |
+| A diagram from a question the room does not serve | "diagram.questionId is not a question this room serves: pick one of its approved questions." | "That question is not one this room serves, so its diagram cannot be shown: pick one of its approved questions." |
+| A pick not of this room's wheel | "pick.pickId is not a pick of this room's wheel." | "That pick is not one of this room's wheel." |
+| Nothing to change | "Send mode, question, revealed, diagram, showNames, showCounts or pick to change." | "Nothing was changed: choose what the projector shows, or switch the answer, names or counts on or off." |
+| A question the room does not serve | "question.questionId is not a question this room serves: pick one of its approved questions." | "That question is not one this room serves: pick one of its approved questions." |
+| A question asked aloud of another room | "question.tallyId is not a question asked aloud in this room." | "That question was not asked aloud in this room: choose one that was." |
+
 ## Known open issues
 
 Phase 2, open (none is a failing test; each is a gap or a default awaiting the owner):
@@ -5144,23 +5233,11 @@ Phase 3, open:
 
 Phase 5 (class questions, misconception labels and the review fixes), open:
 
-- **Closing a room while a class question runs can leave the phones uninformed.**
-  `POST /api/session/:code/close` closes the running class question inside the room's
-  status lock, after the status is written and before the phones and the projector
-  are told, with no catch around it. A store error there (reading or updating the
-  class question) answers 500 for a room already closed, and the phones never get
-  `session:closed` until the professor tries again. Reported by the Phase 5 review,
-  traced, not reproduced, **not fixed**. The fix is to catch and log that step so the
-  notifications always run.
-- **No phone's own `mine` after a room is resumed**, and a phone that joins while the
-  room is paused is sent no class question until the resume ("What the screens
-  need", the phone). Asked for by the UI session; not built.
-- **`under18Note` only after a write**: `GET /api/classes/:id` carries each
-  student's `under18` but not the sentence, so a fresh load or an HOD never sees it.
-  Asked for by the UI session; not built.
-- **`levelBands` on `GET /api/dashboard` and `GET /api/analytics` for a professor**
-  (decision 6: three bands first). Only class analytics and attainment carry both;
-  the client sums the six levels itself. Asked for by the UI session; not built.
+- **A store failure while a room's close closes its class question leaves that class
+  question running in the store** (fixed in the Phase 5 follow-ups so the close still
+  answers and everyone is told; the error is logged). It can be closed by hand.
+- **A phone that joins while the room is paused is sent no class question until the
+  resume**; on the resume it now gets its own vote (Phase 5 follow-ups).
 - **Splitting or merging a regenerated draft loses its link** (`replacesId`): the
   question it was to replace keeps serving after the new drafts are approved, until it
   is retired by hand. Recorded as a known gap under the owner's delegation, 19 Nov
@@ -5169,8 +5246,6 @@ Phase 5 (class questions, misconception labels and the review fixes), open:
   supports (accommodations) of the roster student whose roll number it typed, the
   fewer-choices support included. Rooms are account-free (decision 7), so a token
   cannot be required for them. Kept, and recorded as a known gap, 19 Nov 2026.
-- **Two projector refusals still name a field** (`question.questionId …`,
-  `question.tallyId …`, Phase 3; "What the review fixes changed", 6).
 - **One server process.** The class question's vote and state locks, its push
   throttle and the projector's `showCounts` are in memory, as every room lock is. The
   class question's state itself is stored and survives a restart.
@@ -5189,12 +5264,6 @@ Phase 5 (honest indicators), open:
 - **Moves are kept from now on.** A history written before carries none: the student
   card lists no moves for it, and `levelEvidence` reads a move off the last answers as
   `nextStep` does.
-- **Staff lists ordered by score.** The insights' sort orders `band` and `lowest` (the
-  Support card's "Show them"), and a professor's analytics (`GET /api/analytics/:id`,
-  `students`, highest accuracy first) order students by accuracy. Both are staff-only and
-  were left as built; the directive's "students are listed in roll order, never ordered
-  by score" says otherwise. The room CSV still has a "Slow Learner" column (staff). The
-  owner's call.
 - **The HOD dashboard's professor accuracy** is a running pairwise average
   (`(a + b) / 2` per room, `dashboard.js`), not a mean of the rooms, so it weighs the
   latest room as half. Left as built; each room row and each professor row now carries

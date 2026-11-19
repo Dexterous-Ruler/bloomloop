@@ -349,6 +349,9 @@ check('the three sort orders', JSON.stringify(ins.sort?.orders) === JSON.stringi
   lowest: ['21CS03', '21CS02', '21CS04', '21CS01'],
   roll: ['21CS01', '21CS02', '21CS03', '21CS04'],
 }), JSON.stringify(ins.sort?.orders));
+check('the students come in roll order, which the read names as the default; the other two orders stay choices',
+  JSON.stringify((ins.students ?? []).map((s) => s.rollNo)) === JSON.stringify(ins.sort?.orders?.roll) && ins.sort?.default === 'roll'
+  && JSON.stringify(ins.sort?.keys?.map((k) => k.id)) === '["band","lowest","roll"]', JSON.stringify({ default: ins.sort?.default }));
 check('the cut points and the floor travel with the read', ins.thresholds?.needsSupportBelow === 0.4
   && ins.thresholds?.excellingFrom === 0.6 && ins.thresholds?.minAnswers === 3);
 

@@ -5,7 +5,7 @@
 running product, not recalled. Structure and labels were read via the accessibility tree,
 page text and DOM inspection; screenshots were used only where layout itself was the finding.
 
-**Account observed.** `Rudraksh Bharti` (rudrabhar21@gmail.com), account type
+**Account observed.** a team member's account (name and email withheld), account type
 *Teacher university*, plan **Basic (Free)**, org affiliation **VoyageMath** in the sidebar,
 usage `0 / 20 activities`. Currency shown is INR, so pricing is the India storefront.
 

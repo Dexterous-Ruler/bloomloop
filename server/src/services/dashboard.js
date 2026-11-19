@@ -24,6 +24,7 @@ import { listBelow, getAccount, rollKey } from './accounts.js';
 import { hydrate, overallAccuracy, isSlowLearner, totals } from './mastery.js';
 import { SIGNED_IN_ONLY } from './analytics.js';
 import { verifiedKeys, verifiedView } from './evidence.js';
+import { levelBandsOf } from './classAnalytics.js';
 
 /** Empty per-level tallies, in taxonomy order. */
 const emptyBloom = () =>
@@ -237,6 +238,7 @@ export async function hodDashboard(viewer) {
     }
   }
 
+  const bloom = bloomReport(harvested.bloom);
   return {
     role: 'hod',
     department: viewer.department ?? '',
@@ -251,7 +253,9 @@ export async function hodDashboard(viewer) {
       accuracy: harvested.totals.accuracy,
     },
     professors: [...byProfessor.values()].sort((a, b) => b.sessions - a.sessions),
-    bloom: bloomReport(harvested.bloom),
+    bloom,
+    // Decision 6: a department summary reads in three level bands first.
+    levelBands: levelBandsOf(bloom),
     // Newest first, and short: this is a dashboard, not an audit log.
     recentSessions: harvested.sessions.slice(0, 12),
   };
@@ -268,6 +272,7 @@ export async function professorDashboard(viewer) {
   ]);
 
   const roster = below.filter((a) => a.role === 'student');
+  const bloom = bloomReport(harvested.bloom);
   const sessionsByContent = new Map();
   for (const s of harvested.sessions) {
     sessionsByContent.set(s.title, (sessionsByContent.get(s.title) ?? 0) + 1);
@@ -303,7 +308,9 @@ export async function professorDashboard(viewer) {
         lastSeenAt: seat?.lastSeenAt ?? null,
       };
     }),
-    bloom: bloomReport(harvested.bloom),
+    bloom,
+    // Decision 6: a summary of the professor's classes reads in three level bands first.
+    levelBands: levelBandsOf(bloom),
     recentSessions: harvested.sessions.slice(0, 12),
   };
 }

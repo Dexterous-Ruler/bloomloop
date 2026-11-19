@@ -223,7 +223,10 @@ band (`bloom.bands`), with the same rules.
 where the next question is chosen and in detail views; class summaries and attainment
 show the three level bands first, with the six one click away. **What was built:**
 nothing on the server, which already returns both; which to show first is the
-client's (client work).
+client's (client work). Since the Phase 5 follow-ups (19 Nov 2026) the staff
+dashboards and staff analytics send the three bands too (`levelBands`, summed from
+their six levels by the same `LEVEL_BANDS`), so no screen sums them itself; a student
+reading their own is sent the six levels only.
 
 ## 7. Must the Hub require student accounts?
 
@@ -834,11 +837,11 @@ Open, from Phase 5 (each also in `docs/API.md`, "Known open issues"):
 - Confidence stays information only; whether it should ever inform a level estimate
   is the owner's question (class questions, open question 3).
 - The labels' open questions 1 to 5 and the honest indicators' 1 and 2, below.
-- Closing a room while a class question runs can leave the phones uninformed if the
-  store fails at that moment (a review finding not acted on).
-- Three server asks from the UI session are not built: each phone's own `mine` after a
-  room is resumed, `under18Note` on a class's roster read, and `levelBands` on the
-  dashboard and a professor's analytics.
+- Built in the follow-ups of 19 Nov 2026, so no longer open: a store failure while a
+  room's close closes its class question (logged; the phones and the projector are
+  still told), and the UI session's three server asks (each phone's own `mine` after a
+  room is resumed and when a class question is paused, `under18Note` on a class's
+  roster read, `levelBands` on the staff dashboards and analytics).
 
 ### Phase 5: confidence taps and class questions (pause, discuss, re-vote)
 
@@ -989,6 +992,14 @@ Open questions for the owner (nothing is built that settles them):
    students (highest accuracy first) order students by score, on staff screens only.
    The directive says students are listed in roll order, never ordered by score. Keep,
    or roll order only? The room CSV's "Slow Learner" column (staff) likewise.
+   **Decided under the owner's delegation, 19 Nov 2026:** students are listed in roll
+   order by default. A professor's analytics list of students (`GET /api/analytics/:id`)
+   is now in roll order, and highest accuracy first only when asked for
+   (`?order=accuracy`, new); the live insights' students were already in roll order
+   and the read now names `roll` as its default order (`sort.default`), with "By band"
+   and "Lowest first" kept as orders a professor chooses (the Support card's "Show
+   them" chooses Lowest first). The room CSV's staff-only "Slow Learner" column keeps
+   its name, because the Classroom import and the NAAC reports read that column.
 2. **The question's language.** Record it per question (a column) before the Hub's
    language switch, so the warning compares with the language a question was written
    in, not English by default.

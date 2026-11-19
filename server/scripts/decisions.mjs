@@ -483,8 +483,19 @@ let classId;
   check('importing adds them with the mark', done.status === 200 && done.body.added?.find((s) => s.rollNo === 'M02')?.under18 === true
     && !JSON.stringify(await repo.listClassStudents(classId)).includes('2009'));
 
-  const roster = (await get(`/api/classes/${classId}`)).body.students;
+  const ownerRead = await get(`/api/classes/${classId}`);
+  const roster = ownerRead.body.students;
   const idOf = (roll) => roster.find((s) => s.rollNo === roll)?.id;
+  // Phase 5 follow-up: the class's read carries the sentence whenever a student
+  // on it is marked, so a screen opened fresh, or an HOD's, says it too.
+  const hodRead = await get(`/api/classes/${classId}`, 'hod');
+  const plain = await post('/api/classes', { courseName: 'Chemistry', section: 'FY-B' });
+  await post(`/api/classes/${plain.body.class?.id}/students`, { students: [{ roll: 'C01', name: 'Chetan' }] });
+  const plainRead = await get(`/api/classes/${plain.body.class?.id}`);
+  check('the class read carries the under-18 sentence when a student on it is marked, for the owner and the HOD alike, and not otherwise',
+    /a lawyer must confirm/.test(ownerRead.body.under18Note ?? '') && hodRead.status === 200 && hodRead.body.under18Note === ownerRead.body.under18Note
+    && plainRead.status === 200 && plainRead.body.students?.length === 1 && !('under18Note' in plainRead.body),
+    JSON.stringify([ownerRead.body.under18Note, hodRead.status, hodRead.body.under18Note, plainRead.body.under18Note]));
   const hod = await patch(`/api/classes/${classId}/students/${idOf('N02')}`, { under18: true }, 'hod');
   const other = await patch(`/api/classes/${classId}/students/${idOf('N02')}`, { under18: true }, 'profB');
   const bad = await patch(`/api/classes/${classId}/students/${idOf('N02')}`, { under18: 'yes' });

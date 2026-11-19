@@ -391,7 +391,7 @@ POST …/class-questions {questionId} -> startClassQuestion, under #class  -> cl
                                                                          <- student:vote {classQuestionId, round, response, confidence?}
                                        handleVote, under the student's lock: an answers row, class_question_id + round
                                                                          -> class:vote (its own vote; counted or not, why)
-POST …/:id/pause                    -> state paused; votes under way      -> class:question (paused, no voting)
+POST …/:id/pause                    -> state paused; votes under way      -> class:question (paused, no voting), each phone its own vote
                                        swept first, so round 1 is whole
 POST …/:id/revote                   -> state revote (round 2)             -> class:question (revote)
 POST …/:id/close {reveal?}          -> state closed, revealed or not      -> class:closed (key only if revealed)
@@ -405,7 +405,9 @@ projector: projector:state through toProjector(), counts only when the professor
   stands and the question as asked (key included, staff-only). A restart loses none of
   it: a phone that joins or reconnects is sent it where it stands, with its own vote in
   the current round (`sendClassState`). A room's pause leaves it alone and resuming
-  the room sends it to every phone again; closing the room closes it unrevealed.
+  the room sends it to every phone again, each with its own vote by the same rule
+  (`sendClassQuestionToEach`); closing the room closes it unrevealed, and a store error
+  in that step is logged without stopping the close.
 - **Locks.** A change of state runs under the room's `#class` lock, which then takes
   and drops every student's lock (`sweepVotes`) so the round's counts are whole when
   the professor sees them; a vote is written under its student's lock.

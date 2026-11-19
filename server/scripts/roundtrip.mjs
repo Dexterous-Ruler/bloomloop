@@ -5,7 +5,7 @@
 // not an answer at all - a position off the end of its list - which records
 // nothing and scores 0, the nearest honest thing to a wrong answer it has.
 
-import { KINDS, invalidReason, score, forStudent } from 'file:///C:/Users/tanis/wayground/server/src/questionTypes.js';
+import { KINDS, invalidReason, score, forStudent } from '../src/questionTypes.js';
 
 // `answers` is a grid's whole key. A table's key is `accept` inside its cells,
 // already listed, and the deep scan below finds it at any depth.

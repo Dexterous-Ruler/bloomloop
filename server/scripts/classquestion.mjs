@@ -15,7 +15,8 @@
 //               open the professor sees how many voted, not what; a phone that
 //               reconnects is sent the question with its own vote
 //   pause       round 1 closes: its distribution, share right and taps, worked
-//               out by hand; a vote that comes after the pause is kept and not
+//               out by hand; each phone is told with its own vote (Phase 5
+//               follow-up); a vote that comes after the pause is kept and not
 //               counted; a phone that joins now is sent the question where it
 //               stands
 //   round 2     the re-vote: the phone that missed round 1 votes; a second
@@ -33,7 +34,9 @@
 //   confidence  the same answers with and without taps leave two students on
 //               identical levels; the room's counts and the student card's,
 //               by hand; a tap the server does not know is stored as none
-//   room close  closes its running class question without a reveal
+//   room close  closes its running class question without a reveal; with the
+//               store failing at that step, the close still answers and the
+//               phones and the projector are still told (Phase 5 follow-up)
 //   archive     a deleted room's archive keeps its class question and its votes
 //
 // Signed-in accounts need Supabase Auth, which this suite must never reach. So,
@@ -451,6 +454,11 @@ const paused = await post(`/api/session/${code}/class-questions/${cqId}/pause`, 
   check('counts only: no roll number anywhere in the professor\'s view', !/21CS0/.test(JSON.stringify(paused.body)));
   const got = await Promise.all(pausedPhones);
   check('every phone is told voting is paused, to talk it over', got.every((g) => g.state === 'paused' && g.voting === false && /Talk it over/.test(g.message)));
+  check('each with its own vote in round 1 (the changed vote\'s latest), never another phone\'s', same(got.map((g) => g.mine), [
+    { response: 0, confidence: 'guessing' }, { response: 2, confidence: 'sure' }, { response: 1, confidence: 'sure' },
+    { response: 2, confidence: 'think_so' }, { response: 0, confidence: null }, { response: 3, confidence: 'guessing' },
+    { response: 2, confidence: 'sure' },
+  ]), JSON.stringify(got.map((g) => g.mine)));
   const hodPause = await post(`/api/session/${code}/class-questions/${cqId}/revote`, {}, 'hod');
   check('an HOD may not open the re-vote: 403', hodPause.status === 403);
   check('another professor gets the 404 for it', (await post(`/api/session/${code}/class-questions/${cqId}/revote`, {}, 'profB')).status === 404);
@@ -681,6 +689,74 @@ console.log('\na room closed with a class question running');
   const vote = (await repo.listAnswers({ classQuestionId: cq.body.id })).find((a) => a.final !== false);
   check('its vote in force is a truefalse row, marked wrong, stored as given', vote?.response === false && vote?.correct === false && vote?.kind === 'truefalse');
   ph.s.disconnect();
+}
+
+// Phase 5 follow-ups, with the store failing: while each phone is sent its own
+// vote at a pause, and while the room's close is closing its class question. The
+// room is closed by then, so the close still answers, and the phones and the
+// projector are still told.
+{
+  const r4 = await post('/api/session', { contentId: String(content._id) });
+  const ph = await join(r4.body.code, '24CS01');
+  const toPhone = next(ph.s, 'class:question');
+  const cq = await post(`/api/session/${r4.body.code}/class-questions`, { questionId: String(TF_Q._id) });
+  await toPhone;
+  const link4 = await post(`/api/session/${r4.body.code}/projector/links`, {});
+  const wall4 = await connect();
+  const watching = next(wall4, 'projector:state');
+  wall4.emit('projector:watch', { token: link4.body.token });
+  await watching;
+
+  const realError = console.error;
+  const logged = [];
+
+  // First, the store fails reading the votes as the class question pauses: the
+  // phone is still told it paused, with no vote, as before each phone was sent its own.
+  const realList = repo.listAnswers;
+  let failOnce = true;
+  repo.listAnswers = async (...args) => {
+    if (failOnce) { failOnce = false; throw new Error('simulated read failure'); }
+    return realList(...args);
+  };
+  console.error = (...args) => { logged.push(args.map((a) => String(a?.message ?? a)).join(' ')); };
+  let pausedRes;
+  let pausedTold;
+  try {
+    const told4 = next(ph.s, 'class:question', (g) => g.state === 'paused').catch(() => null);
+    pausedRes = await post(`/api/session/${r4.body.code}/class-questions/${cq.body.id}/pause`, {});
+    pausedTold = await told4;
+  } finally {
+    repo.listAnswers = realList;
+    console.error = realError;
+  }
+  check('a store error reading the votes as the class question pauses: the pause holds, the phone is still told, with no vote',
+    pausedRes.status === 200 && pausedTold?.state === 'paused' && pausedTold.mine === null && failOnce === false
+    && logged.some((l) => /simulated read failure/.test(l)), JSON.stringify([pausedRes.status, pausedTold?.mine, logged]));
+  logged.length = 0;
+
+  const realUpdate = repo.updateClassQuestion;
+  repo.updateClassQuestion = async () => { throw new Error('simulated store failure'); };
+  console.error = (...args) => { logged.push(args.map((a) => String(a?.message ?? a)).join(' ')); };
+  let close;
+  let told;
+  try {
+    const shut = next(ph.s, 'session:closed').then(() => true, () => false);
+    const wallShut = next(wall4, 'projector:closed').then(() => true, () => false);
+    close = await post(`/api/session/${r4.body.code}/close`, {});
+    told = await Promise.all([shut, wallShut]);
+  } finally {
+    repo.updateClassQuestion = realUpdate;
+    console.error = realError;
+  }
+  check('a store error closing its class question does not turn the close into an error: 200, the room closed',
+    close.status === 200 && close.body.session?.status === 'closed' && (await repo.getSession(r4.body.sessionId))?.status === 'closed',
+    `HTTP ${close.status} ${JSON.stringify(close.body).slice(0, 160)}`);
+  check('the phones and the projector are still told the room closed', told[0] === true && told[1] === true, JSON.stringify(told));
+  check('and the error is logged, not sent to the professor as a failure', logged.some((l) => /simulated store failure/.test(l))
+    && !logged.some((l) => /^\[api\]/.test(l)), JSON.stringify(logged));
+  check('the class question can still be closed by hand afterwards', (await post(`/api/session/${r4.body.code}/class-questions/${cq.body.id}/close`, {})).status === 200);
+  ph.s.disconnect();
+  wall4.disconnect();
 }
 
 // -------------------------------------------------------------- archive --

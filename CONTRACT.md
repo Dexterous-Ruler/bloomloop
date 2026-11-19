@@ -3,7 +3,7 @@
 Every module below is written against **this file**. Do not change any signature here.
 If something in this file looks wrong, flag it in your report — do not silently "fix" it.
 
-Repo root: `C:\Users\tanis\wayground`. Node 20, ESM everywhere (`"type": "module"`),
+Paths below are from the repository root. Node 20, ESM everywhere (`"type": "module"`),
 2-space indent, single quotes, semicolons. No TypeScript. No new npm dependencies.
 
 Installed and available: `express`, `cors`, `socket.io`, `mongoose`, `multer`, `adm-zip`,

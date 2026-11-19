@@ -200,9 +200,10 @@ or resume and does not hear the events.
   confidence counts, misconception labels and reports, provenance chips, uncertain
   levels, counts beside estimates, the student card's level moves and translation
   warnings; the projector's class-question screen. The server side of all four
-  directive items is in (checklist at the end), except three server asks from the UI
-  session (each phone's own `mine` after a resume, `under18Note` on a class read,
-  `levelBands` on the dashboard and a professor's analytics).
+  directive items is in (checklist at the end), and since the follow-ups of 19 Nov
+  2026 so are the UI session's three server asks (each phone's own `mine` after a
+  resume and at a class question's pause, `under18Note` on a class read, `levelBands`
+  on the staff dashboards and analytics).
 - **Phase 6:** the Learning Hub.
 - **Phase 7:** offline outbox, service worker, laptop-server mode.
 
@@ -419,8 +420,9 @@ From the owner's decisions and Phase 5:
 - Two server processes: the class question's locks, push throttle and the projector's
   `showCounts` are in one process's memory. A restart was stood in for by a second
   server over the same in-process store.
-- Closing a room when the store fails while closing its class question (the review
-  finding not acted on; traced, not run).
+- Closing a room when the store fails while closing its class question: since the
+  follow-ups, run on the in-process store with the update made to fail
+  (`classquestion.mjs`), not against a real store's failure.
 - Any phone, console or projector screen for any of it.
 
 ## Risks found while revalidating
@@ -478,10 +480,12 @@ From the owner's decisions and Phase 5:
   carries the caveat, and a professor's own mark always wins. Kept by decision (rooms
   stay account-free); a typed roll number no longer exposes anything in the student's
   own history, nor takes a signed-in student's class vote.
-- **Closing a room while a class question runs** (Phase 5 review, not acted on). The
-  close awaits the class question's close inside the status lock with no catch; a
-  store error there answers 500 for a room already closed and the phones are not told
-  `session:closed` until the professor tries again. Traced, not reproduced.
+- **Closing a room while a class question runs** (Phase 5 review, fixed in the
+  follow-ups). The close awaited the class question's close inside the status lock
+  with no catch; a store error there answered 500 for a room already closed and the
+  phones were not told `session:closed`. Reproduced with the store's update made to
+  fail, then fixed: the error is logged and the close goes on (`classquestion.mjs`).
+  The class question is then left running in the store, and can be closed by hand.
 - **A class question's key before the reveal** (Phase 5 review, fixed). Four routes
   by which a phone could learn it (the bank id on `class:question`, a vote's key sent
   as an answer, a resend of an answer to the asked question, an early vote) are
@@ -1572,6 +1576,9 @@ Fixed since, by the Phase 5 review fixes (`decisions.mjs` 78 checks,
   dated): section 3's `source`, section 4's regenerate row, section 5's `token`,
   `linked`, `linkNote`, `confidence` and the class-question events, section 6 rule 1's
   "No image generation" (decision 4 and its revision)
+- [x] `GET /api/classes/:id` carries `under18Note` whenever a student on the roster is
+  marked, for the owner and the HOD alike (the UI session's ask; Phase 5 follow-ups,
+  `decisions.mjs`)
 
 Open, from this batch:
 - Supports (accommodations) still follow a typed roll number to the room owner's
@@ -1579,8 +1586,6 @@ Open, from this batch:
   gets that student's supports, the fewer-choices support included. Kept under the
   delegation as a known gap: rooms are account-free.
 - The under-18 mark does not reach a room opened without a class.
-- `GET /api/classes/:id` carries `under18` but not `under18Note` (the UI session's
-  ask; not built).
 - Splitting or merging a regenerated draft loses its `replacesId`, so the old question
   keeps serving until retired by hand (a known gap, recorded under the delegation).
 
@@ -1719,12 +1724,18 @@ Pause-discuss-re-vote
 - [x] **Stored state**: a `class_questions` row; a second server over the same store
   sends a joining phone the question as it stands. The archive keeps the class
   questions and every vote (`classquestion.mjs`)
-- [ ] **Each phone's own vote after the room is resumed.** The resume sends the class
-  question to the whole room with `mine: null`, and a phone that joins while the room
-  is paused gets none until then. Asked for by the UI session; **not built**
-- [ ] **Closing a room when the store fails** while closing its class question: a 500
-  for a room already closed, the phones not told (Phase 5 review finding, **not
-  acted on**; traced, not reproduced)
+- [x] **Each phone's own vote after the room is resumed** (the UI session's ask, Phase
+  5 follow-ups): the resume, and the pause of a class question, send each phone the
+  class question with its own vote in force, by the decision 7 rule a join uses; a
+  phone that reloaded while the room was paused gets its vote at the resume
+  (`keysafety.mjs`: a signed-in student's phone, a phone typing her roll number, a
+  reloaded phone and phones with no counted vote; `classquestion.mjs`: seven phones at
+  the pause, and a store read failing, which falls back to `mine: null`). A phone that
+  joins while the room is paused is still sent no class question until the resume
+- [x] **Closing a room when the store fails** while closing its class question (the
+  Phase 5 review finding): logged, and the close answers 200 and tells the phones and
+  the projector; reproduced first (a 500 and nobody told) with the store's update made
+  to fail, then fixed (`classquestion.mjs`)
 - [ ] The phone's class-question screen, the console's controls and before-and-after
   view, the projector's class-question screen. **Not checked**
 
@@ -1791,11 +1802,12 @@ Labels, ranks and gamification
   (`decisions.mjs`, `honesty.mjs`)
 - [ ] **No coins, leaderboards or streaks**: none exists on the server (searched); no
   test can show an absence
-- [ ] **Staff lists ordered by score.** The insights' "By band" and "Lowest first"
-  sorts and a professor's analytics list of students (highest accuracy first) order
-  students by score, on staff screens; the directive says roll order, never by score.
-  Left as built for the owner; the room CSV's "Slow Learner" column likewise.
-  **Open**
+- [x] **Staff lists in roll order by default** (decided under the owner's delegation,
+  19 Nov 2026): a professor's analytics list of students is in roll order, highest
+  accuracy first only with `?order=accuracy` (`honesty.mjs`); the insights' students
+  are in roll order and the read names `roll` as the default, "By band" and "Lowest
+  first" kept as orders a professor chooses (`insights.mjs`). The room CSV's staff-only
+  "Slow Learner" column keeps its name (the Classroom import and NAAC reports read it)
 
 Across the phase
 
@@ -1812,5 +1824,7 @@ Across the phase
   another language; two server processes; every screen
 
 **Client work** (the UI session's; nothing in `client/` was touched): `docs/API.md`,
-"What the screens need" in each of the three Phase 5 parts, and the three server asks
-above that are not built.
+"What the screens need" in each of the three Phase 5 parts. The three server asks are
+built (`docs/API.md`, "Phase 5 follow-ups"): the phone can show `mine` after a resume,
+the roster can show `under18Note` on a fresh load, and the dashboards and analytics
+can read `levelBands` instead of summing the six levels.
