@@ -10,14 +10,15 @@ screens). Commit `d162cc8` holds Phase 3 (the roster, rooms for a class and
 attendance, `0016`; the teacher-record store, `0017`; room modes, the waiting room and
 the projector, `0018`; live insights, the student card and class analytics; the fixes
 from the Phase 3 review; and the UI session's Phase 2 screens). Commit `eedfd5e`
-holds Phase 4. **The owner's decisions of 19 Nov 2026 are uncommitted**, on the
-server only, with migration `0022` (checklist at the end: "The owner's decisions of
-19 Nov 2026"). **Phase 5 is uncommitted too**, on the server only: the confidence tap
-and class questions (`0023`), misconception labels on wrong options (`0024`), the
-honest indicators (no migration) and the fixes from the Phase 5 review (no migration).
-Its checklist is at the end, by the directive's items: "Phase 5: distinctive
-classroom features". Every suite passes through the offline runner after the review
-fixes (the test table below). Phase 4, as committed:
+holds Phase 4. Commit `2f4fd2b` holds the owner's decisions of 19 Nov 2026 (`0022`;
+checklist at the end: "The owner's decisions of 19 Nov 2026") and Phase 5: the
+confidence tap and class questions (`0023`), misconception labels on wrong options
+(`0024`), the honest indicators and the fixes from the Phase 5 review (checklist at the
+end: "Phase 5: distinctive classroom features"); `4c1df09` holds the Phase 5
+follow-ups. **Commit `646b4e6` holds Phase 6, the Learning Hub, on the server only**
+(`0025` to `0029`; checklist at the end: "Phase 6: the Learning Hub"); its docs are the
+commit after it. Every suite passes through the offline runner after Phase 6 (the test
+table below). Phase 4, as committed:
 - course outcomes, their mappings and coverage, and the roster from CSV (`0019`);
 - configurable attainment and the marks register (`0020`);
 - CSV exports, printable reports and the acceptance run (no migration);
@@ -204,7 +205,12 @@ or resume and does not hear the events.
   2026 so are the UI session's three server asks (each phone's own `mine` after a
   resume and at a class question's pause, `under18Note` on a class read, `levelBands`
   on the staff dashboards and analytics).
-- **Phase 6:** the Learning Hub.
+- **Phase 6:** the Learning Hub. **Server done** (`646b4e6`, `0025` to `0029`): the
+  content backbone and one access rule, practice with feedback, Elo, the error log,
+  FSRS reviews, Get Ready and refresher paths, self-tests, goals and the hub home,
+  lessons, English, Hindi and Marathi, and the hint tutor (checklist at the end).
+  Absent: every hub screen, a live chat tutor (an owner option, not built), and the
+  shared-bank changes decided for batch 8 (`docs/PRODUCT_DECISIONS.md`).
 - **Phase 7:** offline outbox, service worker, laptop-server mode.
 
 ## Dependencies between features
@@ -226,13 +232,13 @@ Missing before this pass: room settings in the live loop, poll handling, ownersh
 `teacher:watch`, idempotent answer submission, migrations building a fresh database,
 the client (no client tests exist).
 
-Results after Phase 5 and the fixes from its review. Every suite was run through the
-offline runner (`docs/TESTING.md`) on 19 November 2026, which first blanks these in
-the environment: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`,
+Results after Phase 6. Every suite was run through the offline runner
+(`docs/TESTING.md`) on 19 November 2026, on commit `646b4e6`, which first blanks these
+in the environment: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`,
 `MONGO_URI`, `GEMINI_API_KEY`. Node 24.22.3, the in-process store and PGlite; no
-network service. Each figure below is what that run printed (the Phase 5 docs pass's
-own run, after the review fixes); every exit code was 0, and every script that
-answers the Auth calls itself ended with no request off the machine.
+network service. Each figure below is what that run printed (the Phase 6 docs pass's
+own run); every exit code was 0, and every script that answers the Auth calls itself
+ended with no request off the machine.
 
 Earlier phases ended at:
 
@@ -243,6 +249,22 @@ Earlier phases ended at:
 | 2 | 343 | | 270 |
 | 3 | 475 | | 451 |
 | 4 | 598 | 13 | 573 |
+| 5 (after its follow-ups) | 721 | 13 | 752 |
+
+How Phase 6 grew, as each piece reported it through the offline runner. The builders
+worked from an earlier snapshot (unit 710, migrations 752), so their figures do not
+add up to this run's; the last row is this run, on `646b4e6`:
+
+| Piece | Unit | Migrations | New script |
+|---|---|---|---|
+| The content backbone (`0025`) | 763 | 847 | `hub.mjs` 78 |
+| Practice, Elo, the error log, reviews (`0026`) | 802 | 934 | `practice.mjs` 74 |
+| Lessons and languages (`0027`) | 802 | 948 | `lessons.mjs` 84 |
+| The two merged and wired | 847 | 1037 | `lessons.mjs` 93 |
+| Get Ready, self-tests, goals (`0028`) | 871 | 1130 | `paths.mjs` 85 |
+| The tutor (`0029`) | 883 | 1131 | `tutor.mjs` 82 |
+| The two merged and wired | 911 | 1226 | |
+| The fixes from the review, landed on `fdac198` (this run) | 940 | 1226 | `hub.mjs` 78, `practice.mjs` 78, `paths.mjs` 88, `lessons.mjs` 100, `tutor.mjs` 84 |
 
 How Phase 5 grew, each through the offline runner as each piece reported it:
 
@@ -256,10 +278,10 @@ How Phase 5 grew, each through the offline runner as each piece reported it:
 
 | Suite | Command | Result |
 |---|---|---|
-| Unit: mastery, selector, edits, integrity, accounts, archive, reviews, evidence reads, the three repos (80 methods each); since Phase 2 also `checks`, `approval`, `kindmix`, `newkinds`, `media`, `itemstats`; since Phase 3 also `roster`, `wheel`, `records`, `modes`, `insights`; since Phase 4 also `outcomes`, `attainment`, `exports`; since 19 Nov 2026 also `decisions` (27), `classQuestions` (24), `misconceptions` (40), `honesty` (27) | `cd server && npm test` | **719 / 719** (162 suites) |
+| Unit: mastery, selector, edits, integrity, accounts, archive, reviews, evidence reads, the three repos (144 methods each); since Phase 2 also `checks`, `approval`, `kindmix`, `newkinds`, `media`, `itemstats`; since Phase 3 also `roster`, `wheel`, `records`, `modes`, `insights`; since Phase 4 also `outcomes`, `attainment`, `exports`; since 19 Nov 2026 also `decisions`, `classQuestions`, `misconceptions`, `honesty`; since Phase 6 also `hubBackbone` (34), `richText` (19), `hubPractice` (39), `hubLessons` (39), `hubSeams` (6), `hubPaths` (24), `hubTutor` (36), `hubPathsTutor` (4), `hubFixes` (18) | `cd server && npm test` | **940 / 940** (219 suites) |
 | Live loop: ownership, evidence, idempotency, polls, retries, redemption, status, room archive | `node server/scripts/liveloop.mjs` | 41 / 41 |
 | Security harness, including a phone answering another room's question | `node server/scripts/security.mjs` | 13 / 13 |
-| Migrations on PGlite: fresh build, re-run, upgrade, constraints, `0010` to `0024` | `cd server && npm run migrations` | **752 / 752** |
+| Migrations on PGlite: fresh build, re-run, upgrade, constraints, `0010` to `0029` | `cd server && npm run migrations` | **1226 / 1226** |
 | Review queue, end to end with the shared key | `node server/scripts/review.mjs` | 83 / 83 |
 | Evidence reads, end to end with the shared key | `node server/scripts/evidence.mjs` | 37 / 37 |
 | Resume, integrity (both read `server/.env`; the runner blanks the network settings first) | `node server/scripts/resume.mjs`, `integrity.mjs` | pass: 7 and 6 mandated steps, 0 failures, 0 supporting failures, 0 known holes |
@@ -271,15 +293,24 @@ How Phase 5 grew, each through the offline runner as each piece reported it:
 | Roster, rooms for a class and attendance (Phase 3), signed-in callers | `node server/scripts/roster.mjs` | **80 / 80** |
 | Teacher records (Phase 3), signed-in callers | `node server/scripts/records.mjs` | **97 / 97** |
 | Room modes, the waiting room and the projector (Phase 3), signed-in callers | `node server/scripts/modes.mjs` | **101 / 101** |
-| Live insights, the student card and class analytics (Phase 3), signed-in callers | `node server/scripts/insights.mjs` | **65 / 65** |
+| Live insights, the student card and class analytics (Phase 3), signed-in callers | `node server/scripts/insights.mjs` | **66 / 66** |
 | Course outcomes, their mappings and coverage, the roster from CSV (Phase 4), signed-in callers | `node server/scripts/outcomes.mjs` | **87 / 87** |
 | Attainment and the marks register (Phase 4), signed-in callers | `node server/scripts/attainment.mjs` | **73 / 73** |
 | The directive's acceptance criterion: exports and printable pages (Phase 4), signed-in callers | `node server/scripts/acceptance4.mjs` | **76 / 76** |
-| The owner's decisions of 19 Nov 2026, the decision 7 fix included, signed-in callers | `node server/scripts/decisions.mjs` | **78 / 78** |
-| Confidence taps and class questions (Phase 5), eight phones, signed-in callers | `node server/scripts/classquestion.mjs` | **70 / 70** |
+| The owner's decisions of 19 Nov 2026, the decision 7 fix included, signed-in callers | `node server/scripts/decisions.mjs` | **79 / 79** |
+| Confidence taps and class questions (Phase 5), eight phones, signed-in callers | `node server/scripts/classquestion.mjs` | **76 / 76** |
 | Misconception labels (Phase 5), signed-in callers | `node server/scripts/misconceptions.mjs` | **54 / 54** |
-| Honest indicators (Phase 5), signed-in callers | `node server/scripts/honesty.mjs` | **59 / 59** |
-| A class question's key and whose vote counts (the Phase 5 review fixes), signed-in callers | `node server/scripts/keysafety.mjs` | **41 / 41** |
+| Honest indicators (Phase 5), signed-in callers | `node server/scripts/honesty.mjs` | **66 / 66** |
+| A class question's key and whose vote counts (the Phase 5 review fixes), signed-in callers | `node server/scripts/keysafety.mjs` | **43 / 43** |
+| The hub's content backbone, access rule and `rich` (Phase 6), signed-in callers | `node server/scripts/hub.mjs` | **78 / 78** |
+| Hub practice, Elo, the error log, reviews, explanations, closed questions (Phase 6), signed-in callers, fixed clock | `node server/scripts/practice.mjs` | **78 / 78** |
+| Get Ready, refresher paths, self-tests, goals, the hub home (Phase 6), signed-in callers | `node server/scripts/paths.mjs` | **88 / 88** |
+| Lessons and languages (Phase 6), signed-in callers | `node server/scripts/lessons.mjs` | **100 / 100** |
+| The hint tutor (Phase 6), signed-in callers | `node server/scripts/tutor.mjs` | **84 / 84** |
+
+The older scripts' figures above (`insights.mjs` 66, `decisions.mjs` 79,
+`classquestion.mjs` 76, `honesty.mjs` 66, `keysafety.mjs` 43) are what they printed
+after the Phase 5 follow-ups (`4c1df09`); Phase 6 changed none of them.
 
 "Signed-in callers" means the script answers the server's three Supabase Auth calls
 itself, for a host that cannot resolve, and refuses and counts any other request off
@@ -425,18 +456,52 @@ From the owner's decisions and Phase 5:
   (`classquestion.mjs`), not against a real store's failure.
 - Any phone, console or projector screen for any of it.
 
+From Phase 6 (the Learning Hub):
+- `0025` to `0029` on the real database: their triggers (the topic-link loop guard, the
+  written-once guards on lessons, runs and hint views, the run and hints checks on hub
+  attempts) under the real service role, and the two approve functions called through
+  PostgREST's `rpc`. Only PGlite ran them.
+- About 70 new repo methods against a real Supabase or Mongo. The parity test shows
+  all three stores have the same 144 methods; a few Supabase request shapes were
+  checked against a stubbed fetch; no Mongo method ran.
+- **A real Supabase Auth token.** The hub is for accounts only, and every hub caller
+  in every script was answered in-process: accounts work only through that shim.
+- Any model call: link proposals, lessons, translations, explanations and hint drafts
+  were tested with fixture replies through the real parsers, or a stand-in model.
+- Hindi or Marathi through Get Ready or a self-test; the quality of any translation.
+- How MathML, shiki's colours and Devanagari look in a browser or on a phone.
+- Two server processes (every hub lock and background run is in one process), a
+  restart in the middle of a run, and a semester's attempts on Supabase.
+- Any hub screen: none exists.
+
 ## Risks found while revalidating
 
 - **Supabase unreachable.** The project's hostname does not resolve (checked against
   public DNS on 18 November 2026). Every account feature is untestable locally and
-  broken on the deployed site until the project is restored.
-- **Uncommitted work.** Phases 0 to 4 are committed on branch
-  `roadmap-phase0-evidence` (`b4585a0`, `05daf56`, `27559ca`, `d162cc8`, `eedfd5e`).
-  Two sets of work are not, and one bad checkout loses both:
-  - the owner's decisions and Phase 5: server, tests, docs, the contract amendments,
-    and migrations `0022` to `0024`;
-  - the UI session's newer client work, which depends on them and should be committed
-    after them.
+  broken on the deployed site until the project is restored. **The whole Learning Hub
+  is an account feature**: nothing of it has run against Supabase or with a real Auth
+  token, and it answers 503 on any server without Supabase.
+- **Committed, not deployed.** Phases 0 to 5 are committed on branch
+  `roadmap-phase0-evidence` (`b4585a0`, `05daf56`, `27559ca`, `d162cc8`, `eedfd5e`,
+  `2f4fd2b`, `4c1df09`). Phase 6 (`646b4e6` and its docs) is on a branch of its own,
+  built on that one and not yet merged into it. Nothing of Phase 6 is deployed or
+  pushed.
+- **Phase 6 migrations.** `0025` to `0029` are route-only: a server deployed without
+  them keeps Supabase and every room, logs the file and what fails, and only the hub's
+  routes fail. Apply them in number order, before or after the server. None has run
+  anywhere but PGlite.
+- **The shared question bank** (Phase 6 review, owner's call decided for batch 8).
+  Practice shows the key of every approved question after one try, so a student can
+  collect the keys of questions a graded room will ask later. Only questions a room is
+  asking right now are closed in the hub. The batch 8 changes ("rooms only" questions,
+  rooms avoiding what a student practised, practice marking only what it served, ending
+  a Get Ready check) are decided and not built (`docs/PRODUCT_DECISIONS.md`).
+- **A topic record with a lesson but no questions or links** is deleted, with its
+  lessons, when it leaves its chapter's topic list (`0027` cascades; the sync counts only
+  questions and links as use). Found while writing the Phase 6 docs; traced, not run.
+- **Hub estimates are replayed per request** from every attempt on the topics involved
+  (as attainment is), and each practice request also reads the open rooms on the
+  chapter, the student's self-tests and checks. Not measured on Supabase.
 - **Deploying the server before a client that approves.** Every generated question
   is a draft since Phase 2, and the committed console has no approve, reject or
   approve-all. A professor who generates a bank then cannot open a room on it (409),
@@ -1828,3 +1893,222 @@ Across the phase
 built (`docs/API.md`, "Phase 5 follow-ups"): the phone can show `mine` after a resume,
 the roster can show `under18Note` on a fresh load, and the dashboards and analytics
 can read `levelBands` instead of summing the six levels.
+
+### Phase 6: the Learning Hub: server done, every screen unticked
+
+The directive's order for Phase 6, kept by the owner's delegation of 19 Nov 2026: the
+content backbone; adaptive practice with feedback; Elo; the error log; FSRS; Get
+Ready; refresher paths; practice and exam modes; lessons; the English, Hindi and
+Marathi switch; the hint tutor. Decided under the delegation as H1 to H18
+(`docs/PRODUCT_DECISIONS.md`, Phase 6), with two more lines checked here: the
+language recorded per question, and personal progress with no rankings.
+
+Committed as `646b4e6`, server and database only: `0025` (the backbone), `0026`
+(practice and explanations), `0027` (lessons and languages), `0028` (Get Ready,
+self-tests and goals), `0029` (the tutor). Endpoints: `docs/API.md`, "Phase 6: the
+Learning Hub". The hub is for accounts only, so **every line below rests on signed-in
+callers answered in-process** by the scripts' stand-in for Supabase Auth: no real Auth
+token, Supabase database, Mongo or model was used.
+
+A box is ticked only when the feature works **end to end with a test** on this tree:
+over HTTP on a real server (the production `createApp` and `attachSockets`), on the
+in-process store, with signed-in callers answered in-process, plus unit tests and
+PGlite for the migrations. **No screen exists, so every screen line is unticked.**
+
+The Phase 6 docs pass's run through the offline runner (19 November 2026):
+
+| Suite | Result |
+|---|---|
+| Unit | 940 / 940 (219 suites); the nine Phase 6 files: `hubBackbone` 34, `richText` 19, `hubPractice` 39, `hubLessons` 39, `hubSeams` 6, `hubPaths` 24, `hubTutor` 36, `hubPathsTutor` 4, `hubFixes` 18 |
+| Migrations | 1226 / 1226 |
+| `hub.mjs` | 78 / 78 |
+| `practice.mjs` | 78 / 78 |
+| `paths.mjs` | 88 / 88 |
+| `lessons.mjs` | 100 / 100 |
+| `tutor.mjs` | 84 / 84 |
+| Every Phase 0 to 5 suite | its figure after the Phase 5 follow-ups |
+
+**Deploying.** `0025` to `0029` are route-only: the boot probe checks each and, when one
+is missing, keeps Supabase, runs every room and logs the file and what fails until it
+is applied. Apply them in number order, before or after the server. None has run
+anywhere but PGlite.
+
+Content backbone (H1 to H4, H15)
+
+- [x] **One access rule** (`services/hubAccess.js`): a student reaches a class when its
+  owner is their professor and the roster holds their roll number, not removed; the
+  owner reads and writes; the department's HOD reads and gets 403 on every write;
+  another professor, a removed student, another professor's student and a student
+  not on the roster get the same 404 as a class that does not exist; 503 without
+  Supabase; 401 for no token and for the teacher key (`hub.mjs`,
+  `test/hubBackbone.test.js`)
+- [x] **Units and placed chapters**: add, rename, reorder, remove; chapters placed and
+  moved by the owner only, their own chapters only; "Other chapters" (`hub.mjs`)
+- [x] **Topic records** made on upload, a topic edit, first placement and the owner's
+  sync, never on a read; a used topic retired, an unused one deleted; no question row
+  rewritten (`hub.mjs`)
+- [x] **Prerequisite links**: provenance and state; a loop refused with a sentence
+  naming the chain; chains nearest first from confirmed links only (`hub.mjs`, unit)
+- [x] **AI proposals on the professor's button**: the strict parser on fixture
+  replies; offline proposes none and says so (`hub.mjs`, unit). The live model call
+  never ran
+- [x] **Per-slide text** kept for new uploads; older decks say they cite slide numbers
+  only (`hub.mjs`)
+- [x] **Formulas and code** as server-made HTML, escaped otherwise, capped; the
+  additive `rich` on the room phone's question, every other field as before
+  (`test/richText.test.js`, `hub.mjs`, `test/hubFixes.test.js`)
+- [ ] How MathML and shiki's output look in a browser or on a low-end Android. **Not
+  checked**
+- [ ] The class hub editor, chapter panel, link editor and the student's hub. **Not
+  checked**
+
+Adaptive practice with feedback (H5, H14)
+
+- [x] **Approved questions only**, through `forStudent`, no key before an attempt;
+  never a poll, a draft or an image question (`practice.mjs`)
+- [x] **Marked on the server**; the reply gives right or wrong, the answer in the
+  positions shown, the approved explanation, option feedback and the topic's state
+  (`practice.mjs`, `tutor.mjs`)
+- [x] **Its own append-only store**, idempotent by the device's attempt id; rooms,
+  attainment and the register byte-identical before and after (`practice.mjs`, unit)
+- [x] **Closed questions** (the review fix): a question a room is asking now, one on
+  an open self-test, or the one an open Get Ready check is asking is not served,
+  answered (409, nothing stored) or hinted (`practice.mjs` over a real socket room,
+  `lessons.mjs`, `test/hubFixes.test.js`)
+- [x] **Explanations**: one per question, written and approved by the professor, or
+  drafted on the button and approved (offline: none, with a sentence); students see
+  approved ones only (`practice.mjs`). The model's drafting never ran
+- [ ] **Image-stimulus questions and the fewer-choices support** are left out of hub
+  practice
+- [ ] The practice screen. **Not checked**
+
+Elo (H6)
+
+- [x] **A rating per student and topic and per question**: first attempts only, items
+  seeded by Bloom level, K shrinking with answers; the typical question's chance
+  (`test/hubPractice.test.js`, `practice.mjs`)
+- [x] **Five topic states**, each with N and a sentence, provisional marked; Mastered
+  at a chance of 0.8 from 5 answers; honest sentences when a topic has too few
+  questions (`bankShort`) (`practice.mjs`, `test/hubFixes.test.js`)
+- [x] **Verified room answers do not seed it**, and every progress reply says so
+  (`practice.mjs`)
+- [ ] Item ratings are not shown to staff yet
+- [ ] The mastery map. **Not checked**
+
+Error log (H7)
+
+- [x] **Built automatically** from wrong hub attempts and verified room answers ("From
+  class"); one open entry per question; cleared by a different question on the topic
+  at its level or above; prerequisites listed (`practice.mjs`, unit)
+- [x] **No room key it would not show anyway** (`keyHeld`) (`test/hubFixes.test.js`)
+- [ ] The error-log screen. **Not checked**
+
+FSRS (H8)
+
+- [x] **One ts-fsrs card per student and topic**, default parameters; sessions split at a
+  10-minute gap; the rating mapping; a due list; weekly consistency with rest days and
+  no streak (`test/hubPractice.test.js`, `practice.mjs` on a fixed clock)
+- [ ] The review and consistency screens. **Not checked**
+
+Get Ready (H9)
+
+- [x] **A check of at most 12 questions** over the target's confirmed prerequisites,
+  nearest first, with the stopping rule; a topic mastered in practice is Ready without
+  asking; Not sure yet with its reasons; feedback after each answer; an ended check
+  stays ended (`paths.mjs`, `test/hubPaths.test.js`, `test/hubFixes.test.js`)
+- [ ] The Get Ready screen. **Not checked**
+
+Refresher paths (H9)
+
+- [x] **The Needs-review prerequisites in dependency order**, each with why it is on
+  the path in the student's own counts, ending at the target; a step done by two right
+  in a row or two of the last three, a repeat counting once per round (`paths.mjs`,
+  `test/hubFixes.test.js`)
+- [ ] The path screen. **Not checked**
+
+Practice and exam modes (H10)
+
+- [x] **Practice**: feedback after each item; hints available (`practice.mjs`,
+  `tutor.mjs`)
+- [x] **Self-tests**: chosen topics and levels, up to 30 questions, an optional time
+  limit with a 30-second grace on the server's clock; no hints and no feedback until
+  hand-in; late answers kept and not counted; unanswered questions keep their keys;
+  counted nowhere official; held back from the estimates until the end (`paths.mjs`,
+  `test/hubPaths.test.js`, `test/hubPathsTutor.test.js`)
+- [ ] **Written answers** get labelled provisional machine marks: built and
+  unit-tested (`test/hubPractice.test.js`, `test/hubPaths.test.js`), but no written
+  answer was sent over HTTP
+- [ ] The self-test builder and result screens. **Not checked**
+
+Lessons (H11)
+
+- [x] **A "slides only" lesson through the routes**: chunks of the professor's own text,
+  cited by slide (or saying it cites none), with approved questions; a draft until
+  approved; regenerating keeps the approved one serving; students read the approved
+  one only, with no key before an attempt; its answers land in the attempts store
+  (`lessons.mjs`, `test/hubLessons.test.js`, `test/hubSeams.test.js`)
+- [x] **The AI-draft lesson** (worked example, retrieval questions as bank drafts) with a
+  stand-in model, in-process (`lessons.mjs`, unit). Never with a real model, nor
+  through the route with one
+- [ ] The lesson screen and the staff lesson panel. **Not checked**
+
+English, Hindi and Marathi (H12)
+
+- [x] **Translations per item and language** (questions, lessons, explanations, hints,
+  option feedback): made on the button or by hand, checked (blocking findings and
+  flags), approved, out of date once the English changes; a student sees an approved,
+  current one or English with a note (`lessons.mjs`, `test/hubLessons.test.js`,
+  `test/hubSeams.test.js`)
+- [x] **The student's choice** of language, saved and read (`lessons.mjs`)
+- [ ] Hindi or Marathi through Get Ready or a self-test (only English was run there);
+  the quality of any translation; Devanagari rendered anywhere. **Not checked**
+- [ ] The language switch and the translations screen. **Not checked**
+
+The hint tutor (H13)
+
+- [x] **Approved hint ladders and option feedback**, the professor's approved as
+  written, AI drafts approved per question; the answer-leak check at writing, parsing,
+  approval and serving; the first-hint plan from the student's own recent answers;
+  each hint opened recorded; hints used counted per question since the last answer;
+  never in a self-test or Get Ready (`tutor.mjs`, `test/hubTutor.test.js`,
+  `test/hubFixes.test.js`)
+- [x] **No live model call**: drafting only on the professor's button, from fixture
+  replies and a stand-in model; offline drafts none (`tutor.mjs`)
+- [ ] A live chat tutor: not built (an owner option, `docs/PRODUCT_DECISIONS.md`)
+- [ ] The hint button and the staff hints screen. **Not checked**
+
+Language recorded per question
+
+- [x] **Every hub attempt records the language actually shown**, believing the
+  screen's echo only when it can have been true (`test/hubSeams.test.js`,
+  `lessons.mjs`)
+- [x] **By-language item statistics** from each student's first graded hub attempt,
+  through Phase 5's warning (`lessons.mjs`, unit)
+- [ ] Room answers are still all `'en'`: no room phone sends a language
+
+Personal progress, no rankings (H16, H17)
+
+- [x] **No rank, class average, streak, coins or band name** on any student payload,
+  the hub home included (`paths.mjs`, `test/hubPaths.test.js`); the student's hub says
+  their professor can see their progress (`hub.mjs`, `paths.mjs`)
+- [x] **Goals** with an exam date, private to the student (`paths.mjs`)
+- [x] **Staff views in roll order**, never ranked: per class by topic state, per
+  student with N, activity counts (hints as counts), open errors and Get Ready results;
+  the HOD reads only (`practice.mjs`, `paths.mjs`, `tutor.mjs`)
+- [ ] The hub home, goals and the staff class and student pages. **Not checked**
+
+Across the phase
+
+- [x] **No model call in anything a student waits on** (decision 5): every script
+  refuses and counts any request off the machine, 0 in every run
+- [x] **Rooms, the ladder, attainment, the register and the answers table untouched**:
+  checked byte for byte before and after hub work (`practice.mjs`, `tutor.mjs`)
+- [x] **The three repos expose the same 144 methods** (the parity unit test). `0025` to
+  `0029` are additive and idempotent, re-run over data, RLS on and no policies, and
+  change no existing row (`npm run migrations`, PGlite only)
+- [ ] **Not tested:** `0025` to `0029` and every new repo method against a real Supabase
+  or Mongo; a real Auth token (accounts work only through the shim); any model call;
+  two server processes; a semester's data; every screen
+
+**Client work** (the UI session's; nothing in `client/` was touched): `docs/API.md`,
+"Phase 6: the Learning Hub", "What the screens need".

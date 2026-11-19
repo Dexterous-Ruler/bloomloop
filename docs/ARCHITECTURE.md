@@ -42,6 +42,13 @@ and is sent `projector:*` events only.
 | Class questions (Phase 5) | `services/classQuestions.js`, `routes/classQuestions.js`, `startClassQuestion` / `changeClassQuestion` / `handleVote` in `sockets/index.js`; `0023` | The room's owner puts one approved `mcq`, `truefalse`, `poll` or `multi` question of the room to every phone in a Student-devices or Mixed room: round 1 (`open`), a pause for discussion (`paused`), a re-vote (`revote`), and a close with or without revealing the key. The state is a `class_questions` row, so a restart loses none of it; a phone that joins or reconnects is sent the question where it stands. Every vote is an `answers` row (`class_question_id`, `round`), never overwritten; a changed vote and a late one are kept with `final` false. No vote touches a profile, so a class question moves no level. A question asked to the class leaves the live loop's bank for that room (`withoutAsked`). Votes are written under each student's lock and a change of state under the room's `CLASS_LOCK`, which then takes and drops every student's lock (`sweepVotes`), so a round's counts are whole when the professor sees them. The professor's screens get `teacher:class-question` (counts, never a name); the projector gets the question through its whitelist, with counts only when the professor chooses and the key only once revealed |
 | Misconception labels (Phase 5) | `services/misconceptions.js` (pure), its readers in `services/itemStats.js`, the label routes in `routes/bank.js`, `routes/misconceptions.js`; `0024` | A short label on a wrong option of an `mcq`, `multi` or `truefalse` question naming the misunderstanding a student who picks it most likely holds (at most 120 characters, no contact details; never on a poll or a right answer). Stored on the question (`questions.misconceptions`) by the option's **text**, so a reorder keeps it on its option and a rewording, or a key change that makes it a right answer, removes it with the edit (`keptLabels`; the reply names it). Provenance `ai` (the generator proposed it, professor-triggered; an "AI draft") or `professor` (written, edited or confirmed). Only the owner writes them, and a label changes no mark: the question keeps its status and approval, and approving a question confirms no label. The reports count, per labelled option, the distinct students whose counted answer (final, graded, no class-question vote) chose it, matched through the option's words in the answer's own snapshot to the question's current label, and say when a label was added or reworded after the answers: per room, per class (its rooms, a roll number pooled across them) and per question (its chapter's rooms, a roll number per room). Item statistics show each option's label beside its count. Staff-only: never on a phone or the projector, and left out of every answer snapshot (`snapshotOf`). The live insights do not carry them: they are built from profiles every two seconds, and these counts need every answer row and the bank |
 | Honest indicators (Phase 5) | `services/honesty.js` (pure); `levelEvidence`, `levelMoves`, `masteryBasis` and the `move` record in `services/mastery.js`; their readers in the grid rows (`routes/session.js`), the live loop's question, `services/insights.js`, `services/itemStats.js`, `services/classAnalytics.js`, the dashboards and the bank routes | Each indicator sent as data with a plain sentence, nothing stored but the move record. **Provenance**: every bank question sent to staff carries who wrote it and where it stands at the approval gate (`questionProvenance`: an unapproved AI question is an "AI draft"), every misconception label whether a professor confirmed it; a phone's question carries a student's wording (`phoneProvenance`, never "template" or a model's name), only ever for a question its room serves. **Uncertain levels** (`levelCheck`, staff only): a level the model chose that no professor approved, or a kind that does not ask for its level. **Counts**: every level, band, mastery figure, item difficulty, KPI, card and class figure carries the answers it rests on and a sentence; one under the engine's own minimum is `provisional`, never a firm state (the phone's `next.provisional` included). **Moves**: every promotion, demotion, move into the below-40% band and hold at either end keeps its rule, window, share, answers and the professor's sentence on the answer's history entry (`move`), read back on the student card; staff-only, so a student's own dashboard trail is sent without it. **Languages** (`languageSplit`, `studentLanguages`): per question, the share right in each language the answers came in and a warning when two languages with at least 5 answers each differ by more than 20 points; per student, which answers were in another language. Every answer is `'en'` today, so this waits for the Hub's language switch |
+| Learning Hub: access and the content backbone (Phase 6) | `routes/hub.js`, `services/hubAccess.js`, `hubTopics.js`, `hubGraph.js`, `hubProposals.js`, `hubViews.js`; the topic sync and per-slide text in `routes/content.js`; `questionTopicFor` in `services/generate.js`; `0025` | The signed-in student's hub, outside any room (see "Learning Hub (Phase 6)" below). `app.js` mounts six routers at `/api/hub` (`hub.js`, `hubPractice.js`, `hubLessons.js`, `hubLanguages.js`, `hubPaths.js`, `hubTutor.js`), each behind `hubGate` in `routes/hub.js`: 503 without Supabase, then a signed-in account, never the teacher key. `hubAccess.js` is the one access rule every hub route uses. `hubTopics.js` keeps each chapter's topic records in step with its topic list; `routes/content.js` calls it on an upload, a paste and a topic edit, and keeps each slide's words for a deck uploaded now, by a write of its own after the chapter is made. `hubGraph.js` (pure) walks confirmed prerequisite links. `hubProposals.js` asks the model for direct links on the professor's button and holds its reply to a strict parser. `hubViews.js` builds the student and staff payloads field by field |
+| Formulas and code (Phase 6) | `services/richText.js`; `phoneRich` in `sockets/index.js`, `phoneRichSync` in `services/classQuestions.js` | Turns a professor's text into HTML on the server: TeX to MathML (temml, with mhchem, trust off), fenced code highlighted (shiki, JavaScript regex engine, 18 languages), everything else escaped. Hub payloads carry `nameHtml`, `titleHtml` and `reasonHtml`; a room phone's question carries `rich` (below) |
+| Hub practice, mastery, the error log and reviews (Phase 6) | `routes/hubPractice.js`, `services/hubPractice.js`, `hubElo.js`, `hubReview.js`, `hubErrors.js`, `hubProgress.js`, `hubExplanations.js`, `hubHintHook.js`; `0026` | Over REST, for a signed-in student: the next approved question on a topic and an attempt marked on the server and kept in `hub_attempts`, with feedback only after it. Elo per student and topic (`hubElo.js`), FSRS reviews (`hubReview.js`), the error log (`hubErrors.js`), the student's and staff's reads (`hubProgress.js`, roll order, never ranked), and one explanation per question (`hubExplanations.js`). `hubHintHook.js` is the only door from practice and lessons to the tutor. Nothing here is read by a room, attainment or the register |
+| Lessons and languages (Phase 6) | `routes/hubLessons.js`, `routes/hubLanguages.js`, `services/hubLessons.js`, `hubLanguages.js`, `hubAttemptBridge.js`; `0027` | A lesson per topic from the professor's own slides, a draft until approved. Hindi and Marathi versions of what a student reads, shown only when approved and current. A lesson's answers go through `hubAttemptBridge.js` into practice's `hub_attempts` |
+| Get Ready, self-tests, goals and the hub home (Phase 6) | `routes/hubPaths.js`, `services/hubRuns.js`, `hubGetReady.js`, `hubExam.js`, `hubHeld.js`, `hubGoals.js`; `0028` | Get Ready checks and refresher paths (`hubGetReady.js`), self-tests (`hubExam.js`) with the hold-back rule (`hubHeld.js`), and a student's goals and hub home (`hubGoals.js`). A check or a self-test is a run (`hub_runs`); its answers are hub attempts carrying its id |
+| Tutor (Phase 6, H13) | `routes/hubTutor.js`, `services/hubTutor.js`, `hubHintHook.js`; `0029` | Approved hint ladders and feedback on wrong options, written by the professor or drafted on their button. No live model call. Hints open in practice, review sets and lessons only, and each one opened is a `hub_hint_views` row |
+| Closed questions (Phase 6) | `services/hubClosed.js` | Which questions are closed to a student for now: being asked in a room, on one of their open self-tests, or the one an open Get Ready check of theirs is asking. Read by practice, lessons, the tutor, Get Ready, the self-test result and the error log. Nothing stored |
 | Item statistics | `services/itemStats.js` | How each question did: attempts, proportion correct, how many chose each option (mapped back through each student's shuffle with `toOriginalResponse` in `questionTypes.js`), mean score, a band for the class, the point-biserial and its negative flag. From final, graded answer rows; `GET /api/session/:code/items` for a room, `GET /api/bank/:contentId/stats` across a bank's rooms. Since Phase 5 each option also carries its misconception label, or null |
 | Reports | `services/dashboard.js`, `analytics.js`, `csv.js`, `routes/export.js`, `routes/classroom.js` | Dashboards, analytics, the CSV export, and Google Classroom posting |
 | Storage | `repo/memoryRepo.js`, `mongoRepo.js`, `supabaseRepo.js` | Three implementations with the same methods. The rest of the server never asks which one it got |
@@ -125,6 +132,31 @@ and is sent `projector:*` events only.
   says which of them count. Deleted rooms' archives are not read. Nothing is written
   but a saved formula. The CSV sheets and printable pages are drawn from the same
   JSON report per request and never stored either.
+- **Hub attempts (Phase 6).** Every answer given in the Learning Hub (practice, a
+  review set, a lesson's question, a Get Ready check, a self-test) is one row in
+  `hub_attempts` (`0026`), its own append-only table, never in `answers`. It is
+  marked on the server from the stored question, with the device's attempt id as its
+  idempotency key (one row per student and id), the mode, the language shown, the
+  hints used and the time the device measured (kept, never used for marking). A guard
+  trigger refuses any change and any delete, except a deleted class, chapter, topic or
+  question clearing its link and the student's account taking its rows with it. No
+  room, the ladder, attainment or the marks register reads it.
+- **Runs (Phase 6).** A Get Ready check or a self-test is a `hub_runs` row (`0028`),
+  holding what was fixed when it started; it is written once and then ended once. Its
+  answers are hub attempts carrying its id (`hub_attempts.run_id`), which a trigger
+  files only under the same student's run, in the run's mode.
+- **Hints opened (Phase 6).** Each hint a student opens is a `hub_hint_views` row
+  (`0029`), written once and never changed, under the attempt id the answer will
+  carry, with the words shown, their language, the slides and the plan. An attempt's
+  `hints_used` is counted from those rows: the distinct hints opened on the question
+  since the student's previous answer to it, under any attempt id, at most 3. A
+  self-test or Get Ready attempt carries none (`0029`'s check on `hub_attempts`, added
+  `NOT VALID`, so rows older than it are not checked).
+- **Hub estimates (Phase 6).** Elo ratings, topic states, spaced reviews, the error
+  log, Get Ready outcomes, refresher paths, goal progress and staff's hub reads are
+  worked out per request from the hub attempts (the error log also from the student's
+  own verified room answers). None is stored. A self-test's answers count only once it
+  has ended (`services/hubHeld.js`).
 - **Reference.** Every Phase 1 to Phase 4 endpoint and socket field, with request
   and response shapes: `docs/API.md`.
 
@@ -181,7 +213,7 @@ is staff-only never leaves the teacher's channel or the teacher's routes:
 
 | Audience | Channel | Joined by | Gets |
 |---|---|---|---|
-| Phones | `session:<code>` | `student:join` (a typed roll number; optionally a signed-in student's token, which links the room to their account, decision 7) | Since Phase 5 also a class question (`class:question`, `class:vote`, `class:closed`): the question through `forStudent()`, its own vote back, never right or wrong, and the key only once the professor reveals it. Its own question, result and row: since 19 Nov 2026 a `PhoneRow` (`phoneRow` in `routes/session.js`, a student subset of the teacher's row with a neutral `next`), and sentences of its own that never name a band (decision (a)); the room's status, `server:waiting`, `session:teacher-led`. Since Phase 5's honest indicators its question carries `provenance` in a student's words, and its row `masteryBasis` and `next.provisional`. Never `slowLearner`, a signal, a roster name, attendance, a teacher record, an insight, a misconception label (Phase 5), a level check, a level move, a translation warning or anything for the projector |
+| Phones | `session:<code>` | `student:join` (a typed roll number; optionally a signed-in student's token, which links the room to their account, decision 7) | Since Phase 5 also a class question (`class:question`, `class:vote`, `class:closed`): the question through `forStudent()`, its own vote back, never right or wrong, and the key only once the professor reveals it. Its own question, result and row: since 19 Nov 2026 a `PhoneRow` (`phoneRow` in `routes/session.js`, a student subset of the teacher's row with a neutral `next`), and sentences of its own that never name a band (decision (a)); the room's status, `server:waiting`, `session:teacher-led`. Since Phase 5's honest indicators its question carries `provenance` in a student's words, and its row `masteryBasis` and `next.provisional`. Since Phase 6 its question (`server:question`) and a class question's (`class:question`) also carry `rich`: HTML for each field of the question as shown that holds a formula or a code block, `{}` otherwise, with every other field as before (`phoneRich` and `phoneRichSync` in `services/richText.js`, H15). A phone holds no account token, so it reaches no `/api/hub` route. Never `slowLearner`, a signal, a roster name, attendance, a teacher record, an insight, a misconception label (Phase 5), a level check, a level move, a translation warning or anything for the projector |
 | Teacher screens | `teacher:<code>` | `teacher:watch` with a teacher's credential, under the read rule | `teacher:grid` (with `rosterName`, `attendance`, `waiting` and `feed` added after `buildGridRow`, in `classGrid` and `roomFeed`), `teacher:status`, `teacher:insights`, and since Phase 5 `teacher:class-question` (counts, never a name) |
 | Projectors | `projector:<code>` | `projector:watch` with a link's token (no account) | `projector:state`, `projector:closed`, `projector:refused`, every one through the `toProjector()` whitelist |
 
@@ -493,6 +525,382 @@ and `levelEvidence`, `levelMoves`, `masteryBasis` in `services/mastery.js`):
 recounts the level tallies from those, and withholds the room's working level when any
 entry is not theirs. The dashboard and analytics read a student's own rooms through
 it; a professor's reads take the profile whole.
+
+## Learning Hub (Phase 6)
+
+The Learning Hub is a signed-in student's own place to study their classes' material
+outside any room: practice, lessons, reviews, Get Ready checks, self-tests and goals.
+Staff build it (units, placed chapters, prerequisite links, lessons, explanations,
+hints, translations) and read their students' progress. It is REST only, under
+`/api/hub`, and shares nothing with a room's socket loop. This is a summary: every
+route, request and reply is in `docs/API.md`, "Phase 6: the Learning Hub", and the
+defaults chosen under the owner's delegation (H1 to H18) are in
+`docs/PRODUCT_DECISIONS.md`. No client screen in this tree calls `/api/hub` yet.
+
+```
+practice, review set ── POST /practice/attempts ─────┐
+lesson question ─────── POST /lessons/…/attempts ────┤  marked on the server from the stored
+                        (services/hubAttemptBridge)  │  question (score()), never the device's verdict
+Get Ready check ─────── POST /getready/:id/answers ──┤
+self-test ───────────── POST /exams/:id/answers ─────┘
+                                    │
+                                    ▼
+          hub_attempts (0026): append-only, one row per student and device attempt id,
+          with its mode, the language shown, hints used and, for a run, run_id (0028)
+                                    │
+          countedAttempts (services/hubHeld.js): an open self-test's answers held back
+                                    │
+                                    ▼
+          Elo and topic states · reviews · the error log · Get Ready and paths · goals ·
+          staff reads, all worked out per request (nothing stored, nothing a room reads)
+```
+
+### Who reaches what (`services/hubAccess.js`, decision H1)
+
+One rule, used by every hub route:
+
+- **A student** reaches a class when its owner is the professor their account reports
+  to (`reports_to`) and the class roster holds their roll number (compared by
+  `rollKey`, as rooms and rosters compare them) on a row that is not removed. Through
+  it they reach the chapters placed on the class, those chapters' topics that are not
+  retired, and confirmed prerequisite links. Nothing else of the professor's (H2).
+- **The owner** reads and writes. **The department's HOD** reads, and gets 403 on every
+  write.
+- **Everyone else**, and anything that does not exist, gets one 404 per kind of thing,
+  word for word ("That class was not found.", and likewise for a unit, chapter, topic
+  and link; each later router names its own kinds the same way). A student on a staff
+  route, or staff on a student's route, gets 403 before anything is read.
+- **Accounts only.** Without Supabase every hub route answers 503; with no token, or
+  with the teacher key, 401. A room phone holds no token, so it never reaches the hub.
+- **Students never call `/api/content`, `/api/classes` or `/api/bank`**, which answer a
+  student 403. Everything a student's hub needs comes from `/api/hub`.
+
+### The content backbone (`0025`, H2 to H4)
+
+- **Units and placed chapters.** The owner adds, renames, reorders and removes a
+  class's units, and places their own chapters on it, in a unit or in none ("Other
+  chapters"). Nothing reaches a student's hub until it is placed, and only the class
+  owner's own chapters can be placed (a trigger holds this in the database too).
+- **Topic records.** Each chapter's topics become records (`chapter_topics`), synced
+  from its topic list on an upload or paste, on a topic edit, when the chapter is first
+  placed and on the owner's sync button; never on a read. A topic that leaves the list
+  is **retired** (`retired_at`) when questions or links hang off it, and **deleted**
+  otherwise; a retired topic comes back with its id if its name returns. Questions are
+  matched to a record by name within the chapter (`topicKey`) or by the generator's
+  clipped name (`questionTopicFor`); no question row is rewritten. A renamed topic is a
+  new record. "Used" means questions or links only: in Postgres, deleting a record
+  also deletes its lessons (`0027` cascades) and clears the topic on hub attempts and
+  hint views (`0026`, `0029`); the in-process store removes only its links.
+- **Per-slide text (H4).** A deck uploaded from Phase 6 on keeps each slide's words
+  (`contents.slide_texts`); an older deck kept only slide numbers, and staff views say
+  so. Slide text is staff and model material; a student reads it only inside an
+  approved lesson.
+- **Prerequisite links (H3).** One topic before another, across any chapters the same
+  professor owns, each with a provenance (`ai`, `professor`) and a state (`proposed`,
+  `confirmed`, `rejected`). Only confirmed links are used: chains (nearest first), what
+  a topic leads to and dependency order are computed from them (`services/hubGraph.js`),
+  never stored. A link that would close a loop among confirmed links is refused with a
+  sentence naming the chain, by the route and by a trigger. A professor's link is
+  confirmed at once; adding by hand a pair already proposed or rejected confirms that
+  row. AI proposals come only from the professor's button (`services/hubProposals.js`):
+  direct links over at most 60 topics of 1 to 10 of their chapters, each with a
+  one-line reason; the parser drops self-links, pairs already linked in any state,
+  loops and links a longer chain implies. Offline, none is proposed, and the reply says
+  so.
+- **A student's topic view** names confirmed prerequisites from the professor's
+  chapters on none of the student's classes (an earlier semester's) by name and chapter
+  title only, flagged `onYourClasses: false`; those chapters and topics still answer
+  the student 404.
+
+### Formulas and code (`services/richText.js`, H15)
+
+A phone runs no maths or highlighting library: the server sends finished markup.
+
+- `$...$` and `$$...$$` (with `\ce{}` for chemistry) become MathML through temml's
+  CommonJS build, which carries mhchem, with trust off (`maxSize` [20, 20], `maxExpand`
+  300).
+- A fenced code block is highlighted by shiki with its JavaScript regex engine (no
+  WebAssembly) and a fixed list of 18 languages; a fence naming any other is shown as
+  plain text. Shiki loads on first need, so `phoneRichSync` (a class question's
+  payload, built synchronously) shows a code block escaped until it has loaded.
+- Everything else is escaped character by character; a line break is `<br>`.
+- A dollar sign follows pandoc's rule, so "$20 and $30" stays text, and `\$` is a
+  literal dollar sign.
+- Caps: 20,000 characters of input, 2,000 per formula, 200 formulas, 10,000 per code
+  block. A formula that is malformed, too long or past the count is shown as its
+  escaped source; nothing throws.
+- `\label`, `\ref` and `\eqref` are shown as source, and so is any rendering that
+  would carry an `id=` or `href=` attribute, so no id or link written by the input
+  survives.
+- Hub payloads carry `nameHtml`, `titleHtml` and `reasonHtml` beside the plain text;
+  a room phone's question carries `rich` ("Who is sent what in a room", above).
+  Pinned: temml 0.14.0, shiki 4.6.0.
+
+### Hub attempts and their idempotency (`0026`, H5)
+
+- **Marked once, kept once.** The device's attempt id (8 to 64 letters, digits, `-` or
+  `_`) is the idempotency key: a resend gets the stored result back (200,
+  `duplicate: true`) and never makes a second row. An id already kept for another
+  question, or another kind of answer, is refused with 409 rather than answered from
+  that row.
+- **Five modes**: `practice`, `review`, `lesson`, `getready`, `exam`. `recordAttempt`
+  in `services/hubPractice.js` takes all five; a Get Ready check and a self-test write
+  through it with their run's id. A lesson's answer goes through
+  `services/hubAttemptBridge.js`, now connected to practice's store, so it counts in
+  mastery, the error log, reviews and staff activity like any hub attempt. (Tests can
+  disconnect the bridge; with no store an answer is refused with 503, never taken and
+  lost.) `hub_attempts` has no column for a lesson's id or version or the translation
+  shown, so a lesson attempt keeps its mode and language only.
+- **One shuffle seed** for the whole hub: `hubSeed`, `hub:<account id>:<question id>`.
+  The server re-derives a student's option order when the answer comes, and the error
+  log redraws an answer as the student saw it.
+- **Feedback only after an attempt.** Right or wrong, the right answer in the
+  positions shown, the approved explanation, feedback on a wrong option chosen and the
+  topic's state exist only once the attempt does. A written answer carries a labelled
+  provisional machine mark.
+- **Approved questions only.** Never a draft, a poll or a question showing an uploaded
+  image (the image rule serves an upload only through a running room).
+
+### Mastery, reviews and the error log (H6 to H8, H14, H17)
+
+- **Elo (`services/hubElo.js`, pure).** One skill per student and topic, one difficulty
+  per question, after Pelánek (2016): the chance of a right answer is the logistic of
+  skill minus difficulty, and each update is scaled by K(n) = 1 / (1 + 0.05n), so a
+  rating resting on more answers moves less. A question's difficulty starts from its
+  Bloom level (−1.25 for Remember to 1.25 for Create) and is corrected by the answers
+  given. Only a student's first attempt at each question moves either rating; N is
+  those first attempts. Room answers do not seed or move a hub rating, and the
+  estimate says it rests on hub practice alone.
+- **Topic states (H6).** Not started; Not sure yet (under 3 answers: provisional, no
+  figure); In progress; Mastered (a chance of at least 0.8 on the topic's typical
+  question, the median difficulty of its practisable questions, from at least 5
+  answers); Needs review (a review is due, which comes first once there is any answer).
+  Each carries N and a sentence. A topic with too few approved questions to reach the
+  next state says so (`bankShort`) instead of promising that more practice will.
+- **Reviews (`services/hubReview.js`, ts-fsrs 6.0.0 with its default parameters).**
+  One card per student and topic. A session is a run of attempts on the topic with no
+  gap of 10 minutes or more; its share right is the rating: under 0.4 Again, under 0.7
+  Hard, otherwise Good, and Easy at 0.9 or more from at least 5 answers with no hint.
+  Weekly consistency names days practised and rested (India's time) and counts no
+  streak.
+- **The error log (`services/hubErrors.js`, pure).** From the student's wrong hub
+  attempts and their own verified room answers (marked "From class"; a typed roll
+  number's never). One open entry per question. It clears on a later right answer, in
+  the hub or in class, to a different question on the same topic at its Bloom level or
+  above. What was right is held back (`keyHeld`) while a room is asking the question,
+  and on a "From class" entry whose question a room may still ask but practice cannot
+  serve this student; elsewhere it is an answer practice would show after a try anyway.
+- **Explanations (`services/hubExplanations.js`, H14).** One per question. The
+  professor's own is approved as written; an AI draft waits for approval. A student
+  reads an approved one only, after an attempt.
+- **Staff reads (`services/hubProgress.js`, H17).** Per class and per student, in roll
+  order and never ranked: states with N, open errors and activity counts (hints opened
+  among them). A roster row is tied to an account by the access rule's own terms; a
+  roll number no account carries, or two do, shows no data and says why. Nothing is
+  written.
+
+### Lessons (`services/hubLessons.js`, H11)
+
+- Made per topic on the professor's button, in the background (202 and a run to poll).
+  With a model: the professor's own text in chunks, word for word and cited by slide;
+  one worked example per chunk (an AI draft); and 2 to 4 recall questions (Remember,
+  Choose one or True or false) written into the bank as drafts, so they pass the
+  normal approval gate. Offline, or when the model fails, a "slides only" lesson: the
+  chunks and the topic's questions already approved.
+- Either kind is a draft until the professor approves it. Each version is written once
+  (`topic_lessons`, `0027`); approving one retires the one serving in the same
+  statement (`approve_topic_lesson`), so a regenerated lesson leaves the approved one
+  serving until then.
+- The text comes from each slide's kept words; for an older deck, the chapter's text
+  between the topic's heading and the next topic's, citing the topic's slides together;
+  for pasted text, the same with no slide. Each says which.
+- A student reads only the approved lesson, its approved questions as the phone shows
+  them (no key), each marked `closed` while closed to them. An answer to a version
+  superseded while they had it open is still taken.
+
+### Languages (`services/hubLanguages.js`, H12)
+
+- English is the original. Hindi (`hi`) and Marathi (`mr`) versions are made on the
+  professor's button (in the background) or written by hand, and kept per item and
+  language (`item_translations`, `0027`) as drafts until approved, one approved per
+  item and language.
+- **The translatable registry** (`registerTranslatable`): a kind says how to load an
+  item, its chapter and the fields a student reads. Registered: `question` (its
+  wording, and its options for mcq, multi and poll, item for item; never the key, and
+  positions never move, so marking is the same in every language; pairs, groups,
+  sequences, passages and typed answers stay in English), `lesson`, `explanation`
+  (keyed by the question's id), and the tutor's `hint` and `feedback`.
+- **The check** (`checkTranslation`), on every translation made, edited or approved: a
+  missing field, a list of another length or another number of `____` gaps blocks
+  approval; changed numbers, formulas or code, or a sentence of four or more English
+  words with no Devanagari, are flags that need a second, confirming press. A
+  translation with a blocking finding against the current English is never served,
+  even if approved earlier.
+- **Staleness by source hash.** A translation keeps the English it was made from and
+  its hash; once the English changes it is not shown until edited against the new
+  English or made again.
+- **What is shown and recorded.** A student chooses a language
+  (`student_language_choices`); per item they see an approved, current translation, or
+  English with a plain note. `languageShown()` gives the language one item is shown in
+  now; `attemptLanguage()` what an attempt records, believing the screen's echo only
+  when it can have been true. Hub attempts record it, and `languageItemStats()` splits
+  them by it for Phase 5's translation warning.
+
+### Get Ready and refresher paths (`services/hubGetReady.js`, H9)
+
+- A student picks a target topic. The check covers its confirmed prerequisites,
+  nearest first, fixed when it starts (kept on the run), and asks at most 12 questions.
+- Per prerequisite: two right is Ready, two wrong is Needs review, and after one of
+  each a third question decides (two of three right is Ready). One already Mastered in
+  practice when the check started is Ready on that evidence, citing its N. Otherwise
+  Not sure yet, with its counts and the reason: the questions ran out, the check never
+  reached it, too few or no approved questions, material on none of the student's
+  classes, or the check ended first.
+- Each answer is a hub attempt (mode `getready`, under the check's id) with practice's
+  feedback after it, and no hints. Unmet questions come first, in an order seeded by
+  the check; never one already asked in it, nor one a room or a self-test has closed
+  (with none left, the check waits and says why). Once its end is written a check stays
+  as it ended: it takes no answer (409) and keeps its path.
+- The refresher path: the Needs-review prerequisites in dependency order over the
+  confirmed links, each saying why in the student's own counts, ending at the target. A
+  step is done when, among the student's answers on it since the check, the last two
+  are right or two of the last three are. Each question counts once per round, so a key
+  just shown is not taken as evidence and a topic with few questions can still be
+  finished.
+- Staff read a student's checks through the class (`checksForStaff`), which writes
+  nothing.
+
+### Self-tests and the hold-back rule (`services/hubExam.js`, `services/hubHeld.js`, H10)
+
+- The student picks topics, levels, up to 30 questions and an optional time limit (1
+  to 180 minutes). The server fixes the list at the start, on the run: approved
+  questions practice could serve, one from each topic in turn, unmet ones first, in an
+  order seeded by the self-test, then shuffled.
+- While it is open: no hints, no feedback. Each answer is marked and kept at once
+  (mode `exam`, under the self-test's id), and the reply says only that it was saved. A
+  changed answer is a new attempt.
+- It ends when handed in, or at its deadline plus a 30-second grace
+  (`EXAM_GRACE_SECONDS`) on the server's clock. The end is written on the next request
+  about it; the hold-back rule already treats it as ended once the grace has passed. An
+  answer after the end is kept, marked late, and not counted.
+- **The hold-back rule** (`countedAttempts`): every read that marks or estimates (Elo
+  and states, the error log, reviews) leaves out an open self-test's answers. Once it
+  has ended, only the final answer to each question before the end counts; changed and
+  late answers are kept and never counted. Get Ready answers are never held back.
+- **The result**: per question, right or wrong, the right answer, the approved
+  explanation and the feedback on a wrong option chosen, and a written answer's
+  provisional machine mark, labelled; then a summary by topic and by level, with
+  counts. An unanswered question keeps its key and explanation back, so an empty
+  self-test cannot read the bank; so does a question a room is asking now (`held`,
+  `heldNote`). A question whose topic the student no longer reaches is not shown while
+  it is open, nor in the result if unanswered.
+- `openSelfTestQuestions` (in `hubHeld.js`) lists the questions on a student's open
+  self-tests for the closed-questions rule below. A self-test counts in no room,
+  attainment figure or register.
+
+### Goals and the hub home (`services/hubGoals.js`, H16, H17)
+
+- A goal is the student's own: an optional title, an exam date of today or later, and
+  1 to 60 of their topics; at most 10 goals. Its progress is their topic states over
+  those topics, with N, the days left and what to do first. Staff never see goals.
+- `GET /api/hub/home`: the mastery map by class, unit, chapter and topic, reviews due
+  and coming up, goals, refresher paths, four weeks with rest days, and the sentence
+  that their professor can see their progress. Never a rank, an average, a streak,
+  coins or a band name. A part that cannot be read (goals or paths without `0028`) says
+  so in its place.
+- Staff see, per class, the students in each topic state, in roll order, with N
+  (`studentsByState`).
+
+### The tutor (`services/hubTutor.js`, `services/hubHintHook.js`, H13)
+
+- **No live model call.** A hint is written before any student asks: by the professor
+  (approved as written) or by the model on the professor's button, in the background
+  (an AI draft until approved). A live chat tutor is not built.
+- **What a question may carry** (`0029`): a ladder of up to three hints (a nudge, a
+  strategy, a worked step stopping short of the answer), each citing slides; and
+  feedback on each wrong option of a Choose one, Choose all or True or false, keyed by
+  the option's words.
+- **The leak check** (`answerLeak`) refuses a hint or feedback holding the answer: the
+  right option's words, letter or number; a numeric answer within its tolerance; an
+  accepted typed answer; a true-or-false verdict; a whole pairing, grouping or order; a
+  rubric point word for word. It runs when a professor writes, when the model's reply
+  is parsed, at approval and again before anything is shown; a translated hint that
+  fails it is shown in English. It is lexical and reads the English question: a
+  paraphrase, or a translation naming the right option in its translated words, is not
+  caught (the second a review finding not acted on). The professor's approval is the
+  gate.
+- **The first-hint plan** (`planHints`, pure), from the student's attempts whose
+  results they have seen (practice, review, lesson; never a self-test or Get Ready):
+  approved feedback on the wrong option they chose last time first, in place of the
+  nudge; wrong after k hints, the ladder starts at step k + 1; most of the last five
+  answers on the topic wrong, or a non-provisional estimate under an even chance, it
+  starts at the strategy; otherwise the nudge.
+- **Where hints open.** Practice, review sets and lessons only, one at a time, at most
+  three per attempt, each recorded. Never in a self-test or Get Ready (400, and the
+  database refuses such a view), nor on a closed question (409). Asking again for a
+  step returns it and records nothing. Once the attempt exists its hints are closed.
+- **The hint hook** (`hintsOffered`, `hintsUsedOn`, `feedbackAfter`) is the only way
+  practice and lessons reach the tutor, and never throws: without `0029`'s tables no
+  hint is offered and an attempt records 0. Feedback on a wrong option reaches a student
+  after an attempt in practice, lessons and Get Ready (through practice's
+  `feedbackFor`), and in a self-test's result after the end (`hubExam.js`, through
+  `feedbackAfter`).
+
+### Closed questions (`services/hubClosed.js`)
+
+Practice, a lesson and the tutor show a question's answer, explanation and hints to
+anyone who may be served it. So a question that is otherwise practisable is
+**closed** to a student while:
+
+- a room on its chapter that is not closed is asking it: a phone there was served it
+  and has not finished it, or it is the room's class question and that is not closed.
+  Any phone counts, not only this student's: rooms are account-free (decision 7), so a
+  phone may be this student under any roll number;
+- it is on one of the student's open self-tests (`openSelfTestQuestions`);
+- one of their open Get Ready checks is asking it.
+
+While it is closed, practice and review sets never serve it (with nothing else left,
+the reply says so); an answer to it in practice, a review set or a lesson is refused
+with 409 before anything is stored, saying why, so the device can keep it and send it
+later; no hint opens on it (409), and the next question's hints say 0 with the reason;
+a Get Ready check skips one closed by a room or a self-test and refuses an answer to
+it; and a self-test's result (`held`, `heldNote`) and the error log (`keyHeld`) keep
+back the key and explanation of a question a room is asking now. Nothing is written:
+the set is worked out from the rooms, self-tests and checks on every request.
+
+What it does not close: rooms and the hub share one bank, and practice shows a
+question's key after one try, so a student can see before class the key of a question
+a graded room will ask later. Only a question being asked now is closed; the rest is
+the owner's decision (`docs/PRODUCT_DECISIONS.md`). A Get Ready check cannot be
+abandoned, so the question an open check is asking stays closed until it is answered.
+
+### Model calls
+
+Every model call in the hub runs only on a professor's button, never in anything a
+student waits on (decision 5): link proposals, lessons (with their worked examples and
+recall questions), translations, explanations, and hints and feedback. Lessons,
+translations and hints answer 202 and run in the background; link proposals and
+explanation drafts run inside the professor's request, with a run to poll, as
+generation does. With no model key none is made: no link, translation, explanation,
+hint or feedback is drafted, each reply says so, and a lesson is "slides only". Each
+service holds the model's reply to a strict parser, tested with fixture replies; no
+test calls a real model.
+
+### In-process only
+
+- **Locks**, in this process: per class (units and placements), per professor (links),
+  per topic (lessons), per item (translations), per question (explanations, hints), per
+  student and attempt (opening a hint), per run (a check's or self-test's answers) and
+  per student (starting a check or self-test, goals). A second server process shares
+  none of them. Across processes the database's unique keys and triggers are the
+  guard, except that `0025`'s loop trigger takes no lock: two processes confirming A
+  before B and B before A at the same moment could both pass (a review finding not
+  acted on).
+- **Runs** (`services/runs.js`) are held in memory: a restart loses a run's progress
+  and any background work under way. A lesson run cut off between writing its bank
+  drafts and its lesson leaves ordinary drafts the professor can reject.
+- **Estimates** replay every hub attempt on the topics involved, by every student, on
+  each request; this was not measured at a semester's scale (`docs/TESTING.md`).
 
 ## Client (`client/src`)
 

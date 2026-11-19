@@ -25,6 +25,32 @@ Installed and available: `express`, `cors`, `socket.io`, `mongoose`, `multer`, `
 > students have only a room code and a roll number, exactly as specified.
 > `GET /api/session/:code` returns a trimmed session that **must never include
 > `contentId`**, because that id is the route to the answer key.
+>
+> **Amendment 6 (19 Nov 2026, Phase 6, decided under the owner's delegation; decisions 1,
+> 5 and 7 and the Phase 6 decisions H1 to H18 in `docs/PRODUCT_DECISIONS.md`).** Additive
+> only; nothing above changes. This note is the amendment's main part; its other pieces
+> sit beside the sections they amend: section 2 (the repository's Phase 6 methods),
+> section 3 (`Content.slideTexts`), section 5 (`question.rich`) and section 6 (rules 1 to 3
+> as the hub applies them).
+> - **The Learning Hub (`/api/hub`) is an account-only surface, separate from this frozen
+>   room contract.** Rooms stay account-free: section 6 rule 3 stands for rooms, the phone
+>   and every event in section 5 (decision 7). A room phone, which carries no token, never
+>   reaches the hub.
+> - The hub needs a signed-in account: it answers 503 on a server without Supabase (there
+>   are no accounts then), and 401 to a request with no bearer token or with only the
+>   teacher key. Who reaches what is one rule (`server/src/services/hubAccess.js`): a
+>   student whose professor (`accounts.reports_to`) owns the class and whose roll number is
+>   on its roster, not removed; the owner reads and writes; the department's HOD reads
+>   only; anyone else gets the same 404 as for something that does not exist.
+> - **Its shapes are documented in `docs/API.md`, "Phase 6: the Learning Hub", and are not
+>   frozen here.**
+> - **Hub attempts are their own table** (`hub_attempts`, `0026`), never `answers`. They
+>   never move a room's ladder or a profile, and attainment and the marks register never
+>   read them.
+> - **Three new server dependencies**, pinned exactly and MIT: `ts-fsrs@6.0.0` (spaced
+>   review), `temml@0.14.0` (formulas to MathML, with mhchem) and `shiki@4.6.0` (code
+>   highlighting). "No new npm dependencies" above is amended for these three only
+>   (decision H18). No client dependency was added.
 
 ---
 
@@ -78,6 +104,27 @@ saveProfile(profile)                      -> profile         (upsert on sessionI
 listProfiles(sessionId)                   -> profile[]       (sorted by rollNo, numeric)
 ```
 
+> **Amendment 6 (19 Nov 2026, Phase 6), section 2.** Additive only; every method above
+> is unchanged and `kind` is untouched. All three stores (Supabase, MongoDB, in-memory)
+> gain the Phase 6 methods, in one block per migration, each headed in the store's code:
+> - `0025`, the hub's backbone: create, read, update and delete for class units, class
+>   chapters (placed, moved, removed), chapter topics and topic links, and
+>   `setContentSlideTexts(contentId, slideTexts)`.
+> - `0026`, practice: hub attempts (`addHubAttempt` returns `{ attempt, duplicate }`,
+>   idempotent by account and client attempt id; a read by that key; a filtered list) and
+>   question explanations.
+> - `0027`, lessons and languages: topic lessons and item translations (create, read,
+>   list, approve, discard; a translation is edited only while a draft), and a student's
+>   language choice.
+> - `0028`, Get Ready, self-tests and goals: hub runs (add, read, read by key, list, end
+>   once) and hub goals.
+> - `0029`, the tutor: question hints and option feedback (each with add, read, list,
+>   update, delete) and hint views (add, list).
+>
+> Their signatures are the code's (`server/src/repo/memoryRepo.js`), not frozen here. A
+> store whose database lacks one of these migrations keeps serving rooms: only the
+> routes that need it fail, and the boot log names the file.
+
 ## 3. Documents
 
 ```js
@@ -93,6 +140,16 @@ Profile  { _id, sessionId, rollNo, name, levels:{<level>:{seen,correct}} x6,
 > `Question.source` may also be `'teacher'`: a question a professor wrote in the bank
 > (section 6 rule 5). A professor's question written before this date stays
 > `'fallback'`; no stored row is rewritten.
+>
+> **Amendment 6 (19 Nov 2026, Phase 6, decision H4), section 3.** Additive only.
+> `Content` gains `slideTexts: [{ slide, text }]`: each slide's own words, kept for a deck
+> uploaded from Phase 6 on (slide numbers as the deck numbers them, empty slides left
+> out, at most 400 slides of 4,000 characters each; `contents.slide_texts`, `0025`). It is
+> null (or absent) for an older deck, which cites slide numbers through `topicSlides`
+> only, and for pasted text. It is written by its own repository call after
+> `createContent`, so `createContent` and the upload's response are unchanged and an
+> upload still succeeds without `0025`. No route sends it to a student: slide text
+> reaches a student only inside an approved lesson.
 
 Profiles are only ever built/changed through `mastery.js`. Never hand-edit `levels`
 or `workingLevel` anywhere else — that is the whole point of having a pure module.
@@ -216,6 +273,29 @@ Client constants live in `client/src/socket.js` (`EV`). Server must match verbat
 > - New, server → teacher: `teacher:class-question`, a class question as the
 >   professor's screens get it (counts, never a student's name).
 > - A misconception label is never sent on any socket event.
+>
+> **Amendment 6 (19 Nov 2026, Phase 6, decision H15), section 5.** Additive only; every
+> field above keeps its meaning. `server:question`'s `question`, and `class:question`'s
+> `question`, gain `rich`: an object of HTML for each field of the question **as the
+> phone was sent it** (after `forStudent()`, so never a key) whose HTML says more than
+> its plain text: a formula (`$...$` or `$$...$$`, with `\ce{}` for chemistry), a fenced
+> code block, a formula shown as its escaped source because it could not be read, or an
+> escaped dollar sign (`\$`). A question with none of these gets `rich: {}`; a price such
+> as "$20 and $30" is plain text.
+> - Its keys, each present only when it qualifies: `text`, `criterion`; the lists
+>   `options`, `left`, `right`, `items`, `groups` and `columns`, each sent whole, item for
+>   item, when any item qualifies; `rows` (a grid's row labels); `passage` (a passage
+>   stimulus's text); and `gaps` (`[{ options: [html] }]`, every gap of a dropdown).
+> - Indices and order are those of the plain fields, which are unchanged and are still
+>   what is answered and seeded.
+> - The HTML is made on the server: MathML by temml with trust off (a formula using
+>   `\label`, `\ref` or `\eqref`, or any rendering holding an `id=` or `href=`, is shown as
+>   its escaped source), code highlighted by shiki (a fixed list of languages; any other
+>   fence is plain text), and every other character escaped. It carries inline `style`
+>   attributes and no script, so a page's Content-Security-Policy must allow style
+>   attributes.
+> - In `class:question` a code block is highlighted only once the server has loaded
+>   shiki; before that it is sent escaped, uncoloured. `server:question` waits for it.
 
 **Server → teacher** (room `teacher:<code>`)
 - `teacher:grid` `{rows:[GridRow], code}` — broadcast on every join, answer and disconnect
@@ -245,6 +325,21 @@ and must not create a second row in the grid.
    question a professor wrote. Never present a template item, or a professor's, as
    model output. *(Amended 19 Nov 2026, under the owner's delegation: `'teacher'` is
    new, and a professor's own questions written before it stay `'fallback'`.)*
+
+> **Amendment 6 (19 Nov 2026, Phase 6, decided under the owner's delegation), section 6,
+> as the Learning Hub applies these rules.** Additive only; every rule stands.
+> - Rule 1: a hub lesson's text is the professor's own slide text, word for word, cited
+>   by slide (an older deck cites the topic's slides together; pasted text cites none,
+>   and says so). Its worked examples and retrieval questions, and the AI's explanations,
+>   hints, option feedback, translations and proposed prerequisite links, are AI drafts
+>   until the professor approves them; a student sees only what was approved. A lesson
+>   made without a model is "slides only": the professor's chunks and questions already
+>   approved, no generated prose, and it too waits for approval.
+> - Rule 2, in its spirit: the hub's practice loop, review sets, Get Ready, self-tests,
+>   lessons and hints make zero model calls too. A model runs only when a professor
+>   presses a button (decision 5). No live chat tutor is built.
+> - Rule 3 stands for rooms. The hub is a separate surface for signed-in accounts
+>   (decision 7; Amendment 6 after Amendment 2).
 
 ## 7. Style notes for UI agents
 

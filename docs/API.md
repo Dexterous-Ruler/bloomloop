@@ -1,4 +1,11 @@
-# API reference: Phases 1, 2, 3, 4 and 5
+# API reference: Phases 1, 2, 3, 4, 5 and 6
+
+**Phase 6** (committed as `646b4e6`; `0025` to `0029`) is one part, "Phase 6: the
+Learning Hub", just before "Known open issues": who may call the hub, every new
+endpoint under `/api/hub` grouped by piece (the backbone, practice, Get Ready and
+self-tests, lessons, languages, the tutor), the additive `question.rich` on the room
+phone's questions, captured examples, and what each screen needs. Its open issues are
+listed under "Known open issues", "Phase 6 (the Learning Hub), open".
 
 **Phase 5** (uncommitted; `0023`, `0024`) opens with one index of every new and
 changed endpoint and socket event, "Phase 5: every new and changed endpoint and socket
@@ -5106,7 +5113,667 @@ nobody was told.
 | A question the room does not serve | "question.questionId is not a question this room serves: pick one of its approved questions." | "That question is not one this room serves: pick one of its approved questions." |
 | A question asked aloud of another room | "question.tallyId is not a question asked aloud in this room." | "That question was not asked aloud in this room: choose one that was." |
 
+## Phase 6: the Learning Hub
+
+Server and database only, committed as `646b4e6` with migrations `0025` to `0029`
+(`docs/DATABASE_SCHEMA.md`). Every route here is new and lives under `/api/hub`; the
+only changed room payloads are the additive `question.rich` on `server:question` and
+`class:question` (below). The decisions behind it are H1 to H18
+(`docs/PRODUCT_DECISIONS.md`, Phase 6); how it is built, `docs/ARCHITECTURE.md`,
+"Learning Hub (Phase 6)".
+
+**Tested, and not.** Exercised over HTTP on a real server (the production `createApp`
+and `attachSockets`), on the in-process store, with signed-in callers answered
+in-process as `roster.mjs` does, by `server/scripts/hub.mjs` (78 checks),
+`practice.mjs` (78), `paths.mjs` (88), `lessons.mjs` (100) and `tutor.mjs` (84), and
+unit-tested by nine new test files (219 tests); all passing on 19 November 2026
+(`docs/TESTING.md`). **Nothing was run against Supabase, Mongo, a real Auth token or
+a model.** Accounts work only through the scripts' in-process stand-in for Supabase
+Auth. Every model path (link proposals, lessons, translations, explanations, hints)
+was tested with fixture replies through the real parsers; the live Gemini calls
+never ran. No screen exists for any of it.
+
+The examples are real responses, captured on 19 November 2026 from a server on the
+in-process store with no model, a professor, the department's HOD and one rostered
+student answered in-process, nothing off the machine (a throwaway script, not kept).
+Long arrays and MathML are shortened with `…`. Ids are 24-character hex; on Supabase
+they are uuids.
+
+### Who may call it
+
+**Accounts only (H1).** Every hub router sits behind one gate (`hubGate`,
+`routes/hub.js`):
+- without Supabase, every route answers **503** "The learning hub needs student and
+  staff accounts, and this server has none set up.";
+- with no token, or with the shared teacher key, **401** "Sign in to continue.". The
+  teacher key reaches nothing here, and a room phone (a typed roll number, no token)
+  never reaches the hub.
+
+**Who reaches a class** is one rule (`services/hubAccess.js`). A student reaches a
+class when its owner is the professor the student reports to (`accounts.reports_to`)
+and the class roster holds the student's roll number (matched as a room reads it),
+not removed. The owner reads and writes. The department's HOD reads and gets **403**
+on every write ("You can read this class's hub but not change it: only the professor
+who owns it can."). Anyone else gets the same **404** as for something that does not
+exist, word for word, one sentence per kind:
+
+| Kind | The 404 |
+|---|---|
+| class, unit, chapter, topic, link | "That class was not found." (and "That unit / chapter / topic / link was not found.") |
+| lesson, question, translation, item | "That lesson was not found.", "That question was not found.", "That translation was not found.", "That item was not found." |
+| a student's Get Ready check, self-test, goal | "That Get Ready check was not found.", "That self-test was not found.", "That goal was not found." |
+| a roster row on a staff read | "That student was not found." |
+| a background run not started by the caller | "No such run." |
+
+A student on a staff route gets **403** "This is for a professor or an HOD only."
+before anything is read; staff on a student-only route get **403** too (practice:
+"Practice is for a student account. Staff see their students' progress through the
+class."). Captured:
+
+```json
+GET /api/hub (no token, or x-teacher-key)                 401 { "error": "Sign in to continue." }
+GET /api/hub/classes/:id/progress (the student)           403 { "error": "This is for a professor or an HOD only." }
+POST /api/hub/classes/:id/units (the HOD)                 403 { "error": "You can read this class's hub but not change it: only the professor who owns it can." }
+```
+
+**What a student is sent (H2).** Approved material only: placed chapters, live (not
+retired) topics, confirmed links, approved questions through `forStudent` (no key
+before an attempt), approved lessons, translations, explanations, hints and option
+feedback. Never a draft, a proposed or rejected link, a misconception label, a model
+name or a finding, nor the raw deck: slide text reaches a student only inside an
+approved lesson. **Never a rank, a class average, a streak, coins or a band name**
+(H16; checked by `paths.mjs` and the unit tests). Student screens must never call
+`/api/content`, `/api/classes` or `/api/bank` (each answers 403 to a student).
+
+**Ids a device makes.** An `attemptId` (every answer, and the hints opened before it)
+and a `clientRunId` (a Get Ready check or a self-test) are 8 to 64 of `A-Z a-z 0-9 -
+_`, made on the device. They are the idempotency keys (H5, Phase 7's outbox): the first
+send is **201**; a resend of the same id is **200** with `duplicate: true` and the
+stored result, never a second row. An id kept for something else is a **409** "That
+attempt id was used for another answer. Send this one with a new id." (practice and
+lessons; the practice route keeps its older sentence for a self-test's id, "That
+answer belongs to a self-test; its result comes when the self-test is handed in.").
+
+**Closed questions** (the fix after the review, `services/hubClosed.js`). A question
+is closed to a student while (a) any phone in a room on its chapter that is not
+closed (open, paused or waiting) has been served it and has not finished it, or the
+room's class question on it is still running (any phone counts: rooms need no
+sign-in, decision 7); (b) it is on one of
+the student's open self-tests; or (c) one of their open Get Ready checks is asking it.
+While it is closed:
+- `GET /practice/next` never serves it; with nothing else left, `question: null` and
+  the message "Every question you could practise here is closed for now: being asked
+  in class, on a self-test you have not handed in, or the one your Get Ready check is
+  asking. Come back once that is done.";
+- an answer to it in practice, a review set or a lesson is a **409** with one of three
+  sentences, and **nothing is stored** (the device keeps it and sends it later):
+  "That question is being asked in class right now, so it stays closed here until the
+  class has moved on.", "That question is on a self-test you have not handed in yet,
+  so it stays closed here until you hand it in." or "That question is the one your Get
+  Ready check is asking now, so it stays closed here until you answer it there.";
+- a hint on it is the same **409**, and the next question's `hints` say
+  `available: 0` with the sentence;
+- Get Ready skips questions closed by a room or a self-test (with none left on the
+  topic, `question: null` and a `waiting` sentence) and refuses an answer to one;
+- a self-test result item, and an error-log entry, whose question a room is asking
+  now holds back its key and explanation (`held: true` / `keyHeld`, with "This question
+  is being asked in class right now, so what was right, and why, is shown here once
+  the class has moved on.").
+
+A resent **practice** attempt id (same question, practice mode) is still answered
+with the stored key even if the question has closed since: the student was shown it
+when it was first stored. Captured, practice on a question of the student's open
+self-test:
+
+```json
+POST /api/hub/practice/attempts   409
+{ "error": "That question is on a self-test you have not handed in yet, so it stays closed here until you hand it in." }
+```
+
+**HTML fields.** Every name or title a hub payload carries comes twice: plain
+(`name`, `title`, `text`) for search, aria labels and answering, and as server-made
+HTML (`nameHtml`, `titleHtml`, `textHtml`, `reasonHtml`, `html`, `rich`). The HTML is
+escaped text, with `$…$` and `$$…$$` (and `\ce{}`) as MathML from temml (trust off) and
+fenced code highlighted by shiki; it carries inline `style` attributes and never
+script. `\label`, `\ref` and `\eqref`, and any output with an `id=` or `href=`
+attribute, are shown as the formula's escaped source. A formula that cannot be read is
+its escaped source in `<span class="rich-tex-error">`.
+
+### Every new endpoint
+
+**The content backbone (H1 to H4)**, `routes/hub.js`. Every write replies with the
+fresh staff view (`hub`), so a screen redraws from one reply.
+
+| Route | Who | Body → reply; refusals |
+|---|---|---|
+| `GET /api/hub` | any account | Student: `{ role: 'student', notice, classes: [studentClassView], empty? }`. Staff: `{ role, classes: [{ id, courseName, section, termLabel, canEdit, units, chapters }] }` (a professor's own; an HOD's department) |
+| `GET /api/hub/classes/:classId` | a student on it, the owner, the HOD | Student: `{ class: { id, courseName, section, termLabel }, units: [{ id, name, nameHtml, chapters: [{ id, title, titleHtml, topics: [{ id, name, nameHtml }] }] }], otherChapters: { label: 'Other chapters', chapters }, empty?, notice }`. Staff: `staffClassView` (`class` with `canEdit`, `access`; units with `position`; each chapter's kind, slides note, topics with `retired`, question counts `{ active, draft }`, link counts, `unsynced`, `unmatchedQuestions`; `otherChapters`; `available`, the owner's chapters not yet placed; `notes`). Staff with `?view=student` get the student shape plus `preview` |
+| `POST /api/hub/classes/:classId/units` | owner | `{ name }` → 201 `{ unit: { id, name, position }, hub }`. 409 a duplicate name (case ignored); 400 blank, over 80 characters, contact details, or over 40 units |
+| `PATCH /api/hub/classes/:classId/units/:unitId` | owner | `{ name }` → `{ unit, hub }`. A unit of another class is the unit's 404 |
+| `DELETE /api/hub/classes/:classId/units/:unitId` | owner | `{ removed: true, message, hub }`; its chapters move to "Other chapters" |
+| `PUT /api/hub/classes/:classId/units/order` | owner | `{ unitIds }`, every unit once → `{ hub }`; 400 otherwise |
+| `PUT /api/hub/classes/:classId/chapters/:contentId` | owner, and only the class owner's own chapter (else the chapter's 404) | `{ unitId?: id \| null, position?: integer ≥ 1 }` → 201 when newly placed, 200 when moved: `{ placed: true, topics?: { added, retired }, hub }`. Leaving `unitId` out keeps the current unit (none for a new chapter). Nothing reaches a student until placed |
+| `DELETE /api/hub/classes/:classId/chapters/:contentId` | owner | `{ removed: true, message, hub }`; the chapter itself is unchanged |
+| `GET /api/hub/chapters/:contentId` | a student while it is placed on one of their classes, the owner, the HOD | Student: `{ chapter: { id, title, titleHtml, topics } }`. Staff: the staff chapter view with `canEdit` |
+| `POST /api/hub/chapters/:contentId/topics/sync` | the chapter's owner | `{ added, restored, retired, removed, skipped, retiredNote?, chapter }` |
+| `GET /api/hub/topics/:topicId` | a student (topic not retired, chapter placed on their class), the owner, the HOD | `{ topic: { id, name, nameHtml, chapter }, prerequisites: [{ id, name, nameHtml, chapter, depth, via, onYourClasses }] (nearest first, confirmed links only; `onYourClasses` for students), leadsTo, note }`. Staff also get `links: { prerequisites, dependants }` in every state, with `label`, `provenance`, `reason`, `reasonHtml` |
+| `GET /api/hub/links` | staff | `?state=`, `?contentId=` → `{ links: [linkView], counts: { proposed, confirmed, rejected } }`; without `contentId`, a professor's own links, an HOD's department's |
+| `POST /api/hub/links` | owner of both topics' chapters | `{ prerequisiteId, topicId }` → 201 `{ link }` (professor, confirmed); 200 when it confirms an existing proposed or rejected link of the pair. 409 with a sentence naming the chain for a loop or a topic before itself; 400 a retired topic; HOD 403; another professor "That topic was not found." |
+| `PATCH /api/hub/links/:linkId` | owner | `{ state: 'confirmed' \| 'rejected' }` → `{ link }`; confirming a loop is the 409 |
+| `DELETE /api/hub/links/:linkId` | owner | `{ removed: true, message }` |
+| `POST /api/hub/links/propose` | owner (the professor's button) | `{ contentIds: 1 to 10 own chapters, runId? }` → `{ runId, source: 'llm' \| 'offline', note, proposed: [linkView], skipped: [{ prerequisite, topic, why }], warnings, topicsShown }`. Direct links only; offline proposes none and `note` says why |
+| `GET /api/hub/links/run/:runId` | the professor who started it | `{ run }`, as `/api/generate/run` |
+
+Captured, the owner adding a link by hand, then its reverse:
+
+```json
+POST /api/hub/links   201
+{ "link": { "id": "482d36…", "prerequisite": { "id": "5cdb8f…", "name": "Sets", "nameHtml": "Sets", "chapter": { "id": "8ce873…", "title": "Discrete structures", "titleHtml": "Discrete structures" } },
+            "topic": { "id": "c2a8a4…", "name": "Relations", "nameHtml": "Relations", "chapter": { "…": "as above" } },
+            "provenance": "professor", "state": "confirmed", "label": "Added by the professor", "reason": "", "reasonHtml": "",
+            "createdAt": "2026-11-19T13:44:02.489Z", "decidedAt": "2026-11-19T13:44:02.488Z" } }
+POST /api/hub/links   409
+{ "error": "\"Relations\" cannot come before \"Sets\": the confirmed links already put \"Sets\" before \"Relations\", so this link would make a loop. A topic cannot be needed before itself." }
+```
+
+The student's hub and a topic:
+
+```json
+GET /api/hub   200
+{ "role": "student",
+  "notice": "Your professor can see your progress in the hub: the topics you practise and how you are doing on them.",
+  "classes": [{ "class": { "id": "a98626…", "courseName": "Discrete Maths", "section": "SY A", "termLabel": "" },
+                "units": [{ "id": "df69db…", "name": "Unit 1: Sets and relations", "nameHtml": "Unit 1: Sets and relations",
+                            "chapters": [{ "id": "8ce873…", "title": "Discrete structures", "titleHtml": "Discrete structures",
+                                           "topics": [{ "id": "5cdb8f…", "name": "Sets", "nameHtml": "Sets" }, { "id": "c2a8a4…", "name": "Relations", "nameHtml": "Relations" }, "…"] }] }],
+                "otherChapters": { "label": "Other chapters", "chapters": [] } }] }
+GET /api/hub/topics/:topicId   200
+{ "topic": { "id": "c2a8a4…", "name": "Relations", "nameHtml": "Relations", "chapter": { "…": "…" } },
+  "prerequisites": [{ "id": "5cdb8f…", "name": "Sets", "nameHtml": "Sets", "chapter": { "…": "…" }, "depth": 1, "via": ["c2a8a4…"], "onYourClasses": true }],
+  "leadsTo": [],
+  "note": "Prerequisites are the topics your professor confirmed are needed first, nearest first." }
+```
+
+`onYourClasses: false` marks a prerequisite from the professor's chapters on none of
+the student's classes (an earlier semester): its name and chapter title are sent, and
+the chapter and topic themselves still answer 404 to that student.
+
+**Practice, mastery, the error log and reviews (H5 to H8, H14)**,
+`routes/hubPractice.js`. Students only unless marked staff.
+
+| Route | Who | Body → reply; refusals |
+|---|---|---|
+| `GET /api/hub/practice/next?topicId=` (or `topicIds=a,b`) `&mode=practice\|review` | student | `{ mode, language, translationId, languageNote, question: forStudent fields + provenance + rich (never a key), topic, topics, why, hints: { available: 0..3, note }, setSize (review) }`; `{ question: null, topics, message }` when no approved question exists or all are closed. A topic not theirs: "That topic was not found." |
+| `POST /api/hub/practice/attempts` | student | `{ attemptId, questionId, topicId, response, mode: 'practice' \| 'review', timeTakenMs?, shown?: { language, translationId } }` → 201 `{ attempt: { id, attemptId, mode, createdAt, language, hintsUsed }, duplicate: false, correct, score, detail, provisional?, provisionalNote?, solution (shown positions), explanation: { text, textHtml, by, label, note, language } \| null, optionFeedback, topic: { …, state } }`; 200 with `duplicate: true` on a resend; 409 an id of another answer, a self-test's id, or a closed question; 404 the topic or question (a draft, a poll, an image question, another topic); 400 validation, or a response over 20,000 characters |
+| `GET /api/hub/progress` | student | `{ notice, basis, states, counts, topics: [{ id, name, nameHtml, chapter, classIds, practiceQuestions, state: { state, label, answers (N), attempts, provisional, pRight, outOf10, estimateState, sentence, bankShort?, review: { dueAt, due, when, sessions, lastRating } } }] }` |
+| `GET /api/hub/review/due` | student | `{ due: [{ id, name, nameHtml, chapter, state, label, answers, review, practiceQuestions }] (most overdue first), upcoming (due within 7 days), setSize: 5, rule, empty? }` |
+| `GET /api/hub/errors?status=open\|cleared&topicId=` | student | `{ entries: [{ id, status, from: 'practice' \| 'class', fromLabel, topic, level, levelLabel, times, firstAt, lastAt, clearedAt, clearedBy, question (as shown, with rich, no key), response, solution, provisional?, prerequisites, sentence, explanation, keyHeld? }] (newest first), counts: { open, cleared }, openByTopic, rule }` |
+| `GET /api/hub/consistency?weeks=1..26` | student | `{ weeks: [{ start (a Monday), end, days: [{ day, practised, attempts, upcoming }], practisedDays, restDays, attempts, sentence }] (newest first), note }`; no streak anywhere |
+| `GET /api/hub/classes/:classId/progress` | staff: the owner, the HOD | `{ class: { …, canEdit, access }, topics: [{ …, unit, practiceQuestions, counts: { <state>: n }, openErrors }] (layout order), students: [{ rosterId, rollNo, name, accountId \| null, note?, topics: { <topicId>: { state, label, answers, provisional, pRight, openErrors } }, activity: { …, hintsUsed, attemptsWithHints } }] (roll order), states, notes }` |
+| `GET /api/hub/classes/:classId/students/:studentId/progress` | staff | `studentId` is the roster row id → `{ class, student: { rosterId, rollNo, name, accountId }, topics, activity: { total, last7Days, last30Days, daysActiveLast7, byMode, lastAt, hintsUsed, attemptsWithHints }, errors: { entries (each with questionId), counts, openByTopic, rule }, states }`, or a `note` and no data when no single account carries the roll number |
+| `GET /api/hub/chapters/:contentId/explanations` | staff | `{ chapter, canEdit, questions: [{ questionId, text, topic, bloom, kind, status, explanation: { …, provenance, status, label, model } \| null }] (no polls, no discarded), counts: { approved, draft, none }, note }` |
+| `PUT /api/hub/questions/:questionId/explanation` | the chapter's owner | `{ text }` (1 to 2000 characters) → 201 or 200 `{ explanation }`, approved as written, provenance professor; 400 a poll |
+| `POST /api/hub/questions/:questionId/explanation/approve` | owner | `{ explanation }`, approved, provenance kept `ai`; 404 when none |
+| `DELETE /api/hub/questions/:questionId/explanation` | owner | `{ removed: true, message }`; 404 when none |
+| `POST /api/hub/explanations/generate` | owner | `{ contentId }` or `{ questionIds: 1..60 }`, `runId?` → `{ runId, source, note, drafted: [AI drafts], skipped: [{ questionId, why }], warnings }`; offline, `drafted: []` and `note` says so |
+| `GET /api/hub/explanations/run/:runId` | the run's owner | `{ run: { state, planned, written, topicsDone, topicsTotal, elapsedMs, error } }` |
+
+Hub choice questions are served in the bank's order (no shuffle), with the seed
+`hub:<account id>:<question id>` for any kind that is reordered, so the error log
+redraws an answer exactly as it was shown. Captured, a practice question with a
+formula, a wrong answer, and its resend:
+
+```json
+GET /api/hub/practice/next?topicId=5cdb8f…   200
+{ "mode": "practice", "language": "en", "translationId": null, "languageNote": null,
+  "question": { "_id": "4e701e…", "text": "How many elements has $\\{1, 2, 2, 3\\}$?", "bloom": "understand", "topic": "Sets", "kind": "mcq",
+                "source": "teacher", "options": ["2", "3", "4", "5"],
+                "provenance": { "by": "professor", "checked": true, "text": "Written by your professor." },
+                "rich": { "text": "How many elements has <math><mrow><mo fence=\"true\" form=\"prefix\" stretchy=\"false\">{</mo><mn>1</mn>…</mrow></math>?" } },
+  "topic": { "id": "5cdb8f…", "name": "Sets", "nameHtml": "Sets", "chapter": { "…": "…" } }, "topics": ["…"],
+  "why": "You have not practised this topic yet, so this question starts near its middle.",
+  "hints": { "available": 0, "note": "Your professor has not added hints to this question." } }
+POST /api/hub/practice/attempts   201   (a resend of the same attemptId: 200, "duplicate": true, the same body)
+{ "attempt": { "id": "c3901a…", "attemptId": "doc-attempt-0001", "mode": "practice", "createdAt": "2026-11-19T13:44:02.588Z", "language": "en", "hintsUsed": 0 },
+  "duplicate": false, "correct": false, "score": 0, "detail": "", "solution": 1, "explanation": null, "optionFeedback": [],
+  "topic": { "id": "5cdb8f…", "name": "Sets", "…": "…",
+             "state": { "state": "not-sure", "label": "Not sure yet", "answers": 1, "attempts": 1, "provisional": true, "pRight": null, "outOf10": null,
+                        "estimateState": "not-sure", "sentence": "Not sure yet: this rests on 1 answer. After 3 answers you get a first estimate.",
+                        "review": { "dueAt": "2026-11-19T13:45:02.588Z", "due": false, "when": "in 1 minute", "sessions": 1, "lastRating": "again" } } } }
+```
+
+The review is due a minute later: that is FSRS's default learning step, not a fault
+(the screen should say a short second session soon after the first is part of
+learning). The entry it made in the error log:
+
+```json
+GET /api/hub/errors   200
+{ "entries": [{ "id": "practice:c3901a…", "status": "open", "from": "practice", "fromLabel": "From your practice",
+                "topic": { "…": "…" }, "level": "understand", "levelLabel": "Understand", "times": 1,
+                "firstAt": "2026-11-19T13:44:02.588Z", "lastAt": "2026-11-19T13:44:02.588Z", "clearedAt": null, "clearedBy": null,
+                "question": { "text": "How many elements has $\\{1, 2, 2, 3\\}$?", "…": "…", "rich": { "text": "…" } },
+                "response": 0, "solution": 1, "prerequisites": [],
+                "sentence": "Answered wrong in practice. It clears when you get another question on this topic right at Understand or above.",
+                "explanation": null }],
+  "counts": { "open": 1, "cleared": 0 }, "openByTopic": { "5cdb8f…": 1 },
+  "rule": "An entry clears when a different question on the same topic, at its level or above, is answered right." }
+```
+
+A "From class" entry (a wrong verified room answer) carries `keyHeld`, with `solution`
+and `explanation` null, while a room is asking its question, or while the question is
+still active in the bank but practice cannot serve it to this student (an image
+question, say); retired or deleted since, it shows its key. Staff views are
+unchanged. When a topic has too few practisable questions for the next state, the
+state carries `bankShort: true` and its sentence says the topic needs more approved
+questions.
+
+**Get Ready, refresher paths, self-tests, goals and the hub home (H9, H10, H16,
+H17)**, `routes/hubPaths.js`.
+
+| Route | Who | Body → reply; refusals |
+|---|---|---|
+| `GET /api/hub/home` | student | `{ notice, basis, states, counts, classes: [{ class, units: [{ id, name, nameHtml, chapters: [{ id, title, titleHtml, topics: [{ id, name, nameHtml, practiceQuestions, state: { state, label, answers, provisional, outOf10, sentence }, review: { due, dueAt, when } }] }] }], otherChapters }], reviews: { due, upcoming, setSize, rule }, goals: { goals, note, max } \| { unavailable }, paths: { paths: [{ checkId, target, endedAt, steps, done, next, nextName, sentence }] } \| { unavailable }, weeks: { weeks (4), note }, empty? }` |
+| `POST /api/hub/getready` | student | `{ clientRunId, targetTopicId }` → 201 (200 resend, `duplicate: true`) `{ duplicate, check: { id, clientRunId, startedAt, endedAt, status: open \| complete, asked, maxQuestions: 12, rule }, target, prerequisites: [{ topic, depth, status: asking \| waiting \| decided, outcome: ready \| needs-review \| not-sure \| null, label, answers, right, source: check \| practice \| none, provisional, sentence }], sentence, question: { question, language, translationId, languageNote, topic, why, hints: { available: 0, note } } \| null, waiting?, path (once complete) }`. 400 a bad id or no target; 404 the topic; 409 the id of a self-test |
+| `GET /api/hub/getready?topicId=` | student | `{ checks: [{ id, clientRunId, target, startedAt, endedAt, status, asked, counts: { ready, needs-review, not-sure }, sentence }] (newest first), rule }` |
+| `GET /api/hub/getready/:checkId` | the student who started it | The check as above. Once complete, `path: { steps: [{ topicId, name, topic, depth, why, status: done \| in-progress \| to-do, answers, right, sentence }], target: { topic, status: ready \| waiting, sentence }, next, done, total, rule }` |
+| `POST /api/hub/getready/:checkId/answers` | the student who started it | `{ attemptId, questionId, response, timeTakenMs?, shown? }` → 201 (200 resend) practice's feedback (`correct`, `solution`, `explanation`, `optionFeedback`, `topic.state`) plus `check`, the check after it. 404 "That question was not found." for a question not on the prerequisite being checked or already asked; 409 "This Get Ready check is complete. Start a new one to check again.", an id of another answer, or a closed question |
+| `POST /api/hub/exams` | student | `{ clientRunId, topicIds (1 to 20), levels? (default all six), count? (1 to 30, default 10), timeLimitMinutes? (1 to 180) }` → 201 (200 resend) `{ duplicate, exam: { id, clientRunId, startedAt, timeLimitMinutes, deadlineAt, secondsLeft, endedAt, endReason, status, topics, levels, total, shortNote? }, questions: [{ position, questionId, topic, question, language…, answered, response, answeredAt } \| { removed, sentence }], answered, hints: { available: 0, note }, note }`. No key, mark or explanation. 400 when none of the professor's approved questions match; 404 a topic |
+| `GET /api/hub/exams` | student | `{ exams: [head + answered (+ right, sentence once ended)], limits: { maxQuestions, maxMinutes, graceSeconds } }` newest first; a timed-out one is ended on this read |
+| `GET /api/hub/exams/:examId` | the student who started it | Open: as `POST /exams`. Ended: `{ exam, ended, questions: [{ position, questionId, topicId, topic, bloom, levelLabel, question, answered, response, correct, score, detail, mark: auto \| provisional \| unmarked, markLabel, solution, explanation, optionFeedback, held?, heldNote? }], summary: { overall, byTopic, byLevel }, lateNote?, note }`. An unanswered question keeps its key and explanation hidden |
+| `POST /api/hub/exams/:examId/answers` | the student who started it | `{ attemptId, questionId, response, timeTakenMs?, shown? }` → 201 (200 resend) exactly `{ saved, duplicate, late, attempt: { id, attemptId, createdAt }, answered, total, status, message? }`, no mark of any kind. A change of answer is a new attempt; the last before the end counts. A late answer is stored, `late: true`, and not counted. 404 a question not on the list; 409 an id of another answer |
+| `POST /api/hub/exams/:examId/submit` | the student who started it | The result, as `GET` when ended. A second submit changes nothing |
+| `GET /api/hub/goals` | student | `{ goals: [{ id, title, titleHtml, examDate, daysLeft, past, counts, topics: [{ topic, state, review } \| { id, unavailable, sentence }], focus, sentence, createdAt, updatedAt }] (soonest first), note: 'Only you see your goals.', max: 10 }` |
+| `POST /api/hub/goals` | student | `{ title?, examDate (YYYY-MM-DD, today or later), topicIds (1 to 60) }` → 201 `{ goal }`. 400 a bad or past date; 404 a topic; 409 over 10 goals |
+| `PATCH /api/hub/goals/:goalId` | the student who owns it | `{ title?, examDate?, topicIds? }` → `{ goal }` |
+| `DELETE /api/hub/goals/:goalId` | the student who owns it | `{ removed: true, message }`; a second removal is the 404 |
+| `GET /api/hub/classes/:classId/states` | staff: the owner, the HOD | `{ class: { …, canEdit, access }, topics: [{ id, name, nameHtml, chapter, unit, practiceQuestions, counts, openErrors, students: { <state>: [{ rosterId, rollNo, name, answers, provisional }] } }], noAccount: [{ rosterId, rollNo, name, note }], states, notes }`, roll order |
+| `GET /api/hub/classes/:classId/students/:studentId/getready` | staff | `{ class, student, checks: [{ id, target, startedAt, endedAt, status, asked, counts, prerequisites (sentences about the student), sentence, path \| null }], note }`; a roster row with no account, `checks: []` and a note. Writes nothing |
+
+Get Ready's rule (`check.rule`, captured): "The check asks at most 12 questions, about
+the topics this one needs first, nearest first. Two right answers in a row on a topic
+make it Ready and two wrong make it Needs review; after one of each, a third question
+decides (two of three right is Ready). A topic you have already mastered in practice
+is Ready without asking. A topic the check could not decide is Not sure yet." Not sure
+yet comes with one of six reasons, each with its own sentence: the 12 questions ran
+out, the check never reached it, too few approved questions, none, material on none of
+the student's classes, or the check ended first. Once a check's end is written it stays
+as it ended. A refresher step is done when the student's answers on it since the check
+are two right in a row, or two right of their last three, a repeated question counting
+once per round.
+
+```json
+POST /api/hub/getready   201
+{ "duplicate": false,
+  "check": { "id": "dc43bf…", "clientRunId": "doc-check-0001", "startedAt": "2026-11-19T13:44:02.615Z", "endedAt": null,
+             "status": "open", "asked": 0, "maxQuestions": 12, "rule": "The check asks at most 12 questions, …" },
+  "target": { "id": "c2a8a4…", "name": "Relations", "…": "…" },
+  "prerequisites": [{ "topic": { "id": "5cdb8f…", "name": "Sets", "…": "…" }, "depth": 1, "status": "asking", "outcome": null, "label": null,
+                      "answers": 0, "right": 0, "source": "none", "provisional": true, "sentence": "Being checked now." }],
+  "sentence": "Checking the topics \"Relations\" needs first: 0 questions asked of at most 12.",
+  "question": { "question": { "_id": "687448…", "text": "What is $\\{1,2\\} \\cap \\{2,3\\}$?", "kind": "mcq", "…": "…",
+                              "rich": { "text": "What is <math>…</math>?", "options": ["<math>…</math>", "…"] } },
+                "language": "en", "translationId": null, "languageNote": null, "topic": { "…": "…" },
+                "why": "Checking \"Sets\", which \"Relations\" needs first.", "hints": { "available": 0, "note": "…" } } }
+```
+
+A self-test answer, and the result after hand-in (one question answered, one not):
+
+```json
+POST /api/hub/exams/:examId/answers   201
+{ "saved": true, "duplicate": false, "late": false, "attempt": { "id": "a2704e…", "attemptId": "doc-exam-ans-01", "createdAt": "2026-11-19T13:44:02.636Z" },
+  "answered": 1, "total": 2, "status": "open" }
+POST /api/hub/exams/:examId/submit   200
+{ "exam": { "id": "407dd5…", "status": "ended", "endReason": "submitted", "endedAt": "2026-11-19T13:44:02.652Z", "total": 2, "…": "…" },
+  "ended": "You handed this self-test in.",
+  "questions": [
+    { "position": 1, "questionId": "bf1ee6…", "bloom": "understand", "levelLabel": "Understand", "question": { "…": "…" },
+      "answered": true, "response": 0, "correct": true, "score": 1, "detail": "", "mark": "auto",
+      "markLabel": "Marked by the computer from your professor's answer.", "solution": 0, "explanation": null, "optionFeedback": [] },
+    { "position": 2, "questionId": "48f4b8…", "bloom": "remember", "levelLabel": "Remember", "question": { "…": "…" },
+      "answered": false, "response": null, "correct": null, "score": null, "detail": "", "mark": "unmarked",
+      "markLabel": "Not answered, so not marked. Its answer is shown once you have tried it, in practice or in another self-test.",
+      "solution": null, "explanation": null, "optionFeedback": [] }],
+  "summary": { "overall": { "questions": 2, "answered": 1, "right": 1, "provisional": 0, "unmarked": 1, "sentence": "1 of 2 questions right; 1 not answered." },
+               "byTopic": ["…"], "byLevel": ["…"] },
+  "note": "…" }
+```
+
+A student who no longer reaches a question's topic (taken off the roster, the chapter
+taken off the class, the topic retired) does not see it while the self-test is open
+(`removed: true`, "This question's chapter is no longer on your classes in the hub, so
+it is not asked."); in the result, unanswered questions of that kind are left out and
+answered ones show from the student's own attempt.
+
+The staff view of students by state (captured, one topic):
+
+```json
+GET /api/hub/classes/:classId/states   200
+{ "class": { "id": "a98626…", "courseName": "Discrete Maths", "section": "SY A", "termLabel": "", "canEdit": true, "access": "owner" },
+  "topics": [{ "id": "5cdb8f…", "name": "Sets", "…": "…", "practiceQuestions": 3,
+               "counts": { "not-started": 0, "not-sure": 1, "in-progress": 0, "mastered": 0, "needs-review": 0 }, "openErrors": 1,
+               "students": { "not-sure": [{ "rosterId": "0fd4a5…", "rollNo": "21CS01", "name": "…", "answers": 1, "provisional": true }], "…": [] } }],
+  "noAccount": [],
+  "states": { "not-started": "Not started", "not-sure": "Not sure yet", "in-progress": "In progress", "mastered": "Mastered", "needs-review": "Needs review" },
+  "notes": { "order": "Students are listed in roll order. Nothing here ranks them.",
+             "basis": "Each state rests on the student's answers in the hub (N is how many). Answers in rooms are not counted in it; wrong ones show in the student's error log, marked \"From class\".",
+             "students": "A student appears here once their account reports to the class's professor and the roster holds their roll number." } }
+```
+
+**Lessons (H11)**, `routes/hubLessons.js`.
+
+| Route | Who | Body → reply; refusals |
+|---|---|---|
+| `GET /api/hub/topics/:topicId/lesson` | a rostered student (in their chosen language); staff preview with `?lang=en\|hi\|mr` | `{ topic: { id, name, nameHtml }, lesson: null \| { id, version, approvedAt, label, language: { requested, language, translationId, note }, steps: [ { type: 'chunk', cite, text, html } \| { type: 'example', cite, label, problem, problemHtml, steps: [{ text, html }], answer, answerHtml } \| { type: 'questions', cite, questions: [forStudent + rich + provenance + language + hints: { available, note } + closed?: { reason, note }] } ], answering }, empty?, preview? }`. Never a key, a draft, a model, a warning or the basis. `answering` is true wherever the server runs |
+| `GET /api/hub/topics/:topicId/lessons` | staff (the owner, the HOD reads) | `{ topic, canEdit, writing, serving: lessonView \| null, drafts, history, basis: { from, perSlideText, slides, note }, nothingToTeach?, notes: { approval, questions, model } }` |
+| `POST /api/hub/topics/:topicId/lessons/generate` | the chapter's owner | 202 `{ runId, state: 'running', note }`; writes a new draft version in the background (an AI draft with a model, "slides only" without). 409 a retired topic, a topic with no text, or a lesson being written now |
+| `GET /api/hub/lessons/run/:runId` | the staff member who started it | `{ run: { id, state, written, topicsDone, topicsTotal, topic, elapsedMs, error } }` |
+| `GET /api/hub/lessons/:lessonId` | staff who may read the chapter | `{ lesson: lessonView, canEdit }` |
+| `POST /api/hub/lessons/:lessonId/approve` | owner | `{ lesson, message, replaced?: { id, version } }`; the version before it is retired in the same statement. 409 not a draft |
+| `POST /api/hub/lessons/:lessonId/discard` | owner | `{ lesson, message }`; 409 not a draft |
+| `POST /api/hub/lessons/:lessonId/questions/:questionId/attempts` | student, on an approved (or just superseded) lesson of their class | `{ attemptId, response, shown?: { language, translationId }, timeMs? }` → 201 `{ attemptId, duplicate: false, correct, score, solution, language, optionFeedback }`; 200 with `duplicate: true` only when the stored row is a lesson answer to the same question (the key worked out from that row's own snapshot). 409 an id kept for anything else, a closed question, or a question that has become a poll; 404 a draft or discarded lesson ("That lesson was not found."), or a question the lesson does not list or that was never approved ("That question was not found."); 400 a bad id, no answer, or one over 20,000 characters |
+
+A lesson's answer is a hub attempt (`mode: 'lesson'`) in the same store as practice:
+it counts in the student's mastery, error log, reviews and staff activity, and in no
+room, attainment figure or register. Captured, offline (no model key):
+
+```json
+GET /api/hub/topics/:topicId/lesson (the student, before any is approved)   200
+{ "topic": { "id": "5cdb8f…", "name": "Sets", "nameHtml": "Sets" }, "lesson": null,
+  "empty": "Your professor has not published a lesson on this topic yet." }
+POST /api/hub/topics/:topicId/lessons/generate (the owner)   202
+{ "runId": "f1bd02…", "state": "running",
+  "note": "No AI model is set up on this server, so this makes a slides-only lesson: your slides in steps, with questions you already approved. It arrives as a draft for you to approve." }
+```
+
+**Languages (H12)**, `routes/hubLanguages.js`.
+
+| Route | Who | Body → reply; refusals |
+|---|---|---|
+| `GET /api/hub/language` | student | `{ language: 'en' \| 'hi' \| 'mr', choices: [{ tag, name, native, original }], note }` |
+| `PUT /api/hub/language` | student | `{ language }` → `{ language, choices }`; 400 anything but `en`, `hi`, `mr` |
+| `GET /api/hub/chapters/:contentId/translations?language=` | staff | `{ chapter, canEdit, languages, items: [{ kind: question \| lesson \| explanation \| hint \| feedback, id, status, english: { field: text \| [texts] }, note, translations: { hi: { serving, drafts, shown }, mr: { … } } }], counts, notes }`; `translationView` carries `status`, `provenance`, `model`, `fields`, `madeFrom`, `stale`, `staleNote?`, `findings: [{ field, id, blocking, message }]`, `blocking`, `flags` |
+| `POST /api/hub/chapters/:contentId/translations/generate` | owner | `{ languages?, items? }` → 202 `{ runId, state, note, items, languages }`; items with a current draft or approved translation are skipped |
+| `GET /api/hub/translations/run/:runId` | the staff member who started it | `{ run }`; when done, `run.error` holds a sentence if some items were not translated |
+| `POST /api/hub/translations` | the owner of the item's chapter | `{ itemKind, itemId, language: 'hi' \| 'mr', fields }` → 201 `{ translation (a draft, provenance professor), message }`. Fields: a question `{ text, options }`; a lesson `steps.N.text`, `steps.N.problem`, `steps.N.steps` (a list), `steps.N.answer`; an explanation `explanation` (item id: the question's); a hint `hint`; option feedback `feedback` |
+| `PATCH /api/hub/translations/:translationId` | owner | `{ fields }` → `{ translation, message }`, checked again against the English as it is now; 409 not a draft |
+| `POST /api/hub/translations/:translationId/approve` | owner | `{ confirmFlags? }` → `{ translation, message }`. 409 not a draft, out of date, a blocking finding (`missing`, `count`, or `blanks`: a different number of `____` gaps), or flags (`numbers`, `formulas`, `code`, `untranslated`) without `confirmFlags: true` |
+| `POST /api/hub/translations/:translationId/discard` | owner | `{ translation, message }`; 409 not a draft |
+| `GET /api/hub/chapters/:contentId/languages` | staff | `{ chapter, items: [{ questionId, text, kind, bloom, students, original, originalName, languages: [{ language, name, answers, correct, share, original }], otherThanOriginal, note, warning }], warnings, method, note }`: each student's first graded hub attempt (practice and lessons), split by language with Phase 5's thresholds |
+
+A translation made from English that has changed since is out of date and never
+shown; one with any blocking finding against the current English is never served,
+even if approved before. A student sees an approved, current translation, or English
+with a plain note. Captured:
+
+```json
+GET /api/hub/language   200
+{ "language": "en",
+  "choices": [{ "tag": "en", "name": "English", "native": "English", "original": true },
+              { "tag": "hi", "name": "Hindi", "native": "हिन्दी", "original": false },
+              { "tag": "mr", "name": "Marathi", "native": "मराठी", "original": false }],
+  "note": "Your professor checks every translation before you see it. Until one is checked, you see the English, with a note." }
+```
+
+**The tutor (H13)**, `routes/hubTutor.js`. No live model call: hints are approved
+ladders of up to three steps (1 a nudge, 2 a strategy, 3 a worked step that stops
+short of the answer) and feedback on wrong options.
+
+| Route | Who | Body → reply; refusals |
+|---|---|---|
+| `GET /api/hub/practice/hints?attemptId&questionId&topicId` | student | The hints already opened for this attempt (for a reload): `{ hints, hintsUsed, remaining, why, note }`. 400 a bad id; 404 the topic or question |
+| `POST /api/hub/practice/hints` | student | `{ attemptId, questionId, topicId, mode: 'practice' \| 'review', step? }` → 201 `{ hint: { position, kind: feedback \| nudge \| strategy \| worked, label, text, html, cite, by, byLabel, language, languageNote? }, hintsUsed, remaining, why, note, duplicate: false }`; 200 with the stored hint when `step` names one already opened; 200 `{ hint: null, message }` when none is left. 400 in a self-test or Get Ready ("No hints in a self-test" / "No hints in Get Ready"), a bad id or a step out of turn; 409 the attempt is answered already, the id was used for another question, or the question is closed |
+| `GET /api/hub/lessons/:lessonId/questions/:questionId/hints?attemptId` | student on the lesson's class | As the practice `GET` |
+| `POST /api/hub/lessons/:lessonId/questions/:questionId/hints` | student | `{ attemptId, step? }`, mode `lesson` → as the practice `POST`; staff 403 |
+| `GET /api/hub/chapters/:contentId/hints` | staff | `{ chapter, canEdit, questions: [{ questionId, text, topic, bloom, kind, kindLabel, status, hints: [{ id, step, kind, label, text, textHtml, provenance, status, statusLabel, model, sourceRef, cite, opened, leak? }], missingSteps, takesFeedback, options: [{ optionIdx, option, feedback \| null }], noLongerShown, counts }], counts, notes }` |
+| `GET /api/hub/questions/:questionId/hints` | staff | `{ question (one entry as above), canEdit, notes }` |
+| `PUT /api/hub/questions/:questionId/hints/:step` | owner | step 1, 2 or 3; `{ text, slides? }` → 201 or 200 `{ question, message }`, approved as written. 400 when it gives the answer away (the reason named), a poll, a bad step, too long, contact details |
+| `DELETE /api/hub/questions/:questionId/hints/:step` | owner | `{ removed: true, question, message }`; 404 no hint there |
+| `PUT /api/hub/questions/:questionId/feedback/:option` | owner | option index from 0 (true/false: 0 True, 1 False); `{ text, slides? }` → 201 or 200 `{ question, message }`. 400 the right option, a kind that takes none, a poll, a leak |
+| `DELETE /api/hub/questions/:questionId/feedback/:option` | owner | `{ removed: true, question, message }`; 404 none |
+| `POST /api/hub/questions/:questionId/hints/approve` | owner | `{ steps?, options? }` (all AI drafts when neither) → `{ approved, refused: [{ step \| option, why }], question, message }`; each draft is leak-checked again. 404 no AI drafts |
+| `POST /api/hub/chapters/:contentId/hints/generate` | owner | `{ questionIds?, runId? }` → 202 `{ runId, state: 'running', questions, skipped, note }`; drafts only what approved, non-poll, non-image questions lack. 409 nothing to draft or a run in progress. Offline still 202, and nothing is drafted |
+| `GET /api/hub/hints/run/:runId` | the run's owner | `{ run: { state, written, topicsDone, topicsTotal, error } }` |
+
+Hints are offered in practice, review sets and lessons only. The attempt's
+`hintsUsed` counts the distinct hints the student opened on the question since their
+previous answer to it, under any attempt id, at most 3, and 0 in a self-test or Get
+Ready. Changed replies, all additive: `practice/next` `hints` is live; practice and
+lesson attempt replies, Get Ready answers and the self-test result carry
+`optionFeedback: [{ option, text, html, cite, by, byLabel, language }]` (approved
+feedback on the wrong option chosen; `[]` when right or unanswered); each lesson
+question carries `hints`; staff activity carries `hintsUsed` and `attemptsWithHints`
+(counts only). Captured, the owner writing a hint, and one that gives the answer away:
+
+```json
+PUT /api/hub/questions/:questionId/hints/1   201
+{ "question": { "questionId": "0cbc09…", "text": "Which symbol says that $x$ belongs to the set $A$?", "kind": "mcq", "kindLabel": "Choose one", "status": "active",
+                "hints": [{ "id": "adf09d…", "step": 1, "kind": "nudge", "label": "Hint 1: a nudge",
+                            "text": "Read the symbol aloud: which one is said \"is an element of\"?", "textHtml": "…",
+                            "provenance": "professor", "status": "approved", "statusLabel": "Written by the professor",
+                            "model": null, "sourceRef": null, "cite": null, "opened": 0, "…": "…" }],
+                "missingSteps": [2, 3], "takesFeedback": true,
+                "options": [{ "optionIdx": 1, "option": "$x \\subset A$", "feedback": null }, "…"], "noLongerShown": [], "counts": { "…": "…" } },
+  "message": "Saved. Students on your classes see this hint when they ask for it." }
+PUT /api/hub/questions/:questionId/hints/2   400
+{ "error": "This hint was not saved. It gives the answer away: it names the right option, \"$x \\in A$\". Rewrite it so it helps without giving the answer." }
+```
+
+The leak check is lexical: a hint that gives the answer in other words passes it, and
+the professor's approval is the real gate.
+
+### The additive `question.rich` (rooms)
+
+`server:question`'s `question` and `class:question`'s `question` gain `rich` (H15;
+`CONTRACT.md` Amendment 6). It is an object of HTML for each field of the question as
+the phone is shown it that holds a formula or a fenced code block (also a formula
+that could not be read, sent as its escaped source, and an escaped dollar sign), and
+`{}` for every other question, prices included. A list field is sent whole once any
+item in it qualifies. Fields: `text`, `criterion`, `options[]`, `left[]`,
+`right[]`, `items[]`, `groups[]`, `columns[]`, `rows[]` (grid), `passage` (stimulus)
+and `gaps[i].options[]`. Every other field is unchanged, as are indices and order: the
+plain field is still what the phone answers with. `server:question` waits for the code
+highlighter to load (about 300 ms the first time); `class:question` is built at once, so
+before the highlighter has loaded a code block there is shown escaped without colours.
+Hub question payloads carry the same `rich`.
+
+### What the screens need
+
+None of these screens exists. Every student screen uses the student's bearer token;
+no student screen calls `/api/content`, `/api/classes` or `/api/bank`. Show every
+error's sentence as it is. Render `*Html` and `rich` as HTML (never the plain field
+beside it); use the plain fields for search, aria labels and answering. Put
+`lang="hi"` or `lang="mr"` on translated text and load a Devanagari font without
+blocking the page. MathML is native (Chrome 109 and later; check a low-end Android),
+`.rich-tex-error` needs a small rule (the escaped source of a formula that could not be
+read), shiki's dark colours come through `--shiki-dark`, and any CSP must allow
+`style` attributes.
+
+**Hub home and mastery map.** `GET /api/hub/home` (or `GET /api/hub` and
+`GET /api/hub/progress`). Show `notice` plainly near the top. The map is
+`classes → units → chapters → topics`, then `otherChapters` under its label; each
+topic shows `state.label`, N (`state.answers`, "based on N answers"), `state.sentence`,
+a provisional marker when `state.provisional`, and `review.when`. Show `reviews`,
+`goals`, `paths` and `weeks` (with `weeks.note`); where a part carries `unavailable`,
+show that sentence instead. Show `empty`. **Never** a rank, a class average, another
+student, a streak, coins, points or a band name.
+
+**Topic and practice.** `GET /api/hub/topics/:id` (prerequisites nearest first; mark
+`onYourClasses: false` as from earlier material; a 404 looks like any missing page).
+Practice: `GET /practice/next?topicId=` then `POST /practice/attempts`. Make one
+`attemptId` when a question is shown and use it for its hints and its answer; keep the
+attempt in the outbox until 201 or 200; resend the same id after a network failure.
+Render the question as the room phone does (`rich` first), with `provenance.text`,
+`why` and `languageNote`; send `shown: { language, translationId }` from the payload.
+After the reply: right or wrong, the right answer from `solution`, the explanation's
+`textHtml` and label, `optionFeedback`, `provisionalNote` for a written answer, and the
+topic's new state sentence and N (and the `bankShort` sentence). A 409 means "closed
+for now": keep the answer, show the sentence, retry later; show the `ALL_CLOSED`
+message when `question` is null. **Never** show a key, an explanation or feedback
+before the reply.
+
+**Get Ready and refresher path.** Make a `clientRunId` and keep it, then
+`POST /api/hub/getready`. Show `check.rule`, each prerequisite (status, label,
+answers, right, sentence, provisional marker) and the current question with its `why`;
+no Hint button (`hints.note` says why). Each answer `POST …/answers` with its own
+`attemptId`; show the feedback, then `body.check.question`. Show `waiting` when the
+question is null for that reason. Once `check.status` is `complete`, show each
+outcome's sentence and the path: each step's topic, `why`, status and sentence, with a
+Practise action that opens practice on `step.topicId`, `path.next` highlighted, the
+target last. Past checks: `GET /api/hub/getready`. **Never** hints, or another
+student's results.
+
+**Self-test builder and results.** Inputs: topics (up to 20), levels (all six on by
+default), number (1 to 30, default 10), optional time limit (1 to 180 minutes).
+`POST /api/hub/exams` with a `clientRunId`; show `shortNote`. Every answer and every
+change of answer is a `POST …/answers` with a new `attemptId`; show only "saved",
+answered of total and status. The countdown comes from `secondsLeft` / `deadlineAt`;
+the server decides the end. Hand in with `POST …/submit`. Result: per question
+`correct`, `response`, `solution`, `explanation`, `optionFeedback`, `markLabel`
+(`unmarked` shows no key), `heldNote` when held; `summary` overall, by topic and by
+level; `ended`, `lateNote`, `note` (counted nowhere official). `GET /api/hub/exams`
+resumes an open one. **Never** a mark, a key, an explanation, feedback or a hint
+before the end.
+
+**Lessons.** `GET /api/hub/topics/:id/lesson`. Render the steps in order: a chunk's
+`html` with its `cite`; an example's label, `problemHtml`, each step's `html` and
+`answerHtml`; a questions step with each question in its kind's component, `rich`
+first, its provenance text and `language.note`. Show `lesson.label` and
+`lesson.language.note`; show `empty` when `lesson` is null. Answer with
+`POST /api/hub/lessons/:lessonId/questions/:questionId/attempts` and an `attemptId`
+kept in the outbox; show the key only from the reply. A question with `closed` shows
+`closed.note` and no answer box. **Never** an "AI draft" label, a model name, a
+warning, the basis or a draft lesson to a student.
+
+**Language switch.** `GET /api/hub/language`, save with `PUT /api/hub/language`.
+Offer English, हिन्दी and मराठी with `note`, then reload what is open. **Never** a
+finding, `madeFrom`, a model or an AI-draft label to a student.
+
+**Hints.** In practice, review sets and lessons only. A Hint button when
+`hints.available > 0`, with `hints.note`. Each press `POST`s the attempt id,
+question, topic and mode, with `step` = hints shown so far + 1 so a retry is safe.
+Show the hint's `label`, `html`, `cite`, `byLabel`, `languageNote` and, with the first,
+`why`. Stop at `remaining: 0` or `hint: null` (show `message`). On a reload, `GET` the
+hints with the same attempt id. Hide the button once the answer is sent (a later
+request is a 409). **Never** a Hint button in a self-test or Get Ready.
+
+**Error log.** `GET /api/hub/errors` (filter by `status` or `topicId`). Each entry:
+the question (`rich`), the response, the solution, the explanation, prerequisites
+nearest first, `fromLabel`, status and `sentence`; `keyHeld` in place of the solution
+when present. **Never** another student, or a room's key the entry holds back.
+
+**Reviews and goals.** `GET /api/hub/review/due`: due and upcoming topics with
+`review.when`; start a set of `setSize` (5) with `mode=review`. Say that a short second
+session soon after the first is part of learning (FSRS's first step is minutes).
+`GET /api/hub/consistency`: weeks with practised, rested and upcoming days, `sentence`
+and `note`. Goals: a form (title up to 80 characters, exam date today or later, up to
+60 of the student's topics), `POST`, `PATCH`, `DELETE /api/hub/goals…`; show each
+goal's `sentence`, counts, `focus` and each topic's state with N, `note` ("Only you
+see your goals.") and the limit of 10. **Never** a streak count, or a goal to staff.
+
+**Professor: units and topics.** `GET /api/hub/classes/:id` (staff shape). Add,
+rename, delete units; drag to reorder (`PUT …/units/order` with every id); place or
+move chapters (`PUT …/chapters/:contentId { unitId, position }`) from `available`;
+take one off (`DELETE`). Redraw from the reply's `hub`. A chapter panel
+(`GET /api/hub/chapters/:id`): topics with question and link counts, retired ones
+greyed, slide numbers, `slides.note` ("older decks cite slide numbers only"), a "Make
+topic records" button when `unsynced` is not empty (`POST …/topics/sync`), and
+`unmatchedQuestions` as a count. "Preview as a student" with `?view=student`. When
+`canEdit` is false (an HOD), hide every control.
+
+**Professor: prerequisite links.** The staff topic view lists links in every state
+with `label`, `reason`. Add (`POST /api/hub/links`), confirm or reject (`PATCH`),
+remove (`DELETE`); show a 409's sentence as it is (it names the chain). A proposals
+queue from `GET /api/hub/links?state=proposed` with `counts`. "Suggest prerequisites":
+`POST /api/hub/links/propose { contentIds, runId }` with a device-made `runId`, poll
+`GET /api/hub/links/run/:runId`; show proposals as AI drafts ("not used until
+confirmed"), `note`, `skipped` with reasons and `warnings`.
+
+**Professor: the review queues.**
+- *Explanations*: `GET /api/hub/chapters/:id/explanations`; write or edit (`PUT`),
+  approve an AI draft, remove; "Draft explanations" `POST /api/hub/explanations/generate`
+  with a `runId`, poll the run, show the offline note.
+- *Hints and feedback*: `GET /api/hub/chapters/:id/hints`; three step slots per
+  question (label, text, `statusLabel`, `cite`, `opened`, a `leak` warning,
+  `missingSteps`), each wrong option's feedback or an empty slot, `noLongerShown`;
+  write or delete a step or feedback (show the 400's reason inline); "Approve drafts"
+  (show `refused` with reasons); "Draft hints with AI" (202, poll
+  `/api/hub/hints/run/:runId`, show `skipped` and the run's sentence).
+- *Lessons*: `GET /api/hub/topics/:id/lessons`: serving, drafts, history, each with
+  its `statusLabel`, `basis.note`, warnings and steps; each retrieval question with its
+  provenance and status and a link to approve it in the bank; "Make a lesson" (202,
+  poll `/api/hub/lessons/run/:runId`, disabled while `writing`, `notes.model`);
+  Approve and Discard with the reply's `message`; preview as a student with `?lang=`.
+- *Translations*: `GET /api/hub/chapters/:id/translations`: English and each
+  translation side by side, status, `provenanceLabel`, `stale` and `staleNote`, the
+  findings split into blocking and flags; edit (`PATCH`), write by hand (`POST`),
+  approve (on a 409 for flags, resend with `confirmFlags: true` on a second press; a
+  blocking finding needs an edit), discard; "Translate" (202, poll
+  `/api/hub/translations/run/:runId`, show `run.error`). Item kinds question, lesson,
+  explanation, hint and feedback need labels. Statistics by language:
+  `GET /api/hub/chapters/:id/languages` (Phase 5's translation warning component).
+
+**Professor and HOD: per-class and per-student hub views.** Class:
+`GET /api/hub/classes/:id/progress` (a matrix of students in roll order by topics,
+each cell state, N, open errors; per-topic counts; notes; roster rows with no account
+show their note) and `GET /api/hub/classes/:id/states` (per topic, one column per
+state, students in roll order with N and a provisional marker; `noAccount` apart).
+Student: `GET …/students/:rosterId/progress` (states with N, activity for 7 and 30
+days by mode, `hintsUsed` and `attemptsWithHints` as counts, the error log with each
+`questionId` linking to the bank) and `GET …/students/:rosterId/getready` (each check's
+target, status, counts, outcome sentences and path progress). The HOD sees all of it
+read-only (`access: 'reader'`). **Never** a ranking, sorting by score by default, a
+class average beside a name, or a student's goals.
+
 ## Known open issues
+
+Phase 6 (the Learning Hub), open. None is a failing test; each is a gap, a limit or
+an owner's call (`docs/PRODUCT_DECISIONS.md`, Phase 6):
+
+- **Nothing ran against Supabase, Mongo, a real Auth token or a model.** Accounts work
+  only through the scripts' in-process stand-in for Supabase Auth; the new repo methods
+  were checked by the parity test, PGlite for the SQL and a few stubbed request shapes.
+- **Rooms and the hub share one question bank.** Practice shows the key of every
+  approved question after one try, so a student can collect, before class, the keys of
+  questions a graded room will ask later. The fix closes only questions a room is
+  asking right now. Decided, to be built in batch 8: a professor can mark a question
+  "rooms only"; the room avoids a question the student has practised when another of
+  that level exists; practice marks only questions practice served; a student can end
+  a Get Ready check.
+- **A Get Ready check cannot be abandoned.** While it is open, the question it is
+  asking stays closed to practice and lessons (above); each open check adds a few reads
+  to every practice request. Until batch 8, finishing the check is the only way out.
+- **Any approved question in the student's scope can be answered by id**, as if
+  practised: no store of served questions exists yet (batch 8).
+- **A topic record with a lesson but no questions or links**, taken out of its
+  chapter's topic list, is deleted, not retired, and its lessons go with it (`0027`
+  cascades); its hub attempts keep the topic's name and lose the link. Found while
+  writing these docs; traced from the code, not run.
+- **Image-stimulus questions and the fewer-choices support are left out of hub
+  practice** (an `<img>` carries no token; supports would need the account read at
+  serve and submit).
+- **Estimates are worked out per request** from every hub attempt on the topics
+  involved, by every student. Not measured with a semester of data on Supabase,
+  where PostgREST pages at 1000 rows.
+- **One server process.** Unit, placement, link, explanation, hint and run locks are
+  in memory; background runs are lost on a restart (a lesson run cut short can leave
+  its retrieval drafts in the bank). The `0025` loop guard takes no lock, so two
+  processes confirming A before B and B before A at once could both pass (reviewer's
+  finding, low, not confirmed).
+- **A translated hint or option feedback is leak-checked against the English
+  question only** (reviewer's finding, low, not confirmed); approval stays the gate.
+- **`hub_attempts` keeps no lesson id, lesson version or translation id**, only the
+  mode and the language. The error log shows entries and explanations in English and
+  labels a lesson's entry "From your practice".
+- **Hints and feedback do not follow a regenerated question**; feedback whose option is
+  reworded is kept but not shown (`noLongerShown`). A renamed topic is a new record:
+  its questions stay on the retired one until retagged. A lesson cannot be edited, and
+  an approved one cannot be withdrawn without approving a replacement.
+- **A hub attempt is deleted with its student's account** (cascade), while room answers
+  keep their roll number; the legal review of decision 8 should confirm this.
+  `hub_goals.topic_ids` are not foreign keys: a topic gone from the student's classes
+  shows in a goal as no longer on them.
+- **No screen exists** for any of it, and no MathML, shiki output or Devanagari was
+  rendered in a browser or on a phone.
 
 Phase 2, open (none is a failing test; each is a gap or a default awaiting the owner):
 

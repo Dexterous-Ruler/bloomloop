@@ -10,6 +10,10 @@ the two Phase 3 questions ("Phase 3: the two questions, decided" below) and the 
 defaults the owner was asked to look at. Decision 8 is a working posture, **not a legal
 decision**: a lawyer must confirm it before any college signs or before 13 May 2027.
 
+The Phase 6 decisions (the student Learning Hub, H1 to H18) were taken under the same
+delegation that day. They are recorded from "Phase 6 in brief" on, with a new decision on
+the question bank that rooms and the hub share, to be built in batch 8.
+
 Where a decision moved a contract, the contract was amended and the date recorded:
 `CONTRACT.md` section 6 rule 1 (decision 1), sections 4 and 5 (Phase 3 question (a):
 the phone's row; Amendment 3) and section 6 rule 5 (`source: 'teacher'`). The
@@ -22,17 +26,21 @@ pass (Amendment 5, dated): section 3 (`Question.source` may be `'teacher'`), sec
 section 6 rule 1 ("No image generation" means image-model output; decision 4 and its
 revision). `V2-CONTRACT.md` was read against the decisions and still holds: a profile's
 `account_id` is still the student's account or null, guest join still works, and a
-student still reads only their own results; it was not changed.
+student still reads only their own results; it was not changed. Phase 6 made
+Amendment 6 (dated): the Learning Hub is an account-only surface outside the frozen room
+contract; three new dependencies; the repository's Phase 6 methods (section 2);
+`Content.slideTexts` (section 3); the phone's additive `question.rich` (section 5); and
+how the hub applies section 6's rules 1 to 3.
 
 | # | Decision | Status |
 |---|---|---|
-| 1 | Generated teaching content in the Hub | **Decided under the owner's delegation, 19 Nov 2026**: as recommended; contract amended; nothing to build yet |
+| 1 | Generated teaching content in the Hub | **Decided under the owner's delegation, 19 Nov 2026**: as recommended; contract amended; Phase 6's lessons, explanations, hints and translations are built under it |
 | 2 | Which mastery threshold is authoritative | **Decided under the owner's delegation, 19 Nov 2026**: as recommended (already built) |
 | 3 | Do observations and spoken answers move a level | **Decided under the owner's delegation, 19 Nov 2026**: never (already built) |
 | 4 | Does "no image generation" cover plotted diagrams | **Decided under the owner's delegation, 19 Nov 2026**: code-rendered figures allowed; revised the same day: a code-rendered graph question kind is built after Phase 6; contract amended |
-| 5 | AI calls for professor-triggered actions | **Decided under the owner's delegation, 19 Nov 2026**: as recommended; nothing to build yet |
+| 5 | AI calls for professor-triggered actions | **Decided under the owner's delegation, 19 Nov 2026**: as recommended; Phase 6's AI buttons follow it, and no live chat tutor is built |
 | 6 | Six levels or three bands by default | **Decided under the owner's delegation, 19 Nov 2026**: as recommended (server already returns both) |
-| 7 | Hub identity: accounts or roll number | **Decided under the owner's delegation, 19 Nov 2026**: rooms account-free; a link only by a signed-in phone (built, `0022`) |
+| 7 | Hub identity: accounts or roll number | **Decided under the owner's delegation, 19 Nov 2026**: rooms account-free; a link only by a signed-in phone (built, `0022`); the Hub needs an account (built, Phase 6, H1) |
 | 8 | DPDP role and students under 18 | **Decided under the owner's delegation, 19 Nov 2026, as a working posture. Not a legal decision: a lawyer must confirm it before any college signs or before 13 May 2027.** The under-18 mark is built (`0022`) |
 | 9 | What deleting a room does to the evidence | **Decided by owner, 18 Nov 2026** |
 
@@ -68,6 +76,11 @@ change. `CONTRACT.md` section 6 rule 1 (it read "No PPT/content generation, ever
 Ingest only.") now says exactly the rule above, dated. It unblocks the Hub's lessons
 (Phase 6), which must carry a source reference and an approval state as questions do
 (`sourceRef`, `approvedBy`/`approvedAt`, `0013`).
+
+**Phase 6 (19 Nov 2026).** Built under this rule: a lesson's text is the professor's own
+slide text, cited; its worked examples, the AI's retrieval questions, explanations, hints,
+option feedback and translations are AI drafts until the professor approves them; a
+lesson made without a model is "slides only". See "Phase 6: lessons and languages".
 
 ## 2. Which mastery threshold is authoritative?
 
@@ -196,6 +209,13 @@ confirms. **What was built:** nothing new; no such call exists yet. The live loo
 makes none (`CONTRACT.md` section 6 rule 2, unchanged), and the keyword marker of
 written answers is not a model.
 
+**Phase 6 (19 Nov 2026).** Five new professor buttons call a model, each writing drafts
+only: prerequisite proposals, lessons, explanations, translations, and hints with option
+feedback. Nothing a student waits on calls one, so the hub's practice loop, Get Ready,
+self-tests, lessons and hints need no model key and cost no quota while students use
+them. A live chat tutor is not built: it would need this decision reversed ("Phase 6:
+owner option, a live chat tutor").
+
 ## 6. Six levels or three bands by default?
 
 **Conflict.** The product is built on six levels; raters agree poorly at six
@@ -314,6 +334,11 @@ confidence tap, and its vote stops counting once her own phone has voted in that
 roll number when no sign-in is presented. Rooms are account-free, so a token cannot be
 required for them.
 
+**Phase 6 (19 Nov 2026).** The Hub needs a signed-in student account (H1): a student
+reaches a class's hub when the class's owner is their professor and its roster holds
+their roll number, not removed. A room phone with a typed roll number reaches nothing
+there, and only a student's verified room answers enter their hub error log (H7).
+
 ## 8. DPDP Act: processor or fiduciary, and students under 18
 
 **Conflict.** From 13 May 2027 the Act's notice, consent, children's-data and rights
@@ -366,6 +391,13 @@ room archives (decision 9).
 - A room opened **without a class** has no roster to read, so the mark cannot reach
   it: signals there are recorded as before. Opening rooms for the class is how the
   mark applies (open, `docs/IMPLEMENTATION_STATUS.md`).
+
+**Phase 6 (19 Nov 2026).** The Hub now holds student-account data: hub attempts, the hints
+a student opened, Get Ready checks and self-tests, goals and their language choice. Each
+is deleted with the student's account, while room answers keep their roll number; the
+legal review should confirm this. None of the notice, consent, export, erasure, retention
+or audit pieces above was built in Phase 6 (open items, "Phase 6: open items for the
+owner").
 
 ---
 
@@ -1003,3 +1035,743 @@ Open questions for the owner (nothing is built that settles them):
 2. **The question's language.** Record it per question (a column) before the Hub's
    language switch, so the warning compares with the language a question was written
    in, not English by default.
+
+### Phase 6 in brief: the Learning Hub, what to read first, and what is open
+
+Phase 6 is the student Learning Hub: a place outside rooms where a signed-in student
+practises their professor's approved questions, reads approved lessons, gets ready for a
+topic, sets self-tests and goals, and sees their own progress. Server and database only:
+five migrations (`0025` to `0029`) and three new dependencies. Every screen is the UI
+session's (`docs/API.md`, "Phase 6: the Learning Hub"). The owner said "decide the best
+outcomes yourself", so the eighteen decisions H1 to H18 below were **decided under the
+owner's delegation, 19 Nov 2026**, in the directive's order: the backbone, practice and
+feedback, Elo, the error log, FSRS, Get Ready, refresher paths, practice and exam modes,
+lessons, the English, Hindi and Marathi switch, and the tutor. `CONTRACT.md` records the
+contract side as Amendment 6. Five rules hold throughout:
+
+- **Accounts only.** Rooms stay account-free (decision 7). The hub needs a signed-in
+  account, and answers 503 on a server without Supabase.
+- **Approved material only.** A student reads only what the professor approved. Every AI
+  output is a draft until then (decision 1).
+- **Evidence kept apart.** Hub attempts have their own append-only table (`hub_attempts`,
+  `0026`). They never move a room ladder and never count in attainment or the marks
+  register (H5). Ratings, states, the error log and reviews are not stored: they are
+  worked out from the attempts on every read, as attainment is from answers.
+- **No model in anything a student waits on** (decision 5). Models run only on a
+  professor's button. The tutor is approved hint ladders, not a chat.
+- **Personal progress only.** No rank, average, streak, coins or band name on any student
+  payload (H16).
+
+**Read these first:**
+1. **The shared question bank** ("Phase 6: the shared question bank"). Rooms and the hub
+   draw on one bank, and practice shows the key of every approved question after one try.
+   The review fix closes only the questions a room is asking right now. A new decision,
+   to be built in batch 8, closes the rest of the gap.
+2. **Closed questions** ("Phase 6: closed questions"). A question is closed to a student
+   while a room is asking it, while it is on their open self-test, or while their open
+   Get Ready check is asking it.
+3. **A live chat tutor is not built** ("Phase 6: owner option, a live chat tutor"). It is
+   the owner's option, and it needs decision 5 reversed.
+4. **Earlier-semester prerequisites** (H3). A student's topic view names confirmed
+   prerequisites from the professor's chapters that are on none of the student's classes,
+   marked as such. The owner may want them left out.
+
+**Not tested.** Nothing in Phase 6 ran against a real Supabase, PostgREST, Postgres or
+MongoDB. The SQL ran in PGlite; the Supabase methods ran only through stubs and the boot
+probe; the Mongo methods are covered only by the test that every store has the same
+method names. No real model call was made: every prompt is unverified against the live
+API, and replies were tested as fixtures through the real parsers. No client exists for
+any hub screen, so nothing was rendered in a browser or on a phone: how MathML, shiki's
+colours and Devanagari look on a low-end Android phone is unknown. Two server processes
+were not tested (every lock is per process). Speed with a semester of attempts was not
+measured.
+
+### Phase 6: who reaches the hub, the backbone, formulas and code (H1 to H4, H15)
+
+**H1. Who.** Decided under the owner's delegation, 19 Nov 2026. The hub is for student
+accounts only; rooms stay account-free (decision 7). A student reaches a class's hub when
+the class's owner is the professor they report to (`accounts.reports_to`) and the roster
+holds their roll number (`rollKey`), not removed. The owner reads their students' hub
+data; the department's HOD reads it and writes nothing; anyone else gets the usual
+same 404.
+
+*What was built.* One access rule, used by every hub route (`services/hubAccess.js`), and
+the routes under `/api/hub` (`routes/hub.js` and the other `routes/hub*.js` files).
+
+*Defaults chosen:*
+- Without Supabase every hub route answers 503. With it, a bearer token is needed, so the
+  teacher key and a room phone get 401.
+- **One 404 sentence per kind of thing** ("That class was not found.", and the same for a
+  unit, chapter, topic, link, lesson, question, check, self-test or goal) for "not there"
+  and "not yours" alike, so no id can be probed. A student on a staff route gets 403
+  before anything is read. An HOD writing to a class they may read gets 403, since they
+  know it exists. Another professor gets 404 on reads and writes alike.
+
+**H2. What a student reads: approved material only.** Decided under the owner's
+delegation, 19 Nov 2026. Approved questions through `forStudent()` (no key before an
+attempt), approved lessons, translations, hints, feedback and explanations, and the
+chapter's units and topics. Never drafts, never misconception labels, never the raw deck:
+slide text reaches a student only inside an approved lesson.
+
+*What was built.* The student payloads (`services/hubViews.js` and each hub service).
+`/api/content`, `/api/classes` and `/api/bank` still answer 403 to a student. A student is
+sent their classes' units, the titles of placed chapters, and topic names that are not
+retired; on a topic, its confirmed prerequisite chain. Never slide text, proposed or
+rejected links, retired topics, other classes or unplaced chapters.
+
+**H3. The content backbone.** Decided under the owner's delegation, 19 Nov 2026. Units per
+class, ordered and named; chapters in no unit show under "Other chapters". Topics become
+records per chapter, made from `contents.topics`; questions keep their topic string and
+are matched to a record by name, and no question row is rewritten. Prerequisite links go
+topic to topic, across any chapters the same professor owns, with provenance `ai` or
+`professor` and state proposed, confirmed or rejected. Only confirmed links are used,
+loops are refused, and longer chains are computed from the direct links. The AI proposes
+direct links only, on the professor's button (decision 5); the offline generator proposes
+none.
+
+*What was built.* `0025` (`class_units`, `class_chapters`, `chapter_topics`,
+`topic_links`); `services/hubTopics.js`, `services/hubGraph.js`, `services/hubProposals.js`
+and `routes/hub.js`.
+
+*Defaults chosen:*
+- **A chapter reaches a class's hub only when the owner places it.** Nothing is placed
+  automatically. Only the class owner's own chapters can be placed: **placing another
+  owner's chapter is refused** (the route's 404, and a database trigger).
+- Topic records are made on upload, on a paste, on a topic edit, when a chapter is first
+  placed, and on the owner's sync, never on a read. A question is matched by `topicKey`,
+  or by the shortened name the generator stamps on a long topic.
+- **A topic that leaves a chapter's list is retired when it is used** (questions or links
+  hang off it), **and deleted otherwise.** A retired topic comes back with the same id if
+  its name returns. A renamed topic is a new record: the old one is retired with its
+  questions and links, which are not moved, so practice on the new name has no questions
+  until the professor retags them (as course outcomes treat renamed topics).
+- **Adding by hand a link the AI proposed, or one rejected before, confirms that row.** A
+  professor's own link is confirmed at once. A loop is refused with a sentence naming the
+  chain it would close, checked against confirmed links under an in-process lock per
+  professor and a database trigger (which takes no lock across processes: open items).
+- **AI proposals** run on the professor's button as a run the console polls, like
+  question generation. They ask for direct links only, over at most 60 topics from 1 to
+  10 of the professor's own chapters, each with at most 500 characters of its slide text.
+  The strict parser keeps only the topics offered and a one-line reason (at most 160
+  characters, no contact details). It **holds back loops, repeats, previously rejected
+  pairs and links implied by a longer chain**, and self-links. A proposed link is an AI
+  draft, used only once confirmed.
+- **A student's topic view names confirmed prerequisites from earlier-semester
+  chapters**: the professor's chapters that are on none of the student's classes. Only
+  the topic's name and its chapter's title are sent, flagged `onYourClasses: false`; that
+  chapter and topic still answer 404 to the student. The builder read H3, H7 and H9 as
+  intending this. If the owner reads strictly the rule that a student sees only material
+  of classes they are on, it is one filter on `onYourClasses` in `topicView`
+  (`services/hubViews.js`).
+
+**H4. Per-slide text.** Decided under the owner's delegation, 19 Nov 2026. A deck uploaded
+from Phase 6 on keeps each slide's own words (`contents.slide_texts`, `0025`). Older
+chapters cite slide numbers through `topic_slides` only, and every staff view that shows
+slides says so.
+
+*What was built.* The slide texts are written by their own repository call after the
+chapter is made (`routes/content.js`), so an upload still succeeds without `0025` and its
+reply is unchanged. `slidesNote` in `services/hubTopics.js` gives the staff sentence. At
+most 400 slides of 4,000 characters each are kept, empty slides left out. Pasted text has
+no slides, and says so.
+
+**H15. Formulas and code.** Decided under the owner's delegation, 19 Nov 2026. `$...$` and
+`$$...$$` (with `\ce{}`) are rendered on the server to MathML with temml (its `temml.cjs`
+build carries mhchem); fenced code is highlighted with shiki; TeX runs with trust off and
+all other text is escaped. Applied to hub payloads, and to room phone payloads as an
+additive field.
+
+*What was built.* `services/richText.js`. Hub payloads carry `nameHtml`, `titleHtml` and
+the like beside the plain text; `server:question` and `class:question` gain
+`question.rich` (`CONTRACT.md` Amendment 6, section 5).
+
+*Defaults chosen:*
+- **Pandoc's dollar rule**, so prices survive: an opening `$` needs a non-space character
+  after it, and the closing `$` a non-space character before it and no digit after it.
+  "$20 and $30" stays text. **`\$` is a literal dollar sign** anywhere.
+- **Caps:** 20,000 characters of input (the rest is dropped, and the result says so),
+  2,000 characters per formula, 200 formulas per input, and 10,000 characters per
+  highlighted code block. temml runs with trust off, a largest size of 20 em and at most
+  300 macro expansions. A formula that cannot be read, or is over a cap, is shown as its
+  escaped source, marked with a class; nothing throws.
+- **No id and no link from the input** (the review fix): a formula using `\label`, `\ref`
+  or `\eqref` is shown as its source, because temml writes an id or a link for them even
+  with trust off, and so is any rendering that comes out holding an `id=` or `href=`
+  attribute.
+- Code: shiki with its JavaScript regex engine (no WebAssembly) and a fixed list of 18
+  languages; a fence naming any other is shown as plain text. Light colours by default,
+  the dark ones beside them as CSS variables.
+- The phone's `rich` holds only fields whose HTML says more than their plain text, so it
+  is `{}` for ordinary questions, prices included, which saves phone bandwidth. A code
+  block in a class question is highlighted only once shiki has loaded in the server's
+  process; `server:question` waits for it (about 300 ms the first time).
+- **Corrected from the reports, by the code:** the reports say `rich` holds a field only
+  when it has a formula or code. `phoneRichSync` also includes a field whose formula could
+  not be read (shown as its source) and a field holding an escaped dollar sign, since
+  their HTML differs from the plain text too.
+
+### Phase 6: practice, mastery, the error log and spaced review (H5 to H8)
+
+**H5. Practice outside rooms.** Decided under the owner's delegation, 19 Nov 2026. Hub
+attempts go to their own append-only table; `answers` stays room evidence. Every attempt
+is kept. Each carries the client's attempt id as an idempotency key (for Phase 7's
+outbox), the language shown, the mode (practice, exam, Get Ready, review or lesson), the
+hints used and the time taken. Hub attempts never move a room ladder and never count in
+attainment or the marks register.
+
+*What was built.* `hub_attempts` (`0026`: one row per account and client attempt id,
+append-only by a guard trigger), `services/hubPractice.js` and `routes/hubPractice.js`.
+The server marks every attempt from the stored question and never reads a client's own
+verdict. A resent attempt id returns the stored result and adds no row. The unit tests
+and `server/scripts/practice.mjs` check that a room's answers, profiles and attendance,
+attainment, the student report and the register are byte-identical before and after hub
+practice.
+
+*Defaults chosen:*
+- **A hub attempt is deleted with the student's account** (cascade, as are their checks,
+  self-tests, goals, hint views and language choice), **while room answers keep their
+  roll number.** The legal review of decision 8 should confirm this.
+- An answer is taken for a question practice could have served: active, or discarded
+  after it was once approved (or the professor's own). Never a draft, a rejected draft, a
+  poll or a question showing an uploaded image.
+- **Image questions are left out of hub practice for now.** The image rule
+  (`services/media.js`) serves an upload only through a running room, and an `<img>` sends
+  no token. Serving them needs a hub-aware image rule.
+- **The fewer-choices support is not applied in the hub for now:** every student is shown
+  the full list and marked on it, in practice, lessons, Get Ready and self-tests. Applying
+  it needs the account's supports read when a question is served and when it is marked.
+- One shuffle seed for the whole hub, the student and the question (`hubSeed`), so the
+  server rebuilds what was shown when the answer comes, and the error log redraws a
+  lesson's answer the same way.
+- An answer over 20,000 characters is refused (400) and not stored. The time taken is the
+  device's, may be missing, and is never used for marking.
+
+**H6. Mastery: Elo.** Decided under the owner's delegation, 19 Nov 2026. An Elo rating per
+(student, topic) and per question difficulty, item ratings seeded from the Bloom level,
+with an uncertainty-based K (Pelánek 2016). Topic states: Not started (no attempt); Not
+sure yet (fewer than 3, provisional, with N); In progress; Mastered (the estimated chance
+on the topic's typical question at least 0.8, the decision-2 goal, from at least 5);
+Needs review (spaced review is due). Every state carries N and a plain sentence, never a
+rank. The room ladder is separate and unchanged.
+
+*What was built.* `services/hubElo.js` (pure), `stateFrom` in `services/hubPractice.js`
+and `services/hubProgress.js`. Nothing is stored: every rating is replayed on each read
+from every hub attempt on the topic, by every student, in the server's order.
+
+*Defaults chosen:*
+- **Verified room answers do not seed or move a hub rating.** A room serves each student
+  questions at the ladder's level, with retries and class discussion, so its right or
+  wrong is not the same measurement. The estimate rests on hub practice alone, and every
+  progress reply says so. Wrong verified room answers do enter the error log (H7).
+- **Only a student's first attempt at each question moves a rating** (the student's and
+  the question's), as in Pelánek's systems: a second attempt after the key was shown
+  measures memory of that answer. Every attempt still counts as practice and activity.
+  Since the merge, a lesson's answers count like practice.
+- **The model:** P(right) = 1 / (1 + e^-(skill - difficulty)), and **K(n) = 1 / (1 +
+  0.05n)** (`ALPHA` 1, `BETA` 0.05), of the size the paper reports, not yet tuned to
+  BloomLoop's data. Skill starts at 0. **Item seeds by Bloom level: Remember -1.25,
+  Understand -0.75, Apply -0.25, Analyse 0.25, Evaluate 0.75, Create 1.25.**
+- **The typical question** is the median difficulty of the topic's practisable questions
+  (0 when there are none).
+- **Shown chances round down** ("about 7 in 10"), so an estimate never reads higher than
+  it is. No figure is shown while a state is Not sure yet.
+- **Needs review takes precedence** over the estimate's state once the topic has any
+  answer (N > 0) and its review is due.
+- **The thresholds count answers to DIFFERENT questions** (first attempts), not every
+  attempt, because a repeat after the key was shown is not new evidence (the review fix;
+  H6 says "attempts"). So a topic with fewer approved questions than a threshold cannot
+  reach it however much it is practised. Then the state carries **`bankShort`**, and its
+  sentence says the topic needs more approved questions instead of promising that more
+  practice will get there.
+- **Selection:** a question the student has not met, the one whose estimated chance is
+  **nearest 0.7** (`TARGET_RIGHT`), so a new student starts at Understand, as in a room.
+  Once every question has been met: the one answered wrong last, then the one met longest
+  ago; never the question just answered unless it is the only one.
+
+**H7. The error log, built automatically.** Decided under the owner's delegation, 19 Nov
+2026. Its sources are wrong hub attempts and the student's own verified room answers
+(marked "From class"). Each entry has the question, topic, Bloom level, confirmed
+prerequisites, the student's response, and what was right (only after the attempt). It
+is open or cleared; it clears when a later question on that topic, at that level or
+above, is answered right.
+
+*What was built.* `services/hubErrors.js` (pure), `errorLogFor` in
+`services/hubProgress.js`, `GET /api/hub/errors`.
+
+*Defaults chosen:*
+- Room entries are the student's verified, final, marked answers: a wrong attempt
+  followed by a retry, a poll and a class question's vote are left out.
+- **One open entry per question:** the same question wrong again before it clears adds to
+  it ("2 times", with the latest response). Once cleared, a new wrong answer opens a new
+  one.
+- **An entry clears only on a right answer to a DIFFERENT question** on the topic, at the
+  entry's level or above, in the hub or in class: the same question right after its key
+  was shown measures memory of the key. A provisional machine mark (a written answer)
+  clears it, and the entry says so.
+- **The error log never shows a room key that practice would not show anyway** (the
+  review fix, which reconciles H7's "what was right" with the rule that keeps keys out of
+  a student's answer history, `services/evidence.js`). What was right, and the
+  explanation, are held back (`keyHeld`, with a sentence) on an entry whose question a
+  room is asking now, and on a "From class" entry whose question is still active in the
+  bank (a room may ask it again) but which practice cannot serve this student (it shows
+  an uploaded image, say). A question retired or deleted since shows its key: no room
+  serves it again. Staff views are unchanged.
+- Known limits: entries and their explanations are shown in English, including those
+  from a lesson or a translated question, and a lesson's entries read "From your
+  practice".
+
+**H8. Spaced review.** Decided under the owner's delegation, 19 Nov 2026. ts-fsrs (MIT)
+with default parameters, one card per (student, topic). A review is a short practice set
+on the topic, and the session's result maps to a rating, documented here. A "due for
+review" list. No streaks: weekly consistency with rest days, from the student's own data
+only.
+
+*What was built.* `services/hubReview.js` (pure), `GET /api/hub/review/due` and
+`GET /api/hub/consistency`.
+
+*Defaults chosen:*
+- ts-fsrs 6.0.0 with `generatorParameters()` defaults: request retention 0.9, the
+  published default weights, no fuzz, learning steps of 1 and 10 minutes. A review set
+  asks 5 questions.
+- **A session is a run of the student's attempts on the topic, in any mode, with gaps
+  under 10 minutes**, rated as one review at its last attempt. 10 minutes is FSRS's
+  longest default learning step.
+- **The rating:** each question's first attempt in the session counts once, and the share
+  right maps to **Again under 0.4, Hard under 0.7, otherwise Good, and Easy at 0.9 or more
+  from at least 5 answers with no hint** used in the session. 0.4 and 0.7 are the room
+  ladder's own lines (decision 2). One right answer is Good; one wrong, Again.
+- FSRS's learning steps mean a topic practised a few minutes ago shows "Needs review" 1 to
+  10 minutes later. That is how FSRS works; the student's screens should say that a short
+  second session soon after the first is part of learning.
+- Weekly consistency: Monday to Sunday in India's time, the days practised and the days
+  rested, from the student's own attempts. Rest days are named as rest. No streak is
+  counted, kept or shown.
+
+### Phase 6: Get Ready and refresher paths (H9)
+
+**H9. Get Ready.** Decided under the owner's delegation, 19 Nov 2026. A short adaptive
+check of at most 12 questions for a target topic the student chooses. It covers the
+target's confirmed prerequisites, nearest first, and stops early when the evidence
+suffices. Each prerequisite ends Ready, Needs review or Not sure yet. Then a refresher
+path: the prerequisites that need review, in dependency order, each with "why this is on
+your path" in the student's own counts, ending at the target.
+
+*What was built.* `services/hubGetReady.js` and `routes/hubPaths.js`. A check is a
+`hub_runs` row (`0028`), written once and then ended once; its answers are hub attempts in
+mode `getready`, filed under it.
+
+*Defaults chosen:*
+- **The stopping rule, per prerequisite:** two right is Ready and two wrong is Needs
+  review; after one of each, a third question decides, and two of three right is Ready.
+  At most 12 questions in all, nearest prerequisite first. The check stops when every
+  prerequisite is decided or the 12 are used. Each answer counted is the first to a
+  different question.
+- **Mastered in practice:** a prerequisite the student had already mastered in practice
+  when the check started (and not due for review) is Ready without asking, citing its N.
+  This is fixed on the run at the start, with the prerequisites and their names.
+- **Not sure yet**, each with its own sentence and counts, when: the 12 questions ran out
+  on it; they ran out before the check reached it; the professor approved too few
+  questions on it to decide; the professor approved none; it is in material on none of
+  the student's classes; or **the check ended before deciding it** (`ended`, the review
+  fix). The builder's report lists five reasons; the code has these six.
+- **Feedback after each answer**, as in practice: right or wrong, the right answer, the
+  explanation and the feedback on a wrong option chosen. H9 does not forbid it, and the
+  answers count in mastery and the error log at once. No hints.
+- The next question: one the student has never answered in the hub first, then any other,
+  in an order seeded by the check (not by Elo, so a reload shows the same question). Never
+  one already asked in this check, and never one closed by a room or an open self-test:
+  when only closed ones are left, the check waits and says why.
+- **A refresher step is done** when the student's answers on it since the check are two
+  right in a row, or two right of their last three. **A question counts once per round**
+  (the review fix): answered again, it counts only once every practisable question on the
+  topic has been answered since, so a key just shown is not evidence, and a topic with
+  few questions can still be finished. The path follows `dependencyOrder` over the
+  professor's confirmed links and ends at the target.
+- **An ended check stays ended** (the review fix). Once its end is written it takes no
+  answer (409), a prerequisite it had not decided reads Not sure yet whatever changes
+  later, and its refresher path stays.
+- A student may have several checks open at once. A student cannot end a check they have
+  left: its current question stays closed to practice and lessons until they finish it
+  ("Phase 6: the shared question bank", item 4).
+
+### Phase 6: practice and self-tests (H10)
+
+**H10. Modes.** Decided under the owner's delegation, 19 Nov 2026. Practice: feedback
+after each item, hints available. Exam (a self-test builder): chosen topics and levels, at
+most 30 questions, an optional time limit, mixed; no hints and no feedback until it is
+handed in; kept as evidence, counted nowhere official. Written answers get provisional
+machine marks, labelled as such.
+
+*What was built.* Practice in `services/hubPractice.js`; self-tests in
+`services/hubExam.js` and `routes/hubPaths.js`, each a `hub_runs` row (`0028`); the rule
+that holds a self-test's answers back in `services/hubHeld.js`.
+
+*Defaults chosen:*
+- A self-test takes 1 to 20 topics, any of the six levels (all by default), 1 to 30
+  questions (10 by default) and an optional limit of 1 to 180 minutes. The list is fixed
+  at the start: one question from each topic in turn, those the student has not met
+  first, in an order seeded by the self-test, then shuffled. If fewer match, it has those
+  and says so.
+- While it is open: no hints and no feedback; an answer's reply says only that it was
+  saved. Changing an answer is a new attempt, every attempt is kept, and the last one
+  before the end counts.
+- **The 30-second grace:** a timed self-test ends at its deadline plus 30 seconds on the
+  server's clock. The device's clock is never trusted.
+- **Late answers are kept, marked late, and not counted.**
+- **Unanswered questions keep their keys hidden** (and their explanations) after
+  hand-in, so an empty self-test cannot be used to read the bank's answers.
+- **Final answers count in personal progress after hand-in:** the student's own mastery,
+  error log and reviews. Until then they are held back. "Counted nowhere official" means
+  no room, attainment figure or register.
+- **Several self-tests may be open at once**, and Get Ready checks beside them.
+- **Questions on an open self-test keep their hints closed everywhere** (practice, review
+  sets, lessons) until it is handed in or times out (the merge). Since the review fix they
+  are not served or taken in practice or lessons either ("Phase 6: closed questions").
+- **The professor's option feedback is shown in the result, after the end**, like the
+  explanation (H14), for answered questions only (the merge).
+- A student who no longer reaches a question's topic (removed from the roster, chapter
+  taken off the class, topic retired) does not see it while the self-test is open; in the
+  result an unanswered one is not shown, and an answered one shows from the student's own
+  attempt (the review fix).
+- An open self-test's answers are left out of the staff activity counts until it ends.
+  The student's weekly consistency counts them at once, since it says nothing about right
+  or wrong.
+
+### Phase 6: lessons and languages (H11, H12)
+
+**H11. Lessons.** Decided under the owner's delegation, 19 Nov 2026. Per topic, generated
+on the professor's button from that topic's slides (decision 1): a slide chunk (the
+professor's own text, cited), then one worked example (an AI draft), then 2 to 4
+retrieval questions (drafts, through the normal approval gate), then the next chunk. A
+lesson is "AI draft" until approved; regenerating keeps the approved lesson until the new
+one is approved. The offline form is slide chunks plus questions already approved, no
+generated prose, labelled "slides only".
+
+*What was built.* `topic_lessons` (`0027`), `services/hubLessons.js` and
+`routes/hubLessons.js`. A lesson's answers go into practice's attempt store
+(`services/hubAttemptBridge.js`, connected at the merge), once per attempt id, in mode
+`lesson`.
+
+*Defaults chosen:*
+- **A slides-only lesson also needs the professor's approval**, because the chunking is
+  the machine's. A student never sees an unapproved lesson of either kind.
+- **Retrieval questions are Remember-level "Choose one" or "True or false" only**
+  (recall). They pass the generator's own validator, are written into the bank as drafts
+  (source `llm`, the model named, cited to their chunk's slides, rule checks run), and are
+  approved only in the bank. Approving a lesson approves none of its questions.
+- A slides-only lesson uses the topic's active questions except polls and written
+  answers, lowest level first, at most 4 per chunk.
+- A lesson is cut at 8 chunks of at most 900 characters and 3 slides each, and a warning
+  names the slides left out. A topic with no text is refused (409) before any run starts.
+  One lesson run per topic at a time.
+- **A lesson cannot be edited, only regenerated or discarded.** It is written once (the
+  `0027` guard), so what a student read is kept. An approved lesson cannot be withdrawn
+  without approving a replacement. Lessons and translations are never deleted, only
+  discarded or superseded.
+- An answer to a lesson superseded while the student had it open is still taken; an
+  answer to a draft or discarded lesson gets the lesson's 404. Only a question that was
+  once approved can be answered in a lesson: a rejected AI draft gives 404 (the review
+  fix).
+- Since the merge a lesson's answers count in the student's mastery, error log, reviews
+  and staff activity, like practice, and in no room, attainment figure or register.
+- The text comes from the topic's slides on a deck that kept them; on an older deck, from
+  the chapter's text between the topic's heading and the next topic's, citing the topic's
+  slides together and saying so; from pasted text with no slide cited, saying so.
+- Known limits: a bank generate in "replace" mode deletes a lesson's questions too, and
+  the staff view counts them as gone; a restart mid-run can leave a lesson's bank drafts
+  with no lesson (ordinary drafts the professor can reject).
+
+**H12. Languages.** Decided under the owner's delegation, 19 Nov 2026. English is the
+original. Hindi and Marathi versions of questions, explanations, hints and lessons are
+generated on the professor's button, stored per item and language as draft or approved
+with who approved. A student sees a translation only once it is approved, otherwise
+English with a plain note. Technical terms stay in English. The language shown is
+recorded on every hub attempt, and by-language item statistics feed Phase 5's
+translation warning.
+
+*What was built.* `item_translations` and `student_language_choices` (`0027`),
+`services/hubLanguages.js` and `routes/hubLanguages.js`.
+
+*Defaults chosen:*
+- One generic store for every kind of item. **Questions, explanations, lessons, hints and
+  feedback are translatable** (explanations since the merge, hints and feedback since the
+  tutor). **Only a question's wording and its options** ("Choose one", "Choose all that
+  apply", polls) are translated, positions unchanged, so marking and the solution are the
+  same in every language. Pairs, groups, sequences, passages and typed answers stay in
+  English, and the staff view says so per question.
+- **Blocking findings and flags.** A missing field (`missing`), a list of another length
+  (`count`) or a different number of `____` gaps (`blanks`, the review fix) blocks
+  approval outright. Changed numbers, formulas or code, or a sentence of four or more
+  English words with no Devanagari at all, are flags: approval then needs a second,
+  confirming press, because a Hindi ordinal can legitimately drop a digit.
+- **A translation is stale once its English changes** (each keeps the English it was made
+  from, and its hash). A stale translation is never shown, and approving a stale draft is
+  refused until it is edited against the current English.
+- **A translation with any blocking finding is never served**, even one approved before
+  the rule existed (the review fix).
+- Hand-written translations are allowed, which matters offline, and stay drafts until
+  approved. Editing an AI draft makes it the professor's.
+- **Every hub attempt records the language shown:** the screen's echo when that
+  translation is of this item and language and was approved at some point, otherwise what
+  would be shown now.
+- **Language statistics use each student's first graded hub attempt** per question, with
+  Phase 5's thresholds (at least 5 answers in each of two languages, more than 20 points
+  apart).
+- Translations of a draft lesson may be made and approved; a student sees them only once
+  that lesson version serves. Choosing a language is for students only; staff may preview
+  a lesson in any language.
+
+### Phase 6: the hint tutor and explanations (H13, H14)
+
+**H13. A tutor with no live model call.** Decided under the owner's delegation, 19 Nov
+2026. Decision 5 stands, so the tutor needs no model while students use it and costs no
+quota. Each question may carry an approved hint ladder of up to 3 steps (a nudge, a
+strategy, and a worked step that stops short of the answer), and each wrong option its
+own feedback, both generated on the professor's button and cited to slides. In practice,
+hints may be asked for at any time; the explanation and the answer come only after an
+attempt. Which hint comes first uses the student's recent attempts, the wrong option they
+chose and their topic state. Hints used are recorded. A live chat tutor is not built.
+
+*What was built.* `question_hints`, `option_feedback` and `hub_hint_views` (`0029`);
+`services/hubTutor.js`, `services/hubHintHook.js` and `routes/hubTutor.js`.
+
+*Defaults chosen:*
+- **Hints in practice, review sets and lessons only; never in a self-test or Get Ready.**
+  Review sets are practice sets (H8), and their Easy rating already depends on hints. The
+  routes answer 400 in those two modes, the database refuses a hint there, and their
+  attempts record 0 hints.
+- **The first hint, as built:** approved feedback on the wrong option the student chose
+  last time comes first, in place of the nudge, and the ladder goes on from the strategy.
+  Wrong after k hints last time starts the ladder at step k + 1. More than half of their
+  last five answers on the topic wrong (from at least three), or an estimate that is not
+  provisional and under an even chance on the topic's typical question, starts it at the
+  strategy. Otherwise the nudge comes first. A ladder too short offers its deepest step.
+  Only attempts whose results the student has already seen (practice, review, lesson) are
+  read; a self-test's and a Get Ready check's never are.
+- **Hints are tied to the client's attempt id:** one question per id, the plan fixed at
+  the first hint, at most 3 per attempt. Once the attempt exists its hints are closed
+  (409). Asking again for a step already opened returns it and records nothing
+  (idempotent per step). Hints opened for an attempt never answered are kept.
+- **`hints_used` counts the distinct hints the student opened on the question since their
+  previous answer to it, under any attempt id**, capped at 3, and 0 in a self-test or Get
+  Ready (the review fix: before, only hints under the attempt id sent with the answer
+  counted).
+- **The leak check** refuses a hint or feedback holding the right option's words, letter
+  or number; a numeric answer within its tolerance; an accepted typed answer; a statement
+  that a true-or-false claim is true or false; a whole pairing, grouping or order; the
+  words a hot-text question asks for; or a rubric point word for word. It runs when a
+  professor writes, when the model's reply is parsed, at approval, and again before
+  serving, since a key can change. **It is lexical only:** a hint that gives the answer
+  away in other words passes, and the professor's approval is the real safeguard.
+- **A translated hint or feedback that fails the check is shown in English**, with a
+  plain note, and the language actually shown is recorded. Open: the check reads the
+  translation against the English question only (open items).
+- **The professor's own hints and feedback are approved as written**, as explanations
+  are. AI drafts wait for approval, per question, each leak-checked again first.
+- **Drafts only for approved questions that are not polls and show no uploaded image**,
+  and only for the steps and options they lack. **None offline:** a hint cannot honestly
+  come from a template.
+- **Feedback is keyed by the option's words**, as misconception labels are, so a reorder
+  keeps it and a reworded option no longer shows it (it is kept, and listed for staff).
+  It is shown after a wrong attempt in practice, lessons and Get Ready, in a self-test's
+  result after the end, and offered as the first hint the next time the student meets
+  the question.
+- A hint cites the question's own slides by default, else its topic's; a pasted-text
+  chapter has none.
+- Known gaps: hints and feedback do not follow a regenerated question; option letters are
+  checked because the hub shows choice options in their stored order, so the letter check
+  needs revisiting if they are ever shuffled.
+
+**H14. Explanations.** Decided under the owner's delegation, 19 Nov 2026. An approved
+explanation per question, drafted by the AI on the professor's button or written by the
+professor; shown after an attempt in practice, and after hand-in in a self-test.
+
+*What was built.* `question_explanations` (`0026`), `services/hubExplanations.js`, and
+their routes in `routes/hubPractice.js`.
+
+*Defaults chosen:*
+- **A professor's explanation is approved as written** (provenance `professor`, no
+  model).
+- **Approving an AI draft keeps provenance `ai`**, shown to the student as "Written with
+  AI help and checked by your professor." A professor's edit makes it theirs.
+- Drafting fills only questions with no explanation, at most 60 per press; with no model
+  it drafts none and says so.
+- Shown after an attempt in practice, review sets, lessons and Get Ready, and in a
+  self-test's result for answered questions only. Translatable since the merge; a
+  translation stops showing when the explanation is rewritten.
+
+### Phase 6: what students and staff see (H16, H17)
+
+**H16. The student's view: personal progress only.** Decided under the owner's
+delegation, 19 Nov 2026. A mastery map by unit and topic, goals tied to an exam date the
+student sets, due reviews, and weekly consistency with rest days; their own past only.
+No ranks, coins, streaks, leaderboards or class averages.
+
+*What was built.* `GET /api/hub/home` and goals (`services/hubGoals.js`, `hub_goals` in
+`0028`), and `GET /api/hub/progress`.
+
+*Defaults chosen:*
+- **No rank, average, streak, coins or band name on any student payload.** The unit tests
+  and `server/scripts/paths.mjs` check the hub home for them.
+- **Goals are private to the student**: no staff route reads them. At most 10 goals, each
+  of 1 to 60 of the student's own topics, with an exam date of today or later when it is
+  set or changed (an unchanged past date may stay). A goal's progress gives counts per
+  state, N per topic, the days left and what to do first.
+- The home still renders when goals or refresher paths cannot be read (a database without
+  `0028`): that part carries a sentence instead.
+
+**H17. The staff view.** Decided under the owner's delegation, 19 Nov 2026. Per student:
+topic states with N, recent activity counts, open errors per topic, Get Ready results.
+Per class: students per topic state, in roll order, no ranking. The student's hub page
+says plainly that their professor can see their progress.
+
+*What was built.* `services/hubProgress.js`, `studentsByState` in `services/hubGoals.js`
+and `checksForStaff` in `services/hubGetReady.js`, through `routes/hubPractice.js` and
+`routes/hubPaths.js`. The class's owner and the department's HOD read; a student gets 403.
+
+*Defaults chosen:*
+- **The student's hub page says the professor can see their progress:** "Your professor
+  can see your progress in the hub: the topics you practise and how you are doing on
+  them." It is on the hub's first read, the hub home and the progress read.
+- **Staff views list students in roll order**, never by a figure. A roster row is tied to
+  a student account by the access rule's terms; a roll number held by no account, or by
+  two, shows no data and says why.
+- **Hints opened are shown to staff as counts** (hints used, and attempts with hints), so
+  the student's note that their professor can see how many they used is true. Which
+  hints a student opened on each attempt is stored but shown on no staff screen.
+- **Staff reads write nothing.** The staff Get Ready read works out a complete check's
+  end without storing it.
+
+### Phase 6: the three new dependencies (H18)
+
+Decided under the owner's delegation, 19 Nov 2026: three server dependencies, each MIT
+and free, pinned exactly in `server/package.json`. `CONTRACT.md`'s "No new npm
+dependencies" is amended for these three (Amendment 6). No client dependency was added.
+
+| Dependency | What for | Alternatives |
+|---|---|---|
+| `ts-fsrs` 6.0.0 (MIT) | Spaced review (H8), with its default parameters | The older SM-2 algorithm, which FSRS beat at predicting recall for 99.6% of 9,999 Anki users' collections (the gap analysis, citing the srs-benchmark). No other FSRS implementation or scheduler was evaluated. The gap analysis notes that ts-fsrs suits single facts; the hub keeps one card per topic and turns a short practice set into its one rating (H8) |
+| `temml` 0.14.0 (MIT) | Formulas to MathML on the server, with mhchem's `\ce{}` (H15) | **KaTeX, run on the server** (MIT), is the named fallback if native MathML looks poor on a low-end Android phone, which has not been tried. Its output needs KaTeX's fonts on the phone (`reports/BloomLoop visuals research.md` measured KaTeX at 75.8 KB plus fonts). No other formula renderer was evaluated |
+| `shiki` 4.6.0 (MIT) | Code highlighting on the server (H15) | None was evaluated. Shiki's JavaScript regex engine is used, not its WebAssembly one. Without shiki, code blocks would be shown escaped and uncoloured, which is what the server already does when the highlighter cannot load |
+
+### Phase 6: closed questions (the review fix)
+
+Decided under the owner's delegation, 19 Nov 2026, in the review fixes, within H9, H10,
+H13 and H14 and the room's own rule that a question's answer is never shown while it is
+being asked. Practice, a lesson and the tutor show a question's key, explanation and
+hints to anyone they may serve it to. So `services/hubClosed.js` works out on every
+request, writing nothing, which questions are **closed** to a student now:
+
+- **A room is asking it:** a phone in a room on its chapter that is not closed (open,
+  paused or waiting) has been served it and not finished it, or the room's class question
+  on it is still running. Any phone counts, not only this student's: rooms need no
+  sign-in (decision 7), so a phone in the room may be this student under any roll number.
+- **It is on one of the student's open self-tests** (a timed self-test is over once its
+  deadline and 30-second grace have passed).
+- **One of the student's open Get Ready checks is asking it.**
+
+While a question is closed: practice and review sets never serve it, and say so when
+nothing else is left; an answer to it in practice, a review set or a lesson is refused
+with a 409 naming the reason, and nothing is stored (the device keeps it and sends it
+again later); no hint opens on it. Get Ready skips questions closed by a room or a
+self-test and refuses an answer to one. A self-test's result keeps back the key, the
+explanation and the option feedback of a question a room is asking now (right or wrong
+is still shown), and the error log does the same (H7). Checked by
+`server/test/hubFixes.test.js`, and by `server/scripts/practice.mjs` over a real socket
+room.
+
+**Corrected from the reports, by the code.** The Get Ready builder and the merge report
+listed as not fixed that practice could serve and mark a question on the student's open
+self-test, showing its answer before hand-in; the closed-questions rule now refuses it.
+The merge report also said the practice route answered a reused lesson or Get Ready
+attempt id with the self-test sentence; the code now answers "That attempt id was used
+for another answer. Send this one with a new id." and keeps the self-test sentence for an
+id a self-test holds.
+
+### Phase 6: owner option, a live chat tutor (not built)
+
+H13 says a live chat tutor is not built, and that the owner may turn one on later, with
+its cost. What it would take:
+
+- **A model call per student message**, all day in term time. One class of 60 students at
+  20 messages a day is about 1,200 calls a day per class, so quota and cost grow with
+  use, not with professor presses.
+- **A connection**, so it does not work offline (Phase 7).
+- **No approval before a student reads it:** a reply cannot be checked by the professor
+  first.
+- **Guardrails** against giving the answer away and against answers off the professor's
+  syllabus (decision 1), and **a DPDP review of student chat logs** (decision 8).
+- **It conflicts directly with decision 5** (no model call in anything a student waits
+  on, and no model output a professor has not approved reaches a student). It needs the
+  owner to reverse decision 5 explicitly.
+
+The approved hint ladders, option feedback and explanations built in Phase 6 give
+step-by-step help without any of these costs. Nothing is built towards a chat.
+
+### Phase 6: the shared question bank (decided, to be built in batch 8)
+
+**The problem.** Rooms and the hub share one question bank. Practice (H5, H14) shows the
+key of every approved question after a single try, so a student can collect, before
+class, the keys of questions a graded room will later ask. The review fix closes only the
+questions a room is asking right now (and a running class question). Any approved
+question in the student's scope can still be answered in practice by its id, which is the
+same exposure as practising it.
+
+**Decided under the owner's delegation, 19 Nov 2026, to be built in batch 8:**
+1. **"Rooms only".** A professor can mark a question "rooms only", and the hub never uses
+   it.
+2. **The room avoids what was practised.** A room does not serve a student a question
+   they have already practised when another question of that level exists.
+3. **Practice marks only what practice served.** An answer is taken only for a question
+   practice actually served to that student. The fix's report named two ways to do it:
+   a store of served questions (a new table and migration), or a server-signed serve
+   token that the device sends back (client work and an API change). Batch 8 chooses.
+4. **A student can end a Get Ready check.** Today a check has no end if the student
+   leaves it, so an abandoned check keeps the question it is asking closed to practice,
+   lessons and hints until the student finishes it, and each open check adds a few reads
+   to every practice request.
+
+None of the four is built. Until they are, the exposure above stands.
+
+### Phase 6: open items for the owner
+
+From the review fixes and the verification findings. Nothing is built that settles them.
+
+1. **A resent practice attempt id is still answered with the stored key**, even if the
+   question has since become closed. The student was shown that key when the attempt was
+   first stored, so it is not a new leak; it was left as it is.
+2. **Nothing was run against Supabase or Mongo** ("Not tested", above). The reads the
+   review fix added already existed in all three stores and their filters were read in
+   the code, but only the in-memory store ran. Response times with many open rooms or
+   many open checks were not measured either.
+3. **The `0025` loop guard takes no lock across two server processes.** Two processes
+   confirming one link and its reverse at the same moment can both pass (under READ
+   COMMITTED), leaving a loop among confirmed links; the in-process lock covers one
+   process only. A low, unconfirmed verification finding, not acted on.
+4. **The translated-hint leak check uses the English question.** A Hindi or Marathi hint
+   or feedback that names the right option in its translated words, which the student
+   sees beside the approved translated options, would pass. It is approval-gated, but
+   the promise that a translated hint giving the answer away is never shown does not
+   hold in the student's language. A low, unconfirmed verification finding, not acted on.
+5. **Practice hints on a topic an open Get Ready check is asking about.** Since the
+   review fix the question the check is asking now is closed, its hints included; the
+   topic's other questions and their hints stay open. (The merge report listed the whole
+   topic as open; the code closes that one question.) Closing the whole topic would shut
+   it for as long as a check is left unfinished, so batch 8's "end a check" comes first.
+6. **The self-test 409 wording on a lesson or Get Ready id: fixed, not open** (see the
+   correction under "Phase 6: closed questions").
+7. **`hub_attempts` keeps no lesson id, lesson version or translation id.** A lesson
+   attempt keeps mode `lesson` and the language shown, not which lesson version or which
+   translation; keeping them needs a migration.
+8. **Decision 8 and the hub.** Each hub table holding a student's data is deleted with
+   their account, while room answers keep their roll number: the legal review should
+   confirm this. None of decision 8's notice, consent, export, erasure, retention or
+   audit pieces was built in Phase 6.
+9. **Scaling.** Every progress, due list, next question and class read replays every
+   attempt on the topics involved, so a large class over a semester means thousands of
+   rows per read on Supabase, where PostgREST pages at 1,000 rows. If it gets slow: a
+   per-topic cache, or stored ratings with the replay kept to rebuild them.
+10. **Earlier-semester prerequisites** shown to a student by name (H3): keep, or filter
+    on `onYourClasses`.
+11. **Left out of the hub for now** (H5): image questions, and the fewer-choices
+    support.

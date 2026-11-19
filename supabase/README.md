@@ -39,12 +39,17 @@ Full detail: `docs/DATABASE_SCHEMA.md`.
 | `0022_owner_decisions.sql` | Verified links, the under-18 mark, `replaces_id`, `source` may be `teacher` | Stops |
 | `0023_class_questions.sql` | Class questions; `answers.class_question_id` and `round` | Stops |
 | `0024_misconception_labels.sql` | `questions.misconceptions` | Stops |
+| `0025_hub_backbone.sql` | The Learning Hub's backbone: units, a class's chapters, topic records, prerequisite links; `contents.slide_texts` | Warns: the hub's units, chapters, topics and links cannot be read or saved; a deck uploaded keeps no per-slide text |
+| `0026_hub_practice.sql` | Hub practice attempts (append-only) and explanations | Warns: no practice answer is saved, so practice, mastery, the error log and reviews fail; no explanation is shown |
+| `0027_lessons_and_languages.sql` | Topic lessons, Hindi and Marathi versions, a student's language | Warns: no lesson or translation can be made, approved or shown; students read English |
+| `0028_hub_paths_and_goals.sql` | Get Ready checks and self-tests (`hub_runs`, `hub_attempts.run_id`), goals | Warns: no Get Ready check, self-test or goal works; practice still saves |
+| `0029_hub_tutor.sql` | Hints, feedback on wrong options, the hints a student opened; no hints in a self-test or Get Ready | Warns: no hint or feedback is offered; answers are still saved and marked |
 
-The next new file takes `0025`.
+The next new file takes `0030`.
 
 ## Applying
 
-Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0024`).
+Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0029`).
 
 `0013` must be in place before the Phase 2 server is deployed: every generated
 question is saved with columns it adds, and the server's boot probe falls back to
@@ -109,6 +114,22 @@ saves, so the boot probe treats it as a piece rooms need: without `0024` the ser
 does not use Supabase at all and its boot log names `0024` to apply. `0024` rewrites no
 row and adds nothing to `answers`; every existing question reads as having no labels.
 Run only on PGlite.
+
+**Phase 6 (the student Learning Hub) adds five files, applied in this order:** `0025`
+(the hub's backbone: units, the chapters a class covers, topic records, prerequisite
+links, each slide's own words), `0026` (practice attempts and explanations), `0027`
+(lessons, Hindi and Marathi versions, a student's language), `0028` (Get Ready checks,
+self-tests and goals) and `0029` (the tutor: hints, feedback on wrong options, the
+hints a student opened). All five are route-only: the boot probe checks them in
+`ROUTE_SCHEMA`, so a missing one is a boot-log line naming its file and what fails
+until it is applied, Supabase is still used and every room runs. So they are safe to
+apply before or after the server is deployed. Apply them in number order: later files
+point at tables earlier ones make (`0026`, `0027` and `0029` at `0025`'s
+`chapter_topics`; `0028` adds `hub_attempts.run_id` and `0029` a check to `0026`'s
+`hub_attempts`). None rewrites a row or drops anything; `0029`'s check is added NOT
+VALID, so attempts already stored are not checked. None has run anywhere but PGlite
+(`npm run migrations`, 1226 of 1226 on 19 November 2026); nothing was run against the
+hosted project.
 
 `0011` creates its index only if no two accounts in one department hold the same
 roll number once trimmed, single-spaced and upper-cased. If some do, it raises a

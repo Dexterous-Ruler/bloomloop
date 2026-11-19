@@ -9,10 +9,42 @@ Every table has row level security **on with no policies**. Only the server's
 service role key, which bypasses RLS, can read or write; the anon key sees nothing.
 The server is the only place authorization is decided.
 
-Last revised 19 November 2026, after the Phase 5 review fixes: the owner's decisions
-(`0022`), class questions (`0023`) and misconception labels (`0024`). The honest
-indicators and the Phase 5 review fixes added no migration. The full rerun after them
-gave 752 of 752 migration checks on PGlite. The next free number is `0025`.
+Last revised 19 November 2026, after Phase 6, the student Learning Hub: the hub's
+backbone (`0025`), practice and explanations (`0026`), lessons and languages
+(`0027`), Get Ready checks, self-tests and goals (`0028`) and the tutor (`0029`).
+Before them came the owner's decisions (`0022`), class questions (`0023`) and
+misconception labels (`0024`), which left 752 migration checks. The full rerun after
+Phase 6 gave 1226 of 1226 on PGlite, run offline with every network setting blank, on
+Node 24.22.3. Nothing has been run against the hosted Supabase project. The next free
+number is `0030`.
+
+**Applying Phase 6: `0025` to `0029`, in order.** Every Phase 6 piece is route-only.
+The boot probe checks each new table, and the two columns added to tables that
+already existed (`contents.slide_texts`, `hub_attempts.run_id`), in `ROUTE_SCHEMA`,
+never in `ROOM_SCHEMA`. With one missing, the server still uses Supabase and every
+room runs; the boot log names the file to apply and what fails until it is:
+- `0025`: a deck uploaded keeps no per-slide text (its topics still cite their slides
+  by number); the hub's units, chapter placements, topic records and prerequisite
+  links cannot be read or saved, so the hub shows no topics and no link can be made.
+- `0026`: no practice answer can be saved or read, so practice, mastery, the error
+  log and reviews in the hub fail; explanations cannot be written, generated or shown
+  (a practice answer is still saved and marked).
+- `0027`: no lesson can be made, approved or read; no Hindi or Marathi version can be
+  made, approved or shown, and a student's choice of language cannot be saved, so
+  students read English.
+- `0028`: no Get Ready check or self-test can be started, read or answered, and goals
+  cannot be set or read; practice answers still save, and the hub home shows the rest.
+- `0029`: no hint or feedback on a wrong option can be written, generated, approved
+  or shown, and no hint can be opened; every answer is still saved and marked.
+
+So the five files are safe to apply before or after the server is deployed. They
+must be applied in number order, because later files point at tables earlier ones
+make: `0026`, `0027` and `0029` reference `0025`'s `chapter_topics`; `0028` adds a
+column to `0026`'s `hub_attempts`, and `0029` adds a check to it. (`0029` needs
+nothing from `0028`.) None rewrites a row, drops anything or changes an existing
+check; `0029`'s new check on `hub_attempts` is added NOT VALID, so rows already there
+are not checked. Each re-runs over data unchanged. RLS is on with no policies on all
+fourteen new tables. None has run anywhere but PGlite (`npm run migrations`).
 
 **Applying the owner's decisions and Phase 5: `0022`, then `0023`, then `0024`, all
 before the server is deployed.** Unlike `0019` to `0021`, each of the three holds a
@@ -59,11 +91,11 @@ rewrites no row; every existing question reads as having no labels. Run on PGlit
 (`npm run migrations`, 752 of 752 on 19 November 2026).
 
 **The boot probe, since 19 November 2026**, checks the tables and columns the server
-writes from `0000` to `0024`, each named with its file (not the columns of `0003` to
+writes from `0000` to `0029`, each named with its file (not the columns of `0003` to
 `0007`, nor `0011`'s index or `0012`'s triggers, which it does not look for;
 `supabase/README.md` lists which file it checks). What rooms need (`0000` to
 `0018`, and `0022` to `0024`) stops Supabase being used when missing; what only some routes
-need (`0019`, `0020`, and `0021`'s `attendance.roll_no`) is logged at boot, one line
+need (`0019`, `0020`, `0021`'s `attendance.roll_no`, and `0025` to `0029`) is logged at boot, one line
 per missing piece, naming the file to apply and what fails until it is, and Supabase
 is still used (`ROOM_SCHEMA`, `ROUTE_SCHEMA` in `server/src/repo/supabaseRepo.js`).
 Before this, `0019` to `0021` were not checked at all.
@@ -117,8 +149,110 @@ printable pages read what these tables and the Phase 1 to 3 tables already hold.
 | `0022_owner_decisions.sql` | The owner's decisions of 19 Nov 2026: `profiles.account_verified` and `answers.account_verified` (boolean, not null, default false: a link made by a signed-in phone, decision 7), `class_students.under_18` (boolean, not null, default false, decision 8), `questions.replaces_id` (nullable uuid, references `questions(id)` on delete set null, partial index `questions_replaces_idx`), and `questions_source_check` widened to `llm`, `fallback`, `teacher`. Every link made before it reads unverified; no row is rewritten (a professor's question stored as `fallback` stays so) | new (19 Nov 2026) |
 | `0023_class_questions.sql` | Phase 5, class questions: the `class_questions` table (a class question's state, `revealed`, its times and the question as asked; one not closed per room, `class_questions_one_running`; RLS on) and `answers.class_question_id` (uuid, no foreign key) and `answers.round` (smallint, 1 or 2, set with `class_question_id` or not at all, `answers_round_check`), with a partial index on `class_question_id`. No check widened: confidence taps use `0008`'s spellings. No row rewritten | new (19 Nov 2026) |
 | `0024_misconception_labels.sql` | Phase 5, misconception labels: `questions.misconceptions` (jsonb, not null, default `[]`), the labels on a question's wrong options, each `{option, label, provenance, addedAt, changedAt, by}`, with `questions_misconceptions_check` (an array of objects, each with text `option` and `label` and a `provenance` of `ai` or `professor`). No answer column: a label is matched to answers when a report runs. No row rewritten; every existing question reads as having none | new (19 Nov 2026) |
+| `0025_hub_backbone.sql` | Phase 6, the hub's backbone: `contents.slide_texts` (nullable jsonb, each slide's own words, `contents_slide_texts_check`), `class_units`, `class_chapters` (trigger `class_chapters_in_class`), `chapter_topics` and `topic_links` (trigger `topic_links_guard`: one owner, no loop of confirmed links). Changes no row: every chapter before it has no slide texts, and the hub starts empty | new (Phase 6) |
+| `0026_hub_practice.sql` | Phase 6, practice: `hub_attempts` (every attempt a student makes in the hub, append-only by trigger `hub_attempts_append_only`, one per account and client attempt id) and `question_explanations` (one per question, an AI draft or the professor's). Changes no row; nothing that reads `answers` reads them | new (Phase 6) |
+| `0027_lessons_and_languages.sql` | Phase 6, lessons and languages: `topic_lessons` (a topic's lesson, one row per version; trigger `topic_lessons_guard`; function `approve_topic_lesson`), `item_translations` (Hindi and Marathi versions; trigger `item_translations_guard`; function `approve_item_translation`) and `student_language_choices`. Changes no row | new (Phase 6) |
+| `0028_hub_paths_and_goals.sql` | Phase 6, Get Ready checks, self-tests and goals: `hub_runs` (written once, then ended once; trigger `hub_runs_written_once`), `hub_attempts.run_id` (nullable uuid, references `hub_runs(id)`, no delete action, partial index; trigger `hub_attempts_in_own_run`) and `hub_goals`. Changes no row: every attempt before it has no run | new (Phase 6) |
+| `0029_hub_tutor.sql` | Phase 6, the tutor: `question_hints` (up to three steps per question), `option_feedback` (per wrong option, keyed by its words), `hub_hint_views` (each hint a student opened, append-only by trigger `hub_hint_views_append_only`) and `hub_attempts_hints_mode_check` (no hints in a self-test or Get Ready), added NOT VALID. Changes no row; an attempt written before it is not checked | new (Phase 6) |
 
 The SQL of every moved file is unchanged; only header comments were updated.
+
+What the migration test holds `0025` to `0029` to (Phase 6; 1226 checks in all, 752
+before them). Each builds on a fresh database as part of the set and builds again
+unchanged; each re-runs over a database holding its own rows, which survive, and its
+guards still refuse after the re-run; a v1 database upgrades through all five. Every
+new table is in `COLUMNS_THE_SERVER_USES` and the RLS check. Run on PGlite only.
+
+`0029`. Applied over a database that already holds hub attempts in every mode, a
+question and a translation of kind `hint`, it adds, removes and changes no row: an
+older self-test attempt holding a hint is left as it was, and a new one is refused.
+Its checks refuse a hint at step 0 or 4, a blank text or one over 600 characters, a
+professor's hint left a draft, an approved one with no approval time, a model on a
+professor's hint, a provenance outside the two and a `source_ref` that is not an
+object (23514), and a second hint at one step (23505); a blank option, feedback over
+600 characters and a professor's feedback left a draft (23514), and second feedback on
+one option, matched by `option_key` (23505); a hint view in a self-test or Get Ready,
+at position 4, of a kind outside the four, with a short attempt id, a plan that is not
+an object or a provenance outside the two (23514), and one position twice for an
+attempt (23505); hints on a self-test or Get Ready attempt (23514). The guard refuses
+changing the words shown, clearing a view's question by hand and deleting a view
+(23001). Deleting a question takes its hints and feedback and leaves its views, their
+question cleared and their words kept; deleting a student's sign-in takes their views.
+
+`0028`. Applied over a database that already holds hub attempts (one in exam mode),
+topic records, a question and a link, it adds, removes and changes no row, and every
+attempt already there reads as one with no run. Its checks refuse a client run id too
+short, a kind outside the two, a spec that is not an object, a time limit on a Get
+Ready check, a deadline that is not the start plus the limit, a limit over three
+hours, an end with no reason, a check handed in like a self-test, a self-test timed
+out with no time limit and an end before the start (23514), and one client run id
+twice for one student (23505; another student may use it). An answer filed under
+another student's run, in a mode other than its run's, or under a run that does not
+exist is refused by the trigger (23514); moving an answer to another run by `0026`'s
+guard (23001). The guard on runs refuses ending a run twice, changing a self-test's
+list or time, ending one while stretching its time, and deleting a run (23001). A goal
+with a title over 80 characters, no topics, topics that are not a list or 61 topics is
+refused (23514), and so is a day that does not exist; a goal can be changed and
+deleted. Deleting a student's sign-in takes their runs, the answers filed under them
+and their goals together.
+
+`0027`. Applied over chapters, a topic record, a question and an answer, it touches
+none of them and makes no lesson, translation or choice of language. Lessons: it
+refuses a version number taken twice (23505); one written as approved, a source
+outside the two, an AI lesson with no model, a slides-only lesson naming one, version
+0, no steps and a step of another type (23514); a topic not of its chapter (23503);
+an owner other than the chapter's (23514). Approving through `approve_topic_lesson`
+retires the approved one in the same call, keeping when it was approved; approving it
+again, or approving a discarded draft, is refused (23514); an unknown id returns no
+row; a second approved lesson written directly is refused (23505,
+`topic_lessons_one_approved`); bringing a retired lesson back is refused (23514). The
+guard refuses changing an approved lesson's steps or a draft's, changing who approved
+it, and deleting a lesson (23001); a draft can be discarded and not brought back.
+Translations: a kind outside the five, a language outside `hi` and `mr`, fields that
+are not an object, a source hash that is not 64 hex digits, a provenance outside the
+two, one written approved and an owner other than the chapter's are refused (23514).
+A draft's text can be edited; `approve_item_translation` retires the approved one;
+editing an approved one's text or changing which item it is of is refused (23001),
+approving a retired one (23514) and deleting one (23001). Deleting the account that
+approved one clears `approved_by` and leaves it approved. A student's language is one
+row, the latest choice; a language outside `en`, `hi` and `mr` is refused (23514).
+
+`0026`. Applied over topic records, a link, a question and a room answer, it touches
+none of them and makes no attempt or explanation. An attempt sent with only what it
+needs gets no links, `en`, no hints and the server's time. It accepts all five modes,
+a written answer's provisional mark and an attempt with no time taken; it refuses one
+client attempt id twice for one student (23505; another student may use it), an id
+too short or with a space, a level spelt `analyze`, a poll, a score over 1, a review
+status other than `auto` and `provisional`, a mode outside the five, a language that
+is not a short code, four hints and a negative time (23514). The guard refuses
+changing an attempt's response or mark, clearing its question by hand and deleting it
+(23001). Deleting a topic record clears the attempt's link and keeps its topic name and
+snapshot; deleting a student's sign-in takes their attempts. Explanations: a second
+for one question (23505); a professor's left a draft, an approved one with no approval
+time, a draft with one, a model on a professor's, a blank text or one over 2000
+characters, a provenance outside the two and a `source_ref` that is not an object
+(23514). Approving a draft and the professor rewriting it as theirs are accepted.
+Deleting a question takes its explanation and leaves the attempt, its question cleared
+and its snapshot kept.
+
+`0025`. Applied over chapters, a class, a question and an answer, it touches no
+question or answer, a chapter keeps its topics and slide numbers and has no slide
+texts, and the hub starts empty. Its checks refuse slide texts that are not a list, a
+slide with no text and a slide numbered by text (23514); a unit name used twice in a
+class in another case (23505; another class may use it), a blank or double-spaced
+name and position 0 (23514); a chapter twice on a class (23505), in a unit of another
+class, on insert or on update (23503), and on a class of another owner (23514);
+removing a unit leaves its chapters on the class in no unit. A topic record's key
+twice in a chapter is skipped by `on conflict do nothing` and refused without it
+(23505); a name with spaces round it or over 300 characters is refused (23514);
+retiring a topic and bringing it back are accepted. Links: the same pair twice
+(23505); a topic before itself, a confirmed link that closes a loop, confirming a
+proposal that would, a professor's link left proposed, a proposal with a decision
+time, a decision with none, a model on a professor's link, a provenance outside the
+two, a reason over 300 characters, a link to another owner's chapter and a link owned
+by someone other than the chapters' owner (23514). The same loop as an AI proposal is
+accepted (a proposal closes nothing) and can be rejected. Deleting a topic record
+takes its links.
 
 `0021` has run only on PGlite (`npm run migrations`, 573 of 573 on 19 November 2026;
 the suite grew by 40 checks with it). It builds on a fresh database, runs again
@@ -235,7 +369,7 @@ tested; it covers size and digest too) while letting its alt change.
 Types are Postgres types. "Repo" means `server/src/repo/supabaseRepo.js`, which maps
 snake_case columns to the camelCase documents the rest of the server uses.
 
-### contents (0000, 0001)
+### contents (0000, 0001, 0025)
 
 A chapter: an uploaded `.pptx` or a syllabus.
 
@@ -249,11 +383,21 @@ A chapter: an uploaded `.pptx` or a syllabus.
 | `owner_id` | uuid | null; references `accounts(id)`, no delete action. Null = made before accounts; only the legacy teacher-key path reaches it (`ownership.js`) |
 | `created_at` | timestamptz | not null, default now() |
 | `topic_slides` | jsonb | not null, default `{}`; must be an object (`contents_topic_slides_object`). Deck only: each extracted topic and the slide numbers it was read from, `{"<topic>": [3, 4]}` (`0013`) |
+| `slide_texts` | jsonb | null; when set, an array of objects each with a number `slide` and a string `text` (`contents_slide_texts_check`), `[{"slide": 1, "text": "..."}]` (`0025`). Each slide's own words, kept for a deck uploaded from Phase 6 on (decision H4). Null for every chapter made before `0025` and for pasted text: their topics cite slides through `topic_slides` only. Staff and model input; it reaches a student only inside an approved lesson |
 
 Written by: repo `createContent` from `routes/content.js` (upload; `topic_slides`
 from `topicSlides()` in `services/extract.js`, since the deck itself is not kept)
 and `seed.js`; `updateContent` (title, raw text, topics; never `topic_slides`, so a
 topic renamed after upload loses its slides).
+
+`slide_texts` (`0025`) is written by repo `setContentSlideTexts`, a statement of its
+own after `createContent` on a deck upload (`keepSlideTexts` in `routes/content.js`),
+so a database without the column still takes uploads: the write fails, is logged, and
+the deck keeps no per-slide text. Read by the lessons (`services/hubLessons.js`), and
+through `topicSlideText` in `services/hubTopics.js` by the prerequisite-link proposals
+and the explanation drafts; `slidesNote` tells staff whether a deck kept them. An
+upload, a pasted syllabus and an edit of the topic list also
+bring the chapter's topic records in step (`chapter_topics`, below).
 
 ### questions (0000, 0001, 0013, 0022, 0024)
 
@@ -998,6 +1142,531 @@ highest version: `order by version desc limit 1`). No column is added to answers
 rooms or classes, and a room's archive carries none of it: the formula is the
 class's. The boot probe does not check the table, as for `0019`.
 
+### The Learning Hub's backbone (0025)
+
+Four tables that describe a professor's material for the hub (Phase 6, decisions H3
+and H4): a class's units, the chapters a class covers, a chapter's topics as records,
+and which topic is needed before which. No student data. Nothing is added to
+`answers`, `questions`, `sessions` or `profiles`: a question keeps its topic text and
+is matched to a record by name within its chapter when read, ignoring case and runs of
+spaces (`services/hubTopics.js`), so no question row is rewritten, and a room's
+archive needs nothing from here. Who reaches which class, chapter and topic is the
+server's rule (`services/hubAccess.js`). RLS on, no policies, on all four.
+
+#### class_units
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key, `gen_random_uuid()` |
+| `class_id` | uuid | not null; references `classes(id)` on delete cascade |
+| `name` | text | not null; 1 to 80 characters, trimmed and single-spaced (`class_units_name_check`). One per class ignoring case (`class_units_class_name_key`, a unique index on `(class_id, lower(name))`) |
+| `position` | integer | not null, default 1, at least 1 (`class_units_position_check`). The class's order; not unique (a reorder is written row by row, as for course outcomes) |
+| `created_at`, `updated_at` | timestamptz | not null, default now(); no trigger maintains `updated_at`, the repo sets it |
+| `created_by` | uuid | null; references `accounts(id)` on delete set null |
+
+Index `class_units_class_idx` on `(class_id, position)`.
+
+Written by repo `createClassUnit` (a 23505 becomes a 409 naming the unit),
+`updateClassUnit` (name, position) and `deleteClassUnit`, from `routes/hub.js`
+(`POST /api/hub/classes/:classId/units`, `PUT .../units/order`, `PATCH` and `DELETE
+.../units/:unitId`). Read by `listClassUnits` and `getClassUnit` (`routes/hub.js`,
+`services/hubViews.js`, `services/hubProgress.js`).
+
+#### class_chapters
+
+The chapters a class covers, each in a unit or in none.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `class_id` | uuid | not null; references `classes(id)` on delete cascade |
+| `content_id` | uuid | not null; references `contents(id)` on delete cascade. Once per class (`class_chapters_class_content_key`, unique `(class_id, content_id)`) |
+| `unit_id` | uuid | null; references `class_units(id)` on delete set null. Null is no unit ("Other chapters"): removing a unit leaves its chapters on the class. A unit of the same class (trigger) |
+| `position` | integer | not null, default 1, at least 1 (`class_chapters_position_check`); the order within its unit, not unique |
+| `added_at` | timestamptz | not null, default now() |
+| `added_by` | uuid | null; references `accounts(id)` on delete set null |
+
+Indexes: the unique `(class_id, content_id)`; `class_chapters_content_idx`
+(`content_id`); `class_chapters_unit_idx` (`unit_id`, where not null).
+
+Trigger `class_chapters_in_class` (function of the same name), `before insert or
+update`: refuses a unit of another class (23503), and a chapter whose owner is not the
+class's owner (23514; two null owners match, as for the shared key).
+
+Written by repo `placeClassChapter` (a 23505 becomes a 409), `updateClassChapter`
+(unit, position) and `removeClassChapter`, from `routes/hub.js` (`PUT` and `DELETE
+/api/hub/classes/:classId/chapters/:contentId`; deleting a unit moves its chapters to
+no unit, after the others). Placing a chapter on a class (not moving one already on
+it) also brings its topic records in step. Read by `listClassChapters` (`routes/hub.js`, `services/hubAccess.js`,
+`services/hubViews.js`, `services/hubProgress.js`).
+
+#### chapter_topics
+
+A chapter's topics as records (H3), kept in step with `contents.topics`.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `content_id` | uuid | not null; references `contents(id)` on delete cascade |
+| `name` | text | not null; 1 to 300 characters, trimmed and single-spaced (`chapter_topics_name_check`). As the chapter's topic list spells it |
+| `key` | text | not null; 1 to 300 characters (`chapter_topics_key_check`). The name in lower case, as the server computes it (`topicKey`); its case folding is the server's, so the database checks only the length. One per chapter (`chapter_topics_content_key_key`, unique `(content_id, key)`), what the server's insert skips on |
+| `position` | integer | not null, default 1, at least 1 (`chapter_topics_position_check`); the chapter's order |
+| `retired_at` | timestamptz | null: in use. Set when the topic has left the chapter's list but questions or links hang off it: kept, not deleted, and in use again, with its id, if the name comes back |
+| `created_at`, `updated_at` | timestamptz | not null, default now(); the repo sets `updated_at` |
+
+No index but the unique `(content_id, key)`.
+
+Written by `syncTopics` in `services/hubTopics.js` only, through repo
+`addChapterTopics` (`on conflict (content_id, key) do nothing`: only the rows added
+come back), `updateChapterTopic` (name and its key, position, `retired_at`) and
+`deleteChapterTopic`. It runs on a deck upload, a pasted syllabus and an edit of the
+topic list (`routes/content.js`, where a failure is logged and the next write tries
+again), when a chapter is placed on a class, before link proposals, and on
+`POST /api/hub/chapters/:contentId/topics/sync` (`routes/hub.js`). A topic that left
+the list is deleted only when no question of the chapter (discarded ones included) and
+no link names it (`topicUsage`); otherwise it is retired. That check counts questions
+and links only: deleting a record also takes its lessons (`topic_lessons`, cascade)
+and clears it on hub attempts, which keep the topic's name, and on hint views. A
+renamed topic is a new record; the old one is retired with its questions and links.
+Read by `listChapterTopics`, `getChapterTopic` and `listChapterTopicsByIds` (the hub's
+routes and services).
+
+#### topic_links
+
+Prerequisite links, topic to topic, across any chapters one professor owns (H3).
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `owner_id` | uuid | null; references `accounts(id)`, no delete action. The professor who owns both topics' chapters (trigger); null only for chapters made before accounts, which only the shared key reaches |
+| `prerequisite_id` | uuid | not null; references `chapter_topics(id)` on delete cascade. Needed before `topic_id` |
+| `topic_id` | uuid | not null; references `chapter_topics(id)` on delete cascade. Never the prerequisite itself (`topic_links_not_self`). One link per pair (`topic_links_pair_key`, unique `(prerequisite_id, topic_id)`) |
+| `provenance` | text | not null; `ai` (proposed by the model on the professor's button) or `professor` (added by hand) (`topic_links_provenance_check`) |
+| `state` | text | not null, default `proposed`; `proposed`, `confirmed` or `rejected`. A professor's own link is never `proposed`, and `decided_at` is set exactly when the link is not a proposal (`topic_links_state_check`). Only confirmed links are used; longer chains are computed from them, never stored |
+| `reason` | text | not null, default `''`; at most 300 characters (`topic_links_reason_check`). One line |
+| `model` | text | null; only on an `ai` link (`topic_links_model_check`) |
+| `created_at` | timestamptz | not null, default now() |
+| `created_by`, `decided_by` | uuid | null; reference `accounts(id)` on delete set null |
+| `decided_at` | timestamptz | null |
+
+Indexes: the unique pair; `topic_links_owner_idx` (`owner_id`);
+`topic_links_topic_idx` (`topic_id`).
+
+Trigger `topic_links_guard` (function of the same name), `before insert or update`:
+both topics' chapters must be the link owner's, and a confirmed link must not close a
+loop of confirmed links (both 23514). The server refuses both first, with a sentence
+naming the topics, under an in-process lock per professor; the trigger is the guard
+behind it. A proposal or a rejected link closes nothing.
+
+Written by repo `addTopicLink` (a 23505 becomes a 409), `updateTopicLink` (state and
+decision only) and `deleteTopicLink`, from `routes/hub.js`: `POST /api/hub/links` (a
+professor's link, confirmed at once; a pair already held as proposed or rejected is
+confirmed in place), `POST /api/hub/links/propose` (the model's proposals, a
+background run, each `ai` and `proposed`), `PATCH` and `DELETE
+/api/hub/links/:linkId`. Read by `listTopicLinks` (by owner, or touching given
+topics) from the hub's routes and `services/hubTopics.js`, `hubViews.js`,
+`hubProgress.js` and `hubGetReady.js`. A student sees confirmed links only.
+
+### Hub practice and explanations (0026)
+
+A student account's practice outside rooms (Phase 6, decisions H5 to H8 and H14).
+**Not `answers`**: `answers.session_id` is not null, every answer there is an answer in
+a room, and attainment and the register read every one. A hub attempt has its own
+table, which no room, attainment figure or marks register reads. Mastery (Elo), the
+error log and spaced review are worked out from these rows when asked for
+(`services/hubElo.js`, `hubErrors.js`, `hubReview.js`); nothing derived is stored.
+RLS on, no policies, on both.
+
+#### hub_attempts (0026, 0028, 0029)
+
+One row per attempt a signed-in student makes in the hub, every one kept.
+**Append-only evidence**, guarded as `0012` guards answers.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key, `gen_random_uuid()` |
+| `account_id` | uuid | not null; references `accounts(id)` on delete cascade. An attempt carries no roll number, so kept without its account it would be nobody's. (Room answers keep theirs under the roll number; whether erasure should work the same way for both waits on the legal review, `docs/PRODUCT_DECISIONS.md`, decisions 8 and 9) |
+| `client_attempt_id` | text | not null; 8 to 64 letters, digits, `-` or `_` (`hub_attempts_client_attempt_id_check`). The client's idempotency key: unique per account (`hub_attempts_account_attempt_key`), so a resent attempt gets the stored row back, never a second |
+| `class_id` | uuid | null; references `classes(id)` on delete set null. The class through which the student reached the chapter |
+| `content_id` | uuid | null; references `contents(id)` on delete set null |
+| `topic_id` | uuid | null; references `chapter_topics(id)` on delete set null |
+| `topic` | text | not null, default `''`. The topic's name when the attempt was made, kept for good |
+| `question_id` | uuid | null; references `questions(id)` on delete set null |
+| `bloom` | text | not null; one of the six levels, spelt `analyse` (`hub_attempts_bloom_check`) |
+| `kind` | text | not null, default `mcq`; 1 to 40 characters, never `poll` (`hub_attempts_kind_check`): a poll assesses nothing |
+| `question_snapshot` | jsonb | not null, default `{}`. The question as asked, answer key included: staff and server data, like `answers.question_snapshot` |
+| `question_source` | text | not null, default `llm`; no check |
+| `response` | jsonb | null; what the student sent |
+| `correct` | boolean | not null |
+| `score` | numeric(4,3) | not null; 0 to 1 (`hub_attempts_score_check`) |
+| `detail` | text | not null, default `''` |
+| `review_status` | text | not null, default `auto`; `auto`, or `provisional` for a written answer's machine mark (`hub_attempts_review_status_check`). `confirmed` and `overridden` are refused |
+| `mode` | text | not null; `practice`, `exam` (a self-test), `getready`, `review` or `lesson` (`hub_attempts_mode_check`) |
+| `language` | text | not null, default `en`; two or three lower-case letters (`hub_attempts_language_check`). The language the question was shown in |
+| `hints_used` | smallint | not null, default 0; 0 to 3 (`hub_attempts_hints_used_check`), and 0 unless the mode is `practice`, `review` or `lesson` (`hub_attempts_hints_mode_check`, `0029`). How it is counted is the server's (below) |
+| `time_taken_ms` | integer | null, or 0 to 86400000, a day (`hub_attempts_time_taken_check`). As the device reported it; never used for marking or ordering |
+| `created_at` | timestamptz | not null, default now(). The server's clock (the repo sends it), the only one used for ordering, sessions and due dates |
+| `run_id` | uuid | null (`0028`); references `hub_runs(id)`, no delete action (`hub_attempts_run_id_fkey`). The Get Ready check or self-test the attempt was given in; null for practice, review and lessons, and for every attempt before `0028` |
+
+Indexes: the unique `(account_id, client_attempt_id)`; `hub_attempts_account_idx` on
+`(account_id, created_at)` (a student's own reads); `hub_attempts_topic_idx` on
+`(topic_id, created_at)` (mastery is worked out over everyone's attempts on a topic);
+`hub_attempts_question_idx` (`question_id`); `hub_attempts_run_idx` on `run_id` where
+not null (`0028`). None on `class_id` or `content_id`.
+
+Trigger `hub_attempts_append_only` (function of the same name, `0026`), `before update
+or delete`: refuses (23001) any UPDATE except inside a foreign key's own action that
+only clears `class_id`, `content_id`, `topic_id` or `question_id` (that row deleted),
+and any DELETE except the cascade from the student's account, whoever sends it. So
+`run_id` never changes once written.
+
+Trigger `hub_attempts_in_own_run` (function of the same name, `0028`), `before
+insert`: an attempt with a `run_id` must be the run's own student's, and its `mode`
+the run's `kind` (`getready` or `exam`); otherwise 23514, so an answer is never filed
+under someone else's self-test. A `run_id` naming no run is refused the same way.
+
+Check `hub_attempts_hints_mode_check` (`0029`): `hints_used = 0 or mode in
+('practice', 'review', 'lesson')`, so a self-test or Get Ready attempt carries no
+hints (H10, H13). **Added NOT VALID**: rows written before `0029` are not checked, so
+no old row can stop the file; every new row is.
+
+`hints_used` is counted by the server, not the database (`hintsUsedFor` in
+`services/hubTutor.js`, through the hint hook `services/hubHintHook.js`): the distinct
+hints the account opened on the question since its previous answer to that question,
+under any attempt id (those opened under the answer's own attempt id always count), at
+most 3, and always 0 in `exam` and `getready`. The database holds only the range and
+the mode check. (`0029`'s comments say the count is of the hint views under the
+attempt's own id; the server's rule is the one above.)
+
+Written by repo `addHubAttempt` (a 23505 on the key returns the stored row, marked a
+duplicate) from `recordAttempt` in `services/hubPractice.js`: practice and review
+(`POST /api/hub/practice/attempts`), Get Ready answers (`services/hubGetReady.js`) and
+self-test answers (`services/hubExam.js`), each of the last two with its `run_id`; and
+from `services/hubAttemptBridge.js` with mode `lesson` (`POST
+/api/hub/lessons/:lessonId/questions/:questionId/attempts`). Lesson answers are written
+now and count in the student's mastery, error log and reviews like practice; the table
+has no column for the lesson, its version or the translation shown. `run_id` is sent
+only when there is one, so practice still saves on a database without `0028`. Read by
+`getHubAttemptByKey` and `listHubAttempts` (by account, accounts, topics, questions,
+runs, since a time; long id lists in chunks of 100) from `services/hubPractice.js`,
+`hubProgress.js`, `hubGetReady.js`, `hubExam.js`, `hubTutor.js`,
+`hubAttemptBridge.js`, `routes/hubPaths.js`, `routes/hubLessons.js` and
+`routes/hubLanguages.js` (attempts by language).
+
+#### question_explanations (0026)
+
+One explanation per question (H14): why the right answer is right, shown to a student
+only after they have attempted the question, and only once approved.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `question_id` | uuid | not null; references `questions(id)` on delete cascade. One per question (`question_explanations_question_key`) |
+| `text` | text | not null; 1 to 2000 characters once trimmed (`question_explanations_text_check`) |
+| `provenance` | text | not null; `ai` (drafted by the model on the professor's button) or `professor` (`question_explanations_provenance_check`) |
+| `status` | text | not null, default `draft`; `draft` or `approved`. A professor's is approved when written (its author is its approver); approved exactly when `approved_at` is set (`question_explanations_status_check`) |
+| `model` | text | null; only on an `ai` one (`question_explanations_model_check`) |
+| `source_ref` | jsonb | null; an object when set (`question_explanations_source_ref_check`): the slides it cites, `{"kind": "slides", "slides": [2]}` |
+| `created_by`, `approved_by` | uuid | null; reference `accounts(id)` on delete set null |
+| `created_at`, `updated_at` | timestamptz | not null, default now(); the repo sets `updated_at` |
+| `approved_at` | timestamptz | null |
+
+No trigger and no index but the unique `question_id`: an explanation is not evidence,
+and may be rewritten (a professor's edit makes it theirs: provenance `professor`, no
+model) or deleted. Approving an AI draft keeps provenance `ai`.
+
+Written by repo `addQuestionExplanation` (a 23505 becomes a 409),
+`updateQuestionExplanation` and `deleteQuestionExplanation`, from
+`routes/hubPractice.js` (`PUT` and `DELETE /api/hub/questions/:questionId/explanation`,
+`POST .../explanation/approve`, and the drafts of `POST /api/hub/explanations/generate`,
+which fills only questions with none). Read by `getQuestionExplanation` and
+`listQuestionExplanations` (`routes/hubPractice.js`, `routes/hubLanguages.js`,
+`services/hubExplanations.js`, `services/hubLanguages.js`). Its Hindi and Marathi
+versions are `item_translations` rows of kind `explanation`, whose `item_id` is the
+question's id.
+
+### Lessons and languages (0027)
+
+A topic's lesson from the professor's own slides (H11), and Hindi and Marathi versions
+of what a student reads (H12), each generated only on the professor's button
+(decision 5) and approved before a student sees it (decision 1). Nothing is added to
+`answers`, `questions`, `sessions` or `profiles`: a lesson's retrieval questions are
+ordinary bank rows written as drafts, and a student's answers inside a lesson are
+`hub_attempts` rows (mode `lesson`). RLS on, no policies, on all three.
+
+#### topic_lessons
+
+One row per version of a topic's lesson. **Written once**: what a student read is kept
+as they read it; only the status moves on.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `topic_id` | uuid | not null; references `chapter_topics(id)` on delete cascade; a topic of the lesson's own chapter (trigger) |
+| `content_id` | uuid | not null; references `contents(id)` on delete cascade |
+| `owner_id` | uuid | null; references `accounts(id)`, no delete action. The chapter's owner (trigger); null only for a chapter made before accounts |
+| `version` | integer | not null, at least 1 (`topic_lessons_version_check`); unique with `topic_id` (`topic_lessons_topic_version_key`) |
+| `status` | text | not null, default `draft`; `draft`, `approved`, `superseded` or `discarded`. `approved_at` is set exactly when approved or superseded, `retired_at` exactly when superseded or discarded (`topic_lessons_status_check`) |
+| `source` | text | not null; `llm` (an AI draft) or `slides` (slides only: the professor's chunks and questions already approved, no generated prose). `model` is null exactly when `source` is `slides` (`topic_lessons_source_check`) |
+| `model` | text | null; the model an AI draft came from |
+| `steps` | jsonb | not null; a non-empty array of objects whose `type` is `chunk`, `example` or `questions` (`topic_lessons_steps_check`). The lesson in order: a chunk of the professor's own slide text cited by slide number, a worked example (an AI draft), the ids of the retrieval questions (bank drafts, through the normal approval gate), the next chunk. How many questions is the server's rule |
+| `basis` | jsonb | not null, default `{}`; an object (`topic_lessons_shape_check`). What the chunks were read from: each slide's own words, the chapter's text cited by the topic's slide numbers, or pasted text |
+| `warnings` | jsonb | not null, default `[]`; an array (`topic_lessons_shape_check`) |
+| `created_at` | timestamptz | not null, default now() |
+| `created_by`, `approved_by`, `retired_by` | uuid | null; reference `accounts(id)` on delete set null |
+| `approved_at`, `retired_at` | timestamptz | null |
+
+Indexes: `topic_lessons_one_approved`, unique on `topic_id` where `status =
+'approved'` (one lesson serving per topic); `topic_lessons_content_idx`
+(`content_id`); the unique `(topic_id, version)`.
+
+Trigger `topic_lessons_guard` (function of the same name), `before insert or update or
+delete`. An INSERT must be a draft (23514), of a topic of its chapter (23503), owned
+by the chapter's owner (23514). An UPDATE may change only `status` and who approved or
+retired it and when (23001); the status moves from draft to approved or discarded,
+and from approved to superseded, nothing else (23514); who approved it and when,
+once set, never change (23001). Inside a foreign key's action only `created_by`,
+`approved_by` and `retired_by` may be cleared. A DELETE only inside a foreign key's
+action, the cascade from its topic or chapter (23001).
+
+Written by repo `createTopicLesson` (a 23505 on the version becomes a 409, try again)
+from `services/hubLessons.js` (the background run of `POST
+/api/hub/topics/:topicId/lessons/generate`); `approveTopicLesson`
+(`approve_topic_lesson`, below; `POST /api/hub/lessons/:lessonId/approve`), so
+regenerating keeps the approved lesson serving until the new one is approved; and
+`discardTopicLesson` (an update where it is still a draft; `POST .../discard`), from
+`routes/hubLessons.js`. Read by `getTopicLesson` and `listTopicLessons`
+(`routes/hubLessons.js`, `routes/hubLanguages.js`, `routes/hubTutor.js`,
+`services/hubLessons.js`, `services/hubLanguages.js`). A student reads the approved
+lesson only.
+
+#### item_translations
+
+A Hindi or Marathi version of one item a student reads, in one generic shape.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `item_kind` | text | not null; `question`, `lesson`, `explanation`, `hint` or `feedback` (`item_translations_kind_check`). All five are in use: `hint` and `feedback` by the tutor (`0029`) |
+| `item_id` | uuid | not null. **No foreign key**: it points into several tables. The question's id for `question`, and for `explanation` too (an explanation is one per question); the `topic_lessons` id for `lesson`; the `question_hints` id for `hint`; the `option_feedback` id for `feedback` |
+| `content_id` | uuid | not null; references `contents(id)` on delete cascade. The item's chapter |
+| `owner_id` | uuid | null; references `accounts(id)`, no delete action. The chapter's owner (trigger) |
+| `language` | text | not null; `hi` or `mr` (`item_translations_language_check`) |
+| `fields` | jsonb | not null; an object: the translated text by field name, a string or a list of strings. `text` and `options` for a question (never its key), `steps.<n>.text` and the like for a lesson, `explanation`, `hint` and `feedback` for those kinds |
+| `source_fields` | jsonb | not null; an object: the English it was made from |
+| `source_hash` | text | not null; 64 lower-case hex digits. A translation whose English has changed since is never shown. `fields`, `source_fields`, `checks` and the hash are checked together (`item_translations_shape_check`) |
+| `status` | text | not null, default `draft`; as `topic_lessons` (`item_translations_status_check`) |
+| `provenance` | text | not null; `ai` (made on the professor's button) or `professor` (written or edited by the professor) (`item_translations_provenance_check`) |
+| `model` | text | null; no check ties it to `provenance` |
+| `checks` | jsonb | not null, default `[]`; an array: what the translation check found (formulas, numbers or a list's length that differ) |
+| `created_at`, `updated_at` | timestamptz | not null, default now(); the repo sets `updated_at` on every edit of a draft |
+| `created_by`, `edited_by`, `approved_by`, `retired_by` | uuid | null; reference `accounts(id)` on delete set null |
+| `approved_at`, `retired_at` | timestamptz | null |
+
+Indexes: `item_translations_one_approved`, unique on `(item_kind, item_id, language)`
+where approved; `item_translations_item_idx` on `(item_kind, item_id)`;
+`item_translations_content_idx` (`content_id`).
+
+Trigger `item_translations_guard` (function of the same name), `before insert or
+update or delete`. An INSERT must be a draft and owned by the chapter's owner (23514).
+`fields`, `source_fields`, `source_hash`, `checks`, `provenance`, `updated_at` and
+`edited_by` may change only while the row is a draft and stays one; the item, chapter,
+owner, language, model and creation never (23001). The status moves as a lesson's
+(23514), and who approved it and when are written once (23001). Inside a foreign key's
+action only the four account columns may be cleared. A DELETE only inside a foreign
+key's action, the cascade from its chapter (23001): with no foreign key on `item_id`, a
+translation outlives its item (a deleted question, hint or feedback row, or a lesson
+that went with its topic) and goes only with its chapter.
+
+Written by repo `addItemTranslation`, `editItemTranslation` (where still a draft,
+else a 409), `approveItemTranslation` (`approve_item_translation`, below) and
+`discardItemTranslation`, from `routes/hubLanguages.js` (`POST /api/hub/translations`,
+`POST /api/hub/chapters/:contentId/translations/generate`, `PATCH`, `.../approve` and
+`.../discard` under `/api/hub/translations/:translationId`). Read by
+`getItemTranslation` and `listItemTranslations` (`routes/hubLanguages.js`,
+`services/hubLanguages.js`, whose `servableTranslations` every student read of a
+question, lesson, explanation, hint or feedback goes through).
+
+#### student_language_choices
+
+| Column | Type | Rules |
+|---|---|---|
+| `account_id` | uuid | primary key; references `accounts(id)` on delete cascade. One row per student |
+| `language` | text | not null; `en` (the original), `hi` or `mr` (`student_language_choices_language_check`) |
+| `updated_at` | timestamptz | not null, default now() |
+
+Written by repo `setLanguageChoice` (an upsert on `account_id`) from `PUT
+/api/hub/language` (students only); read by `getLanguageChoice`
+(`services/hubLanguages.js`). A translation is shown only once approved; otherwise
+English, with a note.
+
+### Get Ready checks, self-tests and goals (0028)
+
+A Get Ready check (H9) and a self-test (H10) are each a run of hub attempts that
+belong together. Their answers are `hub_attempts` rows (mode `getready` or `exam`)
+with the run's `run_id` (above); a run adds what the attempts alone cannot say. A goal
+(H16) is a student's own plan. RLS on, no policies, on both.
+
+#### hub_runs
+
+One row per Get Ready check or self-test a signed-in student starts. **Written once,
+then ended once.**
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `account_id` | uuid | not null; references `accounts(id)` on delete cascade |
+| `client_run_id` | text | not null; 8 to 64 letters, digits, `-` or `_` (`hub_runs_client_run_id_check`). The client's idempotency key: unique per account (`hub_runs_account_run_key`), so a resent start returns the stored run |
+| `kind` | text | not null; `getready` or `exam` (a self-test) (`hub_runs_kind_check`) |
+| `spec` | jsonb | not null, default `{}`; an object (`hub_runs_spec_check`). What was fixed at the start: a check's target and its prerequisites, nearest first; a self-test's topics, levels and list of questions |
+| `time_limit_seconds` | integer | null, or on a self-test only 60 to 10800 (one minute to three hours) |
+| `started_at` | timestamptz | not null, default now() |
+| `deadline_at` | timestamptz | null; set exactly with a time limit, to `started_at` plus it (`hub_runs_time_limit_check`, with the limit) |
+| `ended_at` | timestamptz | null; not before `started_at` |
+| `end_reason` | text | null; set exactly with `ended_at`. A check ends `complete`; a self-test `submitted`, or `timed-out` only with a time limit (`hub_runs_end_check`) |
+
+Index `hub_runs_account_idx` on `(account_id, started_at)`.
+
+Trigger `hub_runs_written_once` (function of the same name), `before update or
+delete`: the only UPDATE is ending an open run, setting `ended_at` and `end_reason`
+and nothing else; a DELETE only inside a foreign key's action, the cascade from the
+student's account (both 23001). `hub_attempts.run_id` has no delete action and is
+checked at the end of the statement, so an account's cascade removes its runs and
+their attempts together, and a run is never deleted on its own.
+
+Written by repo `addHubRun` (a 23505 on the key returns the stored run, marked a
+duplicate) and `endHubRun` (an update where `ended_at` is still null, then the run as
+it stands), from `services/hubGetReady.js` (`POST /api/hub/getready`) and
+`services/hubExam.js` (`POST /api/hub/exams`, `POST /api/hub/exams/:examId/submit`).
+Read by `getHubRun`, `getHubRunByKey` and `listHubRuns` (`services/hubGetReady.js`,
+`hubExam.js`, `hubHeld.js`, `hubRuns.js`, `routes/hubPaths.js`). A timed self-test
+ends at its deadline plus a grace of 30 seconds on the server's clock
+(`EXAM_GRACE_SECONDS`), written on the next request about it.
+
+#### hub_goals
+
+A student's goal: an exam date and the topics it covers. **Not evidence**: the student
+changes or removes it at will, and no trigger guards it. Shown only to that student.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `account_id` | uuid | not null; references `accounts(id)` on delete cascade |
+| `title` | text | not null, default `''`; at most 80 characters (`hub_goals_title_check`) |
+| `exam_date` | date | not null |
+| `topic_ids` | jsonb | not null; an array of 1 to 60 (`hub_goals_topic_ids_check`): the topic records it covers. Not foreign keys: a deleted or unplaced topic shows in the goal as no longer on the student's classes |
+| `created_at`, `updated_at` | timestamptz | not null, default now(); the repo sets `updated_at` |
+
+Index `hub_goals_account_idx` (`account_id`).
+
+Written by repo `addHubGoal`, `updateHubGoal` and `deleteHubGoal` from
+`services/hubGoals.js` (`POST`, `PATCH` and `DELETE /api/hub/goals...`); read by
+`listHubGoals` and `getHubGoal`. The server allows at most 10 goals per student and an
+exam date not in the past when it is set or changed (India's day); the database checks
+neither.
+
+### The tutor (0029)
+
+Hint ladders and feedback on wrong options (H13), with **no live model call**: each is
+made from the professor's own slides on the professor's button, or written by the
+professor, and approved before any student sees it. Each hint a student opens is kept.
+RLS on, no policies, on all three.
+
+#### question_hints
+
+One row per hint step of a question.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `question_id` | uuid | not null; references `questions(id)` on delete cascade |
+| `step` | smallint | not null; 1 (a nudge), 2 (a strategy) or 3 (a worked step that stops short of the answer) (`question_hints_step_check`). Unique with `question_id` (`question_hints_question_step_key`) |
+| `text` | text | not null; 1 to 600 characters once trimmed (`question_hints_text_check`) |
+| `provenance` | text | not null; `ai` or `professor` (`question_hints_provenance_check`) |
+| `status` | text | not null, default `draft`; `draft` or `approved`. A professor's is approved as written; approved exactly when `approved_at` is set (`question_hints_status_check`) |
+| `model` | text | null; only on an `ai` hint (`question_hints_model_check`) |
+| `source_ref` | jsonb | null; an object when set (`question_hints_source_ref_check`): the slides it cites |
+| `created_by`, `approved_by` | uuid | null; reference `accounts(id)` on delete set null |
+| `created_at`, `updated_at` | timestamptz | not null, default now(); the repo sets `updated_at` |
+| `approved_at` | timestamptz | null |
+
+No trigger. The server refuses a hint that holds the answer (`answerLeak` in
+`services/hubTutor.js`) and checks again before showing one, because a question's key
+can change after; the database does not.
+
+#### option_feedback
+
+One row per wrong option of a choose-one, choose-all-that-apply or true-or-false
+question that has feedback: what a student who chose it most likely confused, and what
+to look at again. Keyed by the option's **words**, not its position, as misconception
+labels are (`0024`): a reorder keeps it on its option, and a reworded option or one
+that became a right answer is simply not shown any more.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `question_id` | uuid | not null; references `questions(id)` on delete cascade |
+| `option` | text | not null; the option's words when the feedback was written |
+| `option_key` | text | not null; those words in lower case with runs of space made one, as the server compares options. Both 1 to 1000 characters once trimmed (`option_feedback_option_check`). Unique with `question_id` (`option_feedback_question_option_key`) |
+| `text` | text | not null; 1 to 600 characters once trimmed (`option_feedback_text_check`) |
+| `provenance`, `status`, `model`, `source_ref`, `created_by`, `created_at`, `updated_at`, `approved_by`, `approved_at` | | as `question_hints` (`option_feedback_provenance_check`, `_status_check`, `_model_check`, `_source_ref_check`) |
+
+No trigger. Shown after a student chooses that option, and offered as the first hint
+when they meet the question again.
+
+`question_hints` and `option_feedback` are written by repo `addQuestionHint` and
+`addOptionFeedback` (a 23505 becomes a 409) from `routes/hubTutor.js` (the
+professor's own, approved as written: `PUT /api/hub/questions/:questionId/hints/:step`
+and `PUT .../feedback/:option`) and `services/hubTutor.js` (AI drafts from `POST
+/api/hub/chapters/:contentId/hints/generate`); by `updateQuestionHint` and
+`updateOptionFeedback` (an edit, and `POST /api/hub/questions/:questionId/hints/approve`);
+and by `deleteQuestionHint` and `deleteOptionFeedback` (`DELETE` on the same paths).
+Read by `listQuestionHints`, `getQuestionHint`, `listOptionFeedback` and
+`getOptionFeedback`. Their Hindi and Marathi versions are `item_translations` rows of
+kind `hint` and `feedback`, keyed by the row's own id.
+
+#### hub_hint_views
+
+One row per hint a student opened, before answering, in practice, a review set or a
+lesson (never in a self-test or Get Ready). **Append-only evidence** of how the answer
+was reached.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `account_id` | uuid | not null; references `accounts(id)` on delete cascade |
+| `client_attempt_id` | text | not null; 8 to 64 letters, digits, `-` or `_` (`hub_hint_views_client_attempt_id_check`). The attempt id the hint was opened for, the idempotency key the attempt then carries |
+| `question_id` | uuid | null; references `questions(id)` on delete set null |
+| `topic_id` | uuid | null; references `chapter_topics(id)` on delete set null |
+| `content_id` | uuid | null; references `contents(id)` on delete set null |
+| `mode` | text | not null; `practice`, `review` or `lesson` (`hub_hint_views_mode_check`) |
+| `position` | smallint | not null; 1 to 3, its place in the order shown (`hub_hint_views_position_check`). Unique with `(account_id, client_attempt_id)` (`hub_hint_views_attempt_position_key`) |
+| `kind` | text | not null; `feedback`, `nudge`, `strategy` or `worked` (`hub_hint_views_kind_check`) |
+| `hint_id` | uuid | null. The `question_hints` or `option_feedback` row it came from; no foreign key, since that row may be edited or removed later |
+| `text` | text | not null; 1 to 4000 characters once trimmed (`hub_hint_views_text_check`). The words shown |
+| `provenance` | text | not null; `ai` or `professor`: who wrote what was shown (`hub_hint_views_provenance_check`) |
+| `language` | text | not null, default `en`; two or three lower-case letters (`hub_hint_views_language_check`) |
+| `translation_id` | uuid | null; the approved translation shown, if any. No foreign key |
+| `source_ref` | jsonb | null; an object when set: the slides cited |
+| `plan` | jsonb | not null, default `{}`; an object (`hub_hint_views_shape_check`, with `source_ref`). The plan the server chose for this attempt: which hints, in which order, and the student's own sentence saying why |
+| `created_at` | timestamptz | not null, default now() |
+
+Indexes: the unique `(account_id, client_attempt_id, position)`;
+`hub_hint_views_attempt_idx` on `(account_id, client_attempt_id)`;
+`hub_hint_views_question_idx` (`question_id`).
+
+Trigger `hub_hint_views_append_only` (function of the same name), `before update or
+delete`, as `hub_attempts`' guard: refuses (23001) any UPDATE except a foreign key's
+own action clearing `question_id`, `topic_id` or `content_id`, and any DELETE except
+the cascade from the student's account. A deleted question takes its hints and
+feedback and leaves the views, with the words that were shown.
+
+Written by repo `addHintView` (a 23505 on the position returns the stored row, marked
+a duplicate) from `services/hubTutor.js` (`POST /api/hub/practice/hints` and `POST
+/api/hub/lessons/:lessonId/questions/:questionId/hints`). Read by `listHintViews` (by
+account, attempt id, questions) from `services/hubTutor.js` (a reload's hints, and
+`hints_used`, above) and `routes/hubTutor.js` (staff: how often each hint was opened).
+
 ### accounts (0001, 0003, 0006)
 
 One per Supabase Auth user.
@@ -1064,6 +1733,55 @@ conditional update, so two racers cannot both win) and `releaseInvite` (`POST
   Raises SQLSTATE P0001 (the server answers 400 with the message), for example
   `a student must report to a professor, not hod`. A `reports_to` naming no account
   is left to the foreign key (23503).
+
+Phase 6 (`0025` to `0029`); each table's section above has the detail. Every function
+is plpgsql and security invoker.
+- **`public.class_chapters_in_class()`** with trigger **`class_chapters_in_class`**,
+  `before insert or update on class_chapters` (`0025`): the unit is one of the
+  class's (23503), and the chapter's owner is the class's owner (23514).
+- **`public.topic_links_guard()`** with trigger **`topic_links_guard`**, `before
+  insert or update on topic_links` (`0025`): both topics' chapters are the link
+  owner's, and a `confirmed` link closes no loop: walking confirmed links on from its
+  topic, leaving itself out, must not reach its prerequisite (a recursive query).
+  Both 23514.
+- **`public.hub_attempts_append_only()`** with trigger **`hub_attempts_append_only`**,
+  `before update or delete on hub_attempts` (`0026`): written once; only a foreign
+  key's action may clear `class_id`, `content_id`, `topic_id` or `question_id`, and
+  only the account's cascade may delete (23001).
+- **`public.topic_lessons_guard()`** with trigger **`topic_lessons_guard`**, `before
+  insert or update or delete on topic_lessons` (`0027`): a lesson is inserted as a
+  draft of its own chapter's topic and owner; afterwards only its status moves (draft
+  to approved or discarded, approved to superseded), with who decided and when
+  written once; deleted only with its topic or chapter.
+- **`public.approve_topic_lesson(p_lesson uuid, p_by uuid) returns setof
+  public.topic_lessons`** (`0027`), `search_path = public`. Locks the lesson (`for
+  update`); returns no row when there is none; raises 23514 (`only a draft lesson can
+  be approved; lesson <id> is <status>`) when it is not a draft, which the repo
+  answers as a 409. Otherwise, in one call, moves the topic's approved lesson to
+  `superseded` (`retired_at` now, `retired_by` `p_by`) and approves this one
+  (`approved_at` now, `approved_by` `p_by`), returning it, so a topic is never left
+  with none serving between two writes. Called as `rpc('approve_topic_lesson', {
+  p_lesson, p_by })` by `approveTopicLesson` (`POST /api/hub/lessons/:lessonId/approve`).
+- **`public.item_translations_guard()`** with trigger **`item_translations_guard`**,
+  `before insert or update or delete on item_translations` (`0027`): inserted as a
+  draft with its chapter's owner; its text may change only while it is a draft; its
+  status moves as a lesson's, with who decided and when written once; deleted only
+  with its chapter.
+- **`public.approve_item_translation(p_translation uuid, p_by uuid) returns setof
+  public.item_translations`** (`0027`), as `approve_topic_lesson`: the approved
+  translation of the same item and language is superseded and this draft approved in
+  one call. Called as `rpc('approve_item_translation', { p_translation, p_by })` by
+  `approveItemTranslation` (`POST /api/hub/translations/:translationId/approve`).
+- **`public.hub_runs_written_once()`** with trigger **`hub_runs_written_once`**,
+  `before update or delete on hub_runs` (`0028`): the only change is ending an open
+  run, once; deleted only by the account's cascade (23001).
+- **`public.hub_attempts_in_own_run()`** with trigger **`hub_attempts_in_own_run`**,
+  `before insert on hub_attempts` (`0028`): an attempt with a `run_id` is the run's
+  student's, in the run's kind as its mode (23514).
+- **`public.hub_hint_views_append_only()`** with trigger
+  **`hub_hint_views_append_only`**, `before update or delete on hub_hint_views`
+  (`0029`): as `hub_attempts_append_only`, for `question_id`, `topic_id` and
+  `content_id`.
 
 ## Reconstructed from code
 
@@ -1148,4 +1866,8 @@ and Supabase is still used. It probes `0022`'s four columns as pieces rooms need
 asks for no rows with a GET rather than a HEAD, since a missing table's 404 to a HEAD
 carries no body and the client read it as no error. Phase 5 adds `0023`'s table and
 two `answers` columns and `0024`'s `questions.misconceptions` to the pieces rooms need:
-`insertQuestions` writes `misconceptions` with every question saved.
+`insertQuestions` writes `misconceptions` with every question saved. Phase 6 adds
+`0025` to `0029` to `ROUTE_SCHEMA` only (its fourteen tables, `contents.slide_texts`
+and `hub_attempts.run_id`): a missing one is a boot-log line naming its file and what
+fails, and rooms keep Supabase; the probe does not look for their functions, triggers
+or `hub_attempts_hints_mode_check`.

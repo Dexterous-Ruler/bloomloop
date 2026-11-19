@@ -4,9 +4,76 @@ Newest first. Nothing below is deployed. The 18 November entries are committed a
 `b4585a0` on branch `roadmap-phase0-evidence`, the Phase 1 entries of 19 November as
 `05daf56` and the Phase 2 entries as `27559ca`. **Phase 3 is committed as `d162cc8`**
 and Phase 4, its review fixes and `0019` to `0021` included, as `eedfd5e`. The
-owner's decisions of 19 November (`0022`) are uncommitted, and so are Phase 5's
-confidence tap and class question (`0023`), its misconception labels (`0024`), its
-honest indicators and the fixes from its review (no migration).
+owner's decisions of 19 November (`0022`) and Phase 5 (`0023`, `0024`, the honest
+indicators and the review fixes) are committed as `2f4fd2b`, the Phase 5 follow-ups as
+`4c1df09`. **Phase 6, the Learning Hub's server (`0025` to `0029`), is committed as
+`646b4e6`**, and its docs in the commit after it.
+
+## Unreleased: Phase 6, the Learning Hub (19 November 2026)
+
+Server and database only: `0025` to `0029`, six new routers under `/api/hub`, and an
+additive `question.rich` on the room phone's questions. Built under the owner's
+delegation (decisions H1 to H18, `docs/PRODUCT_DECISIONS.md`) in five pieces merged
+together, then reviewed and fixed. Endpoints: `docs/API.md`, "Phase 6: the Learning
+Hub". No screen exists yet. Nothing was run against Supabase, Mongo, a real Auth token
+or a model.
+
+- **The content backbone (`0025`).** One access rule for every hub route
+  (`services/hubAccess.js`): a student reaches a class when its owner is their professor
+  and the roster holds their roll number, not removed; the owner writes, the
+  department's HOD reads only; everyone else gets the one 404; 503 without Supabase;
+  401 for no token or the teacher key. Units per class; chapters placed by the owner;
+  topic records per chapter (made on upload, a topic edit, first placement or the
+  owner's sync; retired when used, deleted otherwise; no question row rewritten);
+  prerequisite links (ai or professor; proposed, confirmed or rejected; loops refused
+  with a sentence; chains from confirmed links only; AI proposals of direct links on the
+  professor's button, none offline). New uploads keep each slide's words
+  (`contents.slide_texts`).
+- **Formulas and code** (`services/richText.js`): `$…$`, `$$…$$` and `\ce{}` as MathML
+  (temml, trust off), fenced code highlighted by shiki, everything else escaped, input
+  capped. Hub payloads carry `nameHtml`, `titleHtml` and `reasonHtml`; `server:question`
+  and `class:question` gain `question.rich` (`{}` for an ordinary question).
+- **Practice, mastery, the error log and reviews (`0026`).** Hub attempts in their own
+  append-only table, idempotent by the device's attempt id, never read by a room,
+  attainment or the register. Elo per student and topic and per question (first
+  attempts only, Bloom-level seeds, an uncertainty K); five topic states with N and a
+  sentence; an automatic error log (wrong practice answers and verified room answers);
+  FSRS review per topic (ts-fsrs, default parameters) with a due list and weekly
+  consistency, no streaks; approved explanations; staff reads per class and student.
+- **Lessons and languages (`0027`).** A lesson per topic from the professor's own
+  slides, on the button (an AI draft with a model, "slides only" without), approved
+  before any student sees it; its retrieval questions go to the bank as drafts.
+  English, Hindi and Marathi: translations per item and language, checked, approved,
+  out of date once the English changes; every hub attempt records the language shown;
+  statistics by language. Lesson answers land in the same attempts store.
+- **Get Ready, refresher paths, self-tests and goals (`0028`).** A check of at most 12
+  questions over a topic's confirmed prerequisites, with a stopping rule, then a
+  refresher path in dependency order; self-tests (chosen topics and levels, up to 30
+  questions, an optional time limit, no hints or feedback until hand-in, counted nowhere
+  official); goals with an exam date, private to the student; the hub home; staff views
+  of students by state and of Get Ready results.
+- **The hint tutor (`0029`).** Approved ladders of up to three hints and feedback on
+  wrong options, written by the professor or drafted on the button and approved;
+  offered in practice, review sets and lessons only; each hint opened is recorded; an
+  answer-leak check at writing, parsing, approval and serving. No live model call.
+- **Fixes from the review.** Closed questions (`services/hubClosed.js`): a question a
+  room is asking now, one on the student's open self-test, or the one their open Get
+  Ready check is asking is not served, answered (409, nothing stored) or hinted in the
+  hub, and its key is held back in the error log and a self-test result. Also: a lesson
+  resend is answered only from its own stored row; an ended Get Ready check stays ended;
+  refresher steps that small topics can finish; honest sentences when a topic has too
+  few questions (`bankShort`); a different count of `____` gaps blocks a translation;
+  hints used are counted per question since the last answer; a student off the roster
+  no longer reads a self-test's questions; a rejected lesson draft cannot be answered;
+  `\label`, `\ref` and `\eqref` are refused in formulas.
+- **New dependencies** (H18): `ts-fsrs` 6.0.0, `temml` 0.14.0 and `shiki` 4.6.0, all MIT.
+- **Docs.** `docs/API.md`, `ARCHITECTURE.md`, `DATABASE_SCHEMA.md`,
+  `IMPLEMENTATION_STATUS.md`, `PRODUCT_DECISIONS.md`, `TESTING.md`,
+  `supabase/README.md`, and `CONTRACT.md` Amendment 6 (the additive `rich`; the hub as an
+  account-only surface beside the frozen room contract).
+- Every suite through the offline runner: unit 940/940, migrations 1226/1226, `hub.mjs`
+  78, `practice.mjs` 78, `paths.mjs` 88, `lessons.mjs` 100, `tutor.mjs` 84, and every
+  older script at its figure (`docs/TESTING.md`, "Full rerun after Phase 6").
 
 ## Unreleased: Phase 5 follow-ups (19 November 2026)
 
