@@ -55,6 +55,15 @@
 //               phone's pack and no class question
 //   records     asking for a new question and a pack, round after round, writes
 //               no new pack record
+//   any case    an id in capitals or mixed case is the same question on every
+//               path (no answer id, packed, put to the class, after the close):
+//               marked once; and never takes a question the room does not ask
+//   arrival     with the student's turn held, an answer that reached the server
+//               inside the window (or before the close) is judged by when it
+//               arrived, not by when its turn came
+//   kept limit  a student's answers kept and not counted are stored up to
+//               KEPT_LIMIT, the last included; the next is refused with a
+//               sentence and nothing more is stored
 //
 // The professor signs in through a stand-in for Supabase Auth (as roster.mjs and
 // decisions.mjs do): the server is pointed at http://supabase.invalid and every
@@ -70,14 +79,16 @@ import { io as ioClient } from 'socket.io-client';
 const SRC = new URL('../src/', import.meta.url).href;
 const { initStore, getRepo, closeStore } = await import(`${SRC}repo/index.js`);
 const { createApp } = await import(`${SRC}app.js`);
-const { attachSockets } = await import(`${SRC}sockets/index.js`);
+const { attachSockets, lockProfile } = await import(`${SRC}sockets/index.js`);
 const { config } = await import(`${SRC}config.js`);
 const { applyAnswer, hydrate, sessionSettings } = await import(`${SRC}services/mastery.js`);
 const { decodeRoomArchive } = await import(`${SRC}services/archive.js`);
 const {
-  AFTER_CLOSE_DETAIL, ANSWERED_AGAIN_DETAIL, ANSWERED_AGAIN_MESSAGE, DELIVER_MESSAGE, GRACE_MS, LATE_COUNTED_MESSAGE,
-  LATE_NOT_SERVED_MESSAGE, LATE_TOO_LATE_MESSAGE, NOT_THIS_ROOM_MESSAGE, OVER_CAP_DETAIL, PACK_NOTE, PACK_SIZE, overCapMessage,
+  AFTER_CLOSE_DETAIL, ANSWERED_AGAIN_DETAIL, ANSWERED_AGAIN_MESSAGE, ASKED_KEPT_MESSAGE, DELIVER_MESSAGE, GRACE_MS, KEPT_LIMIT,
+  KEPT_LIMIT_MESSAGE, LATE_COUNTED_MESSAGE, LATE_NOT_SERVED_MESSAGE, LATE_TOO_LATE_MESSAGE, NOT_THIS_ROOM_MESSAGE, OVER_CAP_DETAIL,
+  PACK_NOTE, PACK_SIZE, overCapMessage,
 } = await import(`${SRC}services/offline.js`);
+const { OWN_QUESTION_DETAIL } = await import(`${SRC}services/classQuestions.js`);
 
 // The clock, moved on by hand. Waiting out a ten-minute window or a six-hour
 // pack is not something a test can do, so the whole process's clock (the
@@ -260,6 +271,23 @@ function send(p, { questionId, response, answerId, deviceAnsweredAt }) {
   const reply = Promise.race([
     next(p.s, 'server:result', mine).then((r) => ({ event: 'server:result', ...r })),
     next(p.s, 'server:kept', mine).then((r) => ({ event: 'server:kept', ...r })),
+  ]);
+  p.s.emit('student:answer', { questionId, response, answerId, ...(deviceAnsweredAt ? { deviceAnsweredAt } : {}) });
+  return reply;
+}
+
+/**
+ * Send an answer; resolves with the first reply about it by its answerId, a
+ * refusal for good (server:refused) included, or with the next question when
+ * the room moved the phone on instead (an answer to a question it does not ask).
+ */
+function sendAny(p, { questionId, response, answerId, deviceAnsweredAt }) {
+  const mine = (r) => r?.answerId === answerId;
+  const reply = Promise.race([
+    next(p.s, 'server:result', mine).then((r) => ({ event: 'server:result', ...r })),
+    next(p.s, 'server:kept', mine).then((r) => ({ event: 'server:kept', ...r })),
+    next(p.s, 'server:refused', mine).then((r) => ({ event: 'server:refused', ...r })),
+    next(p.s, 'server:question').then((r) => ({ event: 'server:question', ...r })),
   ]);
   p.s.emit('student:answer', { questionId, response, answerId, ...(deviceAnsweredAt ? { deviceAnsweredAt } : {}) });
   return reply;
@@ -835,6 +863,206 @@ console.log('\nasking for a new question and a pack, round after round, writes n
   check('sixty rounds with no answer, the pin moving each time: one pack record, however often the pin met the pack',
     answered === 0 && records.length === 1 && pins.size > 1, `${records.length} records, ${pins.size} questions pinned`);
   H.s.disconnect();
+}
+
+// ------------------------------- the four findings the fix pass missed --
+
+console.log('\nan id in any letter case is the same question, on every path');
+
+{
+  // As in the section above, the store finds an id whatever its case, as
+  // Postgres (uuid) and Mongo (ObjectId) do. A room with a question set leaves
+  // one active question out of it.
+  const exactGet = repo.getQuestion;
+  repo.getQuestion = async (id) => exactGet(String(id ?? '').toLowerCase());
+  const active = bank.filter((x) => x.status === 'active');
+  const outside = active.find((x) => x.bloom === 'understand');
+  const draft = bank.find((x) => x.status === 'draft');
+  const roomK = await post('/api/session', {
+    contentId: String(content._id), reattempts: 0, questionIds: active.filter((x) => x !== outside).map((x) => String(x._id)),
+  });
+  const sidK = roomK.body.sessionId;
+  const rowsK = () => repo.listAnswers({ sessionId: sidK, rollNo: '21CS21' });
+  const K = await phone(roomK.body.code, '21CS21');
+  const pinK = String(K.question?._id ?? '');
+  const mixed = (id) => id.slice(0, 6).toUpperCase() + id.slice(6);
+
+  // An older phone sends no answer id: the key is made from the question, so
+  // the same answer under the id in capitals is the same attempt.
+  const legacy = await sendAny(K, { questionId: pinK, response: await responseFor(pinK, true) });
+  const legacyUpper = await sendAny(K, { questionId: pinK.toUpperCase(), response: await responseFor(pinK, true) });
+  check('no answer id: the same answer under the id in capitals is the attempt already marked, not a second one',
+    legacy.event === 'server:result' && legacy.correct === true && legacyUpper.event === 'server:result' && legacyUpper.correct === true
+    && (await rowsK()).length === 1, JSON.stringify({ legacy: legacy.event, legacyUpper: legacyUpper.event, rows: (await rowsK()).length }));
+
+  // A packed question, first answered under its id in capitals.
+  const packK = (await ask(K)).questions.map((x) => String(x.question._id));
+  const [k1, k2] = packK;
+  const up = await sendAny(K, { questionId: k1.toUpperCase(), response: await responseFor(k1, true), answerId: 'anycase-21CS21-1' });
+  const low = await sendAny(K, { questionId: k1, response: await responseFor(k1, false), answerId: 'anycase-21CS21-2' });
+  const mix = await sendAny(K, { questionId: mixed(k1), response: await responseFor(k1, false), answerId: 'anycase-21CS21-3' });
+  check('a packed question answered under its id in capitals is marked once; in lower or mixed case after, kept and not counted',
+    up.event === 'server:result' && up.correct === true && [low, mix].every((r) => r.event === 'server:kept' && r.message === ANSWERED_AGAIN_MESSAGE
+      && !('correct' in r)), JSON.stringify([up.event, low.event, mix.event]));
+
+  // Questions this room does not ask, each under its id in capitals.
+  const notAsked = [['another chapter\'s', OTHER], ['outside the room\'s set', outside], ['a draft', draft]];
+  const notAskedReplies = [];
+  for (const [what, x] of notAsked) {
+    const r = await sendAny(K, { questionId: String(x._id).toUpperCase(), response: 0, answerId: `anycase-21CS21-${what.length}` });
+    notAskedReplies.push([what, r.event]);
+  }
+  const keysK = new Set((await rowsK()).map((r) => r.answerKey));
+  check('in capitals, another chapter\'s question, one outside the room\'s set and a draft are each refused: moved on, nothing stored',
+    notAskedReplies.every(([, e]) => e === 'server:question') && notAsked.every(([what]) => !keysK.has(`anycase-21CS21-${what.length}`)),
+    JSON.stringify(notAskedReplies));
+
+  // A question put to the class, sent under its id in capitals.
+  // Not one it holds: the room moved it on to a new question just now.
+  const pinNow = String((await repo.getProfile(sidK, '21CS21'))?.served?.questionId ?? '');
+  const toClass = active.find((x) => x.bloom === 'understand' && x !== outside && ![pinK, pinNow, ...packK].includes(String(x._id)));
+  const classQ = next(K.s, 'class:question');
+  const cqK = await post(`/api/session/${roomK.body.code}/class-questions`, { questionId: String(toClass._id) });
+  await classQ.catch(() => null);
+  const askedUpper = await sendAny(K, { questionId: String(toClass._id).toUpperCase(), response: await responseFor(String(toClass._id), true),
+    answerId: 'anycase-21CS21-class' });
+  const askedRow = (await rowsK()).find((r) => r.answerKey === 'anycase-21CS21-class');
+  check('a question put to the class, in capitals: kept with the class question, not counted',
+    cqK.status === 201 && askedUpper.event === 'server:kept' && askedUpper.message === ASKED_KEPT_MESSAGE
+    && askedRow?.final === false && askedRow.detail === OWN_QUESTION_DETAIL && String(askedRow.classQuestionId) === String(cqK.body.id),
+    JSON.stringify({ askedUpper, askedRow: askedRow && [askedRow.final, askedRow.detail] }));
+
+  // After the close, inside the window.
+  K.s.disconnect();
+  await wait(100);
+  await post(`/api/session/${roomK.body.code}/close`, {});
+  const K2 = await phone(roomK.body.code, '21CS21', { deliver: true });
+  const lateUp = await sendAny(K2, { questionId: k2.toUpperCase(), response: await responseFor(k2, true), answerId: 'anycase-21CS21-4' });
+  const lateMix = await sendAny(K2, { questionId: mixed(k2), response: await responseFor(k2, false), answerId: 'anycase-21CS21-5' });
+  const lateOther = await sendAny(K2, { questionId: String(OTHER._id).toUpperCase(), response: 0, answerId: 'anycase-21CS21-6' });
+  check('after the close: packed and in capitals, counted once; in mixed case after, kept; another chapter\'s in capitals, refused',
+    lateUp.event === 'server:result' && lateUp.message === LATE_COUNTED_MESSAGE && lateMix.event === 'server:kept'
+    && lateMix.message === ANSWERED_AGAIN_MESSAGE && lateOther.event === 'server:refused' && lateOther.message === NOT_THIS_ROOM_MESSAGE,
+    JSON.stringify([lateUp.event, lateMix.event, lateOther.event]));
+  K2.s.disconnect();
+  repo.getQuestion = exactGet;
+
+  const rows = await rowsK();
+  const prof = hydrate(await repo.getProfile(sidK, '21CS21'));
+  const marked = prof.history.map((h) => String(h.questionId).toLowerCase());
+  const finals = rows.filter((r) => r.final !== false).map((r) => String(r.questionId).toLowerCase());
+  check('the ladder holds each question once, and each has one final row: the pin, the two packed',
+    same([...marked].sort(), [pinK, k1, k2].sort()) && same([...finals].sort(), [pinK, k1, k2].sort()),
+    JSON.stringify({ marked, finals }));
+  check('every stored row carries the bank\'s own id, never the phone\'s spelling of it; none for a question the room does not ask',
+    rows.every((r) => String(r.questionId) === String(r.questionId).toLowerCase())
+    && !rows.some((r) => [OTHER, outside, draft].some((x) => String(r.questionId).toLowerCase() === String(x._id))),
+    JSON.stringify(rows.map((r) => r.questionId)));
+}
+
+console.log('\nthe grace window goes by when an answer reached the server, not when its turn came');
+
+{
+  const roomW = await post('/api/session', { contentId: String(content._id), reattempts: 0 });
+  const sidW = roomW.body.sessionId;
+  const rowW = async (key) => (await repo.listAnswers({ sessionId: sidW, rollNo: '21CS22' })).find((r) => r.answerKey === key);
+  const W = await phone(roomW.body.code, '21CS22');
+  const pinW = String(W.question?._id ?? '');
+  const [w1, w2] = (await ask(W)).questions.map((x) => String(x.question._id));
+
+  // The student's turn is held, as a slow answer ahead of it would hold it.
+  // The answer to the question on the screen reaches the server while the room
+  // is open; the room closes while it waits; then its turn comes.
+  let release = await lockProfile(sidW, '21CS22');
+  const beforeClose = send(W, { questionId: pinW, response: await responseFor(pinW, true), answerId: 'turn-21CS22-1' });
+  await wait(200);
+  await post(`/api/session/${roomW.body.code}/close`, {});
+  const closedAt = Date.parse((await repo.getSession(sidW)).closedAt);
+  release();
+  const r1 = await beforeClose;
+  const row1 = await rowW('turn-21CS22-1');
+  check('reached the server before the close, marked after it: counted, and stored with the time it arrived',
+    r1.event === 'server:result' && r1.correct === true && row1?.final === true && Date.parse(row1.answeredAt) < closedAt,
+    JSON.stringify({ r1: r1.event, answeredAt: row1?.answeredAt, closedAt: new Date(closedAt).toISOString() }));
+  W.s.disconnect();
+
+  // To two seconds before the window ends, and back to send the pack.
+  moveClock(closedAt + GRACE_MS - 2000 - Date.now());
+  const W2 = await phone(roomW.body.code, '21CS22', { deliver: true });
+  release = await lockProfile(sidW, '21CS22');
+  const sentAt = Date.now();
+  const inside = send(W2, { questionId: w1, response: await responseFor(w1, true), answerId: 'turn-21CS22-2' });
+  await wait(200);
+  // The window ends while it waits for its turn: the clock moves a full window on.
+  moveClock(GRACE_MS);
+  release();
+  const r2 = await inside;
+  const row2 = await rowW('turn-21CS22-2');
+  check('reached the server inside the window, its turn after it: counted, told so, stored with the time it arrived',
+    r2.event === 'server:result' && r2.correct === true && r2.message === LATE_COUNTED_MESSAGE && row2?.final === true
+    && Date.parse(row2.answeredAt) >= sentAt && Date.parse(row2.answeredAt) <= closedAt + GRACE_MS,
+    JSON.stringify({ r2: [r2.event, r2.message], answeredAt: row2?.answeredAt }));
+
+  // Now past the window. The phone's own clock says it answered inside it,
+  // and is not read.
+  const r3 = await send(W2, { questionId: w2, response: await responseFor(w2, true), answerId: 'turn-21CS22-3',
+    deviceAnsweredAt: new Date(closedAt + 60000).toISOString() });
+  const row3 = await rowW('turn-21CS22-3');
+  check('one that reaches the server after the window is kept, not counted, whatever the phone\'s clock says',
+    r3.event === 'server:kept' && r3.message === LATE_TOO_LATE_MESSAGE && row3?.final === false && row3.detail === AFTER_CLOSE_DETAIL,
+    JSON.stringify({ r3: [r3.event, r3.message] }));
+  const again = await send(W2, { questionId: w1, response: await responseFor(w1, true), answerId: 'turn-21CS22-2' });
+  check('the counted one sent again: the same mark from its row, nothing new',
+    again.event === 'server:result' && again.correct === true
+    && (await repo.listAnswers({ sessionId: sidW, rollNo: '21CS22' })).length === 3);
+  W2.s.disconnect();
+}
+
+console.log(`\nanswers kept and not counted: ${KEPT_LIMIT} per student per room, every one of them stored`);
+
+{
+  const roomC = await post('/api/session', { contentId: String(content._id), reattempts: 0 });
+  const sidC = roomC.body.sessionId;
+  const C = await phone(roomC.body.code, '21CS23');
+  const pinC = String(C.question?._id ?? '');
+  C.s.disconnect();
+  await wait(100);
+  await post(`/api/session/${roomC.body.code}/close`, {});
+  const D = await phone(roomC.body.code, '21CS23', { deliver: true });
+  const keptRows = async () => (await repo.listAnswers({ sessionId: sidC, rollNo: '21CS23' })).filter((r) => r.final === false);
+
+  // Counted: the question on its screen, inside the window.
+  const counted = await send(D, { questionId: pinC, response: await responseFor(pinC, true), answerId: 'kept-21CS23-pin' });
+  // Kept, of two kinds: other answers to the question it was marked on, and a
+  // question it was never given, sent again and again under fresh answer ids.
+  const never = String(bank.find((x) => x.status === 'active' && String(x._id) !== pinC)._id);
+  const replies = [];
+  for (let i = 1; i <= KEPT_LIMIT; i += 1) {
+    const q = i <= 2 ? pinC : never;
+    replies.push(await sendAny(D, { questionId: q, response: await responseFor(q, false), answerId: `kept-21CS23-${i}` }));
+  }
+  const stored = await keptRows();
+  check(`the ${KEPT_LIMIT} kept answers up to the limit are each stored and told so, the last one included`,
+    counted.event === 'server:result' && replies.every((r) => r.event === 'server:kept') && stored.length === KEPT_LIMIT
+    && stored.some((r) => r.answerKey === `kept-21CS23-${KEPT_LIMIT}`),
+    JSON.stringify({ counted: counted.event, notKept: replies.filter((r) => r.event !== 'server:kept').length, stored: stored.length }));
+
+  const over = await sendAny(D, { questionId: never, response: 0, answerId: 'kept-21CS23-over' });
+  const overAgain = await sendAny(D, { questionId: pinC.toUpperCase(), response: 0, answerId: 'kept-21CS23-over2' });
+  const after = await keptRows();
+  check('the next one, of either kind, is refused for good with a plain sentence and no mark, and nothing more is stored',
+    [over, overAgain].every((r) => r.event === 'server:refused' && r.message === KEPT_LIMIT_MESSAGE && !('correct' in r) && !('solution' in r))
+    && after.length === KEPT_LIMIT && !after.some((r) => /over/.test(r.answerKey)),
+    JSON.stringify({ over: [over.event, over.message], overAgain: overAgain.event, stored: after.length }));
+  const resend = await sendAny(D, { questionId: never, response: await responseFor(never, false), answerId: `kept-21CS23-${KEPT_LIMIT}` });
+  const resendCounted = await sendAny(D, { questionId: pinC, response: await responseFor(pinC, true), answerId: 'kept-21CS23-pin' });
+  check('a resend of one already kept, or of the counted one, is still answered from its row',
+    resend.event === 'server:kept' && resend.message === LATE_NOT_SERVED_MESSAGE && resendCounted.event === 'server:result'
+    && resendCounted.correct === true && (await keptRows()).length === KEPT_LIMIT,
+    JSON.stringify([resend.event, resendCounted.event]));
+  const prof = hydrate(await repo.getProfile(sidC, '21CS23'));
+  check('the ladder holds the counted one only', prof.history.length === 1 && String(prof.history[0].questionId) === pinC);
+  D.s.disconnect();
 }
 
 {

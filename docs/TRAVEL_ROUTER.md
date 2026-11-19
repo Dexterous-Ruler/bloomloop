@@ -168,6 +168,9 @@ Do this once, with internet, at your desk.
 - Each room is saved to the laptop's disk **every minute** while it runs, and **at
   once when you close it**. If the laptop crashes or the battery dies, you lose at
   most the last minute of that room. Every earlier answer is in its file.
+- If the laptop's disk fills up, a save fails and the laptop's window says so. The
+  room's file keeps its last complete save. Free some space and the next save
+  writes the rest.
 - To save more often, start the laptop with `LAPTOP_ARCHIVE_SECONDS` set to the
   number of seconds you want, from 1 to 3600.
 - If the laptop restarts mid-class, the room that was running cannot be continued.

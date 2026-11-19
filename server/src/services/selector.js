@@ -9,11 +9,13 @@ import { eligibleLevels, isSlowLearner } from './mastery.js';
 /**
  * Questions the student has not already been served in this session.
  * `history` is the authority - a reconnecting student must not be re-served
- * items they already answered before the drop.
+ * items they already answered before the drop. Ids are compared without case,
+ * as the answer path compares them: a history entry written before that, from
+ * an id a phone sent in capitals, still names the question it was.
  */
 function unseen(questions, profile) {
-  const done = new Set(profile.history.map((h) => String(h.questionId)));
-  return questions.filter((q) => !done.has(String(q._id ?? q.id)));
+  const done = new Set(profile.history.map((h) => String(h.questionId).toLowerCase()));
+  return questions.filter((q) => !done.has(String(q._id ?? q.id).toLowerCase()));
 }
 
 /**

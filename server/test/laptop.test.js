@@ -125,6 +125,39 @@ describe('each write is atomic', () => {
     }
   });
 
+  test('a short write is carried on from where it stopped until every byte is down', () => {
+    const dir = tempDir();
+    writeAtomic(dir, 'room-A-1.json', '{"v":1}');
+    const text = JSON.stringify({ v: 2, note: 'Écrit en entier', answers: Array.from({ length: 60 }, (_, i) => i) });
+    // A disk that takes at most 7 bytes a call and says how many, as write(2) may.
+    const took = [];
+    const short = { ...fs, writeSync: (fd, buf, off, len) => { const n = Math.min(7, len); took.push(n); return fs.writeSync(fd, buf, off, n); } };
+    writeAtomic(dir, 'room-A-1.json', text, { fs: short });
+    assert.equal(fs.readFileSync(path.join(dir, 'room-A-1.json'), 'utf8'), text);
+    assert.equal(took.reduce((a, b) => a + b, 0), Buffer.byteLength(text, 'utf8'));
+    assert.ok(took.length > 1, 'it took several writes');
+    assert.deepEqual(listed(dir), ['room-A-1.json']);
+  });
+
+  test('a write that stops short (the disk filled) fails without renaming: the old file stays whole, no temporary file', () => {
+    const dir = tempDir();
+    writeAtomic(dir, 'room-A-1.json', '{"v":1}');
+    const text = JSON.stringify({ v: 2, answers: Array.from({ length: 60 }, (_, i) => i) });
+    // Half the bytes, then none: write(2) on a disk that has just filled.
+    let calls = 0;
+    const renamed = [];
+    const full = {
+      ...fs,
+      writeSync: (fd, buf, off, len) => { calls += 1; return calls === 1 ? fs.writeSync(fd, buf, off, Math.floor(len / 2)) : 0; },
+      renameSync: (from, to) => { renamed.push(to); return fs.renameSync(from, to); },
+    };
+    assert.throws(() => writeAtomic(dir, 'room-A-1.json', text, { fs: full }), /only \d+ of \d+ bytes could be written/);
+    assert.equal(calls, 2);
+    assert.deepEqual(renamed, [], 'nothing renamed over the last whole file');
+    assert.deepEqual(readJson(path.join(dir, 'room-A-1.json')), { v: 1 });
+    assert.deepEqual(listed(dir), ['room-A-1.json']);
+  });
+
   test('the temporary file is opened exclusively, in the same folder', () => {
     const dir = tempDir();
     const opened = [];

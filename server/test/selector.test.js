@@ -153,6 +153,20 @@ describe('never serving the same question twice', () => {
     assert.equal(new Set(served).size, served.length);
   });
 
+  test('a question in history under its id in other letters is the same question: never served again', () => {
+    // A uuid or an ObjectId is the same id in either case; a history entry
+    // written from an id a phone sent in capitals still names this question.
+    const profile = settled('apply', [
+      ['understand', true, 'U1'],
+      ['understand', true, 'u2'],
+      ['apply', true, 'A1'],
+    ]);
+    const served = ids(drain(profile, BANK));
+    assert.equal(served.includes('u1'), false);
+    assert.equal(served.includes('a1'), false);
+    assert.equal(selectNext(profile, BANK, { rng: firstPick }).question._id, 'a2');
+  });
+
   test('draining the bank serves every remaining active item exactly once', () => {
     const served = ids(drain(midProfile(), BANK));
 

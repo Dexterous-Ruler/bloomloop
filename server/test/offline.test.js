@@ -11,12 +11,12 @@ import { describe, test } from 'node:test';
 
 import {
   AFTER_CLOSE_DETAIL, ANSWERED_AGAIN_DETAIL, ANSWERED_AGAIN_MESSAGE, DELIVER_IMPORTED_REASON, DELIVER_MESSAGE, GRACE_MINUTES,
-  GRACE_MS, LATE_COUNTED_MESSAGE, LATE_NOT_SERVED_MESSAGE, LATE_TOO_LATE_MESSAGE, NOT_THIS_ROOM_MESSAGE, OVER_CAP_DETAIL,
+  GRACE_MS, KEPT_LIMIT, KEPT_LIMIT_MESSAGE, LATE_COUNTED_MESSAGE, LATE_NOT_SERVED_MESSAGE, LATE_TOO_LATE_MESSAGE, NOT_THIS_ROOM_MESSAGE, OVER_CAP_DETAIL,
   PACK_HOURS, PACK_NOTE, PACK_RECORD_LIMIT, PACK_SHARE, PACK_SIZE, SERVED_LOG_LIMIT, choosePack, deviceTimeOf, keptAfterClose,
   keptAnsweredAgain, keptNotCounted, lateVerdict, livePack, logServed, overCapMessage, packExpiry, packLevels, packPayload,
   packReason, packRecordNeed, packableLevels, sameId, servedAtFor,
 } from '../src/services/offline.js';
-import { applyAnswer, emptyProfile, hydrate } from '../src/services/mastery.js';
+import { applyAnswer, emptyProfile, hydrate, triesSpent } from '../src/services/mastery.js';
 import { chooseAnswers } from '../src/services/attainment.js';
 import { DEFAULT_PRESET, presetById } from '../src/services/attainmentPresets.js';
 import { createMemoryRepo } from '../src/repo/memoryRepo.js';
@@ -159,6 +159,16 @@ describe('what a pack holds', () => {
     for (const m of marked) assert.ok(!ids.has(m.questionId), `marked ${m.questionId}`);
     assert.ok(!ids.has(pin), 'the pinned question');
     assert.ok(!ids.has(draft._id) && !ids.has(discarded._id), 'not active');
+  });
+
+  test('an id in other letters is the same question: marked or on the screen, it is never packed', () => {
+    const level = 'understand';
+    const atLevel = BANK.filter((x) => x.bloom === level);
+    const marked = atLevel.slice(0, 3).map((x) => ({ questionId: x._id.toUpperCase(), bloom: level, correct: true, score: 1, at: '2026-11-19T09:00:00.000Z' }));
+    const pin = atLevel[3]._id.toUpperCase();
+    const ids = new Set(idsOf(choosePack(profileAt(level, marked), BANK, { exclude: [pin] })).map((id) => id.toLowerCase()));
+    for (const m of marked) assert.ok(!ids.has(m.questionId.toLowerCase()), `marked ${m.questionId}`);
+    assert.ok(!ids.has(pin.toLowerCase()), 'the pinned question');
   });
 
   test('the size follows the room\'s cap: smaller, and nothing at all at the cap', () => {
@@ -310,6 +320,14 @@ describe('a pack\'s life', () => {
     assert.equal(sameId('ABC', 'abc'), true);
     assert.equal(sameId('', ''), false);
   });
+
+  test('the retries spent on the pinned question are its own whatever the case of its id', () => {
+    const profile = { served: { questionId: 'ab12cd', at: issued, tries: 1 } };
+    assert.equal(triesSpent(profile, 'AB12CD'), 1);
+    assert.equal(triesSpent(profile, 'ab12cd'), 1);
+    assert.equal(triesSpent(profile, 'ab12ce'), 0);
+    assert.equal(triesSpent({ served: null }, 'ab12cd'), 0);
+  });
 });
 
 describe('a pack\'s record', () => {
@@ -348,6 +366,13 @@ describe('an answer that reaches the server after its room closed', () => {
     }
   });
 
+  test('arrived before the close and marked after it (it waited its turn): inside the window, counted', () => {
+    for (const now of [closed - 1, closed - 60000]) {
+      assert.deepEqual(lateVerdict({ closedAt, servedAt, now }), { counted: true, message: LATE_COUNTED_MESSAGE }, String(now - closed));
+    }
+    assert.equal(lateVerdict({ closedAt, servedAt: null, now: closed - 1 }).counted, false, 'never served still never counts');
+  });
+
   test('served before the close and just outside the window: kept, not counted, and the phone is told why', () => {
     for (const now of [closed + GRACE_MS + 1, closed + GRACE_MS + 60000, closed + 24 * 60 * 60 * 1000]) {
       assert.deepEqual(lateVerdict({ closedAt, servedAt, now }), { counted: false, message: LATE_TOO_LATE_MESSAGE });
@@ -367,11 +392,18 @@ describe('an answer that reaches the server after its room closed', () => {
   test('the sentences a phone is told name no field, route or event', () => {
     for (const s of [LATE_COUNTED_MESSAGE, LATE_NOT_SERVED_MESSAGE, LATE_TOO_LATE_MESSAGE, AFTER_CLOSE_DETAIL, OVER_CAP_DETAIL,
       overCapMessage(1), overCapMessage(20), NOT_THIS_ROOM_MESSAGE, DELIVER_MESSAGE, DELIVER_IMPORTED_REASON,
-      ANSWERED_AGAIN_DETAIL, ANSWERED_AGAIN_MESSAGE]) {
+      ANSWERED_AGAIN_DETAIL, ANSWERED_AGAIN_MESSAGE, KEPT_LIMIT_MESSAGE]) {
       assert.doesNotMatch(s, /student:|server:|answerId|questionId|\/api\/|final|detail/, s);
     }
     assert.match(overCapMessage(1), /asks each student 1 question, and/);
     assert.match(overCapMessage(20), /asks each student 20 questions, and/);
+  });
+
+  test('answers kept and not counted: at most a named number per student per room, far above an honest outbox', () => {
+    assert.equal(KEPT_LIMIT, 100);
+    // An honest outbox at one outage: the question on the screen and one pack.
+    assert.ok(KEPT_LIMIT >= 10 * (PACK_SIZE + 1));
+    assert.match(KEPT_LIMIT_MESSAGE, new RegExp(`already saved ${KEPT_LIMIT} of your answers that do not count`));
   });
 
   test('a kept row is told apart from a retried attempt and from a vote', () => {

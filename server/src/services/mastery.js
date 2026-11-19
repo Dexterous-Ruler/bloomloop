@@ -1077,9 +1077,14 @@ export const masteredLevels = (profile, goal = DEFAULT_MASTERY_GOAL) =>
    anywhere else would need clearing in all the same places and would eventually
    not be. */
 
-/** Attempts already spent on the question this student is pinned to. */
+/**
+ * Attempts already spent on the question this student is pinned to. Ids are
+ * compared without case, as the answer path compares them (sameId in
+ * services/offline.js): a uuid or an ObjectId is the same id in either case,
+ * and an exact match here gave a pin held in other letters its retries back.
+ */
 export const triesSpent = (profile, questionId) =>
-  String(profile?.served?.questionId ?? '') === String(questionId)
+  String(profile?.served?.questionId ?? '').toLowerCase() === String(questionId).toLowerCase()
     ? (profile.served.tries ?? 0)
     : 0;
 

@@ -76,6 +76,8 @@ import {
   DELIVER_IMPORTED_REASON,
   DELIVER_MESSAGE,
   GRACE_MS,
+  KEPT_LIMIT,
+  KEPT_LIMIT_MESSAGE,
   NOT_THIS_ROOM_MESSAGE,
   OVER_CAP_DETAIL,
   PACK_EMPTY_NOTE,
@@ -98,6 +100,7 @@ import {
   servedAtFor,
 } from '../services/offline.js';
 import { isImportedRoom } from '../services/roomImport.js';
+import { allAnswers } from '../services/evidence.js';
 
 const presence = new Map(); // `${code}:${rollNo}` -> socket.id
 const bankCache = new Map(); // sessionId -> Promise<question[]>
@@ -413,7 +416,7 @@ async function dispatchNext(socket, { profile, session, bank = null, resume = fa
     // is known, because it is the only honest source: the reason string is not.
     let resumed = false;
     if (resume && profile.served?.questionId) {
-      const held = items.find((q) => String(q._id) === String(profile.served.questionId));
+      const held = items.find((q) => sameId(q._id, profile.served.questionId));
       // Only if it is still servable. A question the teacher discarded between
       // the drop and the reconnect must not come back from the dead.
       if (held && (held.status ?? 'active') === 'active') {
@@ -436,7 +439,7 @@ async function dispatchNext(socket, { profile, session, bank = null, resume = fa
     // the pin moves on, the log keeps every question this phone was given, so an
     // answer to one of them that waited on the phone past the close is still
     // known for one it was given (servedAtFor).
-    const repin = String(profile.served?.questionId ?? '') !== String(q._id);
+    const repin = !sameId(profile.served?.questionId, q._id);
     if (repin) {
       // The question it replaces was given too: a profile from before the log
       // has it only on its pin.
@@ -778,7 +781,10 @@ async function replayStored(io, socket, { session, profile, prior, settings, ids
   }
 
   let current = profile;
-  const inHistory = profile.history.some((h) => String(h.questionId) === String(prior.questionId));
+  // Without case (sameId): a row stored before ids were compared that way can
+  // hold its question id as the phone sent it, and an exact match would put
+  // that question into the ladder a second time.
+  const inHistory = profile.history.some((h) => sameId(h.questionId, prior.questionId));
   if (!inHistory) {
     const fields = {
       questionId: prior.questionId,
@@ -840,6 +846,15 @@ async function replayStored(io, socket, { session, profile, prior, settings, ids
   });
 }
 
+/**
+ * An answer row the answer path stored, kept and not counted (KEPT_LIMIT): a
+ * late one, one past the cap, one to a question already marked, and the
+ * student's own answer to a question put to the class. A vote is not one: the
+ * vote path keeps its own rows.
+ */
+const keptRow = (a) => keptNotCounted(a)
+  || (a?.final === false && Boolean(a?.classQuestionId) && a?.detail === OWN_QUESTION_DETAIL);
+
 async function handleAnswer(io, socket, payload) {
   const ctx = socket.data.student;
   // This phone's place in its student's queue, taken as the answer ARRIVES:
@@ -848,6 +863,13 @@ async function handleAnswer(io, socket, payload) {
   // receives answers (Phase 7, O2 and O3), never by a phone's clock, and an
   // outbox sending a morning's answers is marked one by one in that order.
   const turn = ctx ? lockProfile(ctx.sessionId, ctx.rollNo) : null;
+  // When the answer reached the server, read from the server's clock beside the
+  // turn, before anything waits. The grace window is judged by this, and it is
+  // the time the row is stored with: read after the wait for the student's
+  // turn and the store reads below, an answer that arrived inside the window
+  // behind a slow outbox burst was judged as arriving after it. The phone's
+  // clock is still never read for this.
+  const arrivedAt = Date.now();
   let release = null;
   try {
     if (!ctx) {
@@ -932,6 +954,20 @@ async function handleAnswer(io, socket, payload) {
     const ids = { questionId: sentId, ...(ANSWER_ID.test(sent) ? { answerId: sent } : {}) };
     // Said instead of a mark: the answer is saved and counts nowhere.
     const kept = (message, extra = {}) => socket.emit('server:kept', { ...ids, counted: false, ...extra, message });
+    // Room for one more answer kept and not counted (KEPT_LIMIT)? Asked only on
+    // the way to storing one, and under the student's turn, so no other answer
+    // of theirs is stored between the count and the write. Every page of their
+    // rows that are not final is read: votes are among them, and a read of one
+    // page only would let a phone bury its kept rows under votes.
+    // Past the limit the phone is told plainly, in the event that says the
+    // answer is refused for good (its outbox keeps it), and nothing is stored.
+    const keptRoom = async () => {
+      const rows = await allAnswers(repo, { sessionId: ctx.sessionId, rollNo: ctx.rollNo, final: false });
+      if (rows.filter(keptRow).length < KEPT_LIMIT) return true;
+      logIgnored('student:answer', `${ctx.rollNo} has ${KEPT_LIMIT} answers kept and not counted in this room; not stored`);
+      socket.emit('server:refused', { ...ids, message: KEPT_LIMIT_MESSAGE });
+      return false;
+    };
 
     // 1. An attempt the server already holds: answer it with the stored outcome.
     let prior = await repo.getAnswerByKey(ctx.sessionId, answerKey);
@@ -1019,6 +1055,10 @@ async function handleAnswer(io, socket, payload) {
     // mark is this answer's too. Any other answer is told it is saved and does
     // not count, and no mark: the earlier mark is not its own.
     if (already) {
+      if (!(await keptRoom())) {
+        closedNote();
+        return;
+      }
       const earlier = already.answerId ? await repo.getAnswerByKey(ctx.sessionId, already.answerId).catch(() => null) : null;
       const stale = await repo.getQuestion(questionId).catch(() => null);
       // The question as it was asked: the earlier answer's own snapshot, which
@@ -1046,7 +1086,7 @@ async function handleAnswer(io, socket, payload) {
         score: null,
         ungraded: already.ungraded === true,
         servedAt: earlier?.servedAt ?? null,
-        answeredAt: new Date().toISOString(),
+        answeredAt: new Date(arrivedAt).toISOString(),
         ...(deviceTimeOf(payload?.deviceAnsweredAt) ? { deviceAnsweredAt: deviceTimeOf(payload.deviceAnsweredAt) } : {}),
         language: 'en',
         questionSource: earlier?.questionSource ?? asked?.source ?? 'llm',
@@ -1097,7 +1137,9 @@ async function handleAnswer(io, socket, payload) {
     // one served id can work out its rejected siblings'.
     // Nor may it be outside the room's question set: the bank above already
     // leaves those out, and this fallback would otherwise take them back in.
-    const inBank = bank.find((q) => String(q._id) === questionId);
+    // Without case, as every other id in this handler is compared (sameId),
+    // and as the store below finds one.
+    const inBank = bank.find((q) => sameId(q._id, questionId));
     const found = inBank ?? (await repo.getQuestion(questionId));
     const question = found && String(found.contentId) === String(session.contentId) && found.status !== 'draft'
       && !needsApproval(found) && inRoomSet(session, found._id)
@@ -1133,6 +1175,12 @@ async function handleAnswer(io, socket, payload) {
       const asked = (await repo.listClassQuestions(session._id))
         .find((c) => String(c.questionId ?? '').toLowerCase() === questionId.toLowerCase());
       if (asked) {
+        // Past KEPT_LIMIT: not stored, and moved on all the same.
+        if (!(await keptRoom())) {
+          if (closed) closedNote();
+          else await dispatchNext(socket, { profile, session, bank, resume: !onScreen(questionId) });
+          return;
+        }
         const seed = `${ctx.rollNo}:${question._id}`;
         const graded = score(question, response, seed, supports);
         await repo.recordAnswer({
@@ -1195,7 +1243,9 @@ async function handleAnswer(io, socket, payload) {
     const givenAt = pinned ? (profile.served?.at ?? null) : servedAtFor({ profile, packs, questionId });
     const given = pinned || Boolean(givenAt);
     const verdict = closed
-      ? lateVerdict({ closedAt: session.closedAt, servedAt: servedAtFor({ profile, packs, questionId, before: session.closedAt }) })
+      ? lateVerdict({
+        closedAt: session.closedAt, servedAt: servedAtFor({ profile, packs, questionId, before: session.closedAt }), now: arrivedAt,
+      })
       : null;
     // An answer to a question not on the phone's screen (from its outbox, or a
     // pack), or one after the close, had no screen to try again on. It also
@@ -1263,8 +1313,10 @@ async function handleAnswer(io, socket, payload) {
     const graded = score(question, response, seed, supports);
     const kind = question.kind ?? 'mcq';
     // One moment for this answer: the stored row and the history entry carry
-    // the same timestamp, so the two records of one answer always agree.
-    const answeredAt = new Date().toISOString();
+    // the same timestamp, so the two records of one answer always agree. It is
+    // when the answer arrived (arrivedAt), the moment the grace window was
+    // judged by, so a resend of a kept row is told the verdict it was given.
+    const answeredAt = new Date(arrivedAt).toISOString();
     const evidence = {
       sessionId: ctx.sessionId,
       answerKey,
@@ -1322,6 +1374,14 @@ async function handleAnswer(io, socket, payload) {
     // is saved and does not count, and is sent no mark and no key; at the cap it
     // is told it has finished, as it always was.
     if (keptAs) {
+      // Past KEPT_LIMIT: not stored. At the cap the phone has still finished.
+      if (!(await keptRoom())) {
+        if (keptAs === OVER_CAP_DETAIL && !closed) {
+          socket.emit('server:exhausted', { profile: rowFor(profile, settings), reason: capReason(cap) });
+        }
+        closedNote();
+        return;
+      }
       const stamped = await repo.recordAnswer({
         ...evidence,
         final: false,

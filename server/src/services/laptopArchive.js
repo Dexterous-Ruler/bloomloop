@@ -88,10 +88,21 @@ export const FOLDER_MODE = 0o700;
 export function writeAtomic(dir, name, text, { fs = nodeFs } = {}) {
   const target = confinedPath(dir, name);
   const temp = confinedPath(dir, `.${name}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`);
+  const bytes = Buffer.from(text, 'utf8');
   let fd = null;
   try {
     fd = fs.openSync(temp, 'wx', FILE_MODE);
-    fs.writeSync(fd, text);
+    // Every byte, or a throw before the rename. fs.writeSync returns how many
+    // bytes it wrote, and that can be fewer than it was given: write(2) does
+    // so on Linux and macOS when the disk fills. Ignoring the count flushed
+    // half an archive and renamed it over the last whole one. So the rest is
+    // written from where it stopped, and a write that takes nothing is a
+    // failure, which leaves the old file as it was.
+    for (let done = 0; done < bytes.length;) {
+      const n = fs.writeSync(fd, bytes, done, bytes.length - done);
+      if (!(n > 0)) throw new Error(`only ${done} of ${bytes.length} bytes could be written; the disk may be full`);
+      done += n;
+    }
     fs.fsyncSync(fd);
     fs.closeSync(fd);
     fd = null;

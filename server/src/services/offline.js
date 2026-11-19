@@ -91,6 +91,27 @@ export const keptAnsweredAgain = (a) => a?.final === false && a?.detail === ANSW
 export const keptNotCounted = (a) => a?.final === false
   && (a?.detail === AFTER_CLOSE_DETAIL || a?.detail === OVER_CAP_DETAIL || a?.detail === ANSWERED_AGAIN_DETAIL);
 
+/**
+ * How many answers kept and not counted one student may have in one room: the
+ * three above, and an answer of their own to a question put to the class. Each
+ * is evidence and is stored, up to and including the KEPT_LIMIT-th. Past that an
+ * answer is refused with a sentence (KEPT_LIMIT_MESSAGE) and nothing more is
+ * stored; a resend of one already kept is still answered from its row.
+ *
+ * Kept rows never enter the ladder, so nothing else bounds them: a phone could
+ * send any question of its room again and again under fresh answer ids, each
+ * stored, until the room's archive passed the 1 MB it may be and the room could
+ * no longer be deleted. An honest phone comes nowhere near this: at each outage
+ * its outbox holds the question on its screen and one pack (PACK_SIZE), and
+ * each answer in it is stored once.
+ */
+export const KEPT_LIMIT = 100;
+
+/** Said, as a refusal for good, to an answer past KEPT_LIMIT. Names no field, route or event. */
+export const KEPT_LIMIT_MESSAGE = `This room has already saved ${KEPT_LIMIT} of your answers that do not count, which is as `
+  + 'many as it keeps for one student, so this one was not taken. It stays on this phone: show it to your teacher if it '
+  + 'matters.';
+
 // What a phone is told. Plain sentences, no field or route named.
 
 /** Sent with a pack. */
@@ -207,14 +228,15 @@ export function choosePack(profile, bank, { size = PACK_SIZE, adapt = true, excl
 
   const levels = packLevels(profile, { adapt });
   const allowed = new Set(packableLevels(profile, { adapt }));
+  // Without case, as the answer path compares ids (sameId below).
   const done = new Set([
-    ...profile.history.map((h) => String(h.questionId)),
-    ...exclude.map(String),
-    ...held.map((q) => String(q._id)),
-  ]);
+    ...profile.history.map((h) => h.questionId),
+    ...exclude,
+    ...held.map((q) => q._id),
+  ].map((id) => String(id).toLowerCase()));
   const queues = new Map([...allowed].map((l) => [l, []]));
   for (const q of bank ?? []) {
-    if ((q.status ?? 'active') !== 'active' || done.has(String(q._id)) || !allowed.has(q.bloom)) continue;
+    if ((q.status ?? 'active') !== 'active' || done.has(String(q._id).toLowerCase()) || !allowed.has(q.bloom)) continue;
     queues.get(q.bloom).push(q);
   }
   const rollNo = String(profile.rollNo ?? '');
@@ -384,13 +406,17 @@ export function servedAtFor({ profile, packs = [], questionId, before = null }) 
  * It counts when the server served or packed the question to that phone before
  * the close (`servedAt`, from servedAtFor with the close as `before`) and the
  * answer arrived within GRACE_MS of the close, the edge included. Arrival is
- * the server's clock (`now`), never the phone's.
+ * the server's clock (`now`), never the phone's: the moment the answer reached
+ * the server, read before it waited for its student's turn (handleAnswer's
+ * arrivedAt), not the moment it was marked. So an answer that arrived before
+ * the close and was marked after it, having waited behind the answers sent
+ * before it, is inside the window too.
  *
  * @returns {{ counted: boolean, message: string }}
  */
 export function lateVerdict({ closedAt, servedAt, now = Date.now() }) {
   const closed = Date.parse(closedAt ?? '');
-  const inWindow = Number.isFinite(closed) && now >= closed && now - closed <= GRACE_MS;
+  const inWindow = Number.isFinite(closed) && now - closed <= GRACE_MS;
   if (!servedAt) return { counted: false, message: LATE_NOT_SERVED_MESSAGE };
   if (!inWindow) return { counted: false, message: LATE_TOO_LATE_MESSAGE };
   return { counted: true, message: LATE_COUNTED_MESSAGE };
