@@ -47,12 +47,15 @@ Full detail: `docs/DATABASE_SCHEMA.md`.
 | `0030_offline_packs.sql` | `question_packs` (Phase 7); `answers.device_answered_at`; `profiles.served_log` | Stops: apply it before the Phase 7 server |
 | `0031_room_imports.sql` | Rooms imported from laptop mode: where each came from (Phase 7) | Warns: importing a laptop's room file fails |
 | `0032_record_write_keys.sql` | Replay keys of teacher-record writes from an offline console (Phase 7) | Warns: a record write sent with a replay key fails; one without a key works |
+| `0033_figures.sql` | Batch 8: `media.slide_no` and `contents.slide_pictures`, the pictures kept from a deck's slides (a figure itself needs no column: it is JSON in a question's stimulus or a lesson's chunk step) | Warns: a deck uploaded keeps none of its slide pictures; every figure is still drawn |
+| `0034_zip_gaps_live_wheel.sql` | Batch 8: `teaching_moves` (suggested activities), `wheel_question_draws`, `room_activities.suggestion_id`; a verbal question as a wheel ask | Warns: suggestions, drawing a question with a student and recording a suggestion as an activity fail; everything else works |
+| `0035_bank_share_and_concept_panel.sql` | Batch 8: `questions.rooms_only`, `topic_lessons.sections` (the concept panel); a Get Ready check may end early (`hub_runs` end `ended`) | Warns: keeping a question for rooms only, and saving an AI lesson that has sections, fail; everything else works |
 
 The next new file takes `0033`.
 
 ## Applying
 
-Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0032`).
+Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0035`).
 
 `0013` must be in place before the Phase 2 server is deployed: every generated
 question is saved with columns it adds, and the server's boot probe falls back to
@@ -182,6 +185,33 @@ its room; it is not part of the room's archive. Only a write that carries a key 
 writes it, so the boot probe warns rather than stops: without `0032` a write sent with a
 key fails, naming `0032`, and every write sent without one works as before. `0032`
 changes no existing row. Run only on PGlite.
+
+`0034` (Batch 8: the design zip's live-room and wheel gaps) adds two append-only tables
+and one column. `teaching_moves` keeps each activity the AI model suggested in a room, on
+the professor's button, with the room's counts it was built from (never a name).
+`wheel_question_draws` keeps each question the wheel drew with a student, in order, so
+"Another" never repeats one. `room_activities.suggestion_id` names the suggestion an
+activity was run from, in the same room. It also lets a wheel pick be asked a verbal
+question (`ask = 'verbal'`, no bank question); `0017` lists it too, so re-running `0017`
+never narrows the check. Only those features write them, so the boot probe warns rather
+than stops; without `0034` a pick marked as a verbal question is refused by the old
+check, which the probe cannot see. `0034` changes no existing row. Run only on PGlite.
+
+`0033` (Batch 8: figures) adds two columns. `media.slide_no` is the slide a picture was kept
+from when a deck is uploaded (null for a picture uploaded on its own, which is every row
+from before it), and `contents.slide_pictures` says what the upload kept (null for a
+chapter from before it, which kept none). A figure drawn by the server needs no column:
+its spec is JSON inside a question's stimulus, or a lesson's chunk step, which `0027`
+already allows. Only a deck upload writes the two columns, so the boot probe warns
+rather than stops. `0033` changes no existing row. Run only on PGlite.
+
+`0035` (Batch 8: material, the shared bank and the hub's concept panel) adds
+`questions.rooms_only` (false for every existing question, so each stays shared with the
+Learning Hub) and `topic_lessons.sections` (null for every existing lesson), and lets a
+Get Ready check end early (`ended`); `0028` lists `ended` too, so re-running `0028`
+never narrows the check. Only the rooms-only switch and an AI lesson with sections write
+the columns, so the boot probe warns rather than stops. `0035` changes no existing row.
+Run only on PGlite.
 
 `0011` creates its index only if no two accounts in one department hold the same
 roll number once trimmed, single-spaced and upper-cased. If some do, it raises a

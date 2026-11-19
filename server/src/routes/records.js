@@ -5,6 +5,7 @@
 //   wheel/draw          POST        draw the next student (on the server, crypto randomness)
 //   wheel/rounds        POST        start a new round; earlier picks stay
 //   wheel/picks/:id     PATCH       what the pick was asked, and how they responded
+//   wheel/picks/:id/next-question   POST   "Another": the server draws the pick's next question (Batch 8)
 //   tallies             GET, POST   raised hands per option for a question asked aloud
 //   tallies/:id         PATCH       edit; set the counts; reveal
 //   tallies/:id/increment, /decrement   POST, never below 0
@@ -94,6 +95,7 @@ import {
   DEFAULT_SETTINGS,
   askFrom,
   drawFrom,
+  drawQuestion,
   emptyWheelReason,
   pickStatusFrom,
   settingsFrom,
@@ -315,16 +317,29 @@ async function pickQuestions(session, picks) {
   return new Map(bank.map((q) => [String(q._id), q]));
 }
 
+/**
+ * The questions the server drew for the room's picks (Batch 8, 0034). A
+ * database without 0034 has none to read: the wheel still reads, without them
+ * (the boot probe names the file to apply).
+ */
+async function roomDraws(session) {
+  return getRepo().listWheelQuestionDraws(session._id).catch((err) => {
+    console.error('[records] question draws unreadable:', err.message);
+    return [];
+  });
+}
+
 async function wheelBody(session, ctx = null) {
   const repo = getRepo();
-  const [{ people }, rounds, picks] = await Promise.all([
+  const [{ people }, rounds, picks, draws] = await Promise.all([
     ctx ?? roomContext(session),
     repo.listWheelRounds(session._id),
     repo.listWheelPicks(session._id),
+    roomDraws(session),
   ]);
   return {
     room: roomView(session),
-    ...wheelState({ session, rounds, picks, people, questions: await pickQuestions(session, picks) }),
+    ...wheelState({ session, rounds, picks, people, questions: await pickQuestions(session, picks), draws }),
     privacy: STAFF_ONLY,
   };
 }
@@ -383,17 +398,28 @@ router.patch('/:code/wheel', requireTeacher, async (req, res, next) => {
   }
 });
 
+/** Question ids asked on any pick of the room, or drawn for one: what a new draw leaves out first. */
+const askedInRoom = (picks, draws) => [...picks.map((p) => p.questionId), ...draws.map((d) => d.questionId)].filter(Boolean);
+
 /**
  * Draw the next student. The server picks, with crypto randomness, from
  * everyone on the wheel, and stores the pick before answering, so a screen's
  * spin only ever shows a choice already made. { presentOnly?, noRepeat? } change
  * the round's settings first. 409 when the wheel is empty, with the reason.
+ *
+ * { withQuestion: true } ("Question + student", Batch 8): the server also draws
+ * one of the room's approved questions with the same randomness (services/
+ * wheel.js drawQuestion) and stores it on the pick as its bank question, with
+ * the draw kept in wheel_question_draws. 409, and no pick, when the room has no
+ * question to draw.
  */
 router.post('/:code/wheel/draw', requireTeacher, async (req, res, next) => {
   try {
     const session = await writeRoom(req.params.code, req.viewer);
     assertRunning(session);
     const settings = settingsFrom(req.body);
+    const withQuestion = req.body?.withQuestion ?? false;
+    if (typeof withQuestion !== 'boolean') throw fail('withQuestion must be true or false.', 400);
     const repo = getRepo();
 
     const { made, ctx } = await withRecordsLock(session, async () => {
@@ -402,7 +428,13 @@ router.post('/:code/wheel/draw', requireTeacher, async (req, res, next) => {
       const thisRound = picks.filter((p) => p.round === round.round);
       const pool = wheelPool(context.people, { presentOnly: round.presentOnly, noRepeat: round.noRepeat, pickedThisRound: thisRound });
       if (!pool.left) throw fail(emptyWheelReason({ session, presentOnly: round.presentOnly, pool }), 409);
+      // The question first, so a room with none refuses before any student is drawn.
+      const drawn = withQuestion
+        ? drawQuestion(await servable(session), { askedInRoom: askedInRoom(picks, await repo.listWheelQuestionDraws(session._id)) })
+        : null;
+      if (drawn && !drawn.question) throw fail(drawn.reason, 409);
       const chosen = drawFrom(pool.eligible);
+      const now = new Date().toISOString();
       const pick = await repo.addWheelPick({
         sessionId: String(session._id),
         round: round.round,
@@ -413,11 +445,22 @@ router.post('/:code/wheel/draw', requireTeacher, async (req, res, next) => {
         presentOnly: round.presentOnly,
         noRepeat: round.noRepeat,
         ask: 'bank',
-        questionId: null,
+        questionId: drawn ? String(drawn.question._id) : null,
         status: 'pending',
-        pickedAt: new Date().toISOString(),
+        pickedAt: now,
         pickedBy: viewerId(req),
       });
+      if (drawn) {
+        await repo.addWheelQuestionDraw({
+          sessionId: String(session._id),
+          pickId: String(pick._id),
+          drawOrder: 1,
+          questionId: String(drawn.question._id),
+          poolSize: drawn.poolSize,
+          drawnAt: now,
+          drawnBy: viewerId(req),
+        });
+      }
       return { made: pick, ctx: context };
     });
 
@@ -427,6 +470,61 @@ router.post('/:code/wheel/draw', requireTeacher, async (req, res, next) => {
     await afterRecord(req, session, { projector: true });
     const body = await wheelBody(session, ctx);
     res.status(201).json({ pick: body.picks.find((p) => p.id === String(made._id)) ?? null, ...body });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * "Another" ("Question + student", Batch 8): the next question for this pick,
+ * drawn by the server as the first was (services/wheel.js drawQuestion), never
+ * one already drawn for it. The pick's question becomes the new one and the
+ * draw is kept, in order. Only for a bank ask, while the room is open or
+ * paused. 409 with the reason when there is none left to draw.
+ */
+router.post('/:code/wheel/picks/:pickId/next-question', requireTeacher, async (req, res, next) => {
+  try {
+    const session = await writeRoom(req.params.code, req.viewer);
+    assertRunning(session);
+    const repo = getRepo();
+    const { pick, draw } = await withRecordsLock(session, async () => {
+      const [picks, draws] = await Promise.all([repo.listWheelPicks(session._id), repo.listWheelQuestionDraws(session._id)]);
+      const current = picks.find((p) => sameId(p._id, req.params.pickId));
+      if (!current) throw fail('That pick was not found.', 404);
+      if (current.ask !== 'bank') {
+        throw fail('This pick is asked something other than a bank question, so there is no next question to draw. '
+          + 'Change what they are asked first.', 409);
+      }
+      const mine = draws.filter((d) => sameId(d.pickId, current._id));
+      // The pick's own question counts as drawn for it, whoever chose it.
+      const drawnForPick = [...mine.map((d) => d.questionId), current.questionId].filter(Boolean);
+      const drawn = drawQuestion(await servable(session), { askedInRoom: askedInRoom(picks, draws), drawnForPick });
+      if (!drawn.question) throw fail(drawn.reason, 409);
+      const updated = (await repo.updateWheelPick(current._id, { questionId: String(drawn.question._id) })) ?? current;
+      const kept = await repo.addWheelQuestionDraw({
+        sessionId: String(session._id),
+        pickId: String(current._id),
+        drawOrder: mine.reduce((n, d) => Math.max(n, d.drawOrder), 0) + 1,
+        questionId: String(drawn.question._id),
+        poolSize: drawn.poolSize,
+        drawnAt: new Date().toISOString(),
+        drawnBy: viewerId(req),
+      });
+      return { pick: updated, draw: { ...kept, widened: drawn.widened } };
+    });
+    await afterRecord(req, session);
+    const wheel = await wheelBody(session);
+    res.json({
+      pick: wheel.picks.find((p) => p.id === String(pick._id)) ?? null,
+      draw: {
+        order: draw.drawOrder,
+        poolSize: draw.poolSize,
+        // Said when every question had been asked in the room, so this one may
+        // have been asked of someone else already.
+        note: draw.widened ? 'Every approved question has been asked in this room, so this one may have been asked before.' : null,
+      },
+      privacy: STAFF_ONLY,
+    });
   } catch (err) {
     next(err);
   }
@@ -749,16 +847,36 @@ router.get('/:code/activities', requireTeacher, async (req, res, next) => {
 });
 
 /**
+ * The suggestion an activity is recorded from ("Use it", Batch 8): one of this
+ * room's (services/teachingMoves.js), or the 400. Its kind is the activity's
+ * kind: `kind` may be left out, and one that differs is refused.
+ */
+async function activitySuggestion(session, raw, kind) {
+  if (raw === undefined || raw === null) return null;
+  const id = String(raw).trim().toLowerCase();
+  const move = id ? await getRepo().getTeachingMove(id) : null;
+  if (!move || !sameId(move.sessionId, session._id)) throw fail('suggestionId is not a suggestion made in this room.', 400);
+  if (kind && kind !== move.activityKind) {
+    throw fail(`That suggestion is a ${ACTIVITY_KINDS.find((k) => k.id === move.activityKind)?.label.toLowerCase() ?? move.activityKind}: `
+      + 'record it as one.', 400);
+  }
+  return move;
+}
+
+/**
  * Record an activity run: { kind: check | think | group | diagram | real,
- * outcome?, groups?, tallyId? }. A group challenge records groups, never
- * students: groups is [{ label, gotIt: yes | partly | no }]. A quick check may
- * point at the tally that recorded it.
+ * outcome?, groups?, tallyId?, suggestionId? }. A group challenge records
+ * groups, never students: groups is [{ label, gotIt: yes | partly | no }]. A
+ * quick check may point at the tally that recorded it. An activity run from a
+ * suggestion ("Use it", Batch 8) names it, and may leave out its kind.
  */
 router.post('/:code/activities', requireTeacher, async (req, res, next) => {
   try {
     const session = await writeRoom(req.params.code, req.viewer);
     const body = req.body ?? {};
-    const kind = activityKindFrom(body.kind);
+    const suggestion = await activitySuggestion(session, body.suggestionId,
+      body.kind === undefined ? null : activityKindFrom(body.kind));
+    const kind = activityKindFrom(body.kind ?? suggestion?.activityKind);
     const outcome = noteFrom(body.outcome, 'outcome');
     const groups = activityGroups(kind, body.groups) ?? [];
     const repo = getRepo();
@@ -772,6 +890,7 @@ router.post('/:code/activities', requireTeacher, async (req, res, next) => {
         outcome,
         groups,
         tallyId,
+        ...(suggestion ? { suggestionId: String(suggestion._id) } : {}),
         createdAt: now,
         createdBy: viewerId(req),
         updatedAt: now,

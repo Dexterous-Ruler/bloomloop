@@ -15,9 +15,13 @@
   },
   "dependencies": {
     "@google/genai": "^0.14.0",
+    "@hpcc-js/wasm-graphviz": "1.30.0",
+    "@rdkit/rdkit": "2026.9.2",
     "@supabase/supabase-js": "2.45.4",
     "adm-zip": "^0.5.16",
     "cors": "^2.8.5",
+    "d3-scale": "4.0.3",
+    "d3-shape": "3.2.1",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "mongoose": "^8.9.5",
@@ -28,6 +32,7 @@
     "ts-fsrs": "6.0.0"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.16"
+    "@electric-sql/pglite": "^0.5.16",
+    "socket.io-client": "4.8.3"
   }
 }

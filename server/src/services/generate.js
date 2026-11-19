@@ -22,6 +22,11 @@ import {
 } from '../questionTypes.js';
 import { resolveKindMix, spreadKinds, countKinds, kindAllowedAt } from './plan.js';
 import { MAX_LABEL, proposedLabels } from './misconceptions.js';
+// Batch 8: one figure per generated question, drawn and keyed by the server.
+import {
+  NEEDS_FIGURE, FIGURE_KIND_RULES, FIGURE_RULES, FIGURE_SCHEMA_PROPERTIES, attachFigure, chartFlags,
+  plotKeyFromModel, lineKeyFromModel, barsFromModel, figureTemplate, templateFigureNote,
+} from './figureDrafts.js';
 
 /**
  * The kinds this file may write. Everything the contract offers, minus the
@@ -1734,6 +1739,15 @@ function buildNonMcq({ kind, term, terms, topic, contextText, seed, n = 0 }) {
       };
     }
 
+    // Batch 8: a graph from an equation the material states, a number line from
+    // a range it states, bars from a list of figures it states - or nothing
+    // (services/figureDrafts.js). hotspot and label need a figure with named
+    // parts, which no template can honestly invent, so they fall to default.
+    case 'plot':
+    case 'numberline':
+    case 'chart':
+      return figureTemplate(kind, { sentences: sentencesOf(contextText), topic, n });
+
     default:
       return null;
   }
@@ -1904,6 +1918,35 @@ export function validateItems(raw, topic = '', kinds) {
           ? row.map((v) => (v === 'true' ? true : v === 'false' ? false : v))
           : row))
         : [];
+    } else if (kind === 'hotspot') {
+      clean.answerIds = strings(item?.answerIds) ?? [];
+    } else if (kind === 'label') {
+      clean.placements = Array.isArray(item?.placements)
+        ? item.placements.map((p) => (p && typeof p === 'object'
+          ? { target: typeof p.target === 'string' ? collapse(p.target) : p.target, label: typeof p.label === 'string' ? collapse(p.label) : p.label }
+          : p))
+        : [];
+      // Empty is the schema's noise, not a claim of "no extra labels".
+      const extra = strings(item?.distractors);
+      if (extra?.length) clean.distractors = extra;
+    } else if (kind === 'plot') {
+      clean.plotKey = plotKeyFromModel(item?.plotKey);
+    } else if (kind === 'numberline') {
+      clean.lineKey = lineKeyFromModel(item?.lineKey);
+    } else if (kind === 'chart') {
+      clean.bars = barsFromModel(item?.bars);
+      clean.values = Array.isArray(item?.values) ? item.values.map(number) : [];
+    }
+
+    // The figure, drawn and checked by the server, and the key it settles
+    // (services/figureDrafts.js). Before the validator, because a key read off
+    // the drawing replaces the model's and the validator must judge that one.
+    const figure = attachFigure(clean, item);
+    if (NEEDS_FIGURE.includes(kind) && !clean.stimulus) {
+      errors.push(`${label} item ${i + 1} (${kind}) rejected: ${figure.refused
+        ? `its figure did not pass the figure check (${figure.refused.replace(/\.$/, '')})`
+        : 'it needs a figure to be asked on'}.`);
+      return;
     }
 
     const problems = [];
@@ -1930,6 +1973,11 @@ export function validateItems(raw, topic = '', kinds) {
     // none, so only this path ever carries one.
     const labels = proposedLabels(clean, item?.misconceptions);
     if (labels.length) clean.misconceptions = labels;
+    // What generation found about the figure and the key, for the professor:
+    // stored as checks on the draft (figureDrafts.js draftChecks), never as part
+    // of the question.
+    const flags = [...figure.flags, ...chartFlags(clean)];
+    if (flags.length) clean.figureFlags = flags;
     valid.push(clean);
   });
 
@@ -2136,12 +2184,17 @@ const ITEM_SCHEMA = {
           required: ['label'],
         },
       },
+      // Batch 8: the optional figure, what to read off it, and the five kinds
+      // asked on a figure (services/figureDrafts.js).
+      ...FIGURE_SCHEMA_PROPERTIES,
     },
     required: ['bloom', 'kind', 'text'],
     propertyOrdering: [
       'bloom', 'kind', 'text', 'options', 'answerIdx', 'answerIdxs', 'answerBool', 'pairs',
       'buckets', 'blanks', 'value', 'tolerance', 'unit', 'sequence', 'criterion', 'accept', 'rubric',
       'tokens', 'gaps', 'columns', 'tableRows', 'gridRows', 'answers', 'misconceptions',
+      // The figure before the fields keyed on it, so the model draws first and answers from what it drew.
+      'figure', 'reading', 'answerIds', 'placements', 'distractors', 'plotKey', 'lineKey', 'bars', 'values',
     ],
   },
 };
@@ -2182,6 +2235,8 @@ const KIND_RULES = {
     '2 to 4 "columns" and 2 to 6 "tableRows", each {header, cells} with exactly one cell per column. A cell is either given ({"given": text}) or a blank for the student to fill ({"accept": [every accepted answer]}), never both and never neither. Every row follows one rule the source settles, so the given cells show the rule and the blanks ask for it to be applied; fill at least one row completely as a worked example, and keep blank answers short enough to type.',
   grid:
     '2 to 6 "gridRows" and 2 to 5 "columns", and "answers": one array per row with one true or false per column, true exactly where the source says that row and that column go together. At least one true and at least one false, every row and every column checkable against the source - a grid ticked all the way down a column is answered without reading.',
+  // Batch 8: the five kinds asked on a figure, worded beside the figure schema.
+  ...FIGURE_KIND_RULES,
 };
 
 function buildSystemPrompt({ topic, contextText, mix, kinds, avoidTexts }) {
@@ -2238,6 +2293,7 @@ Rules, all of them mandatory:
 7. Options must be mutually distinct and of comparable length and specificity, so that length alone does not give the answer away.
 8. Write plain, exam-ready English. No markdown, no numbering inside the stem, no explanations, no commentary.
 9. On "mcq", "multi" and "truefalse" items you may add "misconceptions": for a wrong option, the misunderstanding a student who picks it most likely holds, in at most ${MAX_LABEL} characters ("Thinks UDP resends lost packets"), as the source text shows it. Never label a correct option and never name a person. Leave it out when the source does not show what the misunderstanding would be.
+${FIGURE_RULES}
 ${avoid}
 Source text for "${topic}":
 """
@@ -2294,6 +2350,7 @@ export async function generateForTopic({
   kinds,
   avoidTexts = [],
   deadline = 0,
+  templatesOnly = false,
 } = {}) {
   const cleanTopic = clip(collapse(topic) || 'this chapter', MAX_TOPIC_CHARS);
   const plan = resolveMix(mix);
@@ -2327,7 +2384,19 @@ export async function generateForTopic({
         );
       }
     }
+    // Batch 8: whether the templates found numbers for the graph, number-line
+    // and bar-chart questions asked, or found none, said in one sentence.
+    const asked = [...new Set(LEVELS.flatMap((level) => Object.keys(wanted[level] ?? {}).filter((k) => wanted[level][k] > 0)))];
+    const figures = templateFigureNote(cleanTopic, asked, made);
+    if (figures) warnings.push(figures);
   };
+
+  // Batch 8 (M3): the professor asked for the built-in writer, so no model is called.
+  if (templatesOnly) {
+    const questions = buildFallback(slots, avoidTexts);
+    reportShort(slots, questions);
+    return { questions, source: 'fallback', warnings };
+  }
 
   if (!hasGemini()) {
     const questions = buildFallback(slots, avoidTexts);
@@ -2429,7 +2498,7 @@ async function mapWithConcurrency(items, limit, fn) {
  * to clear a chapter inside the two-minute bar, few enough not to trip the
  * free-tier rate limit.
  */
-export async function generateBank({ content, topics, perTopic, plan: approved, onProgress } = {}) {
+export async function generateBank({ content, topics, perTopic, plan: approved, onProgress, templatesOnly = false } = {}) {
   const rawText = String(content?.rawText ?? '');
   const requested = Array.isArray(topics) && topics.length ? topics : content?.topics ?? [];
   const warnings = [];
@@ -2508,7 +2577,7 @@ export async function generateBank({ content, topics, perTopic, plan: approved, 
     const topicKinds = kindsFor.get(topic);
     let result;
     try {
-      result = await generateForTopic({ topic, contextText: rawText, mix, kinds: topicKinds, deadline });
+      result = await generateForTopic({ topic, contextText: rawText, mix, kinds: topicKinds, deadline, templatesOnly });
     } catch (err) {
       result = {
         questions: fallbackForTopic({ topic, contextText: contextForTopic(rawText, topic), mix, kinds: topicKinds })

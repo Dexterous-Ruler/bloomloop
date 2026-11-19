@@ -11,6 +11,7 @@ import {
   enterLaptopMode, laptopBanner, laptopRequested, laptopSocketOptions, watchAddresses,
 } from './laptop.js';
 import { createArchiveWriter } from './services/laptopArchive.js';
+import { loadFigureEngines } from './figures/index.js';
 
 function lanAddresses() {
   const out = [];
@@ -30,7 +31,16 @@ async function main() {
 
   fs.mkdirSync(config.uploadsDir, { recursive: true });
 
+  // Batch 8: the figure engines (Graphviz, RDKit) load while the store starts,
+  // and are waited for (at most a few seconds) before the server listens, so a
+  // diagram or molecule is drawn on the first request. A failure or a slow load
+  // is logged, not fatal: every other figure needs neither engine, a render
+  // asked for meanwhile says it is being prepared, and a save waits for them.
+  const engines = loadFigureEngines().catch((err) => console.error('[figures] the drawing engines did not load:', err?.message ?? err));
+
   await initStore();
+
+  await Promise.race([engines, new Promise((resolve) => { setTimeout(resolve, 5000).unref(); })]);
 
   const app = createApp();
   const server = http.createServer(app);

@@ -54,6 +54,7 @@ import {
 } from '../services/exports.js';
 import { attainmentHtml, registerHtml, studentHtml } from '../services/printable.js';
 import { importedRooms } from '../services/roomImport.js';
+import { practisedAnswers } from '../services/bankShare.js';
 
 const router = express.Router();
 
@@ -192,7 +193,10 @@ router.get('/:id/attainment/students/:studentId', async (req, res, next) => {
     const { rooms, window, classRooms } = await roomsFor(cls, req.viewer, req.query);
     const formula = await formulaFor(cls);
     const inputs = await readAttainmentInputs(repo, cls, rooms, { records: true });
-    const report = studentAttainment({ cls, student, rooms, classRooms, window, formula, ...inputs });
+    // Batch 8: their signed-in answers to questions they had practised in the
+    // Learning Hub first, noted on each (services/bankShare.js).
+    const practised = await practisedAnswers(repo, inputs.answers.filter((a) => String(a.rollNo) === String(student.rollNo)));
+    const report = studentAttainment({ cls, student, rooms, classRooms, window, formula, ...inputs, practised });
     const now = new Date();
     // The filename names the class only, never the student.
     if (format === 'html') return sendFile(res, { cls, kind: 'student-report', format, now, body: studentHtml(report, { now }) });

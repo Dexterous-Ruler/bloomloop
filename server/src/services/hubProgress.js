@@ -38,6 +38,7 @@
 
 import { LEVELS, LABEL as LEVEL_LABEL } from '../bloom.js';
 import { forStudent, score } from '../questionTypes.js';
+import { isRoomsOnly } from './bankShare.js';
 import { ownerOf } from '../ownership.js';
 import { rollKey } from './accounts.js';
 import { allAnswers, shownQuestion } from './evidence.js';
@@ -326,10 +327,17 @@ async function keyHeldReader(repo, scope, entries) {
  * scope here.
  */
 async function errorLogOver(repo, { scope, hubAttempts, roomRows, audience = 'student', status = null, topicId = null }) {
-  const entries = buildErrorLog({
+  const built = buildErrorLog({
     hubAttempts: hubAttempts.filter((a) => scope.topics.has(lower(a.topicId))),
     roomAnswers: roomAnswersInScope(roomRows, scope),
   });
+  // Batch 8: a question its owner keeps for rooms only is never shown or
+  // explained to a student in the hub, so its entries leave a student's own log
+  // (and its counts). Staff still read them.
+  const roomsOnly = audience === 'student'
+    ? new Set([...scope.topics.values()].flatMap((t) => t.all.filter(isRoomsOnly).map((q) => lower(q._id))))
+    : new Set();
+  const entries = roomsOnly.size ? built.filter((e) => !roomsOnly.has(lower(e.item))) : built;
   const open = openByTopic(entries);
   const wanted = entries
     .filter((e) => (!status || e.status === status) && (!topicId || lower(e.topicId) === lower(topicId)))

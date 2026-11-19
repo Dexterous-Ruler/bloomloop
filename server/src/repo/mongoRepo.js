@@ -16,6 +16,8 @@ import { TopicLesson, ItemTranslation, LanguageChoice } from '../models/hubLesso
 import { HubRun, HubGoal } from '../models/hubPaths.js';
 // Phase 6: the tutor's hints and feedback (0029).
 import { QuestionHint, OptionFeedback, HintView } from '../models/hubTutor.js';
+// Batch 8: the live room's suggestions and the wheel's question draws (0034).
+import { TeachingMove, WheelQuestionDraw } from '../models/zipGaps.js';
 
 const lean = (d) => (d ? JSON.parse(JSON.stringify(d)) : null);
 
@@ -110,6 +112,9 @@ export function createMongoRepo() {
       await QuestionPack.deleteMany({ sessionId: String(id) });
       // Its replay keys (Phase 7, 0032): receipts, not records, so not archived.
       await RecordWrite.deleteMany({ sessionId: String(id) });
+      // Its suggestions and question draws (Batch 8, 0034), not archived.
+      await TeachingMove.deleteMany({ sessionId: String(id) });
+      await WheelQuestionDraw.deleteMany({ sessionId: String(id) });
       await Answer.deleteMany({ sessionId: id });
       await Profile.deleteMany({ sessionId: id });
       await Session.findByIdAndDelete(id);
@@ -1052,6 +1057,48 @@ export function createMongoRepo() {
         if (err?.code !== 11000) throw err;
         return { write: await this.getRecordWrite(doc), duplicate: true };
       }
+    },
+
+    // ---- Batch 8: figures (0033; see memoryRepo for the contract) ----
+    async createSlideMedia(doc) {
+      const { data, ...meta } = (await Media.create({ ...doc, contentId: String(doc.contentId), slideNo: Number(doc.slideNo) })).toObject();
+      return lean(meta);
+    },
+    async listSlideMedia(contentId) {
+      return lean(await Media.find({ contentId: String(contentId), slideNo: { $ne: null } }).select('-data')
+        .sort({ slideNo: 1, createdAt: 1 }).lean()) ?? [];
+    },
+    async setContentSlidePictures(contentId, summary) {
+      const rec = await Content.findByIdAndUpdate(contentId, { $set: { slidePictures: summary } }, { new: true }).lean().catch(() => null);
+      return rec ? lean(rec.slidePictures) : null;
+    },
+    async getContentSlidePictures(contentId) {
+      const rec = await Content.findById(contentId).select('slidePictures').lean().catch(() => null);
+      return rec?.slidePictures ? lean(rec.slidePictures) : null;
+    },
+
+    // ---- Batch 8: the live room's suggestions and the wheel's question draws (0034; see memoryRepo for the contract) ----
+    async addTeachingMove(doc) {
+      return lean(await TeachingMove.create({ ...doc, sessionId: String(doc.sessionId) }));
+    },
+    async listTeachingMoves(sessionId) {
+      return lean(await TeachingMove.find({ sessionId: String(sessionId) }).sort({ askedAt: 1, _id: 1 }).lean()) ?? [];
+    },
+    async getTeachingMove(id) {
+      return lean(await TeachingMove.findById(String(id ?? '').trim()).lean()
+        .catch((err) => { if (err?.name === 'CastError') return null; throw err; }));
+    },
+    async addWheelQuestionDraw(doc) {
+      return placed('place in the pick\'s questions', () =>
+        WheelQuestionDraw.create({ ...doc, sessionId: String(doc.sessionId), pickId: String(doc.pickId) }));
+    },
+    async listWheelQuestionDraws(sessionId) {
+      return lean(await WheelQuestionDraw.find({ sessionId: String(sessionId) }).sort({ pickId: 1, drawOrder: 1 }).lean()) ?? [];
+    },
+
+    // ---- Batch 8: material, the bank and the hub's concept panel (0035; see memoryRepo for the contract) ----
+    async setQuestionRoomsOnly(id, roomsOnly) {
+      return lean(await Question.findByIdAndUpdate(id, { $set: { roomsOnly: roomsOnly === true } }, { new: true }).lean().catch(() => null));
     },
   };
 }

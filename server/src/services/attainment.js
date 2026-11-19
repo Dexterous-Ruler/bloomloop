@@ -80,6 +80,7 @@ import {
 } from './outcomes.js';
 import { ANSWERED_AGAIN_DETAIL, OVER_CAP_DETAIL, keptNotCounted } from './offline.js';
 import { DEFAULT_PRESET, PRESETS, presetById } from './attainmentPresets.js';
+import { PRACTISED_NOTE } from './bankShare.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -1351,7 +1352,7 @@ function answerNote(a, { chosen, type, config, res, known, knewKey = new Set() }
  */
 export function studentAttainment({
   cls, student, rooms = [], classRooms = rooms, window = {}, formula, answers = [], roster = [student], outcomes = [], links = [],
-  overrides = [], questions = [], chapters = new Map(), records = {}, attendance = new Map(),
+  overrides = [], questions = [], chapters = new Map(), records = {}, attendance = new Map(), practised = new Map(),
 }) {
   const config = formula.config;
   // Theirs by each room's attendance marks, as in the class report (rollResolver).
@@ -1414,6 +1415,9 @@ export function studentAttainment({
           + 'which this room\'s attendance mark for the student was made under.' : ''),
         via: res.via,
         outcomes: res.outcomes.filter((o) => known.has(o.id)).map((o) => ({ id: o.id, code: code.get(o.id), weight: o.weight })),
+        // Batch 8: an answer to a question the student had practised in the hub
+        // first. It counts as usual; the note says so (services/bankShare.js).
+        ...(practised.has(String(a._id)) ? { practisedInHub: true, practisedNote: PRACTISED_NOTE } : {}),
       };
     }),
     answerCounts: t.totals,

@@ -18,7 +18,7 @@
 // for a student.
 
 import { LEVELS } from '../bloom.js';
-import { forStudent } from '../questionTypes.js';
+import { forStudent, toOriginalResponse } from '../questionTypes.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -166,6 +166,10 @@ export function answerItem(answer, room, { name = '' } = {}) {
   return {
     ...view,
     student: { rollNo: answer?.rollNo ?? '', name, accountId: answer?.accountId ?? null },
+    // The idempotency key the row was stored under (Batch 8): the phone's own
+    // answerId, or one the server made, so a console can tie an item a phone's
+    // outbox sent to the row it became. Staff only.
+    answerKey: answer?.answerKey ?? null,
     questionId: answer?.questionId ?? null,
     snapshot: answer?.questionSnapshot ?? {},
     detail: answer?.detail ?? '',
@@ -184,7 +188,33 @@ export function answerItem(answer, room, { name = '' } = {}) {
     // the re-vote after discussion); null for every other answer. The
     // confidence tap is not here: staff see it as counts, never per answer.
     classQuestion: answer?.classQuestionId ? { id: String(answer.classQuestionId), round: Number(answer.round) || null } : null,
+    // Batch 8: a tap or label answer in the parts' own names. The phone sent
+    // tokens that only that student's copy of the figure can read.
+    ...(PART_KINDS.includes(answer?.kind) ? { parts: partsAnswered(answer) } : {}),
   };
+}
+
+/** The kinds a phone answers in per-student tokens (questionTypes.js). */
+const PART_KINDS = ['hotspot', 'label'];
+
+/**
+ * A tap or label answer as a professor reads it: the parts tapped, by name, or
+ * each part with the label put on it. Rebuilt from the snapshot and the seed
+ * the live loop used, as shownQuestion() is; null when the snapshot is too
+ * broken to rebuild.
+ */
+function partsAnswered(answer) {
+  const snap = answer?.questionSnapshot && typeof answer.questionSnapshot === 'object' ? answer.questionSnapshot : {};
+  const questionId = String(snap.id || answer?.questionId || '');
+  const q = { ...snap, _id: questionId, kind: answer.kind };
+  try {
+    const got = toOriginalResponse(q, answer.response, `${answer?.rollNo ?? ''}:${questionId}`);
+    if (answer.kind === 'hotspot') return { tapped: got };
+    const labels = [...q.placements.map((p) => p.label), ...(Array.isArray(q.distractors) ? q.distractors : [])];
+    return { placed: q.placements.map((p, i) => ({ part: p.target, label: got[i] === null ? null : labels[got[i]] })) };
+  } catch {
+    return null;
+  }
 }
 
 /* ---------------------------------------------------------------- topics -- */

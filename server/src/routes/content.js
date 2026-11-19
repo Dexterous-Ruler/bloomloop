@@ -11,6 +11,9 @@ import { extractFromPptx, extractFromText, MAX_TOPICS } from '../services/extrac
 import { isRecordId } from '../ids.js';
 import { assertCanRead, assertCanWrite, readable } from '../ownership.js';
 import { slideTextsFrom, syncTopicsQuietly } from '../services/hubTopics.js';
+import { keepSlidePictures, slidePicturesNote } from '../services/slideImages.js';
+import { config } from '../config.js';
+import { SUPPORT_NOTE, lastUsedOf, levelSupports, topicSources } from '../services/materialInfo.js';
 
 /**
  * Phase 6 (0025, decision H4): each slide's own words, kept for the Learning
@@ -148,12 +151,21 @@ router.post('/', readUpload, async (req, res, next) => {
       // The chapter's topic records for the Learning Hub (Phase 6); a failure
       // is logged and the next write to the chapter tries again.
       await syncTopicsQuietly(repo, content);
+      // Batch 8 (0033): the slides' PNG, JPEG and WebP pictures, kept as the
+      // chapter's uploads with their slide numbers. Never fails the upload.
+      const pictures = await keepSlidePictures(repo, {
+        content, buffer: req.file.buffer, ownerId: req.viewer?.id ?? null, maxBytes: config.media.maxBytes,
+      });
+      // Said only when the deck had pictures at all, so a deck without any is
+      // answered exactly as before.
+      const hadPictures = pictures && pictures.kept + pictures.skippedType + pictures.skippedLarge + pictures.skippedOver > 0;
       res.status(201).json({
         contentId: content._id,
         title: content.title,
         kind: content.kind,
         topics: content.topics,
         slideCount,
+        ...(hadPictures ? { slidePictures: { ...pictures, note: slidePicturesNote(pictures, pictures.kept) } } : {}),
         chars: rawText.length,
         // 'ocr' means the words came out of the pictures, which is worth saying
         // out loud: the teacher should skim those topics harder than parsed ones.
@@ -216,6 +228,8 @@ router.get('/', async (req, res, next) => {
         // deck reads as having no bank, and generating again (which replaces
         // the bank) would throw the drafts away.
         draftCount: await repo.countQuestions(content._id, { status: 'draft' }),
+        // Batch 8 (M5): when it was last used, the newest room opened on it, or null.
+        lastUsed: lastUsedOf(await repo.listSessionsForContent(content._id)),
       })),
     );
     res.json({ contents: rows });
@@ -228,7 +242,14 @@ router.get('/:id', async (req, res, next) => {
   try {
     const content = await lookup('getContent', req.params.id);
     await assertCanRead(req.viewer, content, 'That content');
-    res.json({ content });
+    res.json({
+      content,
+      // ---- Batch 8: where each topic came from (M1), the levels the material
+      // supports for every topic, ticked or not (M2), and when it was last used (M5).
+      topicSources: topicSources(content),
+      levelSupport: { topics: levelSupports(content), note: SUPPORT_NOTE },
+      lastUsed: lastUsedOf(await getRepo().listSessionsForContent(content._id)),
+    });
   } catch (err) {
     next(err);
   }

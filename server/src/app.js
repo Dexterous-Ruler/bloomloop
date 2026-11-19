@@ -42,9 +42,13 @@ import hubLanguageRoutes from './routes/hubLanguages.js';
 import hubPathRoutes from './routes/hubPaths.js';
 // ---- Phase 6: the tutor ----
 import hubTutorRoutes from './routes/hubTutor.js';
+// ---- Batch 8: figures ----
+import { figureRoutes, lessonFigureRoutes } from './routes/figures.js';
 import { importBodyRefused, importRoutes, laptopRoutes, saveRoomsOnClose } from './routes/laptop.js';
 import { laptopOrigin } from './laptop.js';
 import recordSyncRoutes from './routes/recordSync.js';
+// ---- Batch 8: the live room's suggestions ----
+import teachingMoveRoutes from './routes/teachingMoves.js';
 
 /**
  * Any successful write to a question bank drops the live loop's cached copy of
@@ -180,6 +184,13 @@ export function createApp() {
   // /api/session/:code/misconceptions. Staff-only, gated per route for the same
   // reason; the class's own is at /api/classes/:id/misconceptions below.
   app.use('/api/session', misconceptionRoutes);
+  // ---- Batch 8: the live room's suggestions ----
+  // "Suggest a move" and activity prompts written for the chapter (gaps L1 and
+  // C2): /api/session/:code/teaching-moves. On the professor's button only, in
+  // the background, from the room's counts and the chapter's own material
+  // (decisions 1 and 5); kept with what they were built from. Staff-only,
+  // gated per route for the same reason as the routers above.
+  app.use('/api/session', teachingMoveRoutes);
 
   // Teacher-only: class rosters are names and roll numbers, and nothing a phone
   // needs. Whose class is whose is checked inside, by ownership.js.
@@ -249,6 +260,15 @@ export function createApp() {
   // same gate (hubGate), at paths no other hub router answers. Nothing here is
   // read by a room, attainment or the register.
   app.use('/api/hub', hubTutorRoutes);
+
+  // ---- Batch 8: figures ----
+  // The professor's side of the figure engines (routes/figures.js): what they
+  // accept, a preview, a chapter's slide pictures and a printable page, behind
+  // requireTeacher (an HOD reads); and a stepped figure added to a lesson as a
+  // new draft version, behind the hub's gate. A figure reaches a phone only as
+  // a question's stimulus or a lesson step, drawn by the server.
+  app.use('/api/figures', requireTeacher, figureRoutes);
+  app.use('/api/hub', lessonFigureRoutes);
 
   // Mixed, like /api/session: the upload is the teacher's and gated inside;
   // GET /:id is open at the mount, because a phone's <img> carries no
@@ -333,6 +353,12 @@ export function createApp() {
         index: false,
         setHeaders: (res, filePath) => {
           if (filePath.endsWith('index.html')) res.set(noStore);
+          // The phone's service worker (/sw.js, built by client/sw/plugin.js)
+          // keeps its name across builds, so it must never be cached hard: the
+          // browser checks it for a new version on every visit, and a year's
+          // cache would keep a phone on the old worker and its old shell.
+          // no-cache lets it keep a copy but revalidate it each time (Batch 8).
+          else if (path.basename(filePath) === 'sw.js') res.set('Cache-Control', 'no-cache');
           else res.set('Cache-Control', 'public, max-age=31536000, immutable');
         },
       }),

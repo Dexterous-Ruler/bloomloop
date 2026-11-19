@@ -63,6 +63,11 @@ import { studentTopicState } from './hubTutor.js';
 import { CLOSED_SENTENCE, ROOM_HELD_NOTE, closedQuestions } from './hubClosed.js';
 import { attemptOrder } from './hubElo.js';
 import { explanationForStudent } from './hubExplanations.js';
+import { figureWithSteps } from '../figures/index.js';
+// ---- Batch 8: the concept panel, rooms-only questions and serve tokens ----
+import { cleanConcept, conceptOfReply, conceptPrompt, sectionsView } from './hubConcept.js';
+import { isRoomsOnly } from './bankShare.js';
+import { serveToken } from './serveTokens.js';
 
 /** One chunk: at most this many characters, and this many slides. */
 export const MAX_CHUNK_CHARS = 900;
@@ -290,10 +295,13 @@ export function buildLessonPrompt({ topic, chapterTitle = '', chunks, avoid = []
       + '"remember", and either "kind": "mcq" (a question, exactly 4 distinct "options" of similar length, and "answerIdx" 0 to 3 '
       + 'of the one right option) or "kind": "truefalse" (a statement, not a question, and "answerBool"). Wrong options are real '
       + 'ideas from the part that a student who half-understands would pick. Never "all of the above" or "none of the above".',
+    // Batch 8: the concept panel's sections (services/hubConcept.js), cited part by part.
+    conceptPrompt(),
     'Write plain, exam-ready English. Write mathematics in TeX between $ signs, such as $x^2$. No markdown, no headings, no commentary.',
     avoid.length ? `Do not repeat these questions already in the bank: ${avoid.slice(0, 12).map((t) => `"${collapse(t).slice(0, 160)}"`).join('; ')}.` : '',
     'Reply with JSON only: {"parts": [{"part": "C1", "example": {"problem": "...", "steps": ["..."], "answer": "..."}, '
-      + '"questions": [{"kind": "mcq", "bloom": "remember", "text": "...", "options": ["...", "...", "...", "..."], "answerIdx": 0}]}]}.',
+      + '"questions": [{"kind": "mcq", "bloom": "remember", "text": "...", "options": ["...", "...", "...", "..."], "answerIdx": 0}]}], '
+      + '"concept": {"intro": {"text": "...", "parts": ["C1"]}, "facts": [], "steps": [], "mistakes": []}}.',
     '',
     'PARTS',
     ...chunks.map((c) => `${c.label}${citeSlides(c.slides) ? ` (${citeSlides(c.slides)})` : ''}:\n"""\n${c.text}\n"""`),
@@ -335,6 +343,32 @@ const LESSON_SCHEMA = {
           },
         },
         required: ['part', 'example', 'questions'],
+      },
+    },
+    // Batch 8: the concept panel's sections, optional (services/hubConcept.js).
+    concept: {
+      type: Type.OBJECT,
+      properties: {
+        intro: { type: Type.OBJECT, properties: { text: { type: Type.STRING }, parts: { type: Type.ARRAY, items: { type: Type.STRING } } } },
+        facts: {
+          type: Type.ARRAY,
+          items: { type: Type.OBJECT, properties: { kind: { type: Type.STRING }, text: { type: Type.STRING }, parts: { type: Type.ARRAY, items: { type: Type.STRING } } } },
+        },
+        steps: {
+          type: Type.ARRAY,
+          items: { type: Type.OBJECT, properties: { term: { type: Type.STRING }, text: { type: Type.STRING }, parts: { type: Type.ARRAY, items: { type: Type.STRING } } } },
+        },
+        example: {
+          type: Type.OBJECT,
+          properties: {
+            language: { type: Type.STRING }, body: { type: Type.STRING }, caption: { type: Type.STRING },
+            parts: { type: Type.ARRAY, items: { type: Type.STRING } },
+          },
+        },
+        mistakes: {
+          type: Type.ARRAY,
+          items: { type: Type.OBJECT, properties: { text: { type: Type.STRING }, parts: { type: Type.ARRAY, items: { type: Type.STRING } } } },
+        },
       },
     },
   },
@@ -450,7 +484,7 @@ export async function topicQuestions(repo, content, topic) {
  */
 export function retrievalPool(questions = []) {
   return questions
-    .filter((q) => q.status === 'active' && !isUngraded(q.kind ?? 'mcq') && (q.kind ?? 'mcq') !== 'open')
+    .filter((q) => q.status === 'active' && !isUngraded(q.kind ?? 'mcq') && (q.kind ?? 'mcq') !== 'open' && !isRoomsOnly(q))
     .sort((a, b) => levelOrder(a) - levelOrder(b) || String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')));
 }
 
@@ -515,15 +549,21 @@ export async function writeLessonDraft(repo, { content, topic, viewer = null, ca
 
   let model = null;
   let parsed = null;
+  let sections = null;
   if (callModel || hasGemini()) {
     try {
       const prompt = buildLessonPrompt({ topic: topic.name, chapterTitle: content.title, chunks: src.chunks, avoid: mine.map((q) => q.text) });
       const text = await (callModel ?? geminiCall)(prompt, { timeoutMs: CALL_TIMEOUT_MS });
       const reply = parseLessonReply(text, { chunks: src.chunks, topic: topic.name, avoid: mine.map((q) => q.text) });
+      // Batch 8: the concept panel's sections from the same reply, each piece
+      // cited to the parts it came from or left out (services/hubConcept.js).
+      const concept = cleanConcept(conceptOfReply(text), src.chunks);
       const usable = [...reply.parts.values()].some((p) => p.example || p.questions.length);
       if (usable) {
         parsed = reply;
+        sections = concept.sections;
         model = callModel ? 'stand-in' : config.gemini.model;
+        for (const why of concept.skipped.slice(0, 8)) warnings.push(`${why}.`);
       } else {
         warnings.push('The model wrote nothing usable for this topic, so a slides-only lesson was made instead.');
       }
@@ -571,6 +611,8 @@ export async function writeLessonDraft(repo, { content, topic, viewer = null, ca
     basis: src.basis,
     warnings,
     createdBy: viewer?.id ?? null,
+    // Batch 8: only an AI-written lesson has them; a slides-only one says why not.
+    ...(sections ? { sections } : {}),
   });
   return { lesson, drafted, warnings };
 }
@@ -611,10 +653,11 @@ export function lessonQuestion(lesson, questionId, bank) {
   for (const id of lessonQuestionIds(lesson)) {
     if (String(id).toLowerCase() === want) {
       const q = bank.find((x) => String(x._id).toLowerCase() === want) ?? null;
-      return wasApproved(q) ? q : null;
+      // Batch 8: a question kept for rooms only is never one a lesson asks.
+      return wasApproved(q) && !isRoomsOnly(q) ? q : null;
     }
     const served = servedFor(id, bank);
-    if (served && String(served._id).toLowerCase() === want) return served;
+    if (served && !isRoomsOnly(served) && String(served._id).toLowerCase() === want) return served;
   }
   return null;
 }
@@ -711,6 +754,11 @@ export async function staffLessonView(repo, lesson, { bank = null } = {}) {
   const tally = { listed: 0, approved: 0, waiting: 0, gone: 0 };
   const steps = await Promise.all((lesson.steps ?? []).map(async (s, index) => {
     const cite = citeSlides(s.slides);
+    // Batch 8 (gap H9c): a chunk carrying a figure is shown as a figure step,
+    // drawn with every step, with its spec for the professor's editor.
+    if (s.type === 'chunk' && s.figure) {
+      return { index, type: 'figure', slides: s.slides ?? [], cite, text: s.text ?? '', html: await html(s.text ?? ''), spec: s.figure, figure: figureWithSteps(s.figure) };
+    }
     if (s.type === 'chunk') return { index, type: 'chunk', slides: s.slides ?? [], cite, text: s.text, html: await html(s.text) };
     if (s.type === 'example') {
       return {
@@ -752,6 +800,8 @@ export async function staffLessonView(repo, lesson, { bank = null } = {}) {
           status: q.status,
           provenance: questionProvenance(q),
           ...(served && !sameId(served._id, q._id) ? { servedAs: String(served._id), note: 'Replaced in the bank; students see its replacement.' } : {}),
+          // Batch 8: kept for rooms only, so a student never sees it in this lesson.
+          ...(isRoomsOnly(served ?? q) ? { roomsOnly: true, note: 'Kept for rooms only, so students do not see it in this lesson.' } : {}),
         };
       })),
     };
@@ -773,6 +823,9 @@ export async function staffLessonView(repo, lesson, { bank = null } = {}) {
     basis: lesson.basis ?? {},
     warnings: lesson.warnings ?? [],
     steps,
+    // Batch 8: the concept panel's sections, each cited, an AI draft while the
+    // lesson is, and its Visual: the lesson's stepped figures, by step.
+    sections: await sectionsView(lesson, { audience: 'staff', viewSteps: steps }),
     questions: { ...tally, note: waitingNote },
     createdAt: lesson.createdAt ?? null,
     createdBy: lesson.createdBy ?? null,
@@ -807,7 +860,8 @@ export async function studentLessonView(repo, { lesson, account, language = ORIG
     if (s.type !== 'questions') continue;
     for (const id of s.questionIds ?? []) {
       const q = servedFor(id, bank);
-      if (q) served.set(String(id), q);
+      // Batch 8: a question kept for rooms only is never shown in a lesson.
+      if (q && !isRoomsOnly(q)) served.set(String(id), q);
     }
   }
   const questionTranslations = await servableTranslations(repo, { kind: 'question', items: [...new Set(served.values())], language });
@@ -828,7 +882,14 @@ export async function studentLessonView(repo, { lesson, account, language = ORIG
   const steps = [];
   for (const [i, s] of (lesson.steps ?? []).entries()) {
     const cite = citeSlides(s.slides);
-    if (s.type === 'chunk') {
+    if (s.type === 'chunk' && s.figure) {
+      // Batch 8 (gap H9c): the figure with every step drawn, so the student
+      // steps through it on the phone, offline too, and the text beside it
+      // (translated like any chunk). Never the spec. The figure's own labels
+      // are shown as written: they are not translated yet.
+      const text = pick(`steps.${i}.text`, s.text ?? '');
+      steps.push({ type: 'figure', cite, text, html: await html(text), figure: figureWithSteps(s.figure) });
+    } else if (s.type === 'chunk') {
       const text = pick(`steps.${i}.text`, s.text);
       steps.push({ type: 'chunk', cite, text, html: await html(text) });
     } else if (s.type === 'example') {
@@ -869,6 +930,8 @@ export async function studentLessonView(repo, { lesson, account, language = ORIG
           ...(why ? { closed: { reason: why, note: CLOSED_SENTENCE[why] } } : {}),
           // Never a key before an attempt: null until the student has answered it here.
           lastAnswer: last ? await lastAnswerView(repo, { account, attempt: last, closedWhy: why, language }) : null,
+          // Batch 8: sent back with the answer, the proof the lesson served it to this student.
+          ...(account?.role === 'student' ? { serveToken: serveToken({ accountId: account.id, questionId: q._id, mode: 'lesson' }) } : {}),
         });
       }
       if (questions.length) steps.push({ type: 'questions', cite, questions });
@@ -881,6 +944,9 @@ export async function studentLessonView(repo, { lesson, account, language = ORIG
     label: STUDENT_LABEL[lesson.source] ?? STUDENT_LABEL.slides,
     language: shown,
     steps,
+    // Batch 8: the concept panel (introduction, facts, explanation, code example,
+    // common mistakes), in the language shown where the approved translation has it.
+    sections: await sectionsView(lesson, { fields: f, audience: 'student', viewSteps: steps }),
     answering: attemptStoreConnected(),
   };
 }

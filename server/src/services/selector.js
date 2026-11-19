@@ -32,10 +32,15 @@ function fallbackOrder(preferred) {
 }
 
 /**
+ * `avoid` (Batch 8, services/bankShare.js): ids (lower case) of questions this
+ * signed-in student already practised in the Learning Hub. At the level chosen,
+ * one of them is served only when no other question of that level is left, so
+ * the level the ladder chose never changes because of it.
+ *
  * @returns {{question: object, level: string, reason: string}|null}
  *          null means the bank is exhausted for this student.
  */
-export function selectNext(profile, questions, { rng = Math.random } = {}) {
+export function selectNext(profile, questions, { rng = Math.random, avoid = null } = {}) {
   const active = questions.filter((q) => (q.status ?? 'active') === 'active');
   const pool = unseen(active, profile);
   if (pool.length === 0) return null;
@@ -74,8 +79,10 @@ export function selectNext(profile, questions, { rng = Math.random } = {}) {
       // tier. This ceiling is the feature, not a nicety.
       if (slow && !['remember', 'understand'].includes(level)) continue;
 
-      const candidates = pool.filter((q) => q.bloom === level);
-      if (candidates.length === 0) continue;
+      const atLevel = pool.filter((q) => q.bloom === level);
+      if (atLevel.length === 0) continue;
+      const fresh = avoid?.size ? atLevel.filter((q) => !avoid.has(String(q._id ?? q.id).toLowerCase())) : atLevel;
+      const candidates = fresh.length ? fresh : atLevel;
 
       const question = candidates[Math.floor(rng() * candidates.length)];
       return { question, level, reason: explain(profile, level, slow, tier.strict) };

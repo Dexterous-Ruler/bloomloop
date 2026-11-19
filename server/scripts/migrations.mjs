@@ -136,7 +136,7 @@ async function rowCounts(db) {
   for (const table of ['contents', 'questions', 'sessions', 'profiles', 'accounts', 'invites', 'answers', 'room_archives',
     'answer_reviews', 'media', 'classes', 'class_students', 'attendance', ...RECORD_TABLES, 'projector_links',
     ...OUTCOME_TABLES, 'class_questions', ...HUB_TABLES, ...LESSON_TABLES, ...PATH_TABLES,
-    ...TUTOR_TABLES, 'question_packs', 'room_imports', 'record_writes']) {
+    ...TUTOR_TABLES, 'question_packs', 'room_imports', 'record_writes', ...ZIP_TABLES]) {
     const exists = await db.query(`select to_regclass('public.${table}') is not null as ok`);
     if (!exists.rows[0].ok) continue;
     out[table] = Number((await db.query(`select count(*)::int as n from public.${table}`)).rows[0].n);
@@ -148,10 +148,14 @@ async function rowCounts(db) {
 // and server/src/routes/auth.js read or write. A column added there without a
 // migration should be added here too, and this check then says so.
 const COLUMNS_THE_SERVER_USES = {
-  contents: ['id', 'title', 'kind', 'raw_text', 'topics', 'owner_id', 'created_at', 'topic_slides', 'slide_texts'],
+  contents: ['id', 'title', 'kind', 'raw_text', 'topics', 'owner_id', 'created_at', 'topic_slides', 'slide_texts',
+    // Batch 8, what a deck upload kept of its pictures (0033).
+    'slide_pictures'],
   questions: ['id', 'content_id', 'topic', 'text', 'kind', 'options', 'answer_idx', 'bloom', 'status',
     'source', 'payload', 'created_at', 'model', 'source_ref', 'checks', 'created_by', 'approved_by', 'approved_at',
-    'replaces_id', 'misconceptions'],
+    'replaces_id', 'misconceptions',
+    // Batch 8, a question kept for rooms only (0035).
+    'rooms_only'],
   sessions: ['id', 'code', 'content_id', 'title', 'status', 'owner_id', 'started_at', 'closed_at', 'paused_at',
     'mastery_goal', 'reattempts', 'redemption', 'question_ids', 'class_id', 'mode', 'adapt', 'start_level',
     'questions_per_student', 'time_per_question'],
@@ -171,7 +175,9 @@ const COLUMNS_THE_SERVER_USES = {
   room_archives: ['id', 'session_id', 'code', 'title', 'owner_id', 'archived_by', 'archived_at', 'bytes', 'data'],
   answer_reviews: ['id', 'answer_id', 'session_id', 'decision', 'correct', 'score', 'note', 'reviewed_by',
     'reviewed_at'],
-  media: ['id', 'owner_id', 'content_id', 'mime', 'bytes', 'sha256', 'data', 'alt', 'created_at'],
+  media: ['id', 'owner_id', 'content_id', 'mime', 'bytes', 'sha256', 'data', 'alt', 'created_at',
+    // Batch 8, the slide a deck's picture was kept from (0033).
+    'slide_no'],
   classes: ['id', 'owner_id', 'course_name', 'section', 'term_label', 'created_at', 'updated_at'],
   class_students: ['id', 'class_id', 'roll_no', 'name', 'added_at', 'removed_at', 'under_18'],
   attendance: ['id', 'session_id', 'class_student_id', 'status', 'source', 'marked_at', 'marked_by', 'roll_no'],
@@ -183,7 +189,9 @@ const COLUMNS_THE_SERVER_USES = {
   hand_tallies: ['id', 'session_id', 'seq', 'question_id', 'question_text', 'option_labels', 'counts', 'revealed',
     'correct_option', 'created_at', 'created_by', 'updated_at'],
   room_activities: ['id', 'session_id', 'seq', 'kind', 'outcome', 'groups', 'tally_id', 'created_at', 'created_by',
-    'updated_at'],
+    'updated_at',
+    // Batch 8, the suggestion "Use it" recorded (0034).
+    'suggestion_id'],
   insight_actions: ['id', 'session_id', 'flag_id', 'action', 'note', 'acted_by', 'acted_at'],
   projector_links: ['id', 'session_id', 'token_hash', 'created_at', 'created_by', 'revoked_at', 'revoked_by'],
   course_outcomes: ['id', 'class_id', 'code', 'statement', 'target_level', 'position', 'created_at', 'updated_at',
@@ -209,7 +217,9 @@ const COLUMNS_THE_SERVER_USES = {
     'updated_at', 'approved_by', 'approved_at'],
   // Phase 6, lessons and languages (0027).
   topic_lessons: ['id', 'topic_id', 'content_id', 'owner_id', 'version', 'status', 'source', 'model', 'steps', 'basis', 'warnings',
-    'created_at', 'created_by', 'approved_at', 'approved_by', 'retired_at', 'retired_by'],
+    'created_at', 'created_by', 'approved_at', 'approved_by', 'retired_at', 'retired_by',
+    // Batch 8, an AI lesson's concept sections (0035).
+    'sections'],
   item_translations: ['id', 'item_kind', 'item_id', 'content_id', 'owner_id', 'language', 'fields', 'source_fields', 'source_hash',
     'status', 'provenance', 'model', 'checks', 'created_at', 'created_by', 'updated_at', 'edited_by', 'approved_at', 'approved_by',
     'retired_at', 'retired_by'],
@@ -229,7 +239,14 @@ const COLUMNS_THE_SERVER_USES = {
   room_imports: ['id', 'source_room_id', 'source_code', 'source', 'session_id', 'owner_id', 'imported_by', 'imported_at',
     'archived_at', 'bytes', 'sha256', 'summary', 'data'],
   record_writes: ['id', 'session_id', 'writer', 'write_key', 'route', 'target', 'body_hash', 'status', 'reply', 'created_at'],
+  // Batch 8, the live room's suggestions and the wheel's question draws (0034).
+  teaching_moves: ['id', 'session_id', 'purpose', 'activity_kind', 'title', 'body', 'focus_level', 'topic', 'basis', 'source_ref',
+    'model', 'asked_by', 'asked_at'],
+  wheel_question_draws: ['id', 'session_id', 'pick_id', 'draw_order', 'question_id', 'pool_size', 'drawn_at', 'drawn_by'],
 };
+
+// Batch 8: the live room's suggestions and the wheel's question draws (0034).
+const ZIP_TABLES = ['teaching_moves', 'wheel_question_draws'];
 
 // The hub's content backbone (0025), and its practice evidence and explanations (0026).
 const HUB_TABLES = ['class_units', 'class_chapters', 'chapter_topics', 'topic_links', 'hub_attempts', 'question_explanations'];
@@ -1287,8 +1304,9 @@ section('teacher records (0017)');
   }
 
   const idx = await db.query(`select count(*)::int as n from pg_indexes where schemaname = 'public' and tablename = any($1)`, [RECORD_TABLES]);
-  // 6 primary keys, 4 unique places, and 15 for rooms, students, days, questions and markers.
-  check('the record tables carry their indexes (unique places, rooms, students, days, markers)', idx.rows[0].n === 25, `${idx.rows[0].n} indexes`);
+  // 6 primary keys, 4 unique places, and 15 for rooms, students, days, questions and markers;
+  // and 0034's one for the suggestion an activity came from.
+  check('the record tables carry their indexes (unique places, rooms, students, days, markers)', idx.rows[0].n === 26, `${idx.rows[0].n} indexes`);
 }
 
 section('room modes, the waiting room and projector links (0018)');
@@ -2683,6 +2701,238 @@ const kept32 = {};
   // Left in place: the re-run below runs over them.
 }
 
+section('figures: slide pictures, and a figure in a lesson (0033)');
+
+// Kept by the re-run section below, which checks they survive it.
+const kept33 = {};
+{
+  const KEPT = { code: '23514' };
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  const sha = (await import('node:crypto')).createHash('sha256').update(png).digest('hex');
+  // The insert createSlideMedia() sends.
+  const slideMedia = (m = {}) => db.query(
+    `insert into public.media (owner_id, content_id, mime, bytes, sha256, data, alt, slide_no)
+     values ($1, $2, 'image/png', $3, $4, $5::text::bytea, $6, $7) returning id, slide_no, alt`,
+    [PROF, content?.id, png.length, sha, `\\x${png.toString('hex')}`, given(m, 'alt', 'Picture from slide 3 (not yet described)'), given(m, 'slideNo', 3)]);
+  const [pic] = (await accepts('a picture kept from slide 3, as createSlideMedia writes it', () => slideMedia())) ?? [];
+  check('it reads back with its slide', pic?.slide_no === 3, JSON.stringify(pic));
+  await accepts('an upload of its own, with no slide', () => slideMedia({ slideNo: null, alt: 'An own upload' }));
+  await rejects('a slide numbered below 1', () => slideMedia({ slideNo: 0 }), { ...KEPT, match: /media_slide_no_check/ });
+  const listed = await db.query(`select slide_no from public.media where content_id = $1 and slide_no is not null order by slide_no`, [content?.id]);
+  check('a chapter\'s slide pictures are listed by slide, as listSlideMedia reads them', listed.rows.length >= 1 && listed.rows.every((r) => r.slide_no >= 1));
+
+  // What the upload kept, as setContentSlidePictures writes it.
+  await accepts('what a deck upload kept of its pictures', () => db.query(
+    `update public.contents set slide_pictures = $2 where id = $1`,
+    [content?.id, JSON.stringify({ kept: 1, skippedType: 2, skippedLarge: 0, skippedOver: 0, slides: [3] })]));
+  await rejects('a summary that is not an object', () => db.query(
+    `update public.contents set slide_pictures = '[1, 2]' where id = $1`, [content?.id]), { ...KEPT, match: /contents_slide_pictures_check/ });
+
+  // A lesson version with a figure, as the lesson figure route writes it: a chunk carrying it (0027 already allows that).
+  const STEPS = [
+    { type: 'chunk', slides: [1], text: 'A function that calls itself' },
+    { type: 'chunk', slides: [], text: 'The call stack', figure: { type: 'stack', frames: [{ id: 'main', label: 'main' }] } },
+  ];
+  // A topic of its own, so the lessons 0027's checks count are left as they are.
+  const [topic33] = (await db.query(
+    `insert into public.chapter_topics (content_id, name, key, position) values ($1, 'Recursion', 'recursion-0033', 33) returning id`, [content?.id])).rows;
+  const [lesson] = (await accepts('a lesson with a figure on a chunk step, as the lesson figure route writes it', () => db.query(
+    `insert into public.topic_lessons (topic_id, content_id, owner_id, version, status, source, model, steps, basis, warnings, created_by)
+     values ($1, $2, $3, 1, 'draft', 'slides', null, $4, '{}', '[]', $3) returning *`,
+    [topic33?.id, content?.id, PROF, JSON.stringify(STEPS)]))) ?? [];
+  check('it reads back with its figure, a chunk step 0027 already allows', lesson?.steps?.[1]?.type === 'chunk' && lesson.steps[1].figure?.type === 'stack');
+  await rejects('a step of any other type is still refused', () => db.query(
+    `insert into public.topic_lessons (topic_id, content_id, owner_id, version, status, source, model, steps, basis, warnings, created_by)
+     values ($1, $2, $3, 2, 'draft', 'slides', null, '[{"type": "video"}]', '{}', '[]', $3)`,
+    [topic33?.id, content?.id, PROF]), { ...KEPT, match: /topic_lessons_steps_check/ });
+  kept33.media = pic?.id;
+  kept33.lesson = lesson?.id;
+  kept33.content = content?.id;
+  // Left in place: the re-run below runs over them.
+}
+
+section('the live room\'s suggestions, the wheel\'s question draws and verbal asks (0034)');
+
+// Kept by the re-run section below, which checks they survive it.
+const kept34 = {};
+{
+  const KEPT = { code: '23001' };
+  const openRoom = (code) => db.query(
+    `insert into public.sessions (code, content_id, owner_id) values ($1, $2, $3) returning *`, [code, content?.id, PROF]);
+  const [room] = (await openRoom('ZG0001')).rows;
+  const [other] = (await openRoom('ZG0002')).rows;
+  const [question] = (await db.query(
+    `insert into public.questions (content_id, text, options, answer_idx, bloom)
+     values ($1, 'Which traversal visits the root last?', '["Inorder","Preorder","Postorder","Level-order"]', 2, 'understand')
+     returning *`, [content?.id])).rows;
+  await db.query('insert into public.wheel_rounds (session_id, round) values ($1, 1), ($2, 1)', [room.id, other.id]);
+
+  // -- the wheel: the insert addWheelPick() sends, now with a verbal ask.
+  const pick = (p = {}) => db.query(
+    `insert into public.wheel_picks (session_id, round, pick_order, roll_no, pool_size, present_only, no_repeat, ask, question_id, picked_by)
+     values ($1, 1, $2, $3, 4, true, true, $4, $5, $6) returning *`,
+    [given(p, 'sessionId', room.id), given(p, 'order', 1), given(p, 'rollNo', '01'), given(p, 'ask', 'bank'),
+      given(p, 'questionId', null), PROF]);
+  const [verbal] = (await accepts('a pick asked a verbal question, as addWheelPick writes it', () => pick({ ask: 'verbal' }))) ?? [];
+  await rejects('a verbal ask naming a bank question', () => pick({ order: 2, ask: 'verbal', questionId: question.id }),
+    { code: '23514', match: /wheel_picks_ask_check/ });
+  await rejects('an ask outside the four', () => pick({ order: 2, ask: 'sing' }), { code: '23514', match: /wheel_picks_ask_check/ });
+  const [banked] = (await accepts('a bank pick with the question the server drew', () =>
+    pick({ order: 2, rollNo: '02', questionId: question.id }))) ?? [];
+  const [elsewhere] = (await pick({ sessionId: other.id, order: 1 })).rows;
+
+  // -- question draws: the insert addWheelQuestionDraw() sends. Append-only.
+  const draw = (d = {}) => db.query(
+    `insert into public.wheel_question_draws (session_id, pick_id, draw_order, question_id, pool_size, drawn_by)
+     values ($1, $2, $3, $4, $5, $6) returning *`,
+    [given(d, 'sessionId', room.id), given(d, 'pickId', banked?.id), given(d, 'order', 1), given(d, 'questionId', question.id),
+      given(d, 'pool', 5), PROF]);
+  const [first] = (await accepts('the question drawn with the pick', () => draw())) ?? [];
+  check('it reads back with its pool and time', first?.pool_size === 5 && first?.drawn_at instanceof Date && first?.drawn_by === PROF);
+  await accepts('"Another": the next draw for the same pick', () => draw({ order: 2, pool: 4 }));
+  await rejects('a second draw in the same place', () => draw({ order: 2 }), { code: '23505', match: /wheel_question_draws_pick_order_key/ });
+  await rejects('a draw in place 0', () => draw({ order: 0 }), { code: '23514', match: /wheel_question_draws_order_check/ });
+  await rejects('a draw from no questions at all', () => draw({ order: 3, pool: 0 }), { code: '23514', match: /wheel_question_draws_order_check/ });
+  await rejects('a draw filed under another room than its pick\'s', () => draw({ order: 3, sessionId: other.id }), { code: '23503' });
+  await rejects('a draw for a pick that does not exist', () => draw({ order: 3, pickId: randomUUID() }), { code: '23503' });
+  await accepts('another room\'s pick draws in its own room', () => draw({ sessionId: other.id, pickId: elsewhere.id }));
+  await rejects('a draw is never edited', () =>
+    db.query('update public.wheel_question_draws set question_id = null where id = $1', [first?.id]), KEPT);
+  await rejects('nor deleted on its own', () => db.query('delete from public.wheel_question_draws where id = $1', [first?.id]), KEPT);
+  await accepts('"Another" moves the pick on to its next question (the pick\'s own guard allows it)', () =>
+    db.query('update public.wheel_picks set question_id = $1 where id = $2', [question.id, banked?.id]));
+
+  // -- teaching moves: the insert addTeachingMove() sends. Append-only.
+  const BASIS = { present: 30, graded: 24, notAnswered: 4, support: { count: 6, banded: 22 },
+    levels: [{ level: 'apply', working: 14, answers: 40, correct: 15 }] };
+  const move = (m = {}) => db.query(
+    `insert into public.teaching_moves (session_id, purpose, activity_kind, title, body, focus_level, topic, basis, source_ref, model, asked_by)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning *`,
+    [given(m, 'sessionId', room.id), given(m, 'purpose', 'move'), given(m, 'kind', 'group'), given(m, 'title', 'Benches trace it'),
+      given(m, 'body', 'Benches of four write the postorder sequence of the tree on slide 6 on paper.'), given(m, 'level', 'apply'),
+      given(m, 'topic', 'Tree traversals'), JSON.stringify(given(m, 'basis', BASIS)),
+      // null as SQL null, as the client library sends a missing reference.
+      ((ref) => (ref === null ? null : JSON.stringify(ref)))(given(m, 'sourceRef', { kind: 'slides', slides: [6] })),
+      given(m, 'model', 'gemini-test'), PROF]);
+  const [suggested] = (await accepts('a suggested move with the figures it rests on', () => move())) ?? [];
+  check('it reads back with its basis and the slide it cites', suggested?.basis?.support?.count === 6
+    && JSON.stringify(suggested?.source_ref?.slides) === '[6]' && suggested?.asked_at instanceof Date, JSON.stringify(suggested));
+  await accepts('a prompt for one activity kind, asked before any answer: no level', () =>
+    move({ purpose: 'prompt', kind: 'real', level: null, sourceRef: null }));
+  await rejects('a move aimed at no level', () => move({ level: null }), { code: '23514', match: /teaching_moves_move_level_check/ });
+  await rejects('a purpose outside the two', () => move({ purpose: 'tip' }), { code: '23514', match: /teaching_moves_purpose_check/ });
+  await rejects('an activity kind outside the five', () => move({ kind: 'quiz' }), { code: '23514', match: /teaching_moves_kind_check/ });
+  await rejects('a level outside the six', () => move({ level: 'analyze' }), { code: '23514', match: /teaching_moves_level_check/ });
+  await rejects('an empty suggestion', () => move({ body: '' }), { code: '23514', match: /teaching_moves_text_check/ });
+  await rejects('a suggestion over 600 characters', () => move({ body: 'b'.repeat(601) }), { code: '23514', match: /teaching_moves_text_check/ });
+  await rejects('a title over 80 characters', () => move({ title: 't'.repeat(81) }), { code: '23514', match: /teaching_moves_text_check/ });
+  await rejects('a basis that is not an object', () => move({ basis: [1, 2] }), { code: '23514', match: /teaching_moves_basis_check/ });
+  await rejects('no model named', () => move({ model: '' }), { code: '23514', match: /teaching_moves_model_check/ });
+  await rejects('a room that does not exist', () => move({ sessionId: randomUUID() }), { code: '23503' });
+  await rejects('a suggestion is never edited', () =>
+    db.query(`update public.teaching_moves set body = 'changed' where id = $1`, [suggested?.id]), KEPT);
+  await rejects('nor deleted on its own', () => db.query('delete from public.teaching_moves where id = $1', [suggested?.id]), KEPT);
+
+  // -- "Use it": the insert addActivity() sends with a suggestion.
+  const act = (a = {}) => db.query(
+    `insert into public.room_activities (session_id, seq, kind, outcome, suggestion_id) values ($1, $2, $3, $4, $5) returning *`,
+    [given(a, 'sessionId', room.id), given(a, 'seq', 1), given(a, 'kind', 'group'), given(a, 'outcome', ''),
+      given(a, 'suggestionId', suggested?.id)]);
+  const [used] = (await accepts('"Use it": an activity that points at its suggestion', () => act())) ?? [];
+  await rejects('an activity pointing at another room\'s suggestion', () => act({ sessionId: other.id }),
+    { code: '23503', match: /room_activities_suggestion_fkey/ });
+  await rejects('an activity pointing at a suggestion that does not exist', () => act({ seq: 2, suggestionId: randomUUID() }),
+    { code: '23503', match: /room_activities_suggestion_fkey/ });
+  await accepts('an activity with no suggestion, as before', () => act({ seq: 2, suggestionId: null }));
+  await rejects('the suggestion an activity came from is never changed', () =>
+    db.query('update public.room_activities set suggestion_id = null where id = $1', [used?.id]), KEPT);
+  await accepts('its outcome is still filled in afterwards', () =>
+    db.query(`update public.room_activities set outcome = 'Most benches got it', updated_at = now() where id = $1`, [used?.id]));
+
+  {
+    // Deleting the room takes its suggestions, draws and activities with it.
+    const [gone] = (await openRoom('ZG0003')).rows;
+    await db.query('insert into public.wheel_rounds (session_id, round) values ($1, 1)', [gone.id]);
+    const [p] = (await pick({ sessionId: gone.id, questionId: question.id })).rows;
+    await draw({ sessionId: gone.id, pickId: p.id });
+    const [m] = (await move({ sessionId: gone.id })).rows;
+    await act({ sessionId: gone.id, suggestionId: m.id });
+    await accepts('deleting a room with suggestions, draws and an activity that used one', () =>
+      db.query('delete from public.sessions where id = $1', [gone.id]));
+    const left = await db.query(`
+      select (select count(*)::int from public.teaching_moves where session_id = $1)
+           + (select count(*)::int from public.wheel_question_draws where session_id = $1)
+           + (select count(*)::int from public.room_activities where session_id = $1) as n`, [gone.id]);
+    check('they go with it', left.rows[0].n === 0);
+  }
+  Object.assign(kept34, { room: room.id, verbal: verbal?.id, banked: banked?.id, move: suggested?.id, activity: used?.id });
+  // Left in place: the re-run below runs over them.
+}
+
+// ---- Batch 8: material, the bank and the hub's concept panel (0035) ----
+section('rooms-only questions, a lesson\'s concept sections and a Get Ready check ended early (0035)');
+
+// Kept by the re-run section below, which checks they survive it.
+const kept35 = {};
+{
+  const KEPT = { code: '23514' };
+  // A question saved the ordinary way: shared with the hub.
+  const [q] = (await accepts('a question saved as insertQuestions writes it, naming no rooms_only', () => db.query(
+    `insert into public.questions (content_id, topic, text, options, answer_idx, bloom, status, source, payload)
+     values ($1, 'Sets', 'Kept for rooms?', '["a","b","c","d"]', 0, 'remember', 'active', 'teacher', '{}') returning *`, [content?.id]))) ?? [];
+  check('it is shared with the hub by default (rooms_only false)', q?.rooms_only === false, JSON.stringify(q?.rooms_only));
+  const [kept] = (await accepts('the owner keeps it for rooms (setQuestionRoomsOnly)', () => db.query(
+    'update public.questions set rooms_only = true where id = $1 returning rooms_only', [q?.id]))) ?? [];
+  check('and it reads back kept for rooms', kept?.rooms_only === true);
+  await rejects('rooms_only cannot be null', () => db.query('update public.questions set rooms_only = null where id = $1', [q?.id]), { code: '23502' });
+
+  // Lessons with sections, as createTopicLesson writes them now.
+  const SECTIONS = {
+    intro: { text: 'Sets collect distinct objects.', parts: ['C1'], slides: [1] },
+    facts: [{ kind: 'why', label: 'Why it matters', text: 'Everything else builds on them.', parts: ['C1'], slides: [1] }],
+    steps: [], example: null, mistakes: [],
+  };
+  // A topic of its own, so the lessons of 0027's section are left as they are.
+  const [topic35] = (await db.query(
+    `insert into public.chapter_topics (content_id, name, key, position) values ($1, 'Bank35', 'bank35', 35) returning id`, [content?.id])).rows;
+  const lesson = (cols = {}) => db.query(
+    `insert into public.topic_lessons (topic_id, content_id, owner_id, version, status, source, model, steps, sections, created_by)
+     values ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $3) returning *`,
+    [topic35?.id, content?.id, PROF, cols.version ?? 35, cols.source ?? 'llm', 'model' in cols ? cols.model : 'gemini-2.5-flash',
+      JSON.stringify([{ type: 'chunk', slides: [1], text: 'Sets are collections' }]),
+      'sections' in cols ? (cols.sections === null ? null : JSON.stringify(cols.sections)) : JSON.stringify(SECTIONS)]);
+  const [l35] = (await accepts('an AI lesson with its concept sections', () => lesson())) ?? [];
+  check('its sections read back whole', l35?.sections?.facts?.[0]?.kind === 'why' && l35?.sections?.intro?.slides?.[0] === 1,
+    JSON.stringify(l35?.sections));
+  await accepts('a lesson with no sections (null), as every lesson before 0035', () => lesson({ version: 36, sections: null }));
+  await rejects('sections on a slides-only lesson: only a lesson the model wrote has them', () =>
+    lesson({ version: 37, source: 'slides', model: null }), { ...KEPT, match: /topic_lessons_sections_check/ });
+  await rejects('sections that are not an object', () => lesson({ version: 38, sections: [1, 2] }), { ...KEPT, match: /topic_lessons_sections_check/ });
+  await rejects('a lesson\'s sections are written once, like the rest of it', () => db.query(
+    `update public.topic_lessons set sections = '{}' where id = $1`, [l35?.id]), { code: '23001' });
+
+  // A Get Ready check ended early.
+  const run = (cols = {}) => db.query(
+    `insert into public.hub_runs (account_id, client_run_id, kind, spec, started_at) values ($1, $2, $3, $4, '2026-11-19T05:00:00Z') returning *`,
+    [STUDENT, cols.key, cols.kind ?? 'getready', JSON.stringify(cols.spec ?? { targetTopicId: kept25.sets, prerequisites: [] })]);
+  const [early] = (await accepts('an open Get Ready check', () => run({ key: 'run-0035-early' }))) ?? [];
+  await accepts('the student ends it early: end_reason \'ended\'', () => db.query(
+    `update public.hub_runs set ended_at = '2026-11-19T05:05:00Z', end_reason = 'ended' where id = $1`, [early?.id]));
+  await rejects('and it ends only once', () => db.query(
+    `update public.hub_runs set end_reason = 'complete' where id = $1`, [early?.id]), { code: '23001', match: /hub_runs/ });
+  const [exam] = (await accepts('an open self-test', () => run({ key: 'run-0035-exam', kind: 'exam', spec: { questions: [] } }))) ?? [];
+  await rejects('a self-test cannot end \'ended\': it is handed in or timed out', () => db.query(
+    `update public.hub_runs set ended_at = '2026-11-19T05:05:00Z', end_reason = 'ended' where id = $1`, [exam?.id]),
+  { ...KEPT, match: /hub_runs_end_check/ });
+  await accepts('a Get Ready check still ends complete', () => db.query(
+    `insert into public.hub_runs (account_id, client_run_id, kind, spec, started_at, ended_at, end_reason)
+     values ($1, 'run-0035-done', 'getready', '{}', '2026-11-19T05:00:00Z', '2026-11-19T05:00:00Z', 'complete')`, [STUDENT]));
+  kept35.question = q?.id;
+  kept35.lesson = l35?.id;
+  kept35.run = early?.id;
+  // Left in place: the re-run below runs over them.
+}
+
 section('deleting');
 
 await rejects('deleting the sign-in of a professor who owns material and students', () =>
@@ -2839,6 +3089,42 @@ sameSnapshot('the re-run left the schema exactly as it was', shapeBeforeRerun, a
   await accepts('and a key is still accepted after it', () => db.query(
     `insert into public.record_writes (session_id, writer, write_key, route, body_hash, status, reply)
      values ($1, 'shared-key', 'after-rerun-0001', 'observation', $2, 200, '{"changed": true}')`, [kept32.room, 'c'.repeat(64)]));
+  // 0033: a slide picture, the chapter's summary and a lesson's figure step survive, and the checks still hold.
+  const m33 = await db.query('select slide_no from public.media where id = $1', [kept33.media]);
+  const c33 = await db.query('select slide_pictures from public.contents where id = $1', [kept33.content]);
+  const l33 = await db.query('select steps from public.topic_lessons where id = $1', [kept33.lesson]);
+  check('a slide picture, its chapter\'s summary and a lesson\'s figure step survive the re-run (0033)',
+    m33.rows[0]?.slide_no === 3 && c33.rows[0]?.slide_pictures?.kept === 1 && l33.rows[0]?.steps?.[1]?.figure?.type === 'stack',
+    JSON.stringify({ m: m33.rows, c: c33.rows, l: l33.rows }));
+  await rejects('and a slide below 1 is still refused after it', () => db.query(
+    'update public.media set slide_no = 0 where id = $1', [kept33.media]), { code: '23514' });
+  // 0034: the suggestions, draws, a verbal pick and a used suggestion survive,
+  // and no earlier file's re-run (0017 re-adds the ask check) narrows what 0034 allows.
+  const m34 = await db.query('select purpose, activity_kind, basis from public.teaching_moves where id = $1', [kept34.move]);
+  const d34 = await db.query('select draw_order from public.wheel_question_draws where pick_id = $1 order by draw_order', [kept34.banked]);
+  const v34 = await db.query('select ask from public.wheel_picks where id = $1', [kept34.verbal]);
+  const a34 = await db.query('select suggestion_id from public.room_activities where id = $1', [kept34.activity]);
+  check('suggestions, question draws, a verbal pick and a used suggestion survive the re-run (0034)',
+    m34.rows[0]?.purpose === 'move' && m34.rows[0]?.basis?.support?.count === 6
+    && JSON.stringify(d34.rows.map((r) => r.draw_order)) === '[1,2]' && v34.rows[0]?.ask === 'verbal'
+    && a34.rows[0]?.suggestion_id === kept34.move, JSON.stringify({ m: m34.rows, d: d34.rows, v: v34.rows, a: a34.rows }));
+  await accepts('and a verbal ask is still accepted after it', () => db.query(
+    `insert into public.wheel_picks (session_id, round, pick_order, roll_no, pool_size, present_only, no_repeat, ask)
+     values ($1, 1, 9, '09', 3, true, true, 'verbal')`, [kept34.room]));
+  await rejects('and a suggestion is still never edited after it', () => db.query(
+    `update public.teaching_moves set body = 'changed' where id = $1`, [kept34.move]), { code: '23001' });
+  // 0035 (Batch 8): a question kept for rooms, a lesson's sections and a check
+  // ended early survive, and the checks still hold after it.
+  const q35 = await db.query('select rooms_only from public.questions where id = $1', [kept35.question]);
+  const l35 = await db.query('select sections from public.topic_lessons where id = $1', [kept35.lesson]);
+  const r35 = await db.query('select end_reason from public.hub_runs where id = $1', [kept35.run]);
+  check('a rooms-only question, a lesson\'s sections and a check ended early survive the re-run (0035)',
+    q35.rows[0]?.rooms_only === true && l35.rows[0]?.sections?.facts?.[0]?.kind === 'why' && r35.rows[0]?.end_reason === 'ended',
+    JSON.stringify({ q: q35.rows, l: l35.rows, r: r35.rows }));
+  await rejects('and a self-test still cannot end \'ended\' after it', () => db.query(
+    `insert into public.hub_runs (account_id, client_run_id, kind, spec, started_at, ended_at, end_reason)
+     values ($1, 'run-0035-after', 'exam', '{}', '2026-11-19T05:00:00Z', '2026-11-19T05:01:00Z', 'ended')`, [STUDENT]),
+  { code: '23514', match: /hub_runs_end_check/ });
 }
 
 await db.close();
@@ -3218,8 +3504,8 @@ section('0028 on a database that already holds hub attempts, topic records, ques
     Object.fromEntries(Object.entries(await rowCounts(before28)).filter(([t]) => t in counts))));
   const changed = [];
   for (const table of Object.keys(kept)) {
-    // The new column aside, every value is as it was.
-    const now = (await read(table)).map(({ run_id: _run, ...rest }) => rest);
+    // The new column aside, every value is as it was (and 0035's rooms_only, a later file's).
+    const now = (await read(table)).map(({ run_id: _run, rooms_only: _r35, ...rest }) => rest);
     if (JSON.stringify(now) !== JSON.stringify(kept[table])) changed.push(table);
   }
   check('no hub attempt, question, topic record or link is touched', changed.length === 0, changed.join(', '));
@@ -3267,7 +3553,8 @@ section('0029 on a database that already holds hub attempts in every mode, quest
   check('0029 applies over hub attempts in every mode, adding and removing no row', ok && JSON.stringify(counts) === JSON.stringify(
     Object.fromEntries(Object.entries(await rowCounts(before29)).filter(([t]) => t in counts))));
   const same = [];
-  for (const table of Object.keys(kept)) if (JSON.stringify(await read(table)) !== JSON.stringify(kept[table])) same.push(table);
+  // 0035's rooms_only is a later file's column: every value read before is compared.
+  for (const table of Object.keys(kept)) if (asBefore(await read(table), kept[table]) !== JSON.stringify(kept[table])) same.push(table);
   check('no question, hub attempt or translation is touched (an older self-test attempt holding a hint is left as it was)', same.length === 0, same.join(', '));
   await rejects('while a new self-test attempt with hints is refused', () => before29.query(
     `insert into public.hub_attempts (account_id, client_attempt_id, bloom, correct, score, mode, hints_used) values ($1, 'after-0029-01', 'remember', true, 1, 'exam', 1)`,
@@ -3392,6 +3679,93 @@ section('0032 on a database that already holds attendance and teacher records');
   await before32.close();
 }
 
+// ------------------------------ 0034 over picks and activities already kept --
+
+section('0034 on a database that already holds wheel picks and activities');
+
+{
+  const before34 = await freshDatabase();
+  await applyAll(before34, files.filter((f) => f.name < '0034'), 'up to the file before 0034');
+  await before34.exec(`
+    insert into public.contents (id, title, kind) values ('81111111-1111-4111-8111-111111111111', 'deck', 'pptx');
+    insert into public.questions (id, content_id, text, options, answer_idx, bloom)
+      values ('82222222-2222-4222-8222-222222222222', '81111111-1111-4111-8111-111111111111', 'Which?', '["a","b","c","d"]', 0, 'remember');
+    insert into public.sessions (id, code, content_id, status)
+      values ('83333333-3333-4333-8333-333333333333', 'OLD034', '81111111-1111-4111-8111-111111111111', 'open');
+    insert into public.wheel_rounds (session_id, round) values ('83333333-3333-4333-8333-333333333333', 1);
+    insert into public.wheel_picks (session_id, round, pick_order, roll_no, pool_size, present_only, no_repeat, ask, question_id, status, status_at)
+      values ('83333333-3333-4333-8333-333333333333', 1, 1, '01', 3, true, true, 'bank', '82222222-2222-4222-8222-222222222222', 'answered', now()),
+             ('83333333-3333-4333-8333-333333333333', 1, 2, '02', 2, true, true, 'diagram', null, 'help', now()),
+             ('83333333-3333-4333-8333-333333333333', 1, 3, '03', 1, true, true, 'demo', null, 'pending', null);
+    insert into public.room_activities (session_id, seq, kind, outcome)
+      values ('83333333-3333-4333-8333-333333333333', 1, 'think', 'Pairs explained it');
+  `);
+  const counts = await rowCounts(before34);
+  const read = async () => JSON.stringify((await before34.query(`
+    select (select json_agg(json_build_object('o', pick_order, 'a', ask, 'q', question_id, 's', status) order by pick_order)
+              from public.wheel_picks) as p,
+           (select json_agg(json_build_object('k', kind, 'o', outcome, 'at', updated_at)) from public.room_activities) as r`)).rows[0]);
+  const recordsBefore = await read();
+  const ok = await applyAll(before34, files.filter((f) => f.name >= '0034'), 'over existing picks and activities');
+  check('0034 applies over existing picks and activities, adding and removing none', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before34)).filter(([t]) => t in counts))));
+  check('every pick and activity reads back exactly as it was', (await read()) === recordsBefore);
+  const after = await before34.query(`
+    select (select count(*)::int from public.teaching_moves) as moves,
+           (select count(*)::int from public.wheel_question_draws) as draws,
+           (select count(*)::int from public.room_activities where suggestion_id is not null) as used`);
+  check('no suggestion, no draw, and no activity pointing at one: the new tables start empty',
+    after.rows[0].moves === 0 && after.rows[0].draws === 0 && after.rows[0].used === 0, JSON.stringify(after.rows));
+  await before34.close();
+}
+
+// ------------------------------- 0035 over questions, lessons and checks already kept --
+
+section('0035 on a database that already holds questions, lessons and Get Ready checks');
+
+{
+  const before35 = await freshDatabase();
+  await applyAll(before35, files.filter((f) => f.name < '0035'), 'up to the file before 0035');
+  const [H, P, S] = [randomUUID(), randomUUID(), randomUUID()];
+  await before35.query('insert into auth.users (id) values ($1), ($2), ($3)', [H, P, S]);
+  const add = (id, role, code, reportsTo, rollNo) => before35.query(
+    `insert into public.accounts (id, role, code, department, reports_to, roll_no) values ($1, $2, $3, 'CSE', $4, $5)`,
+    [id, role, code, reportsTo, rollNo]);
+  await add(H, 'hod', 'BL-HD3502', null, null);
+  await add(P, 'professor', 'BL-PR3502', H, null);
+  await add(S, 'student', 'BL-ST3502', P, '21CS01');
+  await before35.exec(`
+    insert into public.contents (id, title, kind, topics, owner_id) values
+      ('91111111-1111-4111-8111-111111111111', 'deck', 'pptx', '["Sets"]', '${P}');
+    insert into public.chapter_topics (id, content_id, name, key, position)
+      values ('95555555-5555-4555-8555-555555555555', '91111111-1111-4111-8111-111111111111', 'Sets', 'sets', 1);
+    insert into public.questions (id, content_id, topic, text, options, answer_idx, bloom, status, source, payload)
+      values ('92222222-2222-4222-8222-222222222222', '91111111-1111-4111-8111-111111111111', 'Sets', 'Pick one', '["a","b","c","d"]', 1,
+              'remember', 'active', 'llm', '{}');
+    insert into public.topic_lessons (topic_id, content_id, owner_id, version, source, model, steps)
+      values ('95555555-5555-4555-8555-555555555555', '91111111-1111-4111-8111-111111111111', '${P}', 1, 'llm', 'gemini-2.5-flash',
+              '[{"type": "chunk", "slides": [1], "text": "Sets"}]');
+    insert into public.hub_runs (account_id, client_run_id, kind, spec, started_at, ended_at, end_reason)
+      values ('${S}', 'run-before-35', 'getready', '{}', '2026-11-19T05:00:00Z', '2026-11-19T05:02:00Z', 'complete');
+  `);
+  const counts = await rowCounts(before35);
+  const read = async (table) => (await before35.query(`select * from public.${table} order by id`)).rows;
+  const kept = { questions: await read('questions'), topic_lessons: await read('topic_lessons'), hub_runs: await read('hub_runs') };
+  const ok = await applyAll(before35, files.filter((f) => f.name >= '0035'), 'over existing questions, lessons and checks');
+  check('0035 applies over existing questions, lessons and checks, adding and removing no row', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before35)).filter(([t]) => t in counts))));
+  const now = { questions: await read('questions'), topic_lessons: await read('topic_lessons'), hub_runs: await read('hub_runs') };
+  const without = (rows, col) => rows.map(({ [col]: _drop, ...rest }) => rest);
+  check('every question is still shared (rooms_only false), and nothing else on it changed',
+    now.questions.every((r) => r.rooms_only === false)
+    && asBefore(without(now.questions, 'rooms_only'), kept.questions) === JSON.stringify(kept.questions));
+  check('every lesson has no sections (null), and nothing else on it changed',
+    now.topic_lessons.every((r) => r.sections === null)
+    && asBefore(without(now.topic_lessons, 'sections'), kept.topic_lessons) === JSON.stringify(kept.topic_lessons));
+  check('every check ended as it was', asBefore(now.hub_runs, kept.hub_runs) === JSON.stringify(kept.hub_runs));
+  await before35.close();
+}
+
 // ------------------------------------- 0011 over accounts that already clash --
 
 section('0011 on a department that already holds two spellings of one roll number');
@@ -3422,6 +3796,55 @@ section('0011 on a department that already holds two spellings of one roll numbe
   await applyAll(clash, files.filter((f) => f.name.startsWith('0011')), 'once corrected');
   check('once a person corrects the accounts, running 0011 again creates it', (await indexed()) === true);
   await clash.close();
+}
+
+// ---------------------------- 0033 over uploads and lessons already kept --
+
+section('0033 on a database that already holds uploads, chapters and lessons');
+
+{
+  const before33 = await freshDatabase();
+  await applyAll(before33, files.filter((f) => f.name < '0033'), 'up to the file before 0033');
+  const P = randomUUID();
+  const H = randomUUID();
+  await before33.query('insert into auth.users (id) values ($1), ($2)', [H, P]);
+  await before33.query(`insert into public.accounts (id, role, code, department) values ($1, 'hod', 'BL-HD3301', 'CSE')`, [H]);
+  await before33.query(`insert into public.accounts (id, role, code, department, reports_to) values ($1, 'professor', 'BL-PR3301', 'CSE', $2)`, [P, H]);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  const sha = (await import('node:crypto')).createHash('sha256').update(png).digest('hex');
+  await before33.query(`insert into public.contents (id, title, kind, topics, owner_id, slide_texts) values
+    ('91111111-1111-4111-8111-111111111111', 'deck', 'pptx', '["Sets"]', $1, '[{"slide": 1, "text": "Sets"}]')`, [P]);
+  await before33.query(`insert into public.chapter_topics (id, content_id, name, key, position)
+    values ('95555555-5555-4555-8555-555555555555', '91111111-1111-4111-8111-111111111111', 'Sets', 'sets', 1)`);
+  await before33.query(`insert into public.media (owner_id, content_id, mime, bytes, sha256, data, alt)
+    values ($1, '91111111-1111-4111-8111-111111111111', 'image/png', $2, $3, $4::text::bytea, 'A leaf')`, [P, png.length, sha, `\\x${png.toString('hex')}`]);
+  await before33.query(`insert into public.topic_lessons (topic_id, content_id, owner_id, version, status, source, model, steps, basis, warnings, created_by)
+    values ('95555555-5555-4555-8555-555555555555', '91111111-1111-4111-8111-111111111111', $1, 1, 'draft', 'slides', null,
+            '[{"type": "chunk", "slides": [1], "text": "Sets are collections"}]', '{}', '[]', $1)`, [P]);
+  const counts = await rowCounts(before33);
+  const read = async (table, cols = '*') => (await before33.query(`select ${cols} from public.${table} order by id`)).rows;
+  const kept = {
+    media: await read('media', 'id, owner_id, content_id, mime, bytes, sha256, alt, created_at'),
+    contents: await read('contents'),
+    topic_lessons: await read('topic_lessons'),
+  };
+  const ok = await applyAll(before33, files.filter((f) => f.name >= '0033'), 'over existing uploads and lessons');
+  check('0033 applies over existing uploads, chapters and lessons, adding and removing no row', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before33)).filter(([t]) => t in counts))));
+  const media = await read('media', 'id, owner_id, content_id, mime, bytes, sha256, alt, created_at');
+  const contents = (await read('contents')).map(({ slide_pictures: _s, ...rest }) => rest);
+  const lessons = await read('topic_lessons');
+  check('every upload, chapter and lesson reads back as it was',
+    asBefore(media, kept.media) === JSON.stringify(kept.media)
+    && asBefore(contents, kept.contents) === JSON.stringify(kept.contents)
+    && asBefore(lessons, kept.topic_lessons) === JSON.stringify(kept.topic_lessons));
+  const fresh = await before33.query(`select (select count(*) from public.media where slide_no is not null)::int as m,
+    (select count(*) from public.contents where slide_pictures is not null)::int as c`);
+  check('an old upload has no slide, and an old chapter says it kept no pictures (both null)', JSON.stringify(fresh.rows[0]) === '{"m":0,"c":0}',
+    JSON.stringify(fresh.rows[0]));
+  const again = await applyAll(before33, files.filter((f) => f.name >= '0033'), 'a second time');
+  check('and running it again changes nothing', again && asBefore(await read('topic_lessons'), kept.topic_lessons) === JSON.stringify(kept.topic_lessons));
+  await before33.close();
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

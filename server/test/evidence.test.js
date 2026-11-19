@@ -57,6 +57,32 @@ const Q = {
   },
   grid: { bloom: 'analyse', text: 'Tick where each holds.', rows: ['Plant cell', 'Animal cell'], columns: ['Cell wall', 'Nucleus'], answers: [[true, true], [false, true]] },
   poll: { bloom: 'understand', text: 'How sure do you feel about cells?', options: ['Very', 'Somewhat', 'Not yet'] },
+  // Batch 8: asked on a figure. The parts' names are KEY... so a name reaching
+  // the student in an attribute, a description or a label shows up as a leak.
+  hotspot: {
+    bloom: 'remember', text: 'Tap the point where growth stops.',
+    stimulus: { kind: 'figure', spec: { type: 'plot', x: { min: 0, max: 10 }, y: { min: 0, max: 10 }, points: [{ id: 'KEYHOTA', x: 2, y: 3 }, { id: 'KEYHOTB', x: 6, y: 8 }] } },
+    answerIds: ['KEYHOTB'],
+  },
+  label: {
+    bloom: 'remember', text: 'Label the two marked points.',
+    stimulus: { kind: 'figure', spec: { type: 'numberline', min: 0, max: 10, points: [{ id: 'KEYLBLA', value: 2 }, { id: 'KEYLBLB', value: 7 }] } },
+    placements: [{ target: 'KEYLBLA', label: 'Freezing' }, { target: 'KEYLBLB', label: 'Boiling' }],
+  },
+  plot: {
+    bloom: 'apply', text: 'Plot the points (2, 4) and (3, 6).',
+    stimulus: { kind: 'figure', spec: { type: 'plot', x: { min: 0, max: 10, step: 1 }, y: { min: 0, max: 10, step: 1 } } },
+    plotKey: { place: 'points', points: [[2, 4], [3, 6]] },
+  },
+  numberline: {
+    bloom: 'apply', text: 'Mark every x with 3 < x <= 7.',
+    stimulus: { kind: 'figure', spec: { type: 'numberline', min: 0, max: 10, step: 1 } },
+    lineKey: { intervals: [{ from: 3, to: 7, fromOpen: true }] },
+  },
+  chart: {
+    bloom: 'apply', text: 'Rice 45, wheat 30, maize 10: draw the bars.',
+    bars: { categories: ['Rice', 'Wheat', 'Maize'], max: 50, step: 5 }, values: [45, 30, 10],
+  },
 };
 
 // What a student sent: deliberately wrong where the kind hides a value, so a
@@ -65,12 +91,14 @@ const RESPONSE = {
   mcq: 0, truefalse: true, match: [0, 2, 1], categorise: { 0: 1, 1: 0 }, blank: 'cytoplasm', cloze: ['sugar', 'air'],
   numeric: '12', multi: [0, 1], order: [2, 0, 1], rank: [1, 0, 2], open: 'I am not sure about this one.',
   hottext: [1], dropdown: [1, 0], table: { '0:1': 'nope' }, grid: { '0:0': true }, poll: 1,
+  hotspot: ['z0'], label: { z0: 1, z1: 0 }, plot: [[5, 5]], numberline: { points: [9] }, chart: [5, 5, 5],
 };
 
 // Strings that are answers (or a teacher-only note) and must never reach the student.
 const SECRETS = {
   blank: ['KEYBLANK'], cloze: ['KEYCLOZEA', 'KEYCLOZEB'], numeric: ['4242.5'], open: ['KEYRUBRIC'], table: ['KEYTABLE'],
   mcq: ['KEYSTIM'],
+  hotspot: ['KEYHOT'], label: ['KEYLBL'],
 };
 
 // Field names that carry a key, a rubric, the machine's reading or the stored
@@ -80,6 +108,8 @@ const FORBIDDEN_KEYS = [
   'value', 'tolerance', 'answers', 'modelAnswer', 'solution',
   'auto', 'autoCorrect', 'autoScore', 'autoDetail', 'detail', 'snapshot', 'questionSnapshot',
   'reviewedBy', 'accountId', 'answerKey', 'questionId',
+  // Batch 8's stored keys, and the figure's own description of itself.
+  'answerIds', 'placements', 'plotKey', 'lineKey', 'values', 'bars', 'spec', 'regions',
 ];
 
 const ROOM = { _id: 'room-1', code: 'EVI001', title: 'Cells', startedAt: '2026-11-18T09:00:00.000Z', status: 'closed' };
@@ -178,7 +208,10 @@ describe('redactForStudent, for every kind', () => {
     assert.equal(item.review.reviewedBy, null);
     assert.deepEqual(item.student, { rollNo: '21CS01', name: 'Asha', accountId: 'acct-1' });
     // The shared fields are the student's own copy, so the two cannot drift.
-    const { student, questionId, snapshot, detail, auto, review, servedAt, questionSource, classQuestion, language, ...shared } = item;
+    // answerKey (Batch 8): the key the row was stored under, for staff only.
+    const { student, questionId, snapshot, detail, auto, review, servedAt, questionSource, classQuestion, language, answerKey, ...shared } = item;
+    assert.equal(answerKey, row.answerKey, 'the row\'s key, so a console can tie an outbox item to it');
+    assert.equal('answerKey' in redactForStudent(row, ROOM), false, 'never on the student\'s own copy');
     assert.equal(classQuestion, null, 'not a class question vote (Phase 5)');
     assert.equal(language, 'en', 'the language the answer was given in, for staff (Phase 5)');
     const { review: studentReview, ...studentShared } = redactForStudent(row, ROOM);

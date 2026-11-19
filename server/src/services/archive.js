@@ -55,6 +55,13 @@
  * deleting a room leaves the class's outcomes as they were, and an archived
  * answer can still be traced, from those same fields, against them.
  *
+ * Figures (Batch 8): a question snapshot keeps its figure's spec, and `figures`
+ * keeps each figure drawn as the phones saw it ({ type, title, svg, description,
+ * table }), by the hash of its spec, so the archive shows the picture without
+ * the server that drew it. Only when it fits the 1 MiB; otherwise
+ * `figuresLeftOut` counts them, and each can be drawn again from its spec. An
+ * archive without either had no figures, so the version is unchanged.
+ *
  * A field is only ever left out of a table as a whole column, and only when
  * every row rebuilds it exactly from what it points at; `derived` lists those
  * columns. So decodeRoomArchive() never guesses row by row, and gives back
@@ -63,6 +70,25 @@
 
 import { sessionSettings } from './mastery.js';
 import { minorRolls } from './roster.js';
+import { figureForStudent, specHash, normaliseSpec } from '../figures/index.js';
+
+/**
+ * The figures in a room's question snapshots, drawn as a phone was shown them,
+ * by the hash of their spec: { [hash]: { type, title, svg, description, table } }.
+ */
+function figuresOf(questions) {
+  const out = {};
+  for (const q of questions) {
+    if (q?.stimulus?.kind !== 'figure') continue;
+    const { spec } = normaliseSpec(q.stimulus.spec);
+    if (!spec) continue;
+    const hash = specHash(spec);
+    if (out[hash]) continue;
+    const { kind: _k, ...shown } = figureForStudent(spec);
+    if (shown.svg) out[hash] = shown;
+  }
+  return out;
+}
 
 export const ARCHIVE_FORMAT = 'bloomloop.room-archive';
 export const ARCHIVE_VERSION = 1;
@@ -396,7 +422,22 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
     ...(classRows.length ? { classQuestions: toTable(classRows) } : {}),
   };
 
-  const json = JSON.stringify(data);
+  // Batch 8: each figure the room's questions showed, drawn once as the phones
+  // saw it, keyed by its spec's hash (the snapshot keeps the spec itself). Only
+  // when it fits: the 1 MiB is for evidence first, and a figure left out can be
+  // drawn again from its spec, so the archive then says how many were left out.
+  const drawn = figuresOf(questions);
+  let json = JSON.stringify(data);
+  if (Object.keys(drawn).length) {
+    const withFigures = JSON.stringify({ ...data, figures: drawn });
+    if (Buffer.byteLength(withFigures, 'utf8') <= ARCHIVE_LIMIT_BYTES) {
+      data.figures = drawn;
+      json = withFigures;
+    } else {
+      data.figuresLeftOut = Object.keys(drawn).length;
+      json = JSON.stringify(data);
+    }
+  }
   const bytes = Buffer.byteLength(json, 'utf8');
   return {
     json,

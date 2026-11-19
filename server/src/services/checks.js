@@ -16,8 +16,10 @@
 // in the array (a written answer has no options to be too long), always in the
 // order of CHECK_IDS.
 
+import crypto from 'node:crypto';
+
 import { LABEL as LEVEL_LABEL } from '../bloom.js';
-import { LABEL as KIND_LABEL, isUngraded, rubricKeys } from '../questionTypes.js';
+import { LABEL as KIND_LABEL, PAYLOAD_FIELDS, isUngraded, rubricKeys } from '../questionTypes.js';
 
 export const CHECK_IDS = [
   'longest-option-is-key',
@@ -34,7 +36,7 @@ export const CHECK_IDS = [
  * Kinds where the student writes or types the answer rather than picking it out
  * of what the screen offers. Everything else is selected response.
  */
-export const PRODUCED_KINDS = ['blank', 'cloze', 'numeric', 'open', 'table'];
+export const PRODUCED_KINDS = ['blank', 'cloze', 'numeric', 'open', 'table', 'plot', 'numberline', 'chart'];
 
 /** Does the screen offer the answer to be picked out? */
 export const isSelectedResponse = (kind) => !PRODUCED_KINDS.includes(kind ?? 'mcq');
@@ -251,7 +253,8 @@ function slideOnlyReference(q) {
   // An attached image or passage clears it (the owner's decision of 19 Nov
   // 2026): a passage can carry what the figure showed, a table or a described
   // curve, and the professor who attached it has judged that it does.
-  if (visual && stimulus?.kind !== 'image' && stimulus?.kind !== 'passage') {
+  // A drawn figure (Batch 8) clears it too: it is the picture, drawn by the server.
+  if (visual && !['image', 'passage', 'figure'].includes(stimulus?.kind)) {
     return result(id, false,
       `It refers to "${visual}", which only the slide shows. Add the picture or a passage as a stimulus, or reword it so it can be answered without the slide.`);
   }
@@ -314,8 +317,52 @@ function applies(id, kind) {
 export function runChecks(q) {
   if (!q || typeof q !== 'object') return [];
   const kind = q.kind ?? 'mcq';
-  return CHECK_IDS.filter((id) => applies(id, kind)).map((id) => RUN[id](q));
+  const computed = CHECK_IDS.filter((id) => applies(id, kind)).map((id) => RUN[id](q));
+  // What generation found about a drawn figure cannot be worked out again from
+  // the question (the model's own answer is gone by then), so it is carried
+  // forward - but only while the key and the figure are what they were when it
+  // was found. Once the professor changes either, the sentence no longer
+  // describes the question and is dropped.
+  const basis = keyBasis(q);
+  const carried = list(q.checks).filter((c) => GENERATION_CHECK_IDS.includes(c?.id) && c.basis === basis);
+  return [...computed, ...carried];
 }
+
+// ------------------------------------------------- what generation found --
+
+/**
+ * Checks only generation can make (Batch 8): the server read a figure's answer
+ * itself and the model had said otherwise, or the model's figure failed the
+ * figure check and was left out.
+ */
+export const GENERATION_CHECK_IDS = ['figure-key', 'figure-dropped'];
+
+/**
+ * JSON with every object's keys in sorted order. Postgres keeps jsonb keys in
+ * its own order, so a question read back from Supabase is the same question
+ * with its keys rearranged; fingerprinted as written, every finding would be
+ * dropped the first time the question was checked again.
+ */
+const sortedJson = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x)
+  ? Object.fromEntries(Object.keys(x).sort().map((key) => [key, x[key]]))
+  : x));
+
+/**
+ * A field as the fingerprint reads it: absent, empty and blank are one thing,
+ * because the stores disagree about them (Supabase hands back `options: []` for
+ * a question saved without options, Mongo fills a declared list with []).
+ */
+const basisOf = (v) => (v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0) ? null : v);
+
+/** A fingerprint of everything the answer depends on: the key fields and the stimulus. */
+export function keyBasis(q) {
+  const parts = { options: basisOf(q.options), answerIdx: basisOf(q.answerIdx) };
+  for (const f of PAYLOAD_FIELDS) parts[f] = basisOf(q[f]);
+  return crypto.createHash('sha256').update(sortedJson(parts)).digest('hex').slice(0, 16);
+}
+
+/** One of generation's findings, as a failed check on the question it was made for. */
+export const generationFlag = (q, id, message) => ({ id, ok: false, message, basis: keyBasis(q) });
 
 /** The failed ones, as a route reports them. Accepts null (never checked). */
 export const failedChecks = (checks) =>

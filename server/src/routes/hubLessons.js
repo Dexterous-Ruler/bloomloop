@@ -46,6 +46,7 @@ import { attemptStoreConnected, recordHubAttempt } from '../services/hubAttemptB
 import { hubSeed } from '../services/hubPractice.js';
 import { feedbackAfter, hintsUsedOn } from '../services/hubHintHook.js';
 import { closedError, closedQuestions } from '../services/hubClosed.js';
+import { assertServed } from '../services/serveTokens.js';
 
 const router = express.Router();
 router.use(hubGate);
@@ -289,6 +290,9 @@ router.post('/lessons/:lessonId/questions/:questionId/attempts', async (req, res
       res.status(200).json(await lessonReply(repo, req.viewer, held, { duplicate: true, questionId: q._id }));
       return;
     }
+    // Batch 8: only an answer to a question the lesson served this student, with
+    // the token its reading carried (services/serveTokens.js). Nothing is stored.
+    assertServed(body.serveToken, { accountId: String(req.viewer.id), questionId: String(q._id), mode: 'lesson' });
     // Its reply shows the answer: never on a question closed to this student now
     // (being asked in a room, on an open self-test, or asked by an open Get Ready
     // check). Refused before anything is stored; the device keeps it.

@@ -84,6 +84,10 @@ const STAFF_STEP_RULE = 'A step is done when their answers on it since the check
   + 'A question answered again counts once every other question on the topic has been answered since.';
 
 export const COMPLETE = 'This Get Ready check is complete. Start a new one to check again.';
+/** Batch 8: what a check ended early says (endCheck). */
+export const ENDED_EARLY = 'You ended this check early. The topics it had not decided are Not sure yet, and the question it was '
+  + 'asking is open again in practice.';
+const ENDED_EARLY_STAFF = 'The student ended this check early. The topics it had not decided are Not sure yet.';
 export const CHECK_WAITS = 'The questions left on this topic are closed for now: being asked in class, or on a self-test you have not '
   + 'handed in. The check carries on once one of them opens again.';
 
@@ -269,7 +273,9 @@ export function checkSentence(state, targetName, { audience = 'student' } = {}) 
  *   each step: { topicId, name, depth, via, why, status: 'done' | 'in-progress' | 'to-do', answers, right, sentence };
  *   `next`: the first step not done, or the target's id once all are.
  */
-export function refresherPath({ items = [], target, links = [], since = [], pools = new Map(), audience = 'student' } = {}) {
+export function refresherPath({
+  items = [], target, links = [], since = [], pools = new Map(), audience = 'student', checkedAt = null,
+} = {}) {
   const you = audience === 'student';
   const review = items.filter((i) => i.outcome === 'needs-review');
   const byId = new Map(review.map((i) => [lower(i.topicId), i]));
@@ -289,11 +295,13 @@ export function refresherPath({ items = [], target, links = [], since = [], pool
     if (done) sentence = `Done: since the check ${you ? 'you' : 'they'} got ${right} of ${answersWord(results.length)} right.`;
     else if (results.length) sentence = `Since the check: ${right} of ${answersWord(results.length)} right. ${rule}`;
     else sentence = `Not practised since the check. ${rule}`;
+    // Batch 8 (older design file H5): the evidence names the change it made.
+    const changed = done ? ` Since the check ${you ? 'you' : 'they'} got ${right} of ${answersWord(results.length)} right on it, so this step is marked done.` : '';
     return {
       topicId: String(item.topicId),
       name: item.name,
       depth: item.depth,
-      why: `On ${you ? 'your' : 'the'} path because ${got(item, you)} on it in the Get Ready check. ${needed}`,
+      why: `On ${you ? 'your' : 'the'} path because ${got(item, you)} on it in the Get Ready check. ${needed}${changed}`,
       status: done ? 'done' : results.length ? 'in-progress' : 'to-do',
       answers: results.length,
       right,
@@ -305,6 +313,8 @@ export function refresherPath({ items = [], target, links = [], since = [], pool
   const next = steps.find((s) => s.status !== 'done');
   return {
     steps,
+    // Batch 8: "why this path", naming each change the student's evidence made.
+    why: pathWhy({ items, steps, audience, checkedAt }),
     target: {
       topicId: String(target.topicId),
       name: target.name,
@@ -315,6 +325,48 @@ export function refresherPath({ items = [], target, links = [], since = [], pool
     },
     next: next ? next.topicId : String(target.topicId),
     done: doneCount,
+  };
+}
+
+/**
+ * Why this path (Batch 8; the older design file's H5: "Functions was 5 of 5, so
+ * it is marked done and you can skip it"): one sentence per change the
+ * student's own evidence made, in the order the check met them, with where the
+ * evidence came from. Pure. `items` the check's; `steps` refresherPath's.
+ *
+ * @returns {{ sentence: string, changes: object[], source: { kind: 'getready', label: string, at: string|null } }}
+ */
+export function pathWhy({ items = [], steps = [], audience = 'student', checkedAt = null } = {}) {
+  const you = audience === 'student';
+  const byStep = new Map(steps.map((s) => [lower(s.topicId), s]));
+  const changes = [];
+  for (const item of items) {
+    const name = `"${item.name}"`;
+    const base = { topicId: String(item.topicId), name: item.name };
+    if (item.reason === 'mastered') {
+      changes.push({ ...base, change: 'ready', evidence: 'practice', answers: item.answers, right: null,
+        sentence: `${name} was already mastered in practice (${answersWord(item.answers)}), so it is marked Ready and ${you ? 'you can skip it' : 'they can skip it'}.` });
+    } else if (item.outcome === 'ready') {
+      changes.push({ ...base, change: 'ready', evidence: 'getready', answers: item.answers, right: item.right,
+        sentence: `${name} was ${item.right} of ${item.answers} in the check, so it is marked Ready and ${you ? 'you can skip it' : 'they can skip it'}.` });
+    } else if (item.outcome === 'needs-review') {
+      const step = byStep.get(lower(item.topicId));
+      changes.push({ ...base, change: 'needs-review', evidence: 'getready', answers: item.answers, right: item.right,
+        sentence: `${name} was ${item.right} of ${item.answers} in the check, so it is on ${you ? 'your' : 'the'} path.` });
+      if (step?.status === 'done') {
+        changes.push({ ...base, change: 'done', evidence: 'practice', answers: step.answers, right: step.right,
+          sentence: `Since then ${you ? 'you' : 'they'} got ${step.right} of ${answersWord(step.answers)} right on ${name}, so that step is marked done.` });
+      }
+    }
+  }
+  const day = checkedAt && Number.isFinite(Date.parse(checkedAt))
+    ? new Date(checkedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' }) : null;
+  return {
+    sentence: changes.length
+      ? changes.map((c) => c.sentence).join(' ')
+      : `The check found nothing ${you ? 'you need' : 'they need'} to review first.`,
+    changes,
+    source: { kind: 'getready', label: `${you ? 'Your' : 'Their'} Get Ready check${day ? ` · ${day}` : ''}, and practice since`, at: checkedAt ?? null },
   };
 }
 
@@ -438,6 +490,7 @@ const itemView = (item, audience) => ({
 });
 
 const pathView = (path, audience = 'student') => ({
+  why: path.why,
   steps: path.steps.map((s) => ({ ...s, topic: topicView(s.topicId, s.name) })),
   target: { ...path.target, topic: topicView(path.target.topicId, path.target.name) },
   next: path.next,
@@ -452,7 +505,7 @@ async function pathFor(repo, accountId, run, state, audience, scope) {
   const reviewIds = state.items.filter((i) => i.outcome === 'needs-review').map((i) => i.topicId);
   const [links, since] = await Promise.all([linksFor(repo, run), attemptsSince(repo, accountId, run, reviewIds)]);
   const pools = new Map(reviewIds.map((id) => [lower(id), (scope?.topics.get(lower(id))?.questions ?? []).map((q) => lower(q._id))]));
-  return refresherPath({ items: state.items, target, links, since, pools, audience });
+  return refresherPath({ items: state.items, target, links, since, pools, audience, checkedAt: run.endedAt ?? run.startedAt ?? null });
 }
 
 /** A check as its student sees it: where it stands, the question to answer, and once complete the path. */
@@ -471,6 +524,8 @@ export async function checkView(repo, account, run, { scope = null } = {}) {
       asked: state.asked,
       maxQuestions: MAX_CHECK_QUESTIONS,
       rule: STOPPING_RULE,
+      // Batch 8: a check the student ended early says so.
+      ...(ended.endReason === 'ended' ? { endedEarly: true, note: ENDED_EARLY } : {}),
     },
     target: topicView(spec.targetTopicId, spec.target?.name ?? '', spec.target?.contentId ? { id: spec.target.contentId, title: spec.target.chapterTitle } : null),
     prerequisites: state.items.map((i) => itemView(i, 'student')),
@@ -613,6 +668,27 @@ export async function answerCheck(repo, account, run, body = {}, { now = new Dat
   }, { now, hintsUsed: 0, runId: run._id });
 }
 
+/**
+ * End a check early, at the student's word (Batch 8). Its undecided
+ * prerequisites read Not sure yet (checkState with `ended`), the question it
+ * was asking is no longer closed to them (currentCheckQuestions reads open
+ * checks only), and it takes no answer from now on. A check already ended is
+ * returned as it is; one whose evidence is already complete is ended as
+ * complete, as reading it would.
+ *
+ * @returns {Promise<{ run, changed: boolean }>}
+ */
+export async function endCheck(repo, account, run, { now = new Date() } = {}) {
+  if (String(run?.accountId) !== String(account?.id) || run?.kind !== 'getready') throw fail(RUN_NOT_FOUND.getready, 404);
+  const fresh = (await repo.getHubRun(run._id).catch(() => null)) ?? run;
+  if (fresh.endedAt) return { run: fresh, changed: false };
+  const read = await readCheck(repo, account, fresh);
+  if (read.state.complete) return { run: await settle(repo, fresh, read), changed: false };
+  const at = new Date(Math.max(now.getTime(), Date.parse(fresh.startedAt) || 0)).toISOString();
+  const ended = await repo.endHubRun(fresh._id, { endedAt: at, endReason: 'ended' });
+  return { run: ended ?? fresh, changed: true };
+}
+
 /* ----------------------------------------------------------------- lists -- */
 
 /** Each check's state, for a list or a staff read: one read of all their answers. */
@@ -648,6 +724,7 @@ export async function listChecks(repo, account, { topicId = null } = {}) {
       status: state.complete ? 'complete' : 'open',
       asked: state.asked,
       counts: tallyOf(state),
+      ...(ended.endReason === 'ended' ? { endedEarly: true } : {}),
       sentence: checkSentence(state, ended.spec?.target?.name ?? ''),
     });
   }
@@ -707,6 +784,7 @@ export async function checksForStaff(repo, account, { classTopicIds = new Set() 
       startedAt: ended.startedAt,
       endedAt: ended.endedAt ?? null,
       status: state.complete ? 'complete' : 'open',
+      ...(ended.endReason === 'ended' ? { endedEarly: true, note: ENDED_EARLY_STAFF } : {}),
       asked: state.asked,
       counts: tallyOf(state),
       prerequisites: state.items.map((i) => itemView(i, 'staff')),

@@ -270,9 +270,13 @@ alter table public.wheel_picks enable row level security;
 alter table public.wheel_picks drop constraint if exists wheel_picks_order_check;
 alter table public.wheel_picks
   add constraint wheel_picks_order_check check (round >= 1 and pick_order >= 1 and pool_size >= 1);
+-- 'verbal' is 0034's (Batch 8). It is listed here too because re-running this
+-- file must never narrow the check below what a later file allows: a re-run
+-- with a verbal pick in the table would otherwise fail.
 alter table public.wheel_picks drop constraint if exists wheel_picks_ask_check;
 alter table public.wheel_picks
-  add constraint wheel_picks_ask_check check (ask in ('bank', 'diagram', 'demo') and (ask = 'bank' or question_id is null));
+  add constraint wheel_picks_ask_check
+  check (ask in ('bank', 'diagram', 'demo', 'verbal') and (ask = 'bank' or question_id is null));
 alter table public.wheel_picks drop constraint if exists wheel_picks_status_check;
 alter table public.wheel_picks
   add constraint wheel_picks_status_check check (

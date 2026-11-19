@@ -135,8 +135,48 @@ export function roomReport(session, { profiles = [], roster = [], marks = [] } =
   };
 }
 
-/** A hardest-list item: the item report without its option counts, which live on /items. */
-const hardItem = ({ distribution, ...item }) => item;
+/**
+ * A hardest-list item: the item report without its option counts, which live
+ * on /items, and with its chapter's id (Batch 8, gap A3), so a screen can open
+ * the question in its bank. `contentOf` maps a question id to its chapter.
+ */
+const hardItem = ({ distribution, ...item }, contentOf = new Map()) => ({
+  ...item,
+  contentId: contentOf.get(String(item.questionId).toLowerCase()) ?? null,
+});
+
+const points = (a, b) => (a === null || b === null ? null : Math.round((a - b) * 1000) / 10);
+
+/**
+ * The latest room set against the one before it, level by level (Batch 8, gap
+ * A1), from the rooms' own reports (oldest first, as classAnalytics sends
+ * them). Each level: both rooms' right and answered counts and accuracy, and the
+ * change in percentage points, or null where either room has no answer at that
+ * level. Null with fewer than two rooms.
+ */
+export function roomComparison(reports = []) {
+  if (reports.length < 2) return null;
+  const [before, latest] = reports.slice(-2);
+  const side = (r) => ({ code: r.code, title: r.title, startedAt: r.startedAt });
+  const pair = (a, b) => ({
+    previous: { answers: a.answers, correct: a.correct, accuracy: a.accuracy },
+    latest: { answers: b.answers, correct: b.correct, accuracy: b.accuracy },
+    change: points(b.accuracy, a.accuracy),
+  });
+  const levels = latest.levels.map((l, i) => ({ level: l.level, label: l.label, ...pair(before.levels[i], l) }));
+  const levelBands = latest.levelBands.map((b, i) => ({ id: b.id, label: b.label, ...pair(before.levelBands[i], b) }));
+  const moved = levels.filter((l) => l.change !== null);
+  return {
+    previous: side(before),
+    latest: side(latest),
+    levels,
+    levelBands,
+    sentence: moved.length
+      ? `The latest room against the one before, at the ${moved.length === 1 ? 'level' : `${moved.length} levels`} both have answers at; `
+        + 'each change is in percentage points.'
+      : 'The two latest rooms have no level with answers in both, so nothing can be compared yet.',
+  };
+}
 
 /**
  * The class's last `last` rooms (newest by when they opened), reported oldest
@@ -191,13 +231,19 @@ export async function classAnalytics(repo, cls, rooms = [], { last = DEFAULT_WIN
   ]);
   const report = itemAnalysis({ answers, questions: banks.flat() });
   const enough = report.items.filter((i) => i.attempts >= MIN_ANSWERS_FOR_BAND);
+  // A question's chapter: its bank's, else the chapter its answers were given in.
+  const contentOf = new Map(banks.flat().map((q) => [String(q._id).toLowerCase(), String(q.contentId)]));
+  for (const a of answers) {
+    const k = String(a.questionId ?? '').toLowerCase();
+    if (k && !contentOf.has(k) && a.contentId) contentOf.set(k, String(a.contentId));
+  }
   const hardest = enough
     .sort((a, b) => (b.flags.length ? 1 : 0) - (a.flags.length ? 1 : 0)
       || a.proportionCorrect - b.proportionCorrect
       || b.attempts - a.attempts
       || a.questionId.localeCompare(b.questionId))
     .slice(0, HARDEST)
-    .map(hardItem);
+    .map((item) => hardItem(item, contentOf));
 
   return {
     class: { id: String(cls._id), courseName: cls.courseName, section: cls.section, termLabel: cls.termLabel ?? '' },
@@ -213,6 +259,9 @@ export async function classAnalytics(repo, cls, rooms = [], { last = DEFAULT_WIN
       return { ...h, sentence: `${basedOn(h.answers, { students: h.students, unit: 'graded answer' })}${short}` };
     })(),
     ...levelViews(cells),
+    // Each room carries its own `levels` and `levelBands` in `rooms`; this sets
+    // the latest against the one before, with the change (Batch 8, gap A1).
+    comparison: roomComparison(reports),
     hardest: {
       items: hardest,
       minAttempts: MIN_ANSWERS_FOR_BAND,

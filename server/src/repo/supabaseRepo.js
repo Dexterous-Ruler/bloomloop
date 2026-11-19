@@ -92,6 +92,8 @@ const outQuestion = (r) =>
     replacesId: r.replaces_id ?? null,
     // 0024: misconception labels on its wrong options.
     misconceptions: Array.isArray(r.misconceptions) ? r.misconceptions : [],
+    // 0035 (Batch 8): kept for rooms only; false on a database without the column.
+    roomsOnly: r.rooms_only === true,
     ...(r.payload && typeof r.payload === 'object' ? r.payload : {}),
   };
 
@@ -118,6 +120,9 @@ const inQuestion = (d) => {
     approved_at: d.approvedAt ?? null,
     replaces_id: d.replacesId ?? null,
     misconceptions: Array.isArray(d.misconceptions) ? d.misconceptions : [],
+    // 0035 (Batch 8): written only when set, so a database without the column
+    // still saves every question made the ordinary way.
+    ...(d.roomsOnly === true ? { rooms_only: true } : {}),
   };
 };
 
@@ -402,6 +407,8 @@ const outActivity = (r) =>
     outcome: r.outcome ?? '',
     groups: Array.isArray(r.groups) ? r.groups : [],
     tallyId: r.tally_id ?? null,
+    // Batch 8 (0034): undefined on a database without the column reads as null.
+    suggestionId: r.suggestion_id ?? null,
     createdAt: r.created_at,
     createdBy: r.created_by ?? null,
     updatedAt: r.updated_at,
@@ -1362,6 +1369,9 @@ export function createSupabaseRepo() {
         outcome: doc.outcome ?? '',
         groups: doc.groups ?? [],
         tally_id: doc.tallyId ?? null,
+        // Written only for an activity a suggestion became (Batch 8, 0034), so
+        // a database without the column still records every other activity.
+        ...(doc.suggestionId ? { suggestion_id: doc.suggestionId } : {}),
         created_at: doc.createdAt ?? now,
         created_by: doc.createdBy ?? null,
         updated_at: doc.updatedAt ?? now,
@@ -1972,6 +1982,8 @@ export function createSupabaseRepo() {
         steps: Array.isArray(r.steps) ? r.steps : [], basis: r.basis ?? {}, warnings: Array.isArray(r.warnings) ? r.warnings : [],
         createdAt: r.created_at, createdBy: r.created_by ?? null, approvedAt: r.approved_at ?? null, approvedBy: r.approved_by ?? null,
         retiredAt: r.retired_at ?? null, retiredBy: r.retired_by ?? null,
+        // 0035 (Batch 8): the concept panel's sections, or null (none, or no column yet).
+        sections: r.sections && typeof r.sections === 'object' ? r.sections : null,
       };
       const outTranslation = (r) => r && {
         _id: r.id, itemKind: r.item_kind, itemId: r.item_id, contentId: r.content_id, ownerId: r.owner_id ?? null,
@@ -2011,6 +2023,9 @@ export function createSupabaseRepo() {
             topic_id: doc.topicId, content_id: doc.contentId, owner_id: doc.ownerId ?? null, version: doc.version,
             source: doc.source, model: doc.model ?? null, steps: doc.steps, basis: doc.basis ?? {}, warnings: doc.warnings ?? [],
             created_by: doc.createdBy ?? null,
+            // 0035 (Batch 8): only when there are sections, so a slides-only lesson
+            // saves on a database without the column.
+            ...(doc.sections ? { sections: doc.sections } : {}),
           }).select().single();
           if (error?.code === '23505') throw conflict('Another version of this lesson was written at the same time. Nothing was changed; try again.');
           if (error) fail('createTopicLesson')(error);
@@ -2596,8 +2611,137 @@ export function createSupabaseRepo() {
       if (error) fail('addRecordWrite')(error);
       return { write: outRecordWrite(data), duplicate: false };
     },
+
+    // ---- Batch 8: figures (0033; see memoryRepo for the contract) ----
+    async createSlideMedia(doc) {
+      const row = unwrap('createSlideMedia', await db
+        .from('media')
+        .insert({
+          owner_id: doc.ownerId ?? null,
+          content_id: doc.contentId,
+          mime: doc.mime,
+          bytes: doc.bytes,
+          sha256: doc.sha256,
+          alt: doc.alt,
+          slide_no: doc.slideNo,
+          data: `\\x${Buffer.from(doc.data).toString('hex')}`,
+        })
+        .select(`${MEDIA_META}, slide_no`)
+        .single());
+      return { ...outMedia(row), slideNo: row.slide_no };
+    },
+    async listSlideMedia(contentId) {
+      if (!isUuid(contentId)) return [];
+      const { data, error } = await db.from('media').select(`${MEDIA_META}, slide_no`)
+        .eq('content_id', contentId).not('slide_no', 'is', null)
+        .order('slide_no', { ascending: true }).order('created_at', { ascending: true });
+      if (error) fail('listSlideMedia')(error);
+      return (data ?? []).map((r) => ({ ...outMedia(r), slideNo: r.slide_no }));
+    },
+    async setContentSlidePictures(contentId, summary) {
+      if (!isUuid(contentId)) return null;
+      const { data, error } = await db.from('contents').update({ slide_pictures: summary }).eq('id', contentId)
+        .select('slide_pictures').maybeSingle();
+      if (error) fail('setContentSlidePictures')(error);
+      return data?.slide_pictures ?? null;
+    },
+    async getContentSlidePictures(contentId) {
+      if (!isUuid(contentId)) return null;
+      const { data, error } = await db.from('contents').select('slide_pictures').eq('id', contentId).maybeSingle();
+      if (error) fail('getContentSlidePictures')(error);
+      return data?.slide_pictures ?? null;
+    },
+
+    // ---- Batch 8: the live room's suggestions and the wheel's question draws (0034; see memoryRepo for the contract) ----
+    async addTeachingMove(doc) {
+      return outTeachingMove(unwrap('addTeachingMove', await db.from('teaching_moves').insert({
+        session_id: doc.sessionId,
+        purpose: doc.purpose,
+        activity_kind: doc.activityKind,
+        title: doc.title ?? '',
+        body: doc.body,
+        focus_level: doc.focusLevel ?? null,
+        topic: doc.topic ?? '',
+        basis: doc.basis ?? {},
+        source_ref: doc.sourceRef ?? null,
+        model: doc.model,
+        asked_by: doc.askedBy ?? null,
+        ...(doc.askedAt ? { asked_at: doc.askedAt } : {}),
+      }).select().single()));
+    },
+
+    async listTeachingMoves(sessionId) {
+      if (!isUuid(sessionId)) return [];
+      return allRecords('listTeachingMoves', 'teaching_moves', (q) => q.eq('session_id', sessionId), ['asked_at', 'id'], outTeachingMove);
+    },
+
+    async getTeachingMove(id) {
+      if (!isUuid(id)) return null;
+      const { data, error } = await db.from('teaching_moves').select('*').eq('id', String(id).trim()).maybeSingle();
+      if (error) fail('getTeachingMove')(error);
+      return outTeachingMove(data);
+    },
+
+    // 23505 on wheel_question_draws_pick_order_key: the place was taken.
+    async addWheelQuestionDraw(doc) {
+      const { data, error } = await db.from('wheel_question_draws').insert({
+        session_id: doc.sessionId,
+        pick_id: doc.pickId,
+        draw_order: doc.drawOrder,
+        question_id: doc.questionId ?? null,
+        pool_size: doc.poolSize,
+        drawn_by: doc.drawnBy ?? null,
+        ...(doc.drawnAt ? { drawn_at: doc.drawnAt } : {}),
+      }).select().single();
+      if (error?.code === '23505') throw placeTaken('place in the pick\'s questions');
+      if (error) fail('addWheelQuestionDraw')(error);
+      return outQuestionDraw(data);
+    },
+
+    async listWheelQuestionDraws(sessionId) {
+      if (!isUuid(sessionId)) return [];
+      return allRecords('listWheelQuestionDraws', 'wheel_question_draws', (q) => q.eq('session_id', sessionId),
+        ['pick_id', 'draw_order'], outQuestionDraw);
+    },
+
+    // ---- Batch 8: material, the bank and the hub's concept panel (0035; see memoryRepo for the contract) ----
+    async setQuestionRoomsOnly(id, roomsOnly) {
+      if (!isUuid(id)) return null;
+      const { data, error } = await db.from('questions').update({ rooms_only: roomsOnly === true }).eq('id', id).select().maybeSingle();
+      if (error) fail('setQuestionRoomsOnly')(error);
+      return outQuestion(data);
+    },
   };
 }
+
+// Batch 8 (0034): a suggestion the model made in a room, and a question the wheel drew.
+const outTeachingMove = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    purpose: r.purpose,
+    activityKind: r.activity_kind,
+    title: r.title ?? '',
+    body: r.body,
+    focusLevel: r.focus_level ?? null,
+    topic: r.topic ?? '',
+    basis: r.basis ?? {},
+    sourceRef: r.source_ref ?? null,
+    model: r.model,
+    askedBy: r.asked_by ?? null,
+    askedAt: r.asked_at,
+  };
+const outQuestionDraw = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    pickId: r.pick_id,
+    drawOrder: Number(r.draw_order),
+    questionId: r.question_id ?? null,
+    poolSize: Number(r.pool_size),
+    drawnAt: r.drawn_at,
+    drawnBy: r.drawn_by ?? null,
+  };
 
 // Phase 7 (0031): one import of a laptop's room archive, the archive itself only when selected.
 const outRoomImport = (r) =>
@@ -2745,11 +2889,37 @@ export const ROUTE_SCHEMA = Object.freeze([
   // and read by the live loop when a phone asks to deliver to a closed room, where a
   // missing table is read as "no import" (sockets/index.js), so rooms never need it.
   ['room_imports', null, '0031_room_imports.sql', 'a room archive saved by a laptop in laptop mode cannot be imported'],
+  // Batch 8 (0034): written only when a professor asks for a suggestion, draws a
+  // question with a pick, or records a suggestion as an activity. Every room,
+  // every draw without a question and every other activity work without them.
+  // The widened ask check (a verbal question) cannot be probed: without 0034 a
+  // pick marked as a verbal question is refused, and says so.
+  ['teaching_moves', null, '0034_zip_gaps_live_wheel.sql',
+    'no teaching move or activity prompt can be suggested or kept'],
+  ['wheel_question_draws', null, '0034_zip_gaps_live_wheel.sql',
+    'the wheel cannot draw a question with a student, and "Another" cannot draw the next one'],
+  ['room_activities', 'suggestion_id', '0034_zip_gaps_live_wheel.sql',
+    'a suggestion cannot be recorded as an activity (every other activity is recorded as before)'],
   // Phase 7: read and written only by a teacher-record write that carries a
   // replay key (routes/recordSync.js); a write without one never touches it.
   ['record_writes', null, '0032_record_write_keys.sql',
     'a teacher-record write sent with a replay key fails, so the console cannot send again what it saved offline; '
       + 'writes sent without one work as before'],
+  // Batch 8, figures (0033). Without these a deck still uploads (its pictures are
+  // kept by statements of their own, and a failure there is logged) and every
+  // figure a question carries is still drawn; only the deck's pictures are not
+  // kept, and a lesson cannot hold a figure step.
+  ['media', 'slide_no', '0033_figures.sql',
+    'a deck uploaded now keeps none of its slide pictures, so none can be attached to a question'],
+  ['contents', 'slide_pictures', '0033_figures.sql',
+    'a deck uploaded now keeps none of its slide pictures, and a chapter cannot say what its upload kept'],
+  // Batch 8 (material, the bank and the hub's concept panel). Without them every
+  // question is shared with the hub and no lesson keeps sections; only the
+  // rooms-only switch and an AI lesson that has sections fail to save.
+  ['questions', 'rooms_only', '0035_bank_share_and_concept_panel.sql',
+    'no question can be kept for rooms only, so the Learning Hub may offer every approved question'],
+  ['topic_lessons', 'sections', '0035_bank_share_and_concept_panel.sql',
+    'a lesson written with AI help cannot be saved when it has an introduction, facts, explanation, code example or common mistakes'],
 ]);
 
 /** One missing piece, as a sentence naming the file to apply. */

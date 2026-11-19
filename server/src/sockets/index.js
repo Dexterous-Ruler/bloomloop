@@ -21,6 +21,7 @@ import {
   REVIEW_MARKS,
 } from '../services/mastery.js';
 import { selectNext, servableFor, inRoomSet, reasonForPhone } from '../services/selector.js';
+import { practisedQuestionIds } from '../services/bankShare.js';
 import { needsApproval } from '../services/edits.js';
 import { buildGridRow, phoneRow } from '../routes/session.js';
 import { isRecordId } from '../ids.js';
@@ -243,8 +244,26 @@ function logIgnored(event, detail) {
   console.warn(`[socket] ${event} ignored: ${detail}`);
 }
 
-function reject(socket, reason) {
-  socket.emit('session:rejected', { reason });
+function reject(socket, reason, ids = {}) {
+  socket.emit('session:rejected', { reason, ...ids });
+}
+
+/**
+ * Which of a phone's answers a reply is about (Batch 8, the phone outbox's
+ * ask): the question as the phone sent it, and its own answerId when that is
+ * one the server takes as a key. Spread into every reply to an answer,
+ * refusals and "not now" replies included, so an outbox matches each reply to
+ * its item by id and never by the order replies arrive in.
+ */
+function answerEcho(payload) {
+  const sent = String(payload?.answerId ?? '');
+  return { questionId: String(payload?.questionId ?? ''), ...(ANSWER_ID.test(sent) ? { answerId: sent } : {}) };
+}
+
+/** The same for a vote: the class question, and the phone's own answerId. */
+function voteEcho(payload) {
+  const sent = String(payload?.answerId ?? '');
+  return { classQuestionId: String(payload?.classQuestionId ?? ''), ...(ANSWER_ID.test(sent) ? { answerId: sent } : {}) };
 }
 
 function normaliseRoll(raw) {
@@ -351,7 +370,9 @@ export function snapshotOf(question, shownOptions = null) {
   // the question changing, and a report reads the question's current ones
   // (services/misconceptions.js); kept here, a label would ride in every answer
   // row and its archive, a step nearer a phone than it ever needs to be.
-  const { _id, contentId, createdAt, status, checks, approvedBy, approvedAt, misconceptions, ...rest } = question ?? {};
+  // `roomsOnly` (Batch 8, 0035) is the owner's sharing switch on the bank's row,
+  // not part of what was asked, and it changes without the question changing.
+  const { _id, contentId, createdAt, status, checks, approvedBy, approvedAt, misconceptions, roomsOnly, ...rest } = question ?? {};
   // With the fewer-choices support an mcq or multi is shown as a shorter list,
   // and the response is a position in THAT list. Which options were left is
   // derived from the student's supports at the moment of serving, and those can
@@ -424,7 +445,9 @@ async function dispatchNext(socket, { profile, session, bank = null, resume = fa
         resumed = true;
       }
     }
-    if (!pick) pick = selectNext(profile, items);
+    // Batch 8: a signed-in student is not served, at the level chosen, a question
+    // they already practised in the hub while another is left (services/bankShare.js).
+    if (!pick) pick = selectNext(profile, items, { avoid: socket.data.student?.practised ?? null });
 
     if (!pick) {
       socket.emit('server:exhausted', { profile: rowFor(profile, settings) });
@@ -648,6 +671,10 @@ async function handleJoin(io, socket, payload) {
       // profile's link (decision 7). Its answers are written as verified, and
       // only verified answers reach the student's own history.
       verifiedAccountId: signedIn?.id ?? null,
+      // Batch 8: the questions that account practised in the Learning Hub, read
+      // once at the join, so the room serves others first (selectNext's avoid).
+      // Only for a verified sign-in: a typed roll number proves nothing.
+      practised: signedIn && !closed ? await practisedQuestionIds(repo, signedIn.id) : null,
       // True once this join has told the phone to wait for the start (below);
       // the start serves only such phones (startRoom), so a phone this join
       // served itself is not served a second time.
@@ -870,17 +897,20 @@ async function handleAnswer(io, socket, payload) {
   // behind a slow outbox burst was judged as arriving after it. The phone's
   // clock is still never read for this.
   const arrivedAt = Date.now();
+  // Echoed in the replies that come before the answer is read (Batch 8): the
+  // ones after carry `ids` below, which say the same.
+  const echo = answerEcho(payload);
   let release = null;
   try {
     if (!ctx) {
-      reject(socket, 'Join a session before answering.');
+      reject(socket, 'Join a session before answering.', echo);
       return;
     }
     release = await turn;
 
     const session = await loadSession(ctx.code);
     if (!session) {
-      socket.emit('session:closed', {});
+      socket.emit('session:closed', { ...echo });
       return;
     }
     // Phase 7 (O2): an answer reaching a closed room is stored, never dropped.
@@ -893,12 +923,12 @@ async function handleAnswer(io, socket, payload) {
     // was; one back only to send what it saved knows already.
     const closedNote = () => { if (closed && !ctx.deliverOnly) socket.emit('session:closed', {}); };
     if (session.status === 'paused') {
-      socket.emit('session:paused', { code: session.code });
+      socket.emit('session:paused', { code: session.code, ...echo });
       return;
     }
     // Nothing has been served in a room still waiting to start (0018).
     if (session.status === 'waiting') {
-      socket.emit('server:waiting', { code: session.code, title: session.title ?? '', message: WAITING_MESSAGE });
+      socket.emit('server:waiting', { code: session.code, title: session.title ?? '', message: WAITING_MESSAGE, ...echo });
       return;
     }
 
@@ -925,13 +955,13 @@ async function handleAnswer(io, socket, payload) {
     // save is, so the phone keeps it and resends: a room that is gone then says
     // so, and one whose delete was refused simply takes the answer.
     if (roomDeleting(ctx.sessionId)) {
-      reject(socket, 'That answer did not save. Tap Next question to carry on.');
+      reject(socket, 'That answer did not save. Tap Next question to carry on.', echo);
       return;
     }
     const repo = getRepo();
     const stored = await repo.getProfile(ctx.sessionId, ctx.rollNo);
     if (!stored) {
-      reject(socket, 'Your row is gone - rejoin with your roll number.');
+      reject(socket, 'Your row is gone - rejoin with your roll number.', echo);
       return;
     }
     const profile = hydrate(stored);
@@ -1396,7 +1426,7 @@ async function handleAnswer(io, socket, payload) {
         kept(verdict.message, { late: true });
       } else {
         kept(overCapMessage(cap), closed ? { late: true } : {});
-        if (!closed) socket.emit('server:exhausted', { profile: rowFor(profile, settings), reason: capReason(cap) });
+        if (!closed) socket.emit('server:exhausted', { profile: rowFor(profile, settings), reason: capReason(cap), ...ids });
       }
       closedNote();
       return;
@@ -1541,6 +1571,7 @@ async function handleAnswer(io, socket, payload) {
     // attempt and its key, so sending it again is safe.
     socket.emit('session:rejected', {
       reason: 'That answer did not save. Tap Next question to carry on.',
+      ...echo,
     });
   } finally {
     release?.();
@@ -2064,15 +2095,17 @@ export async function resendClassQuestion(io, session) {
  */
 async function handleVote(io, socket, payload) {
   let release = null;
+  // Which vote every reply is about (Batch 8), as answers' replies say.
+  const echo = voteEcho(payload);
   try {
     const ctx = socket.data.student;
     if (!ctx) {
-      reject(socket, 'Join a session before voting.');
+      reject(socket, 'Join a session before voting.', echo);
       return;
     }
     const session = await loadSession(ctx.code);
     if (!session || session.status === 'closed') {
-      socket.emit('session:closed', {});
+      socket.emit('session:closed', { ...echo });
       return;
     }
     const cqId = String(payload?.classQuestionId ?? '');
@@ -2084,7 +2117,7 @@ async function handleVote(io, socket, payload) {
 
     release = await lockProfile(ctx.sessionId, ctx.rollNo);
     if (roomDeleting(ctx.sessionId)) {
-      reject(socket, 'That vote did not save. Vote again.');
+      reject(socket, 'That vote did not save. Vote again.', echo);
       return;
     }
     const repo = getRepo();
@@ -2096,7 +2129,7 @@ async function handleVote(io, socket, payload) {
     }
     const profile = await repo.getProfile(ctx.sessionId, ctx.rollNo);
     if (!profile) {
-      reject(socket, 'Your row is gone - rejoin with your roll number.');
+      reject(socket, 'Your row is gone - rejoin with your roll number.', echo);
       return;
     }
 
@@ -2138,7 +2171,7 @@ async function handleVote(io, socket, payload) {
       prior = await repo.getAnswerByKey(ctx.sessionId, answerKey);
     }
     if (prior) {
-      socket.emit('class:vote', phoneVote(cq, prior, { counted: prior.final !== false }));
+      socket.emit('class:vote', { ...phoneVote(cq, prior, { counted: prior.final !== false }), ...echo });
       return;
     }
     const graded = score(question, response, seed, null);
@@ -2176,7 +2209,7 @@ async function handleVote(io, socket, payload) {
       round,
     });
     if (stamped.duplicate) {
-      socket.emit('class:vote', phoneVote(cq, stamped.answer, { counted: stamped.answer.final !== false }));
+      socket.emit('class:vote', { ...phoneVote(cq, stamped.answer, { counted: stamped.answer.final !== false }), ...echo });
       return;
     }
     // The vote it replaces is kept, with `final` false: the record of a phone
@@ -2187,13 +2220,13 @@ async function handleVote(io, socket, payload) {
         await repo.updateAnswer(old._id, { final: false }).catch((err) => logError('vote', err));
       }
     }
-    socket.emit('class:vote', phoneVote(cq, stamped.answer, { counted }));
+    socket.emit('class:vote', { ...phoneVote(cq, stamped.answer, { counted }), ...echo });
     // A phone that missed the pause hears it, as an answer sent then would.
     if (notCounted === PAUSED_DETAIL) socket.emit('session:paused', { code: session.code });
     scheduleClassPush(io, session, cq._id);
   } catch (err) {
     logError('student:vote', err);
-    socket.emit('session:rejected', { reason: 'That vote did not save. Vote again.' });
+    socket.emit('session:rejected', { reason: 'That vote did not save. Vote again.', ...echo });
   } finally {
     release?.();
   }

@@ -13,7 +13,8 @@ import { getRepo } from '../repo/index.js';
 import { generateBank, sourceRefFor } from '../services/generate.js';
 import { planBank, describePlan, PRESETS, CONFIRM_ABOVE } from '../services/plan.js';
 import { PAYLOAD_FIELDS, KINDS_FOR_LEVEL } from '../questionTypes.js';
-import { runChecks, failedChecks } from '../services/checks.js';
+import { failedChecks } from '../services/checks.js';
+import { draftChecks } from '../services/figureDrafts.js';
 import { stampLabels } from '../services/misconceptions.js';
 import { assertCanRead, assertCanWrite } from '../ownership.js';
 import { startRun, updateRun, finishRun, failRun, getRun, cleanRunId } from '../services/runs.js';
@@ -35,6 +36,23 @@ const fail = (message, status) => Object.assign(new Error(message), { status });
  * bank under a waiting room would leave it nothing to serve when it starts.
  */
 const RUNNING = ['waiting', 'open', 'paused'];
+
+/**
+ * Which writer ran (Batch 8, M3), from the bank's own source tags: 'templates'
+ * when every item came from the built-in writer, 'model' when every one came
+ * from the AI model, 'mixed' when the model fell short and templates filled in.
+ */
+export function writerReport(asked, source) {
+  const ran = source === 'llm' ? 'model' : source === 'mixed' ? 'mixed' : 'templates';
+  const sentence = {
+    templates: asked === 'templates'
+      ? 'Written by the built-in templates, as you asked.'
+      : 'AI unavailable: written by the built-in templates instead.',
+    model: 'Written by the AI model. You approve each one.',
+    mixed: 'Written by the AI model, with the built-in templates filling what it did not write. You approve each one.',
+  }[ran];
+  return { asked, ran, sentence };
+}
 
 const cleanTopics = (topics, content) =>
   (Array.isArray(topics) ? topics : (content?.topics ?? []))
@@ -98,9 +116,14 @@ router.get('/run/:runId', (req, res, next) => {
 router.post('/', async (req, res, next) => {
   let runId = '';
   try {
-    const { contentId, topics, plan: spec, mode = 'replace', confirm = false } = req.body ?? {};
+    const { contentId, topics, plan: spec, mode = 'replace', confirm = false, writer = 'auto' } = req.body ?? {};
 
     if (!contentId || typeof contentId !== 'string') throw fail('contentId is required.', 400);
+    // Batch 8 (M3): 'templates' asks for the built-in writer on purpose; 'auto'
+    // (the default, as before) uses the AI model when the server has one.
+    if (writer !== 'auto' && writer !== 'templates') {
+      throw fail('Choose who writes the questions: the AI model when the server has one, or the built-in templates.', 400);
+    }
     if (topics !== undefined && !Array.isArray(topics)) throw fail('topics must be an array of strings.', 400);
     if (mode !== 'replace' && mode !== 'append') throw fail("mode must be 'replace' or 'append'.", 400);
 
@@ -155,6 +178,7 @@ router.post('/', async (req, res, next) => {
       content,
       topics: useTopics,
       plan,
+      templatesOnly: writer === 'templates',
       onProgress: (p) => updateRun(runId, {
         topic: p.topic,
         topicsDone: p.topicsDone,
@@ -195,7 +219,8 @@ router.post('/', async (req, res, next) => {
         for (const f of PAYLOAD_FIELDS) if (q[f] !== undefined) row[f] = q[f];
         // The model's proposed misconception labels (0024), AI drafts from now.
         if (q.misconceptions?.length) row.misconceptions = stampLabels(q.misconceptions, at);
-        row.checks = runChecks(row);
+        // The rule checks, and what generation found about a figure and its key.
+        row.checks = draftChecks(row, q);
         return row;
       }),
     );
@@ -215,6 +240,8 @@ router.post('/', async (req, res, next) => {
       removed,
       mode,
       source,
+      // Batch 8 (M3): which writer was asked for and which ran, in words.
+      writer: writerReport(writer, source),
       perLevel,
       plan: { total: plan.total, perLevel: plan.perLevel, perKind: plan.perKind },
       warnings: [...(plan.warnings ?? []), ...(warnings ?? [])],

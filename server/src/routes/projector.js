@@ -91,7 +91,8 @@ router.get('/:code/projector', requireTeacher, async (req, res, next) => {
 
 /**
  * Change what the wall shows: { mode?, question?, revealed?, diagram?,
- * showNames?, showCounts?, pick? } (services/projector.js screenChangeFrom);
+ * showNames?, showCounts?, pick?, step? } (services/projector.js screenChangeFrom);
+ * step (Batch 8) moves a stepped figure on the wall, 0 being the figure itself;
  * question may be { classQuestionId } since Phase 5. Every projector
  * watching the room gets the new screen at once. 409, and nothing changed, for
  * a bank question's key (or that of a question asked aloud from the bank) in a
@@ -104,7 +105,9 @@ router.patch('/:code/projector', requireTeacher, async (req, res, next) => {
     const repo = getRepo();
     const body = req.body ?? {};
     const current = screenOf(session);
-    const wantsQuestions = body.question?.questionId !== undefined || (body.diagram !== undefined && body.diagram !== null);
+    // A step (Batch 8) is checked against the figure on the screen, so it needs the questions too.
+    const wantsQuestions = body.question?.questionId !== undefined || (body.diagram !== undefined && body.diagram !== null)
+      || body.step !== undefined;
     // The tallies whenever the screen may end up on one: a key the professor
     // reveals is checked against where the tally's question came from.
     const wantsTallies = body.question?.tallyId !== undefined || (body.question === undefined && current.question?.source === 'tally');

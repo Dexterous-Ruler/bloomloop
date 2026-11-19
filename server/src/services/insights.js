@@ -56,6 +56,8 @@ import {
   slotKey,
 } from './records.js';
 import { pickView } from './wheel.js';
+import { roomClass } from './roomClass.js';
+import { PRACTISED_NOTE, practisedAnswers } from './bankShare.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -279,8 +281,25 @@ const series = new Map(); // sessionId -> { since, start: { accuracy, support, p
 
 const minuteOf = (iso) => Math.floor(Date.parse(iso) / 60000);
 
-/** Write a room's figures into its series. Returns the series. */
-export function noteSample(sessionId, figures, now = new Date()) {
+/**
+ * Each level's figure for a point of the series (Batch 8, the older design's
+ * "accuracy by level over time"): right and answered counts and the accuracy,
+ * from classLevels(). A level nobody has answered at has accuracy null.
+ */
+export function levelPoint(levels) {
+  return Object.fromEntries(LEVELS.map((l) => [l, {
+    accuracy: levels[l].answers ? levels[l].correct / levels[l].answers : null,
+    answers: levels[l].answers,
+    correct: levels[l].correct,
+  }]));
+}
+
+/**
+ * Write a room's figures into its series. Returns the series. With `levels`
+ * (classLevels(), Batch 8) the point also carries each level's figure; without,
+ * it is the point it always was.
+ */
+export function noteSample(sessionId, figures, now = new Date(), { levels = null } = {}) {
   const key = String(sessionId);
   const at = now.toISOString();
   const held = series.get(key) ?? { since: at, start: { accuracy: null, support: null, participation: null }, points: [] };
@@ -297,7 +316,10 @@ export function noteSample(sessionId, figures, now = new Date()) {
   if (held.start.participation === null && figures.participation !== null) {
     held.start.participation = { value: figures.participation, at, present: figures.present };
   }
-  const point = { at, accuracy: figures.accuracy, support: figures.support, participation: figures.participation };
+  const point = {
+    at, accuracy: figures.accuracy, support: figures.support, participation: figures.participation,
+    ...(levels ? { levels: levelPoint(levels) } : {}),
+  };
   const last = held.points.at(-1);
   if (last && minuteOf(last.at) === minuteOf(at)) held.points[held.points.length - 1] = point;
   else held.points.push(point);
@@ -309,7 +331,7 @@ export function noteSample(sessionId, figures, now = new Date()) {
 export function seriesOf(sessionId) {
   const held = series.get(String(sessionId));
   if (!held) return { since: null, interval: 'minute', start: { accuracy: null, support: null, participation: null }, points: [] };
-  return { since: held.since, interval: 'minute', start: structuredClone(held.start), points: held.points.map((p) => ({ ...p })) };
+  return { since: held.since, interval: 'minute', start: structuredClone(held.start), points: held.points.map((p) => structuredClone(p)) };
 }
 
 /** Forget a room's series and any push waiting for it: the room was deleted. */
@@ -330,7 +352,8 @@ export function forgetInsights(sessionId) {
 export function sampleFromGrid(session, { profiles, roster, marks }) {
   try {
     if (session?.classId && (!roster || !marks)) return;
-    noteSample(session._id, roomFigures({ session, profiles, roster: roster ?? [], marks: marks ?? [] }));
+    noteSample(session._id, roomFigures({ session, profiles, roster: roster ?? [], marks: marks ?? [] }), undefined,
+      { levels: classLevels(profiles) });
   } catch (err) {
     console.error('[insights] sample failed:', err);
   }
@@ -583,6 +606,95 @@ const kpi = (label, value, start, extra) => ({
   change: value !== null && start?.value !== undefined && start?.value !== null ? value - start.value : null,
 });
 
+/* ------------------------------------- the support band, last time (Batch 8) --
+
+   The older design's "below-40% group against the last test": the students in
+   Needs support NOW, and how the same students did in the class's previous
+   room, beside how they are doing here. Like for like: only those of them who
+   had graded answers there are counted, on both sides, pooled (right of
+   answered), so the change is the same students' change. Counts and a sentence,
+   never a name: the screen already lists who they are. */
+
+const pct = (v) => `${Math.round(v * 100)}%`;
+
+/**
+ * Pure. `figures` is this room's roomFigures(); `previous` the class's room
+ * before this one (or null); `previousProfiles` its profiles.
+ */
+export function supportAgainstPrevious({ figures, previous = null, previousProfiles = [] }) {
+  if (figures.support === null) return null;
+  const rolls = figures.supportRolls;
+  if (!rolls.length) {
+    return { room: null, students: 0, compared: 0, then: null, now: null, change: null,
+      sentence: 'Nobody is below 40% overall now, so there is nobody to set against the previous room.' };
+  }
+  if (!previous) {
+    return { room: null, students: rolls.length, compared: 0, then: null, now: null, change: null,
+      sentence: 'This is the class\'s first room, so there is no earlier room to set these students against.' };
+  }
+  const there = new Map(previousProfiles.map((p) => {
+    const h = hydrate(p);
+    return [rollKey(h.rollNo), countedTotals(h)];
+  }));
+  const here = new Map(figures.students.map((s) => [rollKey(s.rollNo), s]));
+  const then = { answers: 0, correct: 0 };
+  const now = { answers: 0, correct: 0 };
+  let compared = 0;
+  for (const roll of rolls) {
+    const t = there.get(rollKey(roll));
+    if (!t || !t.seen) continue;
+    compared += 1;
+    then.answers += t.seen;
+    then.correct += t.correct;
+    const s = here.get(rollKey(roll));
+    now.answers += s?.answers ?? 0;
+    now.correct += s?.correct ?? 0;
+  }
+  const room = { code: previous.code, title: previous.title ?? '', startedAt: previous.startedAt ?? null };
+  if (!compared) {
+    return { room, students: rolls.length, compared: 0, then: null, now: null, change: null,
+      sentence: `None of the ${plural(rolls.length, 'student', 'students')} below 40% now had a graded answer in the previous room (${previous.code}).` };
+  }
+  const acc = (x) => ({ ...x, accuracy: x.answers ? x.correct / x.answers : null });
+  const a = acc(then);
+  const b = acc(now);
+  const change = a.accuracy === null || b.accuracy === null ? null : Math.round((b.accuracy - a.accuracy) * 1000) / 10;
+  return {
+    room,
+    students: rolls.length,
+    compared,
+    then: a,
+    now: b,
+    // In percentage points, for the same students on both sides.
+    change,
+    sentence: `${compared} of the ${plural(rolls.length, 'student', 'students')} below 40% now answered in the previous room `
+      + `(${previous.code}): ${a.correct} of ${plural(a.answers, 'graded answer', 'graded answers')} right there (${pct(a.accuracy)}), `
+      + `${b.correct} of ${b.answers} here${b.accuracy === null ? '' : ` (${pct(b.accuracy)})`}.`,
+  };
+}
+
+/**
+ * The class's room before this one (by when they opened), of the same owner, so
+ * whoever may read this room may read that one; null for a room with no class
+ * or the class's first.
+ */
+export async function previousClassRoom(repo, session) {
+  if (!session.classId) return null;
+  const rooms = await repo.listSessionsForClass(session.classId);
+  const mine = String(session.startedAt ?? '');
+  return rooms
+    .filter((r) => String(r._id) !== String(session._id) && String(r.ownerId ?? '') === String(session.ownerId ?? '')
+      && String(r.startedAt ?? '') < mine)
+    .sort((a, b) => String(b.startedAt ?? '').localeCompare(String(a.startedAt ?? '')))[0] ?? null;
+}
+
+async function previousRoomSupport(repo, session, figures) {
+  if (figures.support === null || !session.classId) return null;
+  const previous = figures.supportRolls.length ? await previousClassRoom(repo, session) : null;
+  const previousProfiles = previous ? await repo.listProfiles(previous._id) : [];
+  return supportAgainstPrevious({ figures, previous, previousProfiles });
+}
+
 /**
  * Everything the live view needs for one room the caller may read: each
  * student's band, the sort orders, the three cards with their dismissal state,
@@ -599,9 +711,9 @@ export async function roomInsights(repo, session) {
     repo.listInsightActions(session._id),
   ]);
   const figures = roomFigures({ session, profiles, roster, marks });
-  noteSample(session._id, figures);
-  const held = seriesOf(session._id);
   const levels = classLevels(profiles);
+  noteSample(session._id, figures, undefined, { levels });
+  const held = seriesOf(session._id);
 
   const names = new Map(roster.filter((s) => !s.removedAt).map((s) => [s.rollNo, s.name]));
   const present = new Set(figures.presentRolls);
@@ -635,6 +747,11 @@ export async function roomInsights(repo, session) {
     participationCard(figures, session),
   ].map((c) => withActions(c, latest));
 
+  const [cls, previousRoom] = await Promise.all([
+    roomClass(repo, session),
+    previousRoomSupport(repo, session, figures),
+  ]);
+  const { masteryGoal } = sessionSettings(session);
   return {
     room: {
       code: session.code,
@@ -642,6 +759,8 @@ export async function roomInsights(repo, session) {
       status: session.status,
       startedAt: session.startedAt ?? null,
       classId: session.classId ?? null,
+      // The class's course and section (Batch 8, gap L2), or null for no class.
+      class: cls,
       mode,
     },
     thresholds: THRESHOLDS,
@@ -673,13 +792,28 @@ export async function roomInsights(repo, session) {
         sentence: figures.banded
           ? `Based on ${plural(figures.banded, 'student', 'students')} with at least ${MIN_BAND_ANSWERS} graded answers each.`
           : `Nobody has ${MIN_BAND_ANSWERS} graded answers yet.`,
+        // The same students in the class's previous room (Batch 8), or null
+        // in a room with no class or before anyone has a band.
+        previousRoom,
       }),
       participation: kpi('Participation', figures.participation, held.start.participation, {
         answered: figures.answered, present: figures.present,
         sentence: figures.present ? `Based on ${plural(figures.present, 'present student', 'present students')}.` : 'Nobody present yet.',
       }),
     },
-    series: { since: held.since, interval: held.interval, points: held.points },
+    series: {
+      since: held.since,
+      interval: held.interval,
+      // Each point carries `levels` (Batch 8): each level's accuracy that
+      // minute, with its counts.
+      points: held.points,
+      // The line a per-level chart draws: this room's own mastery goal, never a
+      // fixed 60% (decision 2).
+      threshold: {
+        goal: masteryGoal,
+        sentence: `The room's mastery goal: ${Math.round(masteryGoal * 100)}% at a level.`,
+      },
+    },
     ...(mode === 'devices' ? {} : { teacherRecords: await teacherRecordCounts(repo, session) }),
     privacy: INSIGHTS_PRIVACY,
   };
@@ -840,6 +974,10 @@ export async function studentCard(repo, session, rawRoll) {
 
   const profile = raw ? hydrate(raw) : null;
   const standing = profile ? standingOf(profile) : { answers: 0, correct: 0, accuracy: null, band: null };
+  // Batch 8: which of the last answers were to a question this signed-in
+  // student had already practised in the Learning Hub (services/bankShare.js).
+  const recent = own.slice(-LAST_ANSWERS);
+  const practised = await practisedAnswers(repo, recent);
   const mine = profile ? countedLevels(profile) : null;
   const gone = profile ? withdrawnByLevel(profile) : null;
   const classCells = classLevels(profiles);
@@ -912,7 +1050,10 @@ export async function studentCard(repo, session, rawRoll) {
       };
     }),
     lastAnswers: {
-      items: own.slice(-LAST_ANSWERS).reverse().map((a) => answerItem(a, session, { name })),
+      items: recent.slice().reverse().map((a) => ({
+        ...answerItem(a, session, { name }),
+        ...(practised.has(String(a._id)) ? { practisedInHub: true, practisedNote: PRACTISED_NOTE } : {}),
+      })),
       limit: LAST_ANSWERS,
       // Final answers only: an attempt followed by a retry never counted. Every
       // attempt is in GET /api/session/:code/answers?rollNo=.

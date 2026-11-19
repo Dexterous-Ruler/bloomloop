@@ -351,7 +351,7 @@ export const labelHtml = (value) => richTextSync(typeof value === 'string' ? val
  * questionTypes.js); the rest are absent.
  */
 const PHONE_STRINGS = ['text', 'criterion'];
-const PHONE_LISTS = ['options', 'left', 'right', 'items', 'groups', 'columns'];
+const PHONE_LISTS = ['options', 'left', 'right', 'items', 'groups', 'columns', 'labels'];
 
 /**
  * The additive `rich` field of a phone's question (decision H15), without

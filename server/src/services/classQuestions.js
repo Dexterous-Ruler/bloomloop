@@ -64,6 +64,7 @@ import { allAnswers } from './evidence.js';
 import { SOURCE_LABEL, phoneProvenance, sourceOf } from './honesty.js';
 // Phase 6 (decision H15): formulas and code as HTML, an additive field.
 import { phoneRichSync } from './richText.js';
+import { figureForStudent } from '../figures/index.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -256,6 +257,13 @@ function stimulusView(s) {
   if (!s || typeof s !== 'object') return null;
   if (s.kind === 'image') return { kind: 'image', url: String(s.url ?? ''), alt: String(s.alt ?? '') };
   if (s.kind === 'passage') return { kind: 'passage', text: String(s.text ?? '') };
+  // A figure (Batch 8): already drawn when it comes through forStudent(), drawn
+  // here from its spec when it comes from a stored snapshot. Either way only the
+  // drawing, its description and its table.
+  if (s.kind === 'figure') {
+    const f = 'svg' in s ? s : figureForStudent(s.spec);
+    return { kind: 'figure', type: f.type ?? null, title: f.title ?? '', svg: f.svg ?? null, description: f.description ?? '', table: f.table ?? null };
+  }
   return null;
 }
 

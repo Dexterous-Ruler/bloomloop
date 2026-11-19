@@ -438,6 +438,8 @@ export function activityView(a) {
       result: GROUP_RESULTS.find((r) => r.id === g.gotIt)?.label ?? g.gotIt,
     })),
     tallyId: a.tallyId ?? null,
+    // The suggestion it was run from ("Use it", Batch 8), or null.
+    suggestionId: a.suggestionId ?? null,
     createdAt: a.createdAt ?? null,
     createdBy: a.createdBy ?? null,
     updatedAt: a.updatedAt ?? null,

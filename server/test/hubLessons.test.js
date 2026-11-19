@@ -350,7 +350,8 @@ describe('approval gating, and regenerating keeps the approved lesson serving (H
     const view = await studentLessonView(repo, { lesson: approved, account: asha });
     const text = JSON.stringify(view);
     assert.ok(!/answerIdx|answerBool|"accept"|rubric|warnings|basis|"model"|stand-in|draft|misconception/.test(text), text.match(/answerIdx|answerBool|accept|rubric|warnings|basis|model|draft/)?.[0]);
-    assert.deepEqual(Object.keys(view).sort(), ['answering', 'approvedAt', 'id', 'label', 'language', 'steps', 'version']);
+    // 'sections' (Batch 8): the concept panel, empty for a slides-only lesson and saying so.
+    assert.deepEqual(Object.keys(view).sort(), ['answering', 'approvedAt', 'id', 'label', 'language', 'sections', 'steps', 'version']);
     assert.equal(view.steps[1].questions[0].provenance.text, 'Written by your professor.');
     assert.ok(view.steps[0].html.includes('<math>'), 'the slide\'s formula is rendered');
 

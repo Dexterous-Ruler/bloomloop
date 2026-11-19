@@ -110,7 +110,11 @@ alter table public.hub_runs
     (ended_at is null) = (end_reason is null)
     and (ended_at is null or ended_at >= started_at)
     and (end_reason is null
-         or (kind = 'getready' and end_reason = 'complete')
+         -- 'ended' (a check the student ended early) is added by 0035. It is
+         -- listed here too because re-running this file must never narrow the
+         -- check below what a later file allows: a re-run over a check ended
+         -- early would otherwise fail.
+         or (kind = 'getready' and end_reason in ('complete', 'ended'))
          or (kind = 'exam' and (end_reason = 'submitted' or (end_reason = 'timed-out' and deadline_at is not null))))
   );
 

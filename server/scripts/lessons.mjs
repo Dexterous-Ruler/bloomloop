@@ -187,7 +187,20 @@ async function call(method, path, { body, as = 'profA' } = {}) {
   return { status: res.status, body: parsed };
 }
 const get = (path, as) => call('GET', path, { as });
-const post = (path, body, as) => call('POST', path, { body, as });
+// Batch 8: practice and lesson answers carry the serve token the hub's reply gave
+// (services/serveTokens.js). This script tests other things, so it signs the
+// token the server would have sent; server/scripts/zipgaps2.mjs tests the token itself.
+const { serveToken: signServed } = await import(`${SRC}services/serveTokens.js`);
+const served = (path, body, as) => {
+  if (!body || typeof body !== 'object' || body.serveToken !== undefined || !ID[as]) return body;
+  const lesson = /^\/api\/hub\/lessons\/[^/]+\/questions\/([^/]+)\/attempts$/.exec(path);
+  if (lesson) return { ...body, serveToken: signServed({ accountId: ID[as], questionId: lesson[1], mode: 'lesson' }) };
+  if (path === '/api/hub/practice/attempts' && body.questionId) {
+    return { ...body, serveToken: signServed({ accountId: ID[as], questionId: body.questionId, mode: body.mode ?? 'practice' }) };
+  }
+  return body;
+};
+const post = (path, body, as) => call('POST', path, { body: served(path, body, as), as });
 const put = (path, body, as) => call('PUT', path, { body, as });
 const patch = (path, body, as) => call('PATCH', path, { body, as });
 
@@ -328,7 +341,8 @@ console.log('\na draft reaches no student; approved, it does (H2)');
     qs.length === 2 && qs.every((q) => q.provenance?.text === 'Written by your professor.') && !KEYS.test(JSON.stringify(read.body))
     && !/A draft nobody approved|How sure/.test(JSON.stringify(read.body)), JSON.stringify(qs).slice(0, 300));
   check('field by field: no status, model, warning, basis or slide numbers list', JSON.stringify(Object.keys(lesson).sort())
-    === '["answering","approvedAt","id","label","language","steps","version"]' && lesson.answering === true);
+    // 'sections' (Batch 8): the concept panel, empty for a slides-only lesson and saying so.
+    === '["answering","approvedAt","id","label","language","sections","steps","version"]' && lesson.answering === true);
 }
 
 // ------------------------------------------------------------ who sees what --

@@ -40,6 +40,16 @@ import { LEVELS } from './bloom.js';
 // throw anywhere at all - it would simply stop reducing, silently, for every
 // student who had been given the support.
 import { FEWER_CHOICES } from './accommodations.js';
+// Figures (Batch 8): the spec check is pure; the drawing is synchronous once the
+// engines have loaded, which the server does before it listens.
+import { specReason, normaliseSpec, emptyGraph, EMPTY_GRAPH } from './figures/spec.js';
+import { engineReason, figureForStudent } from './figures/index.js';
+// The five interaction kinds (Batch 8) read their figure through this: the parts
+// to tap or label under per-student tokens, the grids, and the marking.
+import {
+  boardOf, idOn, drawnLabel, LABEL_FIGURES, tokensFor, zonesFor, plotGrid, numberlineGrid,
+  plotKeyReason, gradePlot, plotSolution, MAX_PLOT_POINTS, lineKeyReason, gradeNumberline, barsReason, gradeChart,
+} from './figures/interact.js';
 
 export const KINDS = [
   'mcq',        // choose one of four
@@ -58,6 +68,12 @@ export const KINDS = [
   'table',      // complete the empty cells of a grid
   'grid',       // tick every true row-column intersection
   'poll',       // ungraded: what does the room think
+  // Batch 8: interactions on a figure the server draws, or a professor's picture.
+  'hotspot',    // tap the right part(s) of a figure or picture
+  'label',      // drag labels onto the parts they name
+  'plot',       // place points, or a line, on a graph
+  'numberline', // mark points, intervals or rays on a number line
+  'chart',      // set the height of each bar
 ];
 
 /**
@@ -82,6 +98,12 @@ export const PAYLOAD_FIELDS = [
   // Not answer-bearing, but it must travel with the question everywhere the
   // payload does, or a passage survives generation and vanishes on save.
   'stimulus',
+  // Batch 8. Answer-bearing: hotspot's `answerIds` (the parts to tap), label's
+  // `placements` (which label goes on which part), plot's `plotKey`, the number
+  // line's `lineKey` and the bar heights in `values`. Not answer-bearing but
+  // stored with them: label's `distractors` and the empty chart in `bars`.
+  // numberline and chart reuse numeric's `tolerance`, for the same idea.
+  'answerIds', 'placements', 'distractors', 'plotKey', 'lineKey', 'bars', 'values',
 ];
 
 /**
@@ -89,8 +111,12 @@ export const PAYLOAD_FIELDS = [
  * First entry is the default, which is what KIND_FOR_LEVEL returns.
  */
 export const KINDS_FOR_LEVEL = {
-  remember: ['mcq', 'truefalse'],
-  understand: ['match', 'categorise'],
+  // hotspot and label (Batch 8): pointing at the part a figure names, or putting
+  // the names on the parts, is recognising - Remember - and reading what a part
+  // of a figure means (tap where the population peaks) is interpreting, which is
+  // Understand. Tapping the part that does not fit is Analyse, below.
+  remember: ['mcq', 'truefalse', 'hotspot', 'label'],
+  understand: ['match', 'categorise', 'hotspot', 'label'],
   // dropdown: the answer is produced in context, in a passage the student has to
   // hold together while they work - which is Apply and not Remember. It sits
   // beside cloze rather than below it because recognition is still available:
@@ -99,7 +125,9 @@ export const KINDS_FOR_LEVEL = {
   // table: completing a grid IS executing a procedure repeatedly - each blank
   // cell is the same rule applied to a new row, which is exactly Krathwohl's
   // "execute". A given cell shows the rule; the blank ones demand it be used.
-  apply: ['blank', 'cloze', 'numeric', 'dropdown', 'table'],
+  // plot, numberline, chart (Batch 8): placing points, marking a solution set or
+  // drawing the bars from a table is using a procedure on given values - Apply.
+  apply: ['blank', 'cloze', 'numeric', 'dropdown', 'table', 'plot', 'numberline', 'chart'],
   // hottext: picking out which words in a sentence do the work is
   // differentiation - separating the load-bearing parts from the surrounding
   // material. The student is not recalling the words, they are already on the
@@ -109,9 +137,13 @@ export const KINDS_FOR_LEVEL = {
   // axes at once - the same attributing move, applied systematically. It is
   // marked differently from multi, though, and scoreOne() says why: the same
   // move over a whole matrix makes leaving a cell alone a judgement too.
-  analyse: ['multi', 'categorise', 'hottext', 'grid'],
+  // hotspot: tap the step, point or part that does not fit - finding the error.
+  analyse: ['multi', 'categorise', 'hottext', 'grid', 'hotspot'],
   evaluate: ['order', 'rank'],
-  create: ['open'],
+  // plot at Create is a line drawn to conditions ("any line with a negative
+  // slope through (1, 1)"): the student makes one of many right answers and the
+  // server checks it by rule. The validator refuses a single right answer here.
+  create: ['open', 'plot'],
 };
 
 /**
@@ -193,6 +225,11 @@ export const KIND_FOR_LEVEL = Object.fromEntries(
  * Left out on purpose: numeric, because a chapter with no figures in it would
  * push the model into inventing one, and categorise at Analyse, which Understand
  * already asks. Both stay one choice away for a teacher who wants them.
+ *
+ * Left out for the same reason as numeric: the five kinds asked on a figure
+ * (FIGURE_ASKED_KINDS). A chapter with no graph, chart or picture in it would
+ * push the model into drawing one for its own sake. So Create, whose set now
+ * also holds plot, is still spread over the written answer alone by default.
  */
 export const DEFAULT_KIND_MIX = {
   remember: { mcq: 2, truefalse: 1 },
@@ -220,7 +257,15 @@ export const LABEL = {
   table: 'Complete the table',
   grid: 'Tick every match',
   poll: 'Have your say',
+  hotspot: 'Tap the part',
+  label: 'Label the figure',
+  plot: 'Plot on the graph',
+  numberline: 'Mark the number line',
+  chart: 'Draw the bars',
 };
+
+/** The kinds asked on a figure or a picture (Batch 8): none is in DEFAULT_KIND_MIX, on purpose. */
+export const FIGURE_ASKED_KINDS = ['hotspot', 'label', 'plot', 'numberline', 'chart'];
 
 /** Which kinds a teacher may switch a question INTO, without changing its level. */
 export const swapsFor = (level) => KINDS_FOR_LEVEL[level] ?? ['mcq'];
@@ -237,6 +282,17 @@ const str = (v) => typeof v === 'string' && v.trim().length > 0;
 const uniq = (a) => new Set(a.map((s) => String(s).trim().toLowerCase())).size === a.length;
 const norm = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+const low = (v) => String(v ?? '').toLowerCase();
+
+/** A figure stimulus's spec, normalised, when it is of this type; else null. */
+function figureSpec(stimulus, type) {
+  if (stimulus?.kind !== 'figure') return null;
+  const { spec } = normaliseSpec(stimulus.spec);
+  return spec?.type === type ? spec : null;
+}
+
+/** An optional tolerance: absent, or zero or more. */
+const toleranceReason = (kind, t) => (t === undefined || t === null || (num(t) !== null && t >= 0) ? null : `${kind} tolerance must be zero or more`);
 
 /**
  * The words of a rubric point the open-answer marker looks for. Exported so the
@@ -251,8 +307,50 @@ const blankCount = (text) => String(text ?? '').split(BLANK_MARK).length - 1;
 
 // ----------------------------------------------------------------- stimulus
 
-/** What a stimulus may be. A third entry here needs a branch in both validators. */
-export const STIMULUS_KINDS = ['passage', 'image'];
+/**
+ * What a stimulus may be. A new entry here needs a branch in both validators.
+ * `figure` (Batch 8) is a JSON spec the server draws itself (src/figures): never
+ * code and never an SVG from anyone, so it is checked key by key below.
+ */
+export const STIMULUS_KINDS = ['passage', 'image', 'figure'];
+
+/** The keys a figure stimulus may carry: anything else, a ready-made picture included, is refused. */
+const FIGURE_STIMULUS_KEYS = ['kind', 'spec', 'sourceRef'];
+
+/**
+ * Regions a professor marks on an image for later interactions: polygons in
+ * percentages of the picture's width and height, each with a name and a label.
+ * Teacher-side only for now (forStudent() leaves them out), since a label is
+ * what a "tap the part" question would ask for.
+ */
+export const MAX_REGIONS = 24;
+export const MAX_REGION_POINTS = 24;
+const REGION_ID = /^[A-Za-z][A-Za-z0-9_-]{0,23}$/;
+
+function regionsReason(regions) {
+  if (regions === undefined || regions === null) return null;
+  if (!Array.isArray(regions)) return 'an image\'s regions must be a list';
+  if (regions.length > MAX_REGIONS) return `an image may have at most ${MAX_REGIONS} regions`;
+  const seen = new Set();
+  for (const [i, r] of regions.entries()) {
+    const what = `region ${i + 1}`;
+    if (!r || typeof r !== 'object' || Array.isArray(r)) return `${what} must be an object`;
+    for (const k of Object.keys(r)) if (!['id', 'label', 'points'].includes(k)) return `${what} carries ${k}, which a region cannot use`;
+    if (typeof r.id !== 'string' || !REGION_ID.test(r.id)) return `${what} needs a short name made of letters, digits, - or _`;
+    if (seen.has(r.id.toLowerCase())) return `two regions are both called ${r.id}`;
+    seen.add(r.id.toLowerCase());
+    if (!str(r.label) || r.label.length > 60) return `${what} needs a label of at most 60 characters`;
+    if (!Array.isArray(r.points) || r.points.length < 3 || r.points.length > MAX_REGION_POINTS) {
+      return `${what} needs between 3 and ${MAX_REGION_POINTS} corners`;
+    }
+    for (const p of r.points) {
+      if (!Array.isArray(p) || p.length !== 2 || !p.every((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100)) {
+        return `each corner of ${what} is two percentages, across and down, from 0 to 100`;
+      }
+    }
+  }
+  return null;
+}
 
 /**
  * A passage long enough to be worth sharing between questions, and short enough
@@ -303,6 +401,16 @@ function stimulusReason(s) {
     // unanswerable without this - the student using a screen reader gets the
     // stem, the options, and silence where the evidence should be.
     if (!str(s.alt)) return 'an image stimulus needs alt text describing it';
+    const badRegions = regionsReason(s.regions);
+    if (badRegions) return badRegions;
+  }
+
+  if (s.kind === 'figure') {
+    for (const k of Object.keys(s)) {
+      if (!FIGURE_STIMULUS_KEYS.includes(k)) return `a figure stimulus carries ${k}, which it cannot use: a figure is described by its spec and drawn by the server`;
+    }
+    const badSpec = specReason(s.spec) ?? engineReason(s.spec);
+    if (badSpec) return badSpec;
   }
 
   // Empty is allowed and means "not given": a form's blank citation box.
@@ -339,6 +447,9 @@ export function invalidReason(q) {
   // the one field that is not the property of any single kind.
   const badStimulus = stimulusReason(q.stimulus);
   if (badStimulus) return badStimulus;
+  // Empty axes carry nothing to read; they are only the board a plot question
+  // is answered on (figures/spec.js allows them for that).
+  if (kind !== 'plot' && emptyGraph(figureSpec(q.stimulus, 'plot'))) return EMPTY_GRAPH;
 
   switch (kind) {
     case 'mcq': {
@@ -531,6 +642,69 @@ export function invalidReason(q) {
       // marked, and the first person to "fix" score() by honouring it turns the
       // room's opinion into a wrong answer. Refuse it at the door.
       if (q.answerIdx !== undefined || q.answerIdxs !== undefined) return 'a poll has no correct answer, so it must carry none';
+      return null;
+    }
+
+    case 'hotspot': {
+      const board = boardOf(q.stimulus);
+      if (!board) return 'hotspot needs a figure, or a picture with marked regions, to tap';
+      if (!Array.isArray(q.answerIds) || q.answerIds.length < 1) return 'hotspot needs at least one right part to tap';
+      if (!q.answerIds.every((id) => typeof id === 'string' && id)) return 'hotspot answerIds are the names of parts';
+      if (new Set(q.answerIds.map(low)).size !== q.answerIds.length) return 'hotspot answerIds repeat';
+      // A diagram or molecule before the engines load: its parts are not known
+      // yet, and the save path waits for them (figures/index.js checkFigure).
+      if (board.pending) return null;
+      if (board.ids.length < 2) return `hotspot needs ${board.kind === 'image' ? 'a picture with at least two marked regions' : 'a figure with at least two parts'} to choose between`;
+      if (!q.answerIds.every((id) => idOn(board, id))) return `hotspot names a part the ${board.kind === 'image' ? 'picture' : 'figure'} does not have`;
+      // As hottext: tapping everything must not be the answer.
+      if (q.answerIds.length >= board.ids.length) return 'hotspot cannot have every part right';
+      return null;
+    }
+
+    case 'label': {
+      const board = boardOf(q.stimulus);
+      if (!board) return 'label needs a figure, or a picture with marked regions, to label';
+      if (board.kind === 'figure' && !LABEL_FIGURES.includes(board.spec.type)) {
+        return `label is asked on a ${LABEL_FIGURES.join(', ')} figure, or a picture with marked regions: other figures draw the names themselves`;
+      }
+      if (!Array.isArray(q.placements) || q.placements.length < 2 || q.placements.length > 8) return 'label needs 2-8 labels to place';
+      if (!q.placements.every((p) => p && typeof p.target === 'string' && str(p.label) && p.label.length <= 60)) {
+        return 'every label placement needs a part and a label of at most 60 characters';
+      }
+      if (q.distractors !== undefined && (!Array.isArray(q.distractors) || q.distractors.length > 3 || !q.distractors.every(str))) {
+        return 'label may carry up to 3 extra labels that belong nowhere';
+      }
+      if (!uniq([...q.placements.map((p) => p.label), ...(q.distractors ?? [])])) return 'label has the same label twice';
+      if (new Set(q.placements.map((p) => low(p.target))).size !== q.placements.length) return 'label puts two labels on one part';
+      if (board.pending) return null;
+      for (const p of q.placements) {
+        if (!idOn(board, p.target)) return `label names a part the ${board.kind === 'image' ? 'picture' : 'figure'} does not have`;
+        // The drawing would be showing the answer it asks for.
+        if (board.kind === 'figure' && drawnLabel(board.spec, p.target)) return 'the figure already labels a part the student is asked to label';
+      }
+      return null;
+    }
+
+    case 'plot': {
+      const spec = figureSpec(q.stimulus, 'plot');
+      if (!spec) return 'plot needs a graph to place on: a plot figure as its stimulus';
+      return plotKeyReason(q.plotKey, spec, q.bloom);
+    }
+
+    case 'numberline': {
+      const spec = figureSpec(q.stimulus, 'numberline');
+      if (!spec) return 'numberline needs a number line to mark: a number-line figure as its stimulus';
+      return toleranceReason('numberline', q.tolerance) ?? lineKeyReason(q.lineKey, spec);
+    }
+
+    case 'chart': {
+      const why = barsReason(q.bars, q.values) ?? toleranceReason('chart', q.tolerance);
+      if (why) return why;
+      // A bar or line chart of the same heights beside it would be the answer.
+      const spec = figureSpec(q.stimulus, 'chart');
+      if (spec?.series?.some((s) => s.values.length === q.values.length && s.values.every((v, i) => Math.abs(v - q.values[i]) < 1e-9))) {
+        return 'the figure already draws the bars the student is asked to set';
+      }
       return null;
     }
 
@@ -964,10 +1138,88 @@ function scoreOne(q, response, seed = '', keep = null) {
       };
     }
 
+    case 'hotspot': {
+      // response: the zone tokens tapped (figures/interact.js). Each is turned
+      // back into the part it stands for from the seed; a token that names no
+      // tappable part is a client bug and is dropped, as grid drops stray keys.
+      const board = boardOf(q.stimulus);
+      if (!board) return { score: 0, correct: false, solution: null, detail: 'the figure could not be read' };
+      const { tokenOf, idOf } = tokensFor(board, zoneShuffle(seed));
+      const parts = new Set(board.ids.map(low));
+      const want = new Set(q.answerIds.map(low));
+      const got = new Set((Array.isArray(response) ? response : [])
+        .map((t) => (typeof t === 'string' ? idOf.get(t) : undefined)).filter(Boolean).map(low).filter((id) => parts.has(id)));
+      // The multi rule, for the reason selectionScore gives: tap everything and
+      // the over-claims cancel the finds.
+      const { score: s, hits } = selectionScore(want, got);
+      return {
+        score: s,
+        correct: s >= PASS_MARK,
+        solution: [...want].map((id) => tokenOf.get(id)).sort(byToken),
+        detail: `${hits}/${want.size} parts`,
+      };
+    }
+
+    case 'label': {
+      // response: { zone token: SHOWN position of the label put there }. Partial
+      // credit per label, as match: one slip is not fatal.
+      const board = boardOf(q.stimulus);
+      if (!board) return { score: 0, correct: false, solution: null, detail: 'the figure could not be read' };
+      const { tokenOf } = tokensFor(board, zoneShuffle(seed));
+      const all = labelsOf(q);
+      const perm = permFor(all.length, `${seed}:lb`);
+      const posOf = [];
+      perm.forEach((orig, pos) => { posOf[orig] = pos; });
+      const raw = response && typeof response === 'object' && !Array.isArray(response) ? response : {};
+      let hits = 0;
+      const solution = {};
+      q.placements.forEach((p, i) => {
+        const zone = tokenOf.get(low(p.target));
+        solution[zone] = posOf[i];
+        const pos = Number(raw[zone]);
+        if (Number.isInteger(pos) && perm[pos] === i) hits += 1;
+      });
+      const s = q.placements.length ? hits / q.placements.length : 0;
+      return { score: s, correct: s >= PASS_MARK, solution, detail: `${hits}/${q.placements.length} labels` };
+    }
+
+    case 'plot': {
+      // response: the points placed, as [x, y] in the graph's own numbers.
+      const spec = figureSpec(q.stimulus, 'plot');
+      if (!spec) return { score: 0, correct: false, solution: null, detail: 'the graph could not be read' };
+      const { score: s, detail } = gradePlot(q.plotKey, spec, response);
+      return { score: s, correct: s >= PASS_MARK, solution: plotSolution(q.plotKey), detail };
+    }
+
+    case 'numberline': {
+      const spec = figureSpec(q.stimulus, 'numberline');
+      if (!spec) return { score: 0, correct: false, solution: null, detail: 'the number line could not be read' };
+      const { score: s, detail } = gradeNumberline(q.lineKey, spec, response, q.tolerance ?? null);
+      return {
+        score: s,
+        correct: s >= PASS_MARK,
+        solution: { points: q.lineKey.points ?? [], intervals: q.lineKey.intervals ?? [], rays: q.lineKey.rays ?? [] },
+        detail,
+      };
+    }
+
+    case 'chart': {
+      // response: one height per category, in the categories' own order (a
+      // chart is not shuffled: the order is the data's).
+      const { score: s, detail } = gradeChart(q.bars, q.values, response, q.tolerance ?? null);
+      return { score: s, correct: s >= PASS_MARK, solution: q.values, detail };
+    }
+
     default:
       return { score: 0, correct: false, solution: null, detail: `unhandled kind ${kind}` };
   }
 }
+
+/** The seeded order a student's zone tokens are dealt in (figures/interact.js tokensFor). */
+const zoneShuffle = (seed) => (n) => permFor(n, `${seed}:z`);
+const byToken = (a, b) => Number(String(a).slice(1)) - Number(String(b).slice(1));
+/** A label question's labels in stored order: the placements', then the ones that belong nowhere. */
+const labelsOf = (q) => [...q.placements.map((p) => p.label), ...(Array.isArray(q.distractors) ? q.distractors : [])];
 
 /**
  * Score one response, server-side, with no model call — the live loop must stay
@@ -1075,6 +1327,12 @@ const inRange = (i, n) => (Number.isInteger(i) && i >= 0 && i < n ? i : null);
  *   categorise       per item, in the stored bucket-major order, its group index
  *   dropdown         per gap, the option index
  *   grid             per row, per column, whether it was ticked
+ *   hotspot          the names of the parts tapped, sorted, each once (the
+ *                    phone sent this student's zone tokens, which mean nothing
+ *                    to anyone else)
+ *   label            per placement, the index of the label put on its part, in
+ *                    the stored order (the placements' labels, then the extra
+ *                    ones), or null
  *   anything else    null: a typed or arranged answer has no options to count
  */
 export function toOriginalResponse(q, response, seed = '', keep = null) {
@@ -1128,6 +1386,28 @@ export function toOriginalResponse(q, response, seed = '', keep = null) {
       const raw = response && typeof response === 'object' && !Array.isArray(response) ? response : {};
       return Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => Boolean(raw[`${r}:${c}`])));
     }
+    case 'hotspot': {
+      const board = boardOf(q.stimulus);
+      if (!board) return [];
+      const { idOf } = tokensFor(board, zoneShuffle(seed));
+      const parts = new Map(board.ids.map((id) => [low(id), id]));
+      const picked = (Array.isArray(response) ? response : [])
+        .map((t) => (typeof t === 'string' ? parts.get(low(idOf.get(t))) : undefined)).filter(Boolean);
+      return [...new Set(picked)].sort();
+    }
+    case 'label': {
+      const board = boardOf(q.stimulus);
+      const placements = Array.isArray(q.placements) ? q.placements : [];
+      if (!board) return placements.map(() => null);
+      const { tokenOf } = tokensFor(board, zoneShuffle(seed));
+      const n = labelsOf(q).length;
+      const perm = permFor(n, `${seed}:lb`);
+      const raw = response && typeof response === 'object' && !Array.isArray(response) ? response : {};
+      return placements.map((p) => {
+        const pos = Number(raw[tokenOf.get(low(p.target))]);
+        return Number.isInteger(pos) && pos >= 0 && pos < n ? perm[pos] : null;
+      });
+    }
     default:
       return null;
   }
@@ -1141,9 +1421,15 @@ export function toOriginalResponse(q, response, seed = '', keep = null) {
  * would do it silently, on every kind at once, because this rides along with all
  * sixteen. Listing the fields means a new one has to be added here on purpose.
  */
-const stimulusForStudent = (s) => (s.kind === 'passage'
-  ? { kind: 'passage', text: s.text }
-  : { kind: 'image', url: s.url, alt: s.alt ?? '' });
+const stimulusForStudent = (s) => {
+  if (s.kind === 'passage') return { kind: 'passage', text: s.text };
+  // A figure goes as its drawing, description and table (figures/index.js
+  // figureForStudent): never its spec, which for a "plot this" figure could
+  // hold what the student is asked to find, and never its steps.
+  if (s.kind === 'figure') return figureForStudent(s.spec);
+  // An image's regions stay with the professor, for the same reason.
+  return { kind: 'image', url: s.url, alt: s.alt ?? '' };
+};
 
 /**
  * The question as ONE student may see it.
@@ -1264,6 +1550,49 @@ export function forStudent(q, seed = '', accommodations = null) {
       return { ...base, options: q.options };
     case 'open':
       return { ...base, hint: `${q.rubric.length} points to cover` };
+    case 'hotspot':
+    case 'label': {
+      // The figure is drawn again under this student's tokens, replacing the
+      // plain drawing on the base: a part's own name ("nucleus") must not reach
+      // the phone in an attribute. Zones carry a token and, on a picture, an
+      // outline; never a name, a label or which of them is right.
+      const board = boardOf(q.stimulus);
+      if (!board) return base;
+      const only = kind === 'label' ? q.placements.map((p) => p.target) : null;
+      const { stimulus, zones } = zonesFor(q.stimulus, board, zoneShuffle(seed), only);
+      if (kind === 'hotspot') return { ...base, stimulus, zones };
+      // The labels shuffled, the extra ones among them; named `labels`, never
+      // `placements`, which is the stored key.
+      return { ...base, stimulus, zones, labels: shown(labelsOf(q), `${seed}:lb`) };
+    }
+    case 'plot': {
+      // The graph and where it sits in its picture, so a tap becomes x and y;
+      // whether a line or points are asked for. Never the key.
+      const spec = figureSpec(q.stimulus, 'plot');
+      const place = q.plotKey?.place === 'line' ? 'line' : 'points';
+      return { ...base, grid: spec ? plotGrid(spec) : null, place, maxPoints: place === 'line' ? 2 : MAX_PLOT_POINTS };
+    }
+    case 'numberline': {
+      // The line and its ticks. Not whether the answer is points or intervals:
+      // the phone offers every mark, since which one is right is part of the
+      // question.
+      const spec = figureSpec(q.stimulus, 'numberline');
+      return { ...base, grid: spec ? numberlineGrid(spec) : null };
+    }
+    case 'chart':
+      // The empty chart, named `board` so the stored `bars` and `values` have
+      // no namesake in a phone's payload.
+      return {
+        ...base,
+        board: {
+          categories: q.bars.categories,
+          min: q.bars.min ?? 0,
+          max: q.bars.max,
+          step: q.bars.step,
+          label: q.bars.label ?? '',
+          xLabel: q.bars.xLabel ?? '',
+        },
+      };
     default:
       return base;
   }

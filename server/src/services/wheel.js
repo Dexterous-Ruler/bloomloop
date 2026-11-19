@@ -26,11 +26,16 @@ import crypto from 'node:crypto';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
-/** What a picked student is asked (the handoff's ASK list). */
+/**
+ * What a picked student is asked (the handoff's ASK list). 'verbal' (Batch 8,
+ * the oldest design file's fourth ask, 0034) is a question the professor makes
+ * up on the spot: like a diagram or a demo, it names no bank question.
+ */
 export const ASK_TYPES = [
   { id: 'bank', label: 'Bank', hint: 'A question from the room\'s bank.' },
   { id: 'diagram', label: 'Diagram', hint: 'Ask them to explain the diagram on the projector, one step at a time.' },
   { id: 'demo', label: 'Demo', hint: 'Ask them to work it through on the board while the class follows.' },
+  { id: 'verbal', label: 'Verbal question', hint: 'A question you ask aloud, made up on the spot; it is not from the bank.' },
 ];
 const ASK_IDS = ASK_TYPES.map((a) => a.id);
 
@@ -134,7 +139,7 @@ export function askFrom(body, { current, servable = [] }) {
   }
   const ask = out.ask ?? current.ask ?? 'bank';
   if (body?.questionId !== undefined && body.questionId !== null) {
-    if (ask !== 'bank') throw fail('Only a bank ask names a question; a diagram or a demo has none.', 400);
+    if (ask !== 'bank') throw fail('Only a bank ask names a question; a diagram, a demo or a verbal question has none.', 400);
     const id = typeof body.questionId === 'string' ? body.questionId.trim().toLowerCase() : '';
     const q = servable.find((s) => String(s._id).toLowerCase() === id);
     if (!q) throw fail('questionId is not a question this room serves: pick one of its approved questions.', 400);
@@ -142,7 +147,7 @@ export function askFrom(body, { current, servable = [] }) {
   } else if (body?.questionId === null) {
     out.questionId = null;
   }
-  // A diagram or a demo asks no bank question: one chosen earlier goes.
+  // A diagram, a demo or a verbal question asks no bank question: one chosen earlier goes.
   if (ask !== 'bank' && current.questionId) out.questionId = null;
   return out;
 }
@@ -155,12 +160,74 @@ export function pickStatusFrom(raw) {
   return raw;
 }
 
+/* ------------------------------------------- "Question + student" (W2) --
+
+   Batch 8 (0034). With the draw, the server may also draw a question of the
+   room's approved set, with the same randomness as the student (drawFrom), and
+   keep it on the pick; "Another" draws the next one for the same pick. Every
+   question drawn is kept in wheel_question_draws, in order, so the record shows
+   what was drawn and not only what was kept, and "Another" never repeats one.
+
+   Which questions: the room's approved questions (its set's, when it has one),
+   less polls (a poll has no answer a picked student could give), in id order so
+   a given random index always names the same question. Questions already asked
+   on any pick of this room, or drawn for one, are left out while any other is
+   left; once every one has been, only the ones drawn for this pick are left out,
+   so a long class can still draw. When even those are all gone, nothing is
+   drawn and the reply says why. */
+
+/** The questions a draw may name, in a fixed order. */
+export function drawableQuestions(servable = []) {
+  return servable
+    .filter((q) => (q.kind ?? 'mcq') !== 'poll')
+    .sort((a, b) => String(a._id).localeCompare(String(b._id)));
+}
+
+/**
+ * The next question for a pick, every one in the pool equally likely, or null
+ * with the reason. `askedInRoom`: ids on any pick of the room or drawn for one;
+ * `drawnForPick`: ids already drawn for this pick (always left out).
+ *
+ * @returns {{ question: object|null, poolSize: number, widened: boolean, reason: string|null }}
+ */
+export function drawQuestion(servable = [], { askedInRoom = [], drawnForPick = [], rng = crypto.randomInt } = {}) {
+  const all = drawableQuestions(servable);
+  const key = (id) => String(id ?? '').toLowerCase();
+  const mine = new Set(drawnForPick.map(key));
+  const room = new Set(askedInRoom.map(key));
+  let pool = all.filter((q) => !room.has(key(q._id)) && !mine.has(key(q._id)));
+  let widened = false;
+  if (!pool.length) {
+    pool = all.filter((q) => !mine.has(key(q._id)));
+    widened = pool.length > 0;
+  }
+  if (!pool.length) {
+    return {
+      question: null,
+      poolSize: 0,
+      widened: false,
+      reason: all.length
+        ? 'Every approved question of this room has been drawn for this pick already. Ask one aloud, or choose one by hand.'
+        : 'This room has no approved question to draw (polls are left out). Draw a student only, or approve questions first.',
+    };
+  }
+  return { question: drawFrom(pool, rng), poolSize: pool.length, widened, reason: null };
+}
+
 /**
  * One pick as a teacher's screen gets it. `nameOf` maps a roll number to the
- * name to show; `questions` (id -> question) gives a bank ask its text and level.
+ * name to show; `questions` (id -> question) gives a bank ask its text and level;
+ * `draws` are the questions the server drew for this pick (0034), in order.
  */
-export function pickView(p, { nameOf = new Map(), questions = new Map() } = {}) {
+export function pickView(p, { nameOf = new Map(), questions = new Map(), draws = [] } = {}) {
   const q = p.questionId ? questions.get(String(p.questionId)) : null;
+  // The draw that put the pick's question there, when the server drew it: the
+  // latest draw, while the pick still names its question (a professor may since
+  // have chosen another by hand, or changed the ask).
+  const last = draws.at(-1);
+  const drawn = last && p.questionId && String(last.questionId ?? '').toLowerCase() === String(p.questionId).toLowerCase()
+    ? { order: last.drawOrder, poolSize: last.poolSize, drawnAt: last.drawnAt ?? null, draws: draws.length }
+    : null;
   return {
     id: String(p._id),
     round: p.round,
@@ -175,6 +242,8 @@ export function pickView(p, { nameOf = new Map(), questions = new Map() } = {}) 
     askLabel: ASK_TYPES.find((a) => a.id === p.ask)?.label ?? p.ask,
     questionId: p.questionId ?? null,
     question: q ? { text: q.text, bloom: q.bloom, kind: q.kind ?? 'mcq' } : null,
+    // Drawn by the server ("Question + student"), or null when chosen by hand or none.
+    questionDraw: drawn,
     status: p.status,
     statusLabel: statusLabel(p.status),
     pickedAt: p.pickedAt ?? null,
@@ -189,7 +258,14 @@ export function pickView(p, { nameOf = new Map(), questions = new Map() } = {}) 
  * who is on the wheel now and "N picked of M", and every pick in every round,
  * in order.
  */
-export function wheelState({ session, rounds = [], picks = [], people = [], questions = new Map() }) {
+export function wheelState({ session, rounds = [], picks = [], people = [], questions = new Map(), draws = [] }) {
+  const drawsOf = new Map();
+  for (const d of draws) {
+    const k = String(d.pickId).toLowerCase();
+    if (!drawsOf.has(k)) drawsOf.set(k, []);
+    drawsOf.get(k).push(d);
+  }
+  for (const list of drawsOf.values()) list.sort((a, b) => a.drawOrder - b.drawOrder);
   const round = currentRound(rounds);
   const thisRound = picks.filter((p) => p.round === round.round);
   const pool = wheelPool(people, { presentOnly: round.presentOnly, noRepeat: round.noRepeat, pickedThisRound: thisRound });
@@ -213,7 +289,7 @@ export function wheelState({ session, rounds = [], picks = [], people = [], ques
       empty: pool.left ? null : emptyWheelReason({ session, presentOnly: round.presentOnly, pool }),
     },
     rounds: rounds.map((r) => ({ number: r.round, startedAt: r.startedAt ?? null, presentOnly: r.presentOnly, noRepeat: r.noRepeat })),
-    picks: picks.map((p) => pickView(p, { nameOf, questions })),
+    picks: picks.map((p) => pickView(p, { nameOf, questions, draws: drawsOf.get(String(p._id).toLowerCase()) ?? [] })),
     asks: ASK_TYPES,
     statuses: PICK_STATUSES,
   };

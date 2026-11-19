@@ -67,6 +67,7 @@ import { newerMarks, newerMarksSentence, staleReply } from '../services/recordSy
 import { importedRooms } from '../services/roomImport.js';
 import { forgetInsights } from '../services/insights.js';
 import { CLASS_LOCK } from '../services/classQuestions.js';
+import { roomClass as classOfRoom, roomClasses } from '../services/roomClass.js';
 
 const router = express.Router();
 
@@ -587,9 +588,12 @@ router.get('/:code/grid', requireTeacher, async (req, res, next) => {
  * unchanged: no screen then shows such a room as one this server ran.
  */
 async function roomHead(session) {
-  const importedFrom = (await importedRooms(getRepo(), [session])).get(String(session._id));
+  const [imported, cls] = await Promise.all([importedRooms(getRepo(), [session]), classOfRoom(getRepo(), session)]);
+  const importedFrom = imported.get(String(session._id));
   return {
     code: session.code, title: session.title ?? '', startedAt: session.startedAt ?? null, status: session.status,
+    // The class's course and section (Batch 8, gap L2), or null for a room opened for no class.
+    class: cls,
     ...(importedFrom ? { importedFrom } : {}),
   };
 }
@@ -836,6 +840,8 @@ router.get('/', requireTeacher, async (req, res, next) => {
     const rooms = await readable(req.viewer, await repo.listSessions());
     // Rooms imported from a file laptop mode saved (Phase 7), in one read.
     const imported = await importedRooms(repo, rooms);
+    // Each room's class, one read per class (Batch 8, gap L2).
+    const classes = await roomClasses(repo, rooms);
 
     const rows = await Promise.all(
       rooms.map(async (session) => {
@@ -865,8 +871,10 @@ router.get('/', requireTeacher, async (req, res, next) => {
           settings: sessionSettings(session),
           // The room's question set, or null for its whole approved bank.
           questionIds: session.questionIds ?? null,
-          // The class the room was opened for, or null.
+          // The class the room was opened for, or null; and its course and
+          // section, for the live head (Batch 8, gap L2).
           classId: session.classId ?? null,
+          class: session.classId ? classes.get(String(session.classId)) ?? null : null,
           // Non-zero only in a room running redemption, and listed beside the
           // accuracy it moved so the two are never read apart.
           withdrawn,

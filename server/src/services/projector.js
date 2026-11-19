@@ -52,6 +52,7 @@ import { presentCount as rosterPresent } from './roster.js';
 import { OPTION_KEYS, roomPeople } from './records.js';
 import { pickForProjector } from './wheel.js';
 import { MIN_VOTES_FOR_WALL, votesOf, wallQuestion } from './classQuestions.js';
+import { figureAtStep, stepCount } from '../figures/index.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -121,6 +122,12 @@ export const PROJECTOR_RULE = 'The projector shows the question (its key only on
 // ------------------------------------------------------------ whitelist --
 
 /**
+ * A figure on the wall (Batch 8): the drawing at the step the professor chose,
+ * its description and table, and where it is in its steps. Never its spec.
+ */
+const FIGURE_WALL_FIELDS = ['type', 'title', 'svg', 'description', 'table', 'step', 'stepCount', 'caption'];
+
+/**
  * Every key any projector:* payload may carry, by path. An object's keys are
  * checked against its path's entry; an array's items against `path[]`. Anything
  * else is dropped by toProjector(), and server/scripts/modes.mjs walks every
@@ -130,7 +137,8 @@ export const PROJECTOR_FIELDS = {
   'projector:state': ['code', 'title', 'status', 'mode', 'roomMode', 'question', 'diagram', 'progress', 'pick'],
   'projector:state.question': ['source', 'text', 'kind', 'options', 'stimulus', 'revealed', 'correct', 'round', 'state', 'voted', 'counts'],
   'projector:state.question.options[]': ['key', 'label'],
-  'projector:state.question.stimulus': ['kind', 'url', 'alt', 'text'],
+  'projector:state.question.stimulus': ['kind', 'url', 'alt', 'text', ...FIGURE_WALL_FIELDS],
+  'projector:state.question.stimulus.table': ['caption', 'columns', 'rows'],
   'projector:state.question.correct[]': null,
   // A class question's counts (Phase 5): numbers per option and per tap, never a name.
   'projector:state.question.counts': ['minVotes', 'before', 'after', 'changes'],
@@ -145,7 +153,8 @@ export const PROJECTOR_FIELDS = {
   'projector:state.question.counts.changes': ['both', 'onlyBefore', 'onlyAfter', 'wrongToRight', 'rightToWrong',
     'rightToRight', 'wrongToSameWrong', 'wrongToOtherWrong', 'kept', 'changed'],
   'projector:state.diagram': ['stimulus'],
-  'projector:state.diagram.stimulus': ['kind', 'url', 'alt', 'text'],
+  'projector:state.diagram.stimulus': ['kind', 'url', 'alt', 'text', ...FIGURE_WALL_FIELDS],
+  'projector:state.diagram.stimulus.table': ['caption', 'columns', 'rows'],
   'projector:state.progress': ['present', 'classSize', 'answered', 'levels', 'minAnswered'],
   'projector:state.progress.levels[]': ['level', 'label', 'answers'],
   'projector:state.pick': ['rollNo', 'firstName'],
@@ -186,7 +195,7 @@ export const PROJECTOR_MODES = ['question', 'diagram', 'progress'];
 
 /** The handoff's own defaults: the question screen, names on; a class question's counts off until chosen. */
 const DEFAULT_SCREEN = {
-  mode: 'question', question: null, revealed: false, diagram: null, pickId: null, showNames: true, showCounts: false,
+  mode: 'question', question: null, revealed: false, diagram: null, pickId: null, showNames: true, showCounts: false, step: 0,
 };
 
 const screens = new Map(); // sessionId -> what the professor has put on the wall
@@ -293,6 +302,19 @@ export function screenChangeFrom(body = {}, current, {
     }
     touched = true;
   }
+  // A new question or diagram starts at its figure's first picture (Batch 8).
+  if (body.question !== undefined || body.diagram !== undefined || body.mode !== undefined) next.step = 0;
+  if (body.step !== undefined) {
+    const steps = stepCount(steppedFigureOn(next, servable));
+    if (!steps) {
+      throw fail('What the projector shows has no steps to move through: show a question or diagram whose figure has steps.', 400);
+    }
+    if (!Number.isInteger(body.step) || body.step < 0 || body.step > steps) {
+      throw fail(`This figure has ${steps} step${steps === 1 ? '' : 's'}: choose one from 0 (the figure itself) to ${steps}.`, 400);
+    }
+    next.step = body.step;
+    touched = true;
+  }
   if (body.showNames !== undefined) bool('showNames');
   if (body.showCounts !== undefined) bool('showCounts');
   if (body.pick !== undefined) {
@@ -313,6 +335,18 @@ export function screenChangeFrom(body = {}, current, {
       + 'projector only in a Teacher-led room; nothing was changed.', 409);
   }
   return next;
+}
+
+/**
+ * The figure spec the screen's step moves (Batch 8, gap P1): the diagram's in
+ * diagram mode, the bank question's in question mode. Null when neither shows a
+ * figure.
+ */
+function steppedFigureOn(screen, servable) {
+  const id = screen.mode === 'diagram' ? screen.diagram?.questionId
+    : screen.mode === 'question' && screen.question?.source === 'bank' ? screen.question.id : null;
+  const q = id ? servable.find((x) => sameId(x._id, id)) : null;
+  return q?.stimulus?.kind === 'figure' ? q.stimulus.spec : null;
 }
 
 /** Is the key of the question on the screen one of the bank's? A tally that cannot be found is treated as if it were. */
@@ -357,6 +391,8 @@ export function screenView(screen) {
     pickId: screen.pickId ?? null,
     showNames: screen.showNames !== false,
     showCounts: screen.showCounts === true,
+    // The figure's step on the wall (Batch 8): 0 is the figure itself.
+    step: Number.isInteger(screen.step) ? screen.step : 0,
   };
 }
 
@@ -364,9 +400,13 @@ export function screenView(screen) {
 
 const letter = (i) => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[i] ?? String(i + 1);
 
-/** A stimulus as a wall may show it: the picture or the passage, nothing a professor keeps beside it. */
-function stimulusForWall(s) {
+/**
+ * A stimulus as a wall may show it: the picture or the passage, nothing a
+ * professor keeps beside it. A figure is drawn at the screen's step.
+ */
+function stimulusForWall(s, step = 0) {
   if (!s || typeof s !== 'object') return null;
+  if (s.kind === 'figure') return figureAtStep(s.spec, step);
   if (s.kind === 'image') return { kind: 'image', url: String(s.url ?? ''), alt: String(s.alt ?? '') };
   if (s.kind === 'passage') return { kind: 'passage', text: String(s.text ?? '') };
   return null;
@@ -379,7 +419,7 @@ function stimulusForWall(s) {
  * true/false); any other kind is shown as its stem, for the class to answer
  * aloud. The key, only once revealed, is the options' letters.
  */
-function bankQuestionForWall(q, revealed) {
+function bankQuestionForWall(q, revealed, step = 0) {
   const seen = forStudent(q, `projector:${q._id}`, null);
   const kind = seen.kind;
   let options = [];
@@ -399,7 +439,9 @@ function bankQuestionForWall(q, revealed) {
     text: String(seen.text ?? ''),
     kind,
     options,
-    stimulus: stimulusForWall(seen.stimulus),
+    // A figure from the stored question, so it can be drawn at the wall's step;
+    // a stimulus holds no answer, and forStudent() has already built the rest.
+    stimulus: q.stimulus?.kind === 'figure' ? stimulusForWall(q.stimulus, step) : stimulusForWall(seen.stimulus),
     revealed: revealed === true,
     correct,
   };
@@ -476,7 +518,7 @@ export async function projectorPayload(repo, session) {
     if (screen.question.source === 'bank') {
       // A question discarded since it went up is simply no longer shown.
       const q = bank.find((x) => sameId(x._id, screen.question.id));
-      question = q ? bankQuestionForWall(q, screen.revealed) : null;
+      question = q ? bankQuestionForWall(q, screen.revealed, screen.step ?? 0) : null;
     } else if (screen.question.source === 'class') {
       // Only this room's: a class question of another room is never shown.
       question = cq && sameId(cq.sessionId, session._id)
@@ -488,7 +530,7 @@ export async function projectorPayload(repo, session) {
     }
   } else if (screen.mode === 'diagram' && screen.diagram) {
     const q = bank.find((x) => sameId(x._id, screen.diagram.questionId));
-    const stimulus = q ? stimulusForWall(q.stimulus) : null;
+    const stimulus = q ? stimulusForWall(q.stimulus, screen.step ?? 0) : null;
     diagram = stimulus ? { stimulus } : null;
   } else if (screen.mode === 'progress') {
     progress = progressForWall({ session, profiles, roster, marks });

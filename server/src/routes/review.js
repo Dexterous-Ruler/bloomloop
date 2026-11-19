@@ -38,6 +38,7 @@ import { applyReview, sessionSettings } from '../services/mastery.js';
 import { PASS_MARK } from '../questionTypes.js';
 import { lockProfile, broadcastGrid, roomDeleting } from '../sockets/index.js';
 import { importedRooms } from '../services/roomImport.js';
+import { figureForStaff } from '../figures/index.js';
 
 const router = express.Router();
 
@@ -104,6 +105,10 @@ function toItem(answer, session, name, importedFrom = null) {
   const snap = answer.questionSnapshot ?? {};
   return {
     answerId: String(answer._id),
+    // The key the row was stored under, the phone's own answerId (Batch 8), so
+    // the console can tie an outbox item to this row. `answerId` above is the
+    // row's id, which the review routes take.
+    answerKey: answer.answerKey ?? null,
     room: {
       code: session?.code ?? null, title: session?.title ?? '', status: session?.status ?? null,
       ...(importedFrom ? { importedFrom } : {}),
@@ -121,6 +126,8 @@ function toItem(answer, session, name, importedFrom = null) {
       // such field), so this is null until one does.
       modelAnswer: snap.modelAnswer ?? null,
       stimulus: snap.stimulus ?? null,
+      // A figure (Batch 8) drawn from the snapshot's spec, as the student saw it.
+      ...(snap.stimulus?.kind === 'figure' ? { figure: figureForStaff(snap.stimulus.spec) } : {}),
     },
     response: answer.response ?? null,
     autoCorrect: answer.autoCorrect ?? null,

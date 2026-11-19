@@ -24,6 +24,9 @@ const contentSchema = new Schema(
     // Deck only, uploaded from Phase 6 on: each slide's own words,
     // [{ slide, text }] (0025). Absent on an older deck and on pasted text.
     slideTexts: { type: Schema.Types.Mixed, default: undefined },
+    // Batch 8 (0033): what the deck upload kept of its slide pictures. Absent on
+    // a chapter from before, which kept none.
+    slidePictures: { type: Schema.Types.Mixed, default: undefined },
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: false } },
 );
@@ -68,6 +71,14 @@ const questionSchema = new Schema(
     rows: { type: Schema.Types.Mixed, default: undefined }, // table: [{header, cells}], grid: [label]
     answers: { type: Schema.Types.Mixed, default: undefined }, // grid: one row of booleans per row
     stimulus: { type: Schema.Types.Mixed, default: undefined }, // passage or image, any kind
+    // Batch 8's interaction kinds: declared for the same reason as the rest.
+    answerIds: { type: [String], default: undefined },   // hotspot: the parts to tap
+    placements: { type: Schema.Types.Mixed, default: undefined }, // label: [{target, label}]
+    distractors: { type: [String], default: undefined }, // label: labels that belong nowhere
+    plotKey: { type: Schema.Types.Mixed, default: undefined }, // plot
+    lineKey: { type: Schema.Types.Mixed, default: undefined }, // numberline
+    bars: { type: Schema.Types.Mixed, default: undefined },    // chart: the empty chart
+    values: { type: [Number], default: undefined },      // chart: the heights
     bloom: { type: String, enum: LEVELS, required: true },
     // 'draft': generated and not yet approved, never served (supabase/migrations/0013).
     status: { type: String, enum: ['active', 'discarded', 'draft'], default: 'active' },
@@ -90,6 +101,9 @@ const questionSchema = new Schema(
     // provenance, addedAt, changedAt, by }] (services/misconceptions.js checks
     // the shape before anything is written). Declared, or Mongoose drops them.
     misconceptions: { type: Schema.Types.Mixed, default: () => [] },
+    // 0035 (Batch 8). Kept for rooms only: the Learning Hub never offers it.
+    // Declared, or Mongoose drops it and every question is shared.
+    roomsOnly: { type: Boolean, default: false },
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: false } },
 );
@@ -344,6 +358,9 @@ const mediaSchema = new Schema(
     sha256: { type: String, required: true, match: /^[0-9a-f]{64}$/ },
     data: { type: Buffer, required: true },
     alt: { type: String, required: true },
+    // Batch 8 (0033): the slide of the deck this picture was kept from; null for
+    // a picture uploaded on its own.
+    slideNo: { type: Number, default: null, min: 1 },
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: false }, versionKey: false },
 );
@@ -491,6 +508,8 @@ const roomActivitySchema = new Schema(
     // Groups, never students: [{ label, gotIt }].
     groups: { type: Schema.Types.Mixed, default: () => [] },
     tallyId: { type: String, default: null },
+    // The suggestion it came from ("Use it", Batch 8, 0034), or null. Set once.
+    suggestionId: { type: String, default: null },
     createdAt: { type: String, default: nowIso },
     createdBy: by,
     updatedAt: { type: String, default: nowIso },

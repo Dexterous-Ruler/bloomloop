@@ -59,6 +59,7 @@ import { BLANK_MARK } from '../questionTypes.js';
 import { readPieces, richText } from './richText.js';
 import { holdsContact } from './roster.js';
 import { languageSplit } from './honesty.js';
+import { sectionFieldLabel, sectionFields } from './hubConcept.js';
 
 export const ORIGINAL = 'en';
 export const TRANSLATED_LANGUAGES = Object.freeze(['hi', 'mr']);
@@ -152,9 +153,12 @@ registerTranslatable('lesson', {
         if (s.answer) out[`steps.${i}.answer`] = s.answer;
       }
     });
-    return out;
+    // Batch 8: the concept panel's sections (services/hubConcept.js). A lesson
+    // without them has the same fields, and so the same hash, as before.
+    return { ...out, ...sectionFields(lesson?.sections) };
   },
-  note: () => null,
+  note: (lesson) => (lesson?.sections
+    ? 'An explanation step\'s term and the code example stay in English: they are the words and code the slides use.' : null),
 });
 
 // A question's explanation (H14, services/hubExplanations.js). There is one per
@@ -226,6 +230,8 @@ export function fieldLabel(key) {
   // The tutor's items (H13, services/hubTutor.js).
   if (key === 'hint') return 'the hint';
   if (key === 'feedback') return 'the feedback';
+  const section = sectionFieldLabel(key);
+  if (section) return section;
   const option = /^options\.(\d+)$/.exec(key);
   if (option) return `option ${Number(option[1]) + 1}`;
   const step = /^steps\.(\d+)\.(text|problem|steps|answer)(?:\.(\d+))?$/.exec(key);

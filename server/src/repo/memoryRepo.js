@@ -50,6 +50,10 @@ export function createMemoryRepo() {
   // keyed `${sessionId}\u0000${writer}\u0000${key}`, as the unique constraint is.
   const recordWrites = new Map();
   const writeKeyOf = (d) => `${d.sessionId}\u0000${d.writer}\u0000${d.key}`;
+  // Batch 8 (0034): the live room's suggestions and the questions the wheel
+  // drew for its picks, both append-only lists in the order written.
+  const teachingMoves = [];
+  const questionDraws = [];
 
   // Unique on (classId, code) among outcomes not archived, as Postgres's partial
   // unique index course_outcomes_class_code_key is.
@@ -119,6 +123,8 @@ export function createMemoryRepo() {
           replacesId: null,
           // 0024: misconception labels on its wrong options, none by default.
           misconceptions: [],
+          // 0035 (Batch 8): shared with the Learning Hub unless the owner keeps it for rooms.
+          roomsOnly: false,
           createdAt: new Date().toISOString(),
           ...d,
           contentId: String(d.contentId),
@@ -226,7 +232,7 @@ export function createMemoryRepo() {
       for (const [k, mark] of attendance) {
         if (mark.sessionId === key) attendance.delete(k);
       }
-      for (const list of [observations, insightActions, questionPacks]) {
+      for (const list of [observations, insightActions, questionPacks, teachingMoves, questionDraws]) {
         for (let i = list.length - 1; i >= 0; i -= 1) if (list[i].sessionId === key) list.splice(i, 1);
       }
       for (const map of [wheelRounds, wheelPicks, tallies, activities, projectorLinks, classQuestions, recordWrites]) {
@@ -1702,6 +1708,118 @@ export function createMemoryRepo() {
       const rec = { _id: oid(), target: '', createdAt: new Date().toISOString(), ...clone(doc), sessionId: String(doc.sessionId) };
       recordWrites.set(k, rec);
       return { write: clone(rec), duplicate: false };
+    },
+
+    // ---- Batch 8: figures (0033; services/slideImages.js, routes/figures.js) ----
+
+    /**
+     * A picture kept from a deck's slide: an upload like any other (createMedia),
+     * with the slide it was on (`slideNo`, from 1). Its bytes have already had
+     * their metadata taken out.
+     */
+    async createSlideMedia(doc) {
+      const { data, ...meta } = doc;
+      const _id = oid();
+      const rec = { _id, ownerId: null, createdAt: new Date().toISOString(), ...clone(meta), contentId: String(doc.contentId), slideNo: Number(doc.slideNo) };
+      media.set(_id, { rec, data: Buffer.from(data) });
+      return clone(rec);
+    },
+
+    /** A chapter's slide pictures, without their bytes, in slide order (then upload order). */
+    async listSlideMedia(contentId) {
+      return [...media.values()].map((h) => h.rec)
+        .filter((r) => r.contentId === String(contentId) && Number.isInteger(r.slideNo))
+        .sort((a, b) => a.slideNo - b.slideNo || String(a.createdAt).localeCompare(String(b.createdAt)))
+        .map(clone);
+    },
+
+    /** What a deck upload kept of its pictures ({ kept, skippedType, ... }), written once after the upload. */
+    async setContentSlidePictures(contentId, summary) {
+      const rec = contents.get(String(contentId));
+      if (!rec) return null;
+      rec.slidePictures = clone(summary);
+      return clone(rec.slidePictures);
+    },
+
+    /** That summary, or null for a chapter from before pictures were kept (or a pasted syllabus). */
+    async getContentSlidePictures(contentId) {
+      return clone(contents.get(String(contentId))?.slidePictures ?? null);
+    },
+
+    // ---- Batch 8: the live room's suggestions and the wheel's question draws (0034) ----
+
+    /**
+     * Keep one suggestion the model made in a room (services/teachingMoves.js).
+     * Append-only, as teaching_moves is: nothing here edits or deletes one; it
+     * goes only with its room.
+     */
+    async addTeachingMove(doc) {
+      const rec = {
+        _id: oid(),
+        title: '',
+        focusLevel: null,
+        topic: '',
+        basis: {},
+        sourceRef: null,
+        askedBy: null,
+        askedAt: new Date().toISOString(),
+        ...clone(doc),
+        sessionId: String(doc.sessionId),
+      };
+      teachingMoves.push(rec);
+      return clone(rec);
+    },
+
+    /** A room's suggestions, oldest first. */
+    async listTeachingMoves(sessionId) {
+      return clone(teachingMoves.filter((m) => m.sessionId === String(sessionId)));
+    },
+
+    /** One suggestion by id, or null. */
+    async getTeachingMove(id) {
+      return clone(teachingMoves.find((m) => m._id === String(id ?? '').trim().toLowerCase()) ?? null);
+    },
+
+    /**
+     * Keep one question the server drew for a pick. Append-only, and one per
+     * (pick, drawOrder), as wheel_question_draws_pick_order_key is: a place
+     * already taken is a 409, as a pick's place on the wheel is.
+     */
+    async addWheelQuestionDraw(doc) {
+      if (questionDraws.some((d) => d.pickId === String(doc.pickId) && d.drawOrder === doc.drawOrder)) {
+        throw taken('place in the pick\'s questions');
+      }
+      const rec = {
+        _id: oid(),
+        questionId: null,
+        drawnBy: null,
+        drawnAt: new Date().toISOString(),
+        ...clone(doc),
+        sessionId: String(doc.sessionId),
+        pickId: String(doc.pickId),
+      };
+      questionDraws.push(rec);
+      return clone(rec);
+    },
+
+    /** Every question drawn in a room, each pick's in draw order. */
+    async listWheelQuestionDraws(sessionId) {
+      return clone(questionDraws
+        .filter((d) => d.sessionId === String(sessionId))
+        .sort((a, b) => (a.pickId < b.pickId ? -1 : a.pickId > b.pickId ? 1 : a.drawOrder - b.drawOrder)));
+    },
+
+    // ---- Batch 8: material, the bank and the hub's concept panel (0035; services/bankShare.js, routes/bank.js) ----
+
+    /**
+     * Keep a question for rooms only, or share it with the Learning Hub again
+     * (questions.rooms_only, 0035). The question, or null when there is none.
+     */
+    async setQuestionRoomsOnly(id, roomsOnly) {
+      const rec = questions.get(String(id));
+      if (!rec) return null;
+      rec.roomsOnly = roomsOnly === true;
+      return clone(rec);
     },
   };
 }

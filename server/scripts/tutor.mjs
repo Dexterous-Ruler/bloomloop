@@ -202,7 +202,20 @@ async function call(method, path, { body, as = 'profA' } = {}) {
   return { status: res.status, body: parsed, text };
 }
 const get = (path, as) => call('GET', path, { as });
-const post = (path, body, as) => call('POST', path, { body, as });
+// Batch 8: practice and lesson answers carry the serve token the hub's reply gave
+// (services/serveTokens.js). This script tests other things, so it signs the
+// token the server would have sent; server/scripts/zipgaps2.mjs tests the token itself.
+const { serveToken: signServed } = await import(`${SRC}services/serveTokens.js`);
+const served = (path, body, as) => {
+  if (!body || typeof body !== 'object' || body.serveToken !== undefined || !ID[as]) return body;
+  const lesson = /^\/api\/hub\/lessons\/[^/]+\/questions\/([^/]+)\/attempts$/.exec(path);
+  if (lesson) return { ...body, serveToken: signServed({ accountId: ID[as], questionId: lesson[1], mode: 'lesson' }) };
+  if (path === '/api/hub/practice/attempts' && body.questionId) {
+    return { ...body, serveToken: signServed({ accountId: ID[as], questionId: body.questionId, mode: body.mode ?? 'practice' }) };
+  }
+  return body;
+};
+const post = (path, body, as) => call('POST', path, { body: served(path, body, as), as });
 const put = (path, body, as) => call('PUT', path, { body, as });
 const del = (path, as) => call('DELETE', path, { as });
 

@@ -31,6 +31,8 @@ const topicLessonSchema = new Schema(
     approvedBy: by,
     retiredAt: { type: String, default: null },
     retiredBy: by,
+    // 0035 (Batch 8): the concept panel's sections (services/hubConcept.js), or null.
+    sections: { type: Schema.Types.Mixed, default: null },
   },
   { versionKey: false, minimize: false },
 );

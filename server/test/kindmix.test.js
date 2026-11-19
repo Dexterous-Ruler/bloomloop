@@ -11,7 +11,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { LEVELS, CEILING } from '../src/bloom.js';
-import { KINDS_FOR_LEVEL, KIND_FOR_LEVEL, DEFAULT_KIND_MIX, kindSuitsLevel } from '../src/questionTypes.js';
+import { KINDS_FOR_LEVEL, KIND_FOR_LEVEL, DEFAULT_KIND_MIX, FIGURE_ASKED_KINDS, kindSuitsLevel } from '../src/questionTypes.js';
 import { isSelectedResponse } from '../src/services/checks.js';
 import {
   planBank, PRESETS, spreadKinds, countKinds, resolveKindMix, kindAllowedAt,
@@ -38,7 +38,9 @@ describe('the default kind mix', () => {
 
   test('every level whose set has two or more kinds is spread over at least two', () => {
     for (const level of LEVELS) {
-      const want = Math.min(2, KINDS_FOR_LEVEL[level].length);
+      // Kinds asked on a figure are left out of the default, as numeric is: a
+      // chapter with no graph in it would push the model into drawing one.
+      const want = Math.min(2, KINDS_FOR_LEVEL[level].filter((k) => !FIGURE_ASKED_KINDS.includes(k)).length);
       assert.ok(Object.keys(DEFAULT_KIND_MIX[level]).length >= want, level);
     }
   });

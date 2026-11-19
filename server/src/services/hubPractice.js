@@ -61,6 +61,8 @@ import {
 } from './hubLanguages.js';
 import { countedAttempts } from './hubHeld.js';
 import { closedError, closedQuestions } from './hubClosed.js';
+import { isRoomsOnly } from './bankShare.js';
+import { assertServed, serveToken } from './serveTokens.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -98,9 +100,13 @@ export function cleanAttemptId(value) {
 /** The shuffle seed of a hub question for one student: stable, so a reload shows the same board. */
 export const hubSeed = (accountId, questionId) => `hub:${accountId}:${questionId}`;
 
-/** May practice serve this question now? Approved, not a poll, no uploaded image. */
+/**
+ * May practice serve this question now? Approved, not a poll, no uploaded image,
+ * and not kept for rooms only (Batch 8, services/bankShare.js): every hub
+ * builder (practice, reviews, self-tests, Get Ready) reads its questions here.
+ */
 export const practisable = (q) => (q?.status ?? 'active') === 'active' && (q?.kind ?? 'mcq') !== 'poll'
-  && q?.stimulus?.kind !== 'image';
+  && q?.stimulus?.kind !== 'image' && !isRoomsOnly(q);
 
 /**
  * Was this question ever approved? Approved now, or retired after it was
@@ -113,7 +119,7 @@ export const wasApproved = (q) => Boolean(q) && ((q.status ?? 'active') === 'act
  * May an answer to this question be stored? Anything practice could have
  * served: a question once approved (wasApproved), not a poll, no uploaded image.
  */
-export const onceServable = (q) => wasApproved(q) && (q.kind ?? 'mcq') !== 'poll' && q.stimulus?.kind !== 'image';
+export const onceServable = (q) => wasApproved(q) && (q.kind ?? 'mcq') !== 'poll' && q.stimulus?.kind !== 'image' && !isRoomsOnly(q);
 
 /* ---------------------------------------------------------------- scope -- */
 
@@ -349,6 +355,9 @@ export async function nextQuestion(repo, account, { topicIds, mode = 'practice',
     translationId: lang.translationId,
     languageNote: lang.note,
     question: { ...shown, provenance: phoneProvenance(pick.q), rich: await phoneRich(shown) },
+    // Batch 8: the proof that practice served this question to this student,
+    // sent back with the answer (services/serveTokens.js).
+    serveToken: serveToken({ accountId: who, questionId: pick.q._id, mode, now }),
     topic: topicRef(pick.entry),
     topics,
     why: whySentence(pick, state.answers),
@@ -376,7 +385,9 @@ const timeTaken = (v) => (Number.isInteger(v) && v >= 0 && v <= 86400000 ? v : n
  *                       `runId` the Get Ready check or self-test the answer was given in (0028)
  * @returns {Promise<{ attempt, duplicate: boolean, entry: object|null }>}
  */
-export async function recordAttempt(repo, account, body = {}, { now = new Date(), hintsUsed = 0, language = null, runId = null } = {}) {
+export async function recordAttempt(repo, account, body = {}, {
+  now = new Date(), hintsUsed = 0, language = null, runId = null, requireServed = false,
+} = {}) {
   const attemptId = cleanAttemptId(body.attemptId);
   if (!attemptId) throw fail('Each attempt needs its own id: 8 to 64 letters, digits, - or _.', 400);
   const mode = body.mode ?? 'practice';
@@ -386,6 +397,10 @@ export async function recordAttempt(repo, account, body = {}, { now = new Date()
   // an answer already kept is never refused later for any reason.
   const held = await repo.getHubAttemptByKey(who, attemptId);
   if (held) return { attempt: held, duplicate: true, entry: null };
+  // Batch 8: practice takes an answer only to a question it served to this
+  // student, proved by the token its reply carried (services/serveTokens.js).
+  // Refused before anything is stored; the device keeps the answer.
+  if (requireServed) assertServed(body.serveToken, { accountId: who, questionId: body.questionId, mode, now });
 
   let responseText;
   try {

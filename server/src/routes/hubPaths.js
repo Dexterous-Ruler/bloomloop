@@ -13,6 +13,8 @@
 //   GET    /getready/:checkId            one check: where it stands, the question to answer, the path once complete
 //   POST   /getready/:checkId/answers    { attemptId, questionId, response, timeTakenMs, shown? }: 201 with the
 //                                        feedback and the check after it; a resend is 200 with the same
+//   POST   /getready/:checkId/end        end it early (Batch 8): undecided topics become Not sure yet and its
+//                                        question is open again; the check as it ended (200, also when already ended)
 //   POST   /exams                        start a self-test { clientRunId, topicIds, levels?, count?, timeLimitMinutes? }
 //   GET    /exams                        their self-tests, newest first
 //   GET    /exams/:examId                open: the questions, with no mark; ended: the result
@@ -45,7 +47,7 @@ import { feedbackFor } from '../services/hubPractice.js';
 import { classProgress, classScope, rosterAccounts } from '../services/hubProgress.js';
 import { itemKeyOf } from '../services/hubElo.js';
 import { ownRun } from '../services/hubRuns.js';
-import { answerCheck, checkView, checksForStaff, listChecks, startCheck } from '../services/hubGetReady.js';
+import { answerCheck, checkView, checksForStaff, endCheck, listChecks, startCheck } from '../services/hubGetReady.js';
 import { answerExam, examView, listExams, startExam, submitExam } from '../services/hubExam.js';
 import { addGoal, changeGoal, goalsFor, hubHome, removeGoal, studentsByState } from '../services/hubGoals.js';
 
@@ -123,6 +125,17 @@ router.post('/getready/:checkId/answers', handle(async (req, res) => {
     return { duplicate, body: { ...feedback, check: await checkView(repo, req.viewer, fresh) } };
   });
   res.status(out.duplicate ? 200 : 201).json(out.body);
+}));
+
+// ---- Batch 8: ending a Get Ready check early ----
+router.post('/getready/:checkId/end', handle(async (req, res) => {
+  assertStudent(req.viewer);
+  const repo = getRepo();
+  const run = await ownRun(repo, req.viewer, req.params.checkId, 'getready');
+  // Under the check's own lock, so an answer arriving at the same moment is
+  // either in before the end or refused after it, never half of each.
+  const { run: ended, changed } = await withLock(`run:${run._id}`, () => endCheck(repo, req.viewer, run));
+  res.json({ changed, ...(await checkView(repo, req.viewer, ended)) });
 }));
 
 /* ----------------------------------------------------------- self-tests -- */

@@ -361,6 +361,11 @@ export async function withUpload(repo, stimulus, contentId) {
   const media = id ? await repo.getMedia(id).catch(() => null) : null;
   if (!media || String(media.contentId) !== String(contentId)) throw notFound();
   const alt = typeof stimulus.alt === 'string' && stimulus.alt.trim() ? stimulus.alt : media.alt;
+  // A picture kept from a deck's slide (Batch 8) has no description yet, only
+  // a placeholder naming its slide: it is described when it goes on a question.
+  if (/\(not yet described\)$/.test(String(alt).trim())) {
+    throw Object.assign(new Error('Describe this picture from the slides first: a student who cannot see it gets only that description.'), { status: 400 });
+  }
   return { ...stimulus, url: mediaUrl(media._id), alt };
 }
 

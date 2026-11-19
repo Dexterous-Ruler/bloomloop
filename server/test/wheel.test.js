@@ -207,6 +207,7 @@ describe('the wheel as a teacher\'s screen gets it', () => {
     const [p] = w.picks;
     assert.deepEqual([p.name, p.askLabel, p.statusLabel, p.question.text, p.poolSize], ['Bilal Khan', 'Bank', 'Needs help', 'Define a binary tree.', 3]);
     assert.deepEqual(w.statuses.map((x) => x.label), ['Answered', 'Passed to partner', 'Needs help', 'Skipped', 'Absent']);
-    assert.deepEqual(w.asks.map((x) => x.id), ['bank', 'diagram', 'demo']);
+    // 'verbal', a question asked aloud on the spot, since Batch 8 (0034).
+    assert.deepEqual(w.asks.map((x) => x.id), ['bank', 'diagram', 'demo', 'verbal']);
   });
 });

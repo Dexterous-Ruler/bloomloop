@@ -31,6 +31,8 @@ import {
 } from '../services/edits.js';
 import { runChecks, failedChecks, isSelectedResponse } from '../services/checks.js';
 import { withUpload } from '../services/media.js';
+import { checkFigure, figureForStaff } from '../figures/index.js';
+import { draftChecks } from '../services/figureDrafts.js';
 import { KINDS_FOR_LEVEL, LABEL as KIND_LABEL, PAYLOAD_FIELDS, isUngraded } from '../questionTypes.js';
 import { contentItemStats, questionMisconceptions } from '../services/itemStats.js';
 import {
@@ -45,6 +47,7 @@ import {
   stampLabels,
   wrongIdxs,
 } from '../services/misconceptions.js';
+import { ROOMS_ONLY_SENTENCE } from '../services/bankShare.js';
 import { assertCanRead, assertCanWrite, canWrite, readable } from '../ownership.js';
 import { staffQuestion } from '../services/honesty.js';
 
@@ -86,6 +89,14 @@ async function retireReplaced(repo, question) {
  */
 async function withStimulus(repo, body, contentId) {
   if (body.stimulus === undefined) return body;
+  // A figure (Batch 8) is drawn now, with every step, by the engines that will
+  // draw it for phones: a spec they refuse is refused here with their sentence,
+  // and the spec is stored as checked (figures/index.js checkFigure).
+  if (body.stimulus?.kind === 'figure') {
+    const checked = await checkFigure(body.stimulus.spec);
+    if (checked.reason) throw fail(`The figure was not saved: ${checked.reason}`, 400);
+    return { ...body, stimulus: { ...body.stimulus, spec: checked.spec } };
+  }
   return { ...body, stimulus: await withUpload(repo, body.stimulus, contentId) };
 }
 
@@ -193,7 +204,12 @@ router.get('/:contentId', async (req, res, next) => {
     res.json({
       // Each with its provenance and approval state, and whether its level is
       // one to check (services/honesty.js, Phase 5): staff-only, like the rest.
-      questions: questions.map(staffQuestion),
+      // A figure stimulus also comes drawn (Batch 8): the picture, description,
+      // table and parts a phone would get, so the review screen shows the same.
+      questions: questions.map((q) => {
+        const view = staffQuestion(q);
+        return q.stimulus?.kind === 'figure' ? { ...view, figure: figureForStaff(q.stimulus.spec) } : view;
+      }),
       counts,
       total: questions.length,
       active,
@@ -591,7 +607,8 @@ router.post('/question/:id/regenerate', async (req, res, next) => {
     // The model's proposed misconception labels (0024), AI drafts like the
     // question. The old question's labels stay with the old question.
     if (item.misconceptions?.length) row.misconceptions = stampLabels(item.misconceptions);
-    row.checks = runChecks(row);
+    // The rule checks, and what generation found about a figure and its key.
+    row.checks = draftChecks(row, item);
 
     // Insert first: a failed insert must not leave the teacher with one fewer
     // usable item than they started with.
@@ -655,6 +672,35 @@ router.post('/question/:id/reject', async (req, res, next) => {
     const question = changed ? await repo.updateQuestion(existing._id, patch) : existing;
     if (!question) throw fail('That question was not found.', 404);
     res.json({ question: staffQuestion(question), changed });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- Batch 8: the shared question bank's "rooms only" switch ----
+
+/**
+ * Keep one question for rooms only, or share it with the Learning Hub again
+ * ({ roomsOnly: true | false }; services/bankShare.js). The owner's write, like
+ * every write here (an HOD is refused, another teacher's question is the same
+ * 404). Rooms serve it either way; the hub never offers a question kept for
+ * rooms. A draft may carry it too, so it is kept for rooms from its approval.
+ */
+router.put('/question/:id/rooms-only', async (req, res, next) => {
+  try {
+    if (typeof req.body?.roomsOnly !== 'boolean') throw fail('Say whether to keep this question for rooms only: true or false.', 400);
+    const repo = getRepo();
+    const { question: existing } = await forWrite(repo, req.viewer, req.params.id);
+    const want = req.body.roomsOnly;
+    const changed = (existing.roomsOnly === true) !== want;
+    const question = changed ? await repo.setQuestionRoomsOnly(existing._id, want) : existing;
+    if (!question) throw fail('That question was not found.', 404);
+    res.json({
+      question: staffQuestion(question),
+      changed,
+      roomsOnly: question.roomsOnly === true,
+      message: ROOMS_ONLY_SENTENCE[question.roomsOnly === true ? 'on' : 'off'],
+    });
   } catch (err) {
     next(err);
   }
