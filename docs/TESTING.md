@@ -1469,7 +1469,7 @@ code change. The figures are what each run printed:
 | `outcomes`, `attainment`, `acceptance4`, `decisions` | 87, 73, 76, 79: all passed |
 | `classquestion`, `misconceptions`, `honesty`, `keysafety` | 76, 54, 66, 43: all passed |
 | `hub`, `practice`, `paths`, `lessons`, `tutor` | 78, 78, 88, 100, 84: all passed |
-| `offline` | **exit 1**: 83 checks passed, then "timeout waiting for server:result" in its grace-window section (the step after "reached the server inside the window, its turn after it"); no check failed before it |
+| `offline` | **exit 1**: 83 checks passed, then "timeout waiting for server:result" in its grace-window section (the step after "reached the server inside the window, its turn after it"); no check failed before it. Fixed on 19 Nov 2026: the step sent on a socket opened before a ten-minute clock jump, and the socket client, which times its heartbeat by the same clock, could judge itself expired and drop the reply. The script now reconnects the phone after the jump; 6 runs of 6 then passed (94 checks each). |
 | `laptop`, `recordsync` | 79 (`refusedOffMachine` 0), 38: all passed |
 | `figures`, `figkinds`, `zipgaps1`, `zipgaps2` | 51, 58, 63, 64: all passed |
 

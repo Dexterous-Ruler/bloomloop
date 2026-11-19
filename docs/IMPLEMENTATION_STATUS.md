@@ -2336,7 +2336,8 @@ Mongo.
 
 The run for the Batch 8 docs: unit 1232 / 1232, migrations 1708 / 1708, `figures` 51,
 `figkinds` 58, `zipgaps1` 63, `zipgaps2` 64, every older suite passed except
-`offline.mjs`, which stopped on a timeout after 83 passing checks and was not rerun
+`offline.mjs`, which stopped on a timeout after 83 passing checks and was not rerun.
+Fixed on 19 Nov 2026 (the test reconnects the phone after its clock jump; 6 of 6 runs pass)
 (`docs/TESTING.md`, "Batch 8").
 
 **Deploying.** Rooms need none of `0033` to `0035`: all three are route-only. Apply

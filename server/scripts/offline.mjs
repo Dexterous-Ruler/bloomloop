@@ -1005,17 +1005,23 @@ console.log('\nthe grace window goes by when an answer reached the server, not w
 
   // Now past the window. The phone's own clock says it answered inside it,
   // and is not read.
-  const r3 = await send(W2, { questionId: w2, response: await responseFor(w2, true), answerId: 'turn-21CS22-3',
+  // A fresh connection after the clock jump: the socket client times its own
+  // heartbeat by the same (moved) clock, so a socket opened before a ten-minute
+  // jump can judge itself expired on its next send and drop the reply. That
+  // made this step time out now and then; a real phone reconnects just so.
+  W2.s.disconnect();
+  const W3 = await phone(roomW.body.code, '21CS22', { deliver: true });
+  const r3 = await send(W3, { questionId: w2, response: await responseFor(w2, true), answerId: 'turn-21CS22-3',
     deviceAnsweredAt: new Date(closedAt + 60000).toISOString() });
   const row3 = await rowW('turn-21CS22-3');
   check('one that reaches the server after the window is kept, not counted, whatever the phone\'s clock says',
     r3.event === 'server:kept' && r3.message === LATE_TOO_LATE_MESSAGE && row3?.final === false && row3.detail === AFTER_CLOSE_DETAIL,
     JSON.stringify({ r3: [r3.event, r3.message] }));
-  const again = await send(W2, { questionId: w1, response: await responseFor(w1, true), answerId: 'turn-21CS22-2' });
+  const again = await send(W3, { questionId: w1, response: await responseFor(w1, true), answerId: 'turn-21CS22-2' });
   check('the counted one sent again: the same mark from its row, nothing new',
     again.event === 'server:result' && again.correct === true
     && (await repo.listAnswers({ sessionId: sidW, rollNo: '21CS22' })).length === 3);
-  W2.s.disconnect();
+  W3.s.disconnect();
 }
 
 console.log(`\nanswers kept and not counted: ${KEPT_LIMIT} per student per room, every one of them stored`);
