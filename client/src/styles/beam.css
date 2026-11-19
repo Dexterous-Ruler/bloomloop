@@ -1,0 +1,103 @@
+/* Phase 3 (beam): the projector's controls in the console (teach/ProjectorControl.jsx).
+   The wall itself, and the preview drawn inside .bm-stage, are styles/wall.css.
+
+   Composition: the wall in miniature on the left, the one dark region on the
+   screen, with the rule it follows and its links under it; one glass card of
+   controls on the right, its parts split by hairlines. One column when the
+   room is narrow. */
+
+.bm { container-type: inline-size; min-width: 0; }
+.bm-grid {
+  display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); grid-template-areas: 'view side' 'meta side';
+  grid-template-rows: auto 1fr; gap: 14px 24px; align-items: start;
+}
+.bm-view { grid-area: view; }
+.bm-side { grid-area: side; }
+.bm-meta { grid-area: meta; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+/* ------------------------------------------------------------- the view */
+
+.bm-view { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.bm-head { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; }
+.bm-stage {
+  position: relative; margin: 0; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--r-4);
+  background: #0B1410; border: 1px solid rgba(255, 255, 255, 0.06); box-shadow: var(--sh-panel);
+}
+.bm-stage > .wl-frame { position: absolute; inset: 0; }
+.bm-rule { font-size: 12.5px; }
+
+.bm-links { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; }
+.bm-links-head { display: flex; align-items: baseline; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.bm-links-head h3 { font: 600 15px/1.3 var(--font); }
+.bm-linklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.bm-linklist > li { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 2px; }
+.bm-linklist > li + li { border-top: 1px solid var(--line); }
+.bm-linklist > li > svg { color: var(--text-3); }
+.bm-link-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bm-link-main b { font: 600 13px/1.3 var(--font); color: var(--text); }
+.bm-link-main span { font: 400 12px/1.35 var(--font); color: var(--text-3); }
+.bm-linklist > li:not([data-state='on']) .bm-link-main b { color: var(--text-3); font-weight: 500; }
+
+/* --------------------------------------------------------- the controls */
+
+.bm-side { display: flex; flex-direction: column; min-width: 0; padding: 20px 22px 6px; }
+.bm-side > .note { margin-bottom: 14px; }
+.bm-side-head { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding-bottom: 16px; }
+.bm-block { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 16px 0; border-top: 1px solid var(--line); }
+.bm-k { font: 600 11px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.bm-quiet { font: 400 13px/1.5 var(--font); color: var(--text-3); }
+.bm-dismiss { margin-left: 10px; padding: 0; border: 0; background: none; cursor: pointer; font: 600 12.5px/1 var(--font); color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+
+.bm-now { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.bm-now-text {
+  font: 600 14.5px/1.45 var(--font); color: var(--text); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.bm-now-acts { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; }
+.bm-why { display: flex; align-items: flex-start; gap: 6px; font: 400 12.5px/1.45 var(--font); color: var(--text-3); }
+.bm-why svg { margin-top: 2px; }
+
+.bm-picker { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.bm-picker-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.bm-picker-head h4 { font: 600 13px/1.3 var(--font); color: var(--text-2); }
+.bm-level .select { width: auto; min-width: 150px; }
+
+/* A scrolling list on hairlines, not a box inside the card. */
+.bm-list { list-style: none; margin: 0 -8px; padding: 0 8px; max-height: 380px; overflow-y: auto; overscroll-behavior: contain; }
+.bm-item { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 10px 6px; border-radius: 10px; }
+.bm-item + .bm-item { box-shadow: 0 -1px 0 var(--line); }
+.bm-item[data-up] { background: var(--primary-soft); }
+.bm-item[data-up] + .bm-item, .bm-item + .bm-item[data-up] { box-shadow: none; }
+.bm-item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.bm-item-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font: 500 12px/1.2 var(--font); color: var(--text-3); }
+.bm-item-text {
+  font: 500 13px/1.45 var(--font); color: var(--text); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.bm-has { display: inline-flex; color: var(--text-3); }
+.bm-thumb { flex: none; width: 64px; height: 44px; border-radius: 8px; object-fit: contain; background: #FFFFFF; border: 1px solid var(--line); }
+.bm-thumb-text { display: grid; place-items: center; background: var(--raised); color: var(--text-3); }
+.bm-list-skel { display: flex; flex-direction: column; gap: 8px; }
+.bm-list-skel > i { display: block; height: 54px; }
+
+.bm-pickrow { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.bm-pick { display: inline-flex; align-items: baseline; gap: 10px; min-width: 0; }
+.bm-pick b { font: 600 18px/1 var(--mono); letter-spacing: 0.02em; color: var(--text); }
+.bm-pick span { font: 600 15px/1 var(--font); color: var(--text-2); }
+.bm-switch { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-top: 4px; }
+.bm-switch > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bm-switch span { font: 600 13px/1.3 var(--font); color: var(--text); }
+.bm-switch small { font: 400 12px/1.4 var(--font); color: var(--text-3); }
+
+/* ------------------------------------------------------------ narrow */
+
+@container (max-width: 860px) {
+  .bm-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'view' 'side' 'meta'; grid-template-rows: auto; gap: 20px; }
+}
+@container (max-width: 520px) {
+  .bm-side { padding: 16px 16px 4px; }
+  .bm-side-head .btn { width: 100%; }
+  .bm-list { max-height: 320px; }
+  .bm-linklist > li { flex-wrap: wrap; }
+  .bm-link-main { flex-basis: calc(100% - 40px); }
+}

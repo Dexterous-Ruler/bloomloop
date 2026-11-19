@@ -37,7 +37,8 @@ import {
 /* Each filter carries its own test, so its count and the rows it shows cannot
    drift apart. */
 const FILTERS = [
-  { id: 'open', label: 'Live', match: (r) => r.status === 'open' },
+  // A waiting room is running too: phones are in it, waiting for the start.
+  { id: 'open', label: 'Live', match: (r) => r.status === 'open' || r.status === 'waiting' },
   { id: 'paused', label: 'Paused', match: (r) => r.status === 'paused' },
   { id: 'closed', label: 'Closed', match: (r) => r.status === 'closed' },
   { id: 'all', label: 'All', match: () => true },
@@ -69,12 +70,21 @@ function Skeleton() {
 }
 
 /** A room's settings, said quietly: the goal always, the rest only when on. */
-function Settings({ settings }) {
+const MODE_LABEL = { 'teacher-led': 'Teacher-led', mixed: 'Mixed' };
+
+function Settings({ settings, classId }) {
   if (!settings) return null;
   const goal = Number(settings.masteryGoal);
   const tries = Number(settings.reattempts) || 0;
   return (
     <>
+      {/* Phase 3. Student devices is every room before it, so it says nothing. */}
+      {MODE_LABEL[settings.mode] && (
+        <span className="ac-set" title={settings.mode === 'teacher-led' ? 'No answers on phones: the professor runs it with the wheel, the tally and observations' : 'Answers on phones, with the professor’s own records kept beside them'}>
+          {MODE_LABEL[settings.mode]}
+        </span>
+      )}
+      {classId && <span className="ac-set" title="Opened for a class: attendance and the wheel work from its roster">Class roster</span>}
       {Number.isFinite(goal) && goal > 0 && <span className="ac-set" title="Mastery goal: the accuracy a level counts as mastered at">Goal {Math.round(goal * 100)}%</span>}
       {tries > 0 && <span className="ac-set" title="Tries a student gets at a question they missed">{plural(tries, 'retry', 'retries')}</span>}
       {settings.redemption && <span className="ac-set" title="Early misses can be set aside once a student shows they have it">Redemption</span>}
@@ -87,7 +97,7 @@ function Settings({ settings }) {
 function RoomRow({ room: r, busy, onPause, onResume, onAskClose, onAskDelete }) {
   const navigate = useNavigate();
   const working = busy?.code === r.code;
-  const running = r.status === 'open' || r.status === 'paused';
+  const running = r.status === 'open' || r.status === 'paused' || r.status === 'waiting';
 
   const items = [
     {
@@ -126,7 +136,7 @@ function RoomRow({ room: r, busy, onPause, onResume, onAskClose, onAskDelete }) 
         <span className="ac-room-t clip" title={r.title || undefined}>{r.title || 'Untitled room'}</span>
         <span className="ac-room-sub">
           <span title={stampOf(when) || undefined}>{roomWhen(r)}</span>
-          <Settings settings={r.settings} />
+          <Settings settings={r.settings} classId={r.classId} />
           {/* null is the whole approved bank; a list is the set picked when it opened. */}
           {Array.isArray(r.questionIds) && (
             <span className="ac-set" title="This room serves a set of questions picked when it opened, and no others">
@@ -156,6 +166,12 @@ function RoomRow({ room: r, busy, onPause, onResume, onAskClose, onAskDelete }) 
           <Link className="btn btn-primary btn-sm ac-tap" to={roomLink(r.code, 'live')}>
             <Icon name="live" />
             Open the class
+          </Link>
+        )}
+        {r.status === 'waiting' && (
+          <Link className="btn btn-sm ac-tap" to={roomLink(r.code, 'live')}>
+            <Icon name="clock" />
+            Open the lobby
           </Link>
         )}
         {r.status === 'paused' && r.canControl && (
@@ -344,7 +360,7 @@ export function RoomsView({
   };
   const stopAsking = () => { setAsking(null); setTyped(''); };
 
-  const running = list.filter((r) => r.status === 'open' || r.status === 'paused');
+  const running = list.filter((r) => r.status === 'open' || r.status === 'paused' || r.status === 'waiting');
   const liveN = list.filter((r) => r.status === 'open').length;
   const connected = running.reduce((n, r) => n + (r.online ?? 0), 0);
   const seats = running.reduce((n, r) => n + (r.joined ?? 0), 0);
@@ -693,7 +709,7 @@ export default function Rooms() {
      and is wrong the moment a phone locks. So the list re-reads itself while
      anything is still running, and stops once every room is closed. */
   useEffect(() => {
-    const running = (raw ?? []).some((r) => r.status === 'open' || r.status === 'paused');
+    const running = (raw ?? []).some((r) => r.status === 'open' || r.status === 'paused' || r.status === 'waiting');
     if (!running) return undefined;
     const timer = setInterval(() => {
       // Not while the tab is in the background, and never on top of an action

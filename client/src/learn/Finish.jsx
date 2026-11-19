@@ -16,7 +16,26 @@ const SHORT = { remember: 'Rem', understand: 'Und', apply: 'App', analyse: 'Ana'
 const R = 42;
 const C = 2 * Math.PI * R;
 
-export default function Finish({ profile, ending, onLeave }) {
+export default function Finish({ profile, ending, reason = '', led = null, onLeave }) {
+  // A Teacher-led room takes no answers on phones, so there is no set to show:
+  // only the server's sentence, and the way out.
+  if (ending === 'teacher-led') {
+    return (
+      <>
+        <Panel className="ln-done">
+          <div className="stack stack-2">
+            <span className="tag-mint">Teacher-led</span>
+            <h1>{led?.title || 'Follow along in class'}</h1>
+            <p>{led?.message}</p>
+          </div>
+        </Panel>
+        <Dock>
+          <Button size="xl" block icon="logout" onClick={onLeave}>Leave the room</Button>
+        </Dock>
+      </>
+    );
+  }
+
   const closed = ending === 'closed';
   const levels = profile?.levels || {};
   const total = profile?.total || { seen: 0, correct: 0 };
@@ -38,7 +57,7 @@ export default function Finish({ profile, ending, onLeave }) {
             <p>
               {closed
                 ? 'Everything you answered is saved.'
-                : `${total.seen} question${total.seen === 1 ? '' : 's'}, chosen for you as you went.`}
+                : reason || `${total.seen} question${total.seen === 1 ? '' : 's'}, chosen for you as you went.`}
             </p>
           </div>
           {overall != null && (

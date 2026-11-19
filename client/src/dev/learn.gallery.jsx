@@ -199,6 +199,58 @@ const SCREENS = [
       </Phone>
     ),
   },
+  // Phase 3.
+  {
+    id: 'phone-waiting',
+    title: 'Student phone: waiting room',
+    note: 'Joined a room opened with a waiting room. The sentence is the server’s; the start sends the first question.',
+    el: (
+      <Phone hold={<Hold icon="clock" title="Waiting to start">You are in. Your professor will start the questions soon - keep this page open.</Hold>}>
+        {ask(null, 0)}
+      </Phone>
+    ),
+  },
+  {
+    id: 'phone-timed',
+    title: 'Student phone: a timed question',
+    note: 'The room set 60 seconds a question. The phone counts; nothing locks when it runs out.',
+    el: <Phone>{ask(MCQ, 3, { timer: 60 })}</Phone>,
+  },
+  {
+    id: 'phone-time-up',
+    title: 'Student phone: time is up',
+    note: 'Said in words, read out once. Submit works as before, because a late answer is still taken.',
+    el: <Phone>{ask({ ...MCQ, _id: 'sample-up' }, 4, { timer: 1 })}</Phone>,
+  },
+  {
+    id: 'phone-teacher-led',
+    title: 'Student phone: Teacher-led room',
+    note: 'Sent in place of being let in; nothing follows. No profile, no attendance, no questions.',
+    el: (
+      <Phone view="done">
+        <Finish
+          ending="teacher-led"
+          onLeave={noop}
+          led={{ title: 'Trees and traversals', message: 'This class is teacher-led: no answers are taken on phones today. Follow along on the board and answer when your professor asks.' }}
+        />
+      </Phone>
+    ),
+  },
+  {
+    id: 'phone-cap',
+    title: 'Student phone: the room’s cap reached',
+    note: 'The room asks each student a fixed number of questions; the reason is the server’s.',
+    el: (
+      <Phone view="done">
+        <Finish
+          ending="exhausted"
+          reason="This room asks each student 10 questions, and you have answered them all."
+          onLeave={noop}
+          profile={{ workingLevel: 'apply', total: { seen: 10, correct: 7 }, levels: { understand: { seen: 4, correct: 3 }, apply: { seen: 6, correct: 4 } } }}
+        />
+      </Phone>
+    ),
+  },
 ];
 
 export default SCREENS.map(({ el, ...entry }) => ({ ...entry, role: null, render: () => el }));

@@ -45,6 +45,10 @@ const Profile = staff(() => import('./account/Profile.jsx'));
 const Analytics = staff(() => import('./account/Analytics.jsx'));
 const Rooms = staff(() => import('./account/Rooms.jsx'));
 const Review = staff(() => import('./account/Review.jsx'));
+const Classes = staff(() => import('./account/Classes.jsx'));
+// The projector page. Not a staff screen: it holds no credentials and loads
+// only its own stylesheet, so a classroom PC downloads nothing it cannot use.
+const Wall = React.lazy(() => import('./teach/Wall.jsx'));
 // Lazy as well: it reads the account, which means the Supabase client.
 const RoleRoute = React.lazy(() => import('./shell/RoleRoute.jsx'));
 
@@ -80,6 +84,12 @@ root.render(
             {/* Unguarded: the shared key may review the rooms nobody owns. The
                 screen itself makes a head of department read-only. */}
             <Route path="/review" element={<Review />} />
+            {/* Unguarded like /rooms: the shared key may keep classes too. The
+                screen follows the server's canEdit, so an HOD reads only. */}
+            <Route path="/classes" element={<Classes />} />
+            <Route path="/classes/:id" element={<Classes />} />
+            {/* The token rides in the hash, so it never reaches a server log. */}
+            <Route path="/wall" element={<Wall />} />
             {Gallery && <Route path="/__gallery/*" element={<React.Suspense fallback={null}><Gallery /></React.Suspense>} />}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

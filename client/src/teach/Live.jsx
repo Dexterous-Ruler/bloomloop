@@ -25,6 +25,13 @@
  * lists the selected student's every attempt with the question as their phone
  * showed it. Both are read over HTTP, and read again only when the roster says
  * there is something new to read.
+ *
+ * Phase 3 puts the rest of the room beside the class: a switch under the head
+ * opens Insights, Attendance (a class room), In the room (the wheel, the
+ * raised-hands tally, observations and activities) and the Projector. A
+ * Teacher-led room has no phones, so it opens on In the room and has no Class
+ * view. A waiting room shows its lobby, with Start, above whichever is open.
+ * All of it is for this screen only: none of it reaches a phone or the wall.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -35,8 +42,14 @@ import { api } from '../lib/api.js';
 import { LABEL, LEVELS, pct } from '../lib/bloom.js';
 import { KIND_LABEL } from '../lib/kinds.js';
 import { Avatar, Button, Dialog, Field, Fig, Icon, Level, Menu, Note, Num, Panel, Segmented, Spark } from '../ui/index.jsx';
-import Draw from './Draw.jsx';
+import Attendance from './Attendance.jsx';
+import FeedSplit from './FeedSplit.jsx';
+import Insights from './Insights.jsx';
 import { ItemList, Thresholds } from './ItemStats.jsx';
+import Lobby from './Lobby.jsx';
+import ProjectorControl from './ProjectorControl.jsx';
+import Records from './Records.jsx';
+import StudentCard from './StudentCard.jsx';
 import useRoomFeed from './useRoomFeed.js';
 
 const ZERO = { seen: 0, correct: 0 };
@@ -636,15 +649,53 @@ function RoomQuestions({ items, onRetry, closed, onCheckKey }) {
   );
 }
 
+/**
+ * This room's row in the room list: its class, its settings and whether this
+ * caller may act on it (`canControl`, false for an HOD). Read again when the
+ * room's status changes, so a start or a close is reflected.
+ */
+function useRoomInfo(code, status) {
+  // undefined while the first read is out; null when it failed or the room is
+  // not in the list (the class view works without it).
+  const [info, setInfo] = useState(undefined);
+  useEffect(() => {
+    let alive = true;
+    api.listSessions().then(
+      (res) => {
+        const row = list(res?.rooms ?? res).find((r) => r.code === code);
+        if (alive) setInfo((prev) => row ?? prev ?? null);
+      },
+      () => { if (alive) setInfo((prev) => prev ?? null); },
+    );
+    return () => { alive = false; };
+  }, [code, status]);
+  return info;
+}
+
 export default function Live({ code, title, closed, onClosed, onProjector, onOpenQuestion }) {
-  const { rows, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus } = useRoomFeed(code);
+  const { rows, room, insights, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus } = useRoomFeed(code);
+  const info = useRoomInfo(code, roomStatus);
+  const known = info !== undefined;
+  const mode = info?.settings?.mode ?? 'devices';
+  const led = mode === 'teacher-led';
+  const classRoom = Boolean(info?.classId);
+  // Unknown until the room list answers; a write the caller may not make is
+  // refused by the server with its own sentence either way.
+  const canControl = info ? info.canControl !== false : true;
+  const waitingRoom = !closed && (roomStatus || info?.status) === 'waiting';
   const paused = roomStatus === 'paused';
+  // Which part of the room is open. Null until chosen, so a Teacher-led room
+  // opens on its own tools once the room list has said what it is.
+  const [space, setSpace] = useState(null);
+  const [recordsTab, setRecordsTab] = useState('wheel');
+  const [insightSort, setInsightSort] = useState('band');
+  const [cardRoll, setCardRoll] = useState('');
+  const [askLevel, setAskLevel] = useState(null);
   const [toggling, setToggling] = useState(false);
   const [exporting, setExporting] = useState(false);
   const { live, everLive, downSince, rejoined, stopped } = wire;
 
   const [pickedRoll, setPickedRoll] = useState('');
-  const [drawing, setDrawing] = useState(false);
   // The heatmap card's two readings: the roster, or the room by topic.
   const [lens, setLens] = useState('students');
   const [topics, setTopics] = useState(NO_TOPICS);
@@ -991,6 +1042,24 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
 
   const selTries = sel ? feed.tries[sel.rollNo] ?? [] : [];
 
+  // ---- Phase 3: the parts of the room beside the class ---------------------
+  const current = space ?? (led ? 'room' : 'class');
+  const spaces = [
+    !led && { id: 'class', label: 'Class' },
+    { id: 'insights', label: 'Insights' },
+    classRoom && { id: 'attendance', label: 'Attendance' },
+    { id: 'room', label: 'In the room' },
+    { id: 'projector', label: 'Projector' },
+  ].filter(Boolean);
+  function spinWheel() { setRecordsTab('wheel'); setSpace('room'); }
+  // An insight card's own action: ask a question at its level (on the wall),
+  // sort the list its way, or go to the wheel.
+  function onAct(action = {}) {
+    if (action.do === 'wheel') spinWheel();
+    else if (action.do === 'sort') { if (action.sort) setInsightSort(action.sort); setSpace('insights'); }
+    else if (action.do === 'ask') { setAskLevel(action.level ?? null); setSpace('projector'); }
+  }
+
   return (
     <>
       <div className="page-head lc-head">
@@ -1007,13 +1076,14 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
           </p>
         </div>
         <div className="acts">
-          {!closed && (
+          {!closed && !waitingRoom && (
             <Button icon={paused ? 'play' : 'pause'} busy={toggling} onClick={togglePause}>
               {paused ? 'Resume' : 'Pause'}
             </Button>
           )}
-          <Button variant="primary" icon="draw" disabled={empty || closed} onClick={() => setDrawing(true)}>Draw a student</Button>
-          <Button icon="projector" disabled={closed} onClick={onProjector}>Projector</Button>
+          <Button variant="primary" icon="draw" disabled={closed} onClick={spinWheel}>Spin the wheel</Button>
+          {/* The join code, full window. A Teacher-led room takes no phones. */}
+          {!led && <Button icon="projector" disabled={closed} onClick={onProjector}>Show the code</Button>}
           <Menu
             trigger={<Button icon="more" aria-label="More actions" />}
             items={[
@@ -1060,7 +1130,24 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
         </div>
       ) : null}
 
-      {connecting ? (
+      {waitingRoom && (
+        <Lobby
+          code={code}
+          waiting={room.waiting}
+          canControl={canControl}
+          mode={mode}
+          onStarted={() => setRoomStatus('open')}
+        />
+      )}
+
+      {known && (
+        <div className="lc-spaces">
+          <Segmented label="Part of the room" value={current} onChange={setSpace} options={spaces} />
+          {room.attendance && <span className="t-meta">{room.attendance.summary}</span>}
+        </div>
+      )}
+
+      {current === 'class' && (connecting || !known ? (
         <div className="lc-wait" aria-busy="true" aria-label="Opening the live roster">
           <div className="skel lc-wait-brief" />
           <div className="lc-cols">
@@ -1149,7 +1236,7 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
                     </>
                   ) : (
                     <>
-                      <Button variant="accent" icon="draw" onClick={() => setDrawing(true)}>Draw a student</Button>
+                      <Button variant="accent" icon="draw" onClick={spinWheel}>Spin the wheel</Button>
                       {watching > 0 && <Button onClick={() => setFilter('signals')}>Show who has signals</Button>}
                     </>
                   )}
@@ -1208,6 +1295,8 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
               )}
             </div>
           </Panel>
+
+          {room.feed && <FeedSplit feed={room.feed} />}
 
           <div className="lc-cols">
             <section className="card lc-grid" style={fade} aria-labelledby="lc-grid-h">
@@ -1496,9 +1585,31 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
             </div>
           </div>
         </>
+      ))}
+
+      {current === 'insights' && (
+        <Insights
+          code={code}
+          insights={insights}
+          canControl={canControl}
+          info={info}
+          sort={insightSort}
+          onSort={setInsightSort}
+          onAct={onAct}
+          onOpenStudent={setCardRoll}
+        />
+      )}
+      {current === 'attendance' && classRoom && (
+        <Attendance code={code} canControl={canControl} mode={mode} summary={room.attendance} />
+      )}
+      {current === 'room' && (
+        <Records code={code} canControl={canControl} info={info} rows={rows} tab={recordsTab} onTab={setRecordsTab} />
+      )}
+      {current === 'projector' && (
+        <ProjectorControl code={code} canControl={canControl} info={info} askLevel={askLevel} />
       )}
 
-      <Draw open={drawing} onOpenChange={setDrawing} rows={rows} onOpen={setPickedRoll} />
+      {cardRoll && <StudentCard code={code} roll={cardRoll} onClose={() => setCardRoll('')} />}
 
       <Dialog
         open={Boolean(courses)}

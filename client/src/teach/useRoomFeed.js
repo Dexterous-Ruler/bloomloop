@@ -14,6 +14,12 @@
  *              is the server refusing or hanging up, never the wifi
  *
  * Used by the live class screen and by the projector.
+ *
+ * Phase 3: a class room's grid also carries `attendance`, a waiting room's
+ * `waiting`, and a Mixed or Teacher-led room's `feed`; they are handed on as
+ * `room` exactly as the server sent them, null when absent. `insights` is the
+ * last `teacher:insights` push (the body of GET /:code/insights), null until
+ * the first arrives. None of it is for a phone or the projector.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -21,8 +27,13 @@ import { useEffect, useRef, useState } from 'react';
 import { api, socketCredentials } from '../lib/api.js';
 import { connect, EV, stillTrying } from '../lib/socket.js';
 
+const NO_ROOM = { attendance: null, waiting: null, feed: null };
+const roomOf = (p) => ({ attendance: p.attendance ?? null, waiting: p.waiting ?? null, feed: p.feed ?? null });
+
 export default function useRoomFeed(code) {
   const [rows, setRows] = useState([]);
+  const [room, setRoom] = useState(NO_ROOM);
+  const [insights, setInsights] = useState(null);
   const [wire, setWire] = useState({ live: false, everLive: false, downSince: null, rejoined: false, stopped: false });
   const [wireError, setWireError] = useState('');
   const [error, setError] = useState('');
@@ -56,6 +67,11 @@ export default function useRoomFeed(code) {
     const onGrid = (p) => {
       if (!p || (p.code && p.code !== code)) return;
       setRows(Array.isArray(p.rows) ? p.rows : []);
+      setRoom(roomOf(p));
+    };
+    const onInsights = (p) => {
+      if (!p || (p.room?.code && p.room.code !== code)) return;
+      setInsights(p);
     };
     const onRefused = (p) => setError(p?.reason || 'The server would not hand over this room.');
     const onStatus = (p) => {
@@ -69,6 +85,7 @@ export default function useRoomFeed(code) {
     socket.on(EV.grid, onGrid);
     socket.on(EV.rejected, onRefused);
     socket.on('teacher:status', onStatus);
+    socket.on('teacher:insights', onInsights);
     return () => {
       socket.off('connect', onConnect);
       socket.off('disconnect', drop);
@@ -76,6 +93,7 @@ export default function useRoomFeed(code) {
       socket.off(EV.grid, onGrid);
       socket.off(EV.rejected, onRefused);
       socket.off('teacher:status', onStatus);
+      socket.off('teacher:insights', onInsights);
       socket.close();
     };
   }, [code]);
@@ -100,7 +118,13 @@ export default function useRoomFeed(code) {
     if (!code) return undefined;
     let alive = true;
     api.getGrid(code).then(
-      (res) => { if (alive && Array.isArray(res.rows)) setRows((prev) => (prev.length ? prev : res.rows)); },
+      (res) => {
+        if (!alive || !Array.isArray(res.rows)) return;
+        setRows((prev) => (prev.length ? prev : res.rows));
+        // The socket's first push replaces NO_ROOM with its own object, so
+        // this only fills in when the HTTP read won the race.
+        setRoom((r) => (r === NO_ROOM ? roomOf(res) : r));
+      },
       (err) => { if (alive) setError(`Could not load the roster: ${err.message}`); },
     );
     return () => { alive = false; };
@@ -113,5 +137,5 @@ export default function useRoomFeed(code) {
     socketRef.current?.connect();
   };
 
-  return { rows, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus };
+  return { rows, room, insights, setInsights, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus };
 }

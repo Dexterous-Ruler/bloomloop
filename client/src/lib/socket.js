@@ -83,4 +83,9 @@ export const EV = {
   // was already sitting there.
   paused: 'session:paused',
   resumed: 'session:resumed',
+  // Phase 3. A waiting room answers `waiting` where a question would go, until
+  // the professor starts it. A Teacher-led room answers a join with
+  // `teacherLed` in place of `accepted`, and sends nothing after it.
+  waiting: 'server:waiting',
+  teacherLed: 'session:teacher-led',
 };

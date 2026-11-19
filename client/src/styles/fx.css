@@ -1,4 +1,4 @@
-/* Things that move: the tubes, the marbles, the drum, the drawn mark. Each
+/* Things that move: the tubes, the marbles, the drawn mark. Each
    one reads its colours from where it sits, so on a forest panel it is drawn
    for that ground. */
 
@@ -85,13 +85,3 @@ button.tube:hover .tube-glass { border-color: var(--text-3); }
   .marbles-short { display: inline-flex; }
 }
 
-/* ------------------------------------------------------------------- drum */
-
-/* Square at any width: the canvas is sized once, and the box only ever
-   shrinks it evenly, so a narrow dialog never squashes the sphere. */
-.drum { position: relative; flex: none; max-width: 100%; height: auto !important; aspect-ratio: 1; }
-.drum-stage, .drum-wait { position: absolute; inset: 0; }
-.drum-stage canvas { display: block; width: 100% !important; height: 100% !important; }
-.drum-wait { border-radius: var(--r-full); margin: 8px; }
-.on-panel .drum-wait { background: radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03) 60%); animation: none; }
-.drum[data-failed='true'] { display: none; }

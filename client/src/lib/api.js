@@ -74,6 +74,22 @@ const json = (method) => (path, body) =>
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
+/** A response saved as a file, under the name the server gave it. */
+async function saveResponse(res, fallback) {
+  const name = filenameFrom(res.headers.get('content-disposition')) || fallback;
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // Not revoked at once: some browsers start reading the blob only after the
+  // click has returned.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return name;
+}
+
 /** `?a=1&b=2` from an object, leaving out empty values. */
 function query(params) {
   const q = new URLSearchParams();
@@ -199,15 +215,7 @@ export const api = {
   // One deleted room as its .json file, saved under the server's file name.
   downloadRoomArchive: async (id) => {
     const res = await send(`/session/archives/${encodeURIComponent(id)}`);
-    const name = filenameFrom(res.headers.get('content-disposition')) || 'bloomloop-room-archive.json';
-    const url = URL.createObjectURL(await res.blob());
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = name;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    await saveResponse(res, 'bloomloop-room-archive.json');
   },
 
   // F6
@@ -225,17 +233,7 @@ export const api = {
   // refusal throws the server's sentence with its status, like every call here.
   downloadExport: async (code) => {
     const res = await send(`/session/${encodeURIComponent(code)}/export`);
-    const name = filenameFrom(res.headers.get('content-disposition')) || `bloomloop-${String(code).toUpperCase()}.csv`;
-    const url = URL.createObjectURL(await res.blob());
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = name;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    // Not revoked at once: some browsers start reading the blob only after the
-    // click has returned.
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    await saveResponse(res, `bloomloop-${String(code).toUpperCase()}.csv`);
   },
   // The full signal trail for one student. The answer carries its own `honesty`
   // caveat, which the console renders verbatim: the wording lives on the server
@@ -320,4 +318,175 @@ export const api = {
   studentAccommodations: (id) => req(`/auth/students/${encodeURIComponent(id)}/accommodations`),
   setStudentAccommodations: (id, accommodations) =>
     json('PUT')(`/auth/students/${encodeURIComponent(id)}/accommodations`, { accommodations }),
+
+  // ── Phase 3 ─────────────────────────────────────────────────────────────
+  // Every route below is teacher-only. An HOD may read but gets 403 on each
+  // write, so edit controls follow the reply's `canEdit` (classes) or
+  // `canControl` (rooms), never the role. "Not yours" and "not there" are one
+  // 404 sentence; screens show it as it comes.
+
+  // Classes and rosters. A roster holds a roll number and a name, nothing else:
+  // other fields are dropped by the server and named in `ignoredFields`.
+  listClasses: () => req('/classes'),
+  createClass: (body) => json('POST')('/classes', body),
+  getClass: (id) => req(`/classes/${encodeURIComponent(id)}`),
+  updateClass: (id, patch) => json('PATCH')(`/classes/${encodeURIComponent(id)}`, patch),
+  // students: [{ roll, name }]. Answers { added, refused[{ index, roll, name, reason }], ignoredFields, note, size }.
+  addStudents: (id, students) => json('POST')(`/classes/${encodeURIComponent(id)}/students`, { students }),
+  // patch: { name } | { rollNo } | { active }. `active: true` restores a removed student.
+  updateStudent: (id, studentId, patch) =>
+    json('PATCH')(`/classes/${encodeURIComponent(id)}/students/${encodeURIComponent(studentId)}`, patch),
+  // A soft removal: the row, answers and marks stay. Show the reply's message.
+  removeStudent: (id, studentId) =>
+    req(`/classes/${encodeURIComponent(id)}/students/${encodeURIComponent(studentId)}`, { method: 'DELETE' }),
+  studentObservations: (id, studentId) =>
+    req(`/classes/${encodeURIComponent(id)}/students/${encodeURIComponent(studentId)}/observations`),
+  // last: 4 | 8.
+  classAnalytics: (id, last = 4) => req(`/classes/${encodeURIComponent(id)}/analytics${query({ last })}`),
+
+  // A waiting room (opened with `lobby: true`) starts here. 409s carry the reason.
+  startSession: (code) => json('POST')(`/session/${encodeURIComponent(code)}/start`),
+
+  // Attendance against the room's class. marks: [{ studentId, status }] with
+  // status present | absent | late (a student nobody has marked reads back as
+  // `unmarked`, which is not something to send); or { fromJoins: true }.
+  attendance: (code) => req(`/session/${encodeURIComponent(code)}/attendance`),
+  markAttendance: (code, body) => json('POST')(`/session/${encodeURIComponent(code)}/attendance`, body),
+
+  // Teacher records: staff only, never on a phone or the projector.
+  observations: (code) => req(`/session/${encodeURIComponent(code)}/observations`),
+  // body: { studentId | rollNo, kind: understood|participated|revision|support|null, note? (≤280) }
+  observe: (code, body) => json('POST')(`/session/${encodeURIComponent(code)}/observations`, body),
+
+  // The wheel. The server draws; the screen only animates the pick it returns.
+  wheel: (code) => req(`/session/${encodeURIComponent(code)}/wheel`),
+  wheelSettings: (code, patch) => json('PATCH')(`/session/${encodeURIComponent(code)}/wheel`, patch),
+  wheelDraw: (code) => json('POST')(`/session/${encodeURIComponent(code)}/wheel/draw`),
+  wheelNewRound: (code) => json('POST')(`/session/${encodeURIComponent(code)}/wheel/rounds`),
+  // patch: { ask: bank|diagram|demo, questionId, status: answered|passed|help|skipped|absent, markAttendance }
+  wheelPick: (code, pickId, patch) =>
+    json('PATCH')(`/session/${encodeURIComponent(code)}/wheel/picks/${encodeURIComponent(pickId)}`, patch),
+
+  // The raised-hands tally. Its hands never go on the projector.
+  tallies: (code) => req(`/session/${encodeURIComponent(code)}/tallies`),
+  // body: { text | questionId, labels, correct }
+  createTally: (code, body) => json('POST')(`/session/${encodeURIComponent(code)}/tallies`, body),
+  updateTally: (code, tallyId, patch) =>
+    json('PATCH')(`/session/${encodeURIComponent(code)}/tallies/${encodeURIComponent(tallyId)}`, patch),
+  tallyUp: (code, tallyId, option) =>
+    json('POST')(`/session/${encodeURIComponent(code)}/tallies/${encodeURIComponent(tallyId)}/increment`, { option }),
+  // At 0 the reply is `clamped: true` and nothing changes.
+  tallyDown: (code, tallyId, option) =>
+    json('POST')(`/session/${encodeURIComponent(code)}/tallies/${encodeURIComponent(tallyId)}/decrement`, { option }),
+
+  // The five no-device activities (check, think, group, diagram, real). A group
+  // challenge records groups, never students.
+  activities: (code) => req(`/session/${encodeURIComponent(code)}/activities`),
+  createActivity: (code, body) => json('POST')(`/session/${encodeURIComponent(code)}/activities`, body),
+  updateActivity: (code, activityId, patch) =>
+    json('PATCH')(`/session/${encodeURIComponent(code)}/activities/${encodeURIComponent(activityId)}`, patch),
+
+  // Live insights. `teacher:insights` pushes the same body over the socket.
+  insights: (code) => req(`/session/${encodeURIComponent(code)}/insights`),
+  insightActions: (code) => req(`/session/${encodeURIComponent(code)}/insights/actions`),
+  // action: dismissed | acted. Append-only.
+  insightAction: (code, flagId, action, note) =>
+    json('POST')(`/session/${encodeURIComponent(code)}/insights/actions`, { flagId, action, note }),
+  studentCard: (code, roll) =>
+    req(`/session/${encodeURIComponent(code)}/students/${encodeURIComponent(roll)}/card`),
+
+  // The projector. A link's token is in the create reply only: it goes straight
+  // into the projector page's URL hash and is never stored or logged.
+  projector: (code) => req(`/session/${encodeURIComponent(code)}/projector`),
+  // patch: { mode, question, revealed, diagram, showNames, pick }. The reply's
+  // `shows` is exactly what the wall gets.
+  setProjector: (code, patch) => json('PATCH')(`/session/${encodeURIComponent(code)}/projector`, patch),
+  createProjectorLink: (code) => json('POST')(`/session/${encodeURIComponent(code)}/projector/links`),
+  revokeProjectorLink: (code, linkId) =>
+    req(`/session/${encodeURIComponent(code)}/projector/links/${encodeURIComponent(linkId)}`, { method: 'DELETE' }),
+
+  // -- Phase 4 ---------------------------------------------------------------
+  // Course outcomes, attainment, the marks register and their files. Staff
+  // only: nothing here is called from /join, the projector or the wall. Writes
+  // follow the reply's `canEdit` (an HOD reads only and gets 403).
+
+  // Course outcomes. Every write answers the whole list again, with the one
+  // written as `outcome`.
+  outcomes: (id) => req(`/classes/${encodeURIComponent(id)}/outcomes`),
+  // body: { code, statement, targetLevel? }
+  createOutcome: (id, body) => json('POST')(`/classes/${encodeURIComponent(id)}/outcomes`, body),
+  // patch: any of code, statement, targetLevel; { archived: false } restores.
+  updateOutcome: (id, outcomeId, patch) =>
+    json('PATCH')(`/classes/${encodeURIComponent(id)}/outcomes/${encodeURIComponent(outcomeId)}`, patch),
+  // ids: every outcome in use, in the new order.
+  reorderOutcomes: (id, ids) => json('POST')(`/classes/${encodeURIComponent(id)}/outcomes/reorder`, { ids }),
+  // Archived when a counted answer reaches it, deleted otherwise: the reply's
+  // `removed` says which, and its `message` is shown.
+  removeOutcome: (id, outcomeId) =>
+    req(`/classes/${encodeURIComponent(id)}/outcomes/${encodeURIComponent(outcomeId)}`, { method: 'DELETE' }),
+  // topics: [{ contentId, topic, weight? }], the outcome's whole set.
+  mapOutcomeTopics: (id, outcomeId, topics) =>
+    json('PUT')(`/classes/${encodeURIComponent(id)}/outcomes/${encodeURIComponent(outcomeId)}/topics`, { topics }),
+  // body: { outcomeIds } or { exclude: true }, for one question in this class.
+  overrideQuestion: (id, questionId, body) =>
+    json('PUT')(`/classes/${encodeURIComponent(id)}/outcomes/questions/${encodeURIComponent(questionId)}`, body),
+  // The question follows its topic again.
+  clearOverride: (id, questionId) =>
+    req(`/classes/${encodeURIComponent(id)}/outcomes/questions/${encodeURIComponent(questionId)}`, { method: 'DELETE' }),
+  copyOutcomes: (id, fromClassId) => json('POST')(`/classes/${encodeURIComponent(id)}/outcomes/copy`, { fromClassId }),
+  outcomeCoverage: (id) => req(`/classes/${encodeURIComponent(id)}/outcomes/coverage`),
+
+  // A roster from a CSV file's text. With dryRun nothing is written and the
+  // reply says what would be. Values in ignored columns are never echoed.
+  // Sent as text/csv, not JSON: the app's JSON limit would refuse a large
+  // file before the import route could answer with its own 1 MB sentence.
+  importRoster: (id, csv, dryRun = false) =>
+    req(`/classes/${encodeURIComponent(id)}/students/import${dryRun ? '?dryRun=true' : ''}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/csv' },
+      body: csv,
+    }),
+
+  // The attainment formula: example presets, and the class's formula in force.
+  attainmentPresets: () => req('/attainment/presets'),
+  attainmentConfig: (id) => req(`/classes/${encodeURIComponent(id)}/attainment/config`),
+  // body: { preset }, { config } (only the fields named) or both. A 409 is a
+  // version race: read again and retry.
+  saveAttainmentConfig: (id, body) => json('PUT')(`/classes/${encodeURIComponent(id)}/attainment/config`, body),
+
+  // The reports. params: { from, to, rooms } with dates as YYYY-MM-DD and
+  // rooms as a comma-separated list of codes; empty ones are left out.
+  attainment: (id, params = {}) => req(`/classes/${encodeURIComponent(id)}/attainment${query(params)}`),
+  studentAttainment: (id, studentId, params = {}) =>
+    req(`/classes/${encodeURIComponent(id)}/attainment/students/${encodeURIComponent(studentId)}${query(params)}`),
+  register: (id, params = {}) => req(`/classes/${encodeURIComponent(id)}/register${query(params)}`),
+
+  // Files. `path` is a report path above without /api, such as
+  // `/classes/${id}/register`. Fetched with this browser's credentials in
+  // headers, never as a link or with ?key= in a url: a link carries no token,
+  // and a key in a url would be printed in a page's footer. File names come
+  // from the server and carry no student name.
+  //
+  // A CSV, saved as a file. params as for the report, plus `sheet` on
+  // /attainment ('bloom' for the Bloom sheet). Answers the file name.
+  downloadCsv: async (path, params = {}) => {
+    const res = await send(`${path}${query({ ...params, format: 'csv' })}`);
+    return saveResponse(res, 'bloomloop-report.csv');
+  },
+  // A printable page, opened in a new tab from a blob url. The tab is opened
+  // before the request (or the browser blocks it as a popup) and pointed at
+  // the page when it arrives; the page runs no script of its own.
+  openReport: async (path, params = {}) => {
+    const tab = window.open('', '_blank');
+    if (tab) tab.opener = null;
+    try {
+      const res = await send(`${path}${query({ ...params, format: 'html' })}`);
+      const url = URL.createObjectURL(new Blob([await res.text()], { type: 'text/html' }));
+      if (tab) tab.location.href = url; else window.location.assign(url);
+      setTimeout(() => URL.revokeObjectURL(url), 120_000);
+    } catch (err) {
+      if (tab) tab.close();
+      throw err;
+    }
+  },
 };

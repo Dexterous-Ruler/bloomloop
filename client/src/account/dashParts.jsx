@@ -201,6 +201,8 @@ export function Climb({ level, className = '' }) {
 export function RoomState({ status }) {
   if (status === 'open') return <Chip tone="ok" dot className="chip-live ac-state">Live</Chip>;
   if (status === 'paused') return <Chip tone="warn" icon="pause" className="ac-state">Paused</Chip>;
+  // Phase 3: opened with a waiting room and not started yet.
+  if (status === 'waiting') return <Chip tone="line" icon="clock" className="ac-state">Waiting</Chip>;
   if (status === 'closed') return <Chip tone="line" className="ac-state">Closed</Chip>;
   return <Chip tone="line" className="ac-state">{status || 'Unknown'}</Chip>;
 }
@@ -213,6 +215,7 @@ export function RoomDot({ status }) {
 export function roomWhen(room) {
   if (room.status === 'paused') return `Paused ${ago(room.pausedAt) || 'at an unrecorded time'}`;
   if (room.status === 'closed') return `Closed ${ago(room.closedAt) || 'at an unrecorded time'}`;
+  if (room.status === 'waiting') return `Opened ${ago(room.startedAt) || 'at an unrecorded time'}, not started`;
   return `Opened ${ago(room.startedAt) || 'at an unrecorded time'}`;
 }
 

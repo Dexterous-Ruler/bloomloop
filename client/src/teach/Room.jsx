@@ -10,8 +10,16 @@
  * (one question or more, fixed once the room opens).
  *
  * Why a room cannot open yet is said before the server has to refuse it: a
- * bank of drafts only, or a whole bank under six. The server's own refusal is
- * still shown as it was given, in case the bank changed elsewhere meanwhile.
+ * bank of drafts only, a whole bank under six, a Teacher-led room with no
+ * class, or a cap or timer out of range. The server's own refusal is still
+ * shown as it was given, in case something changed elsewhere meanwhile.
+ *
+ * Phase 3 adds how the room runs: a class (optional), the mode, whether levels
+ * move, the start level, a cap on questions, a timer, and a waiting room. Only
+ * what differs from the old behaviour is sent, so a room left on the defaults
+ * is opened exactly as before. The reply then also carries `settings`,
+ * `classId` and `status` ('waiting' with a waiting room); onSession gets it
+ * as it comes.
  *
  * @param bank         the GET /api/bank/:id reply; questions carry `status`
  * @param activeCount  approved questions, the only ones a room serves
@@ -20,9 +28,12 @@
  * @param onDrafts     () => go to the bank's drafts
  * @param initialSet   question ids to open on "a set I pick" (the dev gallery)
  * @param create       stands in for api.createSession (the dev gallery)
+ * @param loadClasses  stands in for api.listClasses (the dev gallery)
+ * @param initialRun   how the room runs to begin with (the dev gallery):
+ *                     { classId, mode, lobby, adapt, startLevel, cap, timer }
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { LABEL, LEVELS } from '../lib/bloom.js';
 import { api } from '../lib/api.js';
@@ -51,6 +62,39 @@ const SET_MODES = [
 // The server's floor for a whole-bank room (MIN_BANK in server/src/routes/session.js).
 // A picked set has none: one question is a room.
 const WHOLE_MIN = 6;
+
+// How a room runs (server/src/services/mastery.js ROOM_MODES,
+// QUESTIONS_PER_STUDENT, TIME_PER_QUESTION). The server refuses anything else
+// with a 400 naming the field, shown on this card as it comes.
+const MODES = [
+  {
+    id: 'devices', label: 'Student devices', icon: 'wifi',
+    line: 'Every student answers on a phone, and the room picks each one’s next question.',
+  },
+  {
+    id: 'teacher-led', label: 'Teacher-led', icon: 'hand',
+    line: 'No phones. You run the class from its roster: attendance, the wheel and your observations.',
+  },
+  {
+    id: 'mixed', label: 'Mixed', icon: 'split',
+    line: 'Phones answer as usual, and you record what you see beside them. The two are counted apart.',
+  },
+];
+const CAP = { min: 1, max: 500 };
+const TIMER = { min: 10, max: 600 };
+const START_DEFAULT = 'understand';
+
+/** '' is none. Otherwise a whole number in range, or the reason it is not one. */
+function wholeIn(text, { min, max }, what) {
+  const t = text.trim();
+  if (t === '') return { value: null };
+  if (!/^\d+$/.test(t) || Number(t) < min || Number(t) > max) {
+    return { why: `${what} must be a whole number from ${min} to ${max}, or left empty for none.` };
+  }
+  return { value: Number(t) };
+}
+
+const className = (c) => [c.courseName, c.section].filter(Boolean).join(' ');
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const byLevel = (qs) => LEVELS.reduce((a, l) => ({ ...a, [l]: qs.filter((q) => q.bloom === l).length }), {});
@@ -189,7 +233,27 @@ function SetPicker({ innerRef, approved, kindLabel, topicOrder, picked, onPicked
 
 /* ------------------------------------------------------ the quiet sides */
 
-function WaitingRoom() {
+/** What happens once the room opens, for the mode and waiting room chosen. */
+const HOW = {
+  plain: [
+    'Opening puts a six-character code on the projector, large enough to read from the back.',
+    'Students type it on their phones with their roll number, and the projector counts them in.',
+    'From the class view you watch each student climb, level by level.',
+  ],
+  lobby: [
+    'Opening puts a six-character code on the projector, large enough to read from the back.',
+    'Students type it with their roll number and wait. Nothing is served yet.',
+    'You press Start when the class is in, and every waiting phone gets its first question at once.',
+  ],
+  'teacher-led': [
+    'Opening mints a six-character code for the projector.',
+    'No phone joins. A phone that tries is told the class is teacher-led and to follow the board.',
+    'You run the class from its roster: attendance, the wheel and your observations.',
+  ],
+};
+
+function WaitingRoom({ runMode = 'devices', lobby = false }) {
+  const how = runMode === 'teacher-led' ? HOW['teacher-led'] : lobby ? HOW.lobby : HOW.plain;
   return (
     <aside className="card tc-wait" aria-label="Waiting room">
       <div className="tc-wait-head">
@@ -205,11 +269,124 @@ function WaitingRoom() {
         <p>The code is minted when you open the room. Until then there is nothing to join.</p>
       </div>
       <ol className="tc-wait-how">
-        <li><span className="mono">01</span>Opening puts a six-character code on the projector, large enough to read from the back.</li>
-        <li><span className="mono">02</span>Students type it on their phones with their roll number, and the projector counts them in.</li>
-        <li><span className="mono">03</span>From the class view you watch each student climb, level by level.</li>
+        {how.map((line, i) => <li key={line}><span className="mono">{`0${i + 1}`}</span>{line}</li>)}
       </ol>
     </aside>
+  );
+}
+
+/* ------------------------------------------------ how the room runs */
+
+/**
+ * The class a room is opened for. Optional: a room with no class runs as
+ * rooms always have. Only classes this account may change can carry a room
+ * (the server answers 404 for any other), so a read-only one is not offered.
+ * The list is read again when the window comes back into focus, so a class
+ * set up in the other tab appears without a reload.
+ */
+function ClassChoice({ state, value, onChange, onRetry }) {
+  const usable = state.list.filter((c) => c.canEdit !== false);
+  let control;
+  if (state.status === 'loading' && !state.list.length) {
+    control = <span className="skel ro-class-skel" aria-label="Reading your classes" />;
+  } else if (state.status === 'error' && !state.list.length) {
+    control = (
+      <span className="ro-class-none" role="alert">
+        <span>{state.error}</span>
+        <Button size="sm" icon="refresh" onClick={onRetry}>Try again</Button>
+      </span>
+    );
+  } else if (!usable.length) {
+    control = (
+      <span className="ro-class-none">
+        <span>{state.list.length ? 'None of the classes you can see is yours to open a room for.' : 'You have no class yet.'}</span>
+        <a className="btn btn-sm" href="/classes" target="_blank" rel="noopener noreferrer">
+          <Icon name="external" />Set up a class
+        </a>
+      </span>
+    );
+  } else {
+    control = (
+      <select className="select ro-class" aria-label="Class" value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">No class</option>
+        {usable.map((c) => (
+          <option key={c.id} value={c.id}>
+            {className(c)}{c.termLabel ? `, ${c.termLabel}` : ''} ({plural(c.size ?? 0, 'student')})
+          </option>
+        ))}
+      </select>
+    );
+  }
+  return (
+    <div className="tc-rule">
+      <div className="tc-rule-txt">
+        <b>Class <span className="ro-opt">optional</span></b>
+        <p>
+          With a class, a phone that joins with a roll number on its roster marks that student present, the roster name
+          shows beside the roll number, and you can take attendance. Without one the room runs as rooms always have.
+        </p>
+      </div>
+      {control}
+    </div>
+  );
+}
+
+/** Student devices, Teacher-led or Mixed, each with what it means. Native radios, so arrows move between them. */
+function ModeChoice({ value, onChange, needsClass }) {
+  return (
+    <div className="tc-rule ro-modes-rule">
+      <div className="tc-rule-txt">
+        <b id="ro-mode-h">How students answer</b>
+        <p>Choose one. It cannot change once the room is open.</p>
+      </div>
+      <div className="ro-modes" role="radiogroup" aria-labelledby="ro-mode-h">
+        {MODES.map((m) => (
+          <label key={m.id} className="ro-mode" data-on={value === m.id ? 'true' : undefined}>
+            <input type="radio" name="ro-mode" className="sr-only" value={m.id} checked={value === m.id} onChange={() => onChange(m.id)} />
+            <span className="ro-mode-top">
+              <Icon name={m.icon} />
+              <b>{m.label}</b>
+              {value === m.id && <Icon name="check" className="ro-mode-on" />}
+            </span>
+            <span className="ro-mode-line">{m.line}</span>
+          </label>
+        ))}
+      </div>
+      {needsClass && (
+        <Note tone="warn" className="ro-modes-note" role="status">
+          A Teacher-led room needs a class: no phone joins it, so attendance, the wheel and observations work from the
+          class roster. Choose a class above, or open the room for Student devices or Mixed.
+        </Note>
+      )}
+    </div>
+  );
+}
+
+/** A whole number, or empty for none. The reason it is out of range sits under it. */
+function NumberRule({ id, title, line, value, onChange, unit, placeholder, why }) {
+  return (
+    <div className="tc-rule">
+      <div className="tc-rule-txt">
+        <b><label htmlFor={id}>{title}</label></b>
+        <p id={`${id}-line`}>{line}</p>
+        {why && <p className="ro-bad" id={`${id}-why`} role="alert">{why}</p>}
+      </div>
+      <span className="ro-num" data-bad={why ? 'true' : undefined}>
+        <input
+          id={id}
+          className="input input-sm"
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          value={value}
+          placeholder={placeholder}
+          aria-invalid={why ? 'true' : undefined}
+          aria-describedby={`${id}-line${why ? ` ${id}-why` : ''}`}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <span>{unit}</span>
+      </span>
+    </div>
   );
 }
 
@@ -246,7 +423,7 @@ function Serves() {
 
 export default function Room({
   content, bank, activeCount = 0, draftCount = 0, levels, onSession, onBack, onDrafts,
-  initialSet = null, create = api.createSession,
+  initialSet = null, create = api.createSession, loadClasses = api.listClasses, initialRun = {},
 }) {
   const [busy, setBusy] = useState(false);
   // { message, status }: the server's sentence, shown as given.
@@ -259,6 +436,33 @@ export default function Room({
   const [picked, setPicked] = useState(() => new Set(initialSet ?? []));
   const [jump, setJump] = useState(false);
   const pickerRef = useRef(null);
+
+  // How the room runs (Phase 3). Each starts at the old behaviour.
+  const [classId, setClassId] = useState(initialRun.classId ?? '');
+  const [runMode, setRunMode] = useState(initialRun.mode ?? 'devices');
+  const [lobby, setLobby] = useState(initialRun.lobby ?? false);
+  const [adapt, setAdapt] = useState(initialRun.adapt ?? true);
+  const [startLevel, setStartLevel] = useState(initialRun.startLevel ?? START_DEFAULT);
+  const [cap, setCap] = useState(initialRun.cap ?? '');
+  const [timer, setTimer] = useState(initialRun.timer ?? '');
+  const [classes, setClasses] = useState({ status: 'loading', list: [], error: '' });
+
+  const readClasses = useCallback(() => {
+    setClasses((c) => ({ ...c, status: 'loading' }));
+    loadClasses()
+      .then((r) => setClasses({ status: 'ready', list: r?.classes ?? [], error: '' }))
+      .catch((err) => setClasses((c) => ({ ...c, status: 'error', error: err.message })));
+  }, [loadClasses]);
+  useEffect(() => {
+    readClasses();
+    window.addEventListener('focus', readClasses);
+    return () => window.removeEventListener('focus', readClasses);
+  }, [readClasses]);
+  // A class that left the list (deleted, or no longer this account's) is not kept chosen.
+  const cls = classes.list.find((c) => c.id === classId && c.canEdit !== false) ?? null;
+  useEffect(() => {
+    if (classId && classes.status === 'ready' && !cls) setClassId('');
+  }, [classId, classes.status, cls]);
 
   const approved = useMemo(() => (bank?.questions ?? []).filter((q) => q.status === 'active'), [bank]);
   // Ids no longer approved drop out by themselves: the set is read off the bank.
@@ -278,6 +482,15 @@ export default function Room({
     setError(null);
   }
 
+  const teacherLed = runMode === 'teacher-led';
+  // No phone is served in a Teacher-led room, so its pace settings are not sent.
+  const capped = teacherLed ? { value: null } : wholeIn(cap, CAP, 'Questions per student');
+  const timed = teacherLed ? { value: null } : wholeIn(timer, TIMER, 'Time per question');
+  const needsClass = teacherLed && !cls;
+  const blocked = needsClass
+    ? 'A Teacher-led room needs a class. Choose one, or open the room for Student devices or Mixed.'
+    : capped.why || timed.why || '';
+
   async function start() {
     setError(null); setBusy(true);
     try {
@@ -288,6 +501,15 @@ export default function Room({
         // Left out for the whole bank: that is what the server reads as "every
         // approved question, including any approved later".
         ...(mode === 'set' ? { questionIds: chosen.map((q) => q._id) } : {}),
+        // Only what differs from the old behaviour, so a room on the defaults
+        // is stored, run and archived exactly as before.
+        ...(cls ? { classId: cls.id } : {}),
+        ...(runMode !== 'devices' ? { mode: runMode } : {}),
+        ...(lobby ? { lobby: true } : {}),
+        ...(!teacherLed && !adapt ? { adapt: false } : {}),
+        ...(!teacherLed && startLevel !== START_DEFAULT ? { startLevel } : {}),
+        ...(capped.value != null ? { questionsPerStudent: capped.value } : {}),
+        ...(timed.value != null ? { timePerQuestion: timed.value } : {}),
       }));
     }
     catch (err) { setError({ message: err.message, status: err.status }); }
@@ -376,6 +598,16 @@ export default function Room({
       + `${draftCount > 0 ? 'Any you approve' : 'Questions you approve'} after the room opens join it too.`;
   }
 
+  const runs = {
+    devices: 'Student devices: every student answers on a phone.',
+    'teacher-led': 'Teacher-led: no phones; you work from the class roster.',
+    mixed: 'Mixed: phones answer, and your own records sit beside them, counted apart.',
+  }[runMode];
+  let opens;
+  if (lobby) opens = 'Into a waiting room. Nothing starts until you press Start.';
+  else if (teacherLed) opens = 'Straight away.';
+  else opens = 'Straight away: each phone gets its first question as it joins.';
+
   return (
     <div className="tc-room">
       <div className="tc-room-main">
@@ -384,6 +616,18 @@ export default function Room({
           <h2>{content.title}</h2>
           <p>{lead}</p>
           <LevelSpread counts={counts} />
+          <div className="brief ro-brief">
+            <b>Class</b>
+            <span>
+              {cls
+                ? `${className(cls)}${cls.termLabel ? `, ${cls.termLabel}` : ''}: ${plural(cls.size ?? 0, 'student')} on the roster.`
+                : 'None. No roster, so no attendance and no names beside roll numbers.'}
+            </span>
+            <b>Runs</b>
+            <span>{runs}</span>
+            <b>Opens</b>
+            <span>{opens}</span>
+          </div>
           {error && (
             <Note tone="bad" role="alert">
               {error.message}
@@ -407,14 +651,42 @@ export default function Room({
               </>
             ) : (
               <>
-                <Button variant="accent" size="lg" icon="room" busy={busy} disabled={isSet && n === 0} onClick={start}>
+                <Button
+                  variant="accent"
+                  size="lg"
+                  icon="room"
+                  busy={busy}
+                  disabled={(isSet && n === 0) || Boolean(blocked)}
+                  aria-describedby={blocked ? 'ro-blocked' : undefined}
+                  onClick={start}
+                >
                   {isSet && n > 0 ? `Open the room on ${plural(n, 'question')}` : 'Open the room'}
                 </Button>
                 <Button size="lg" onClick={onBack}>Back to the questions</Button>
               </>
             )}
           </div>
+          {blocked && !short && <p className="ro-why" id="ro-blocked">{blocked}</p>}
         </Panel>
+
+        <section className="card tc-rules" aria-label="Class and mode">
+          <div className="tc-rules-head">
+            <Section title="Class and mode" sub="Who the room is for, and how they answer. Fixed when the room opens." />
+          </div>
+          <ClassChoice state={classes} value={cls ? cls.id : ''} onChange={(id) => { setClassId(id); setError(null); }} onRetry={readClasses} />
+          <ModeChoice value={runMode} onChange={(m) => { setRunMode(m); setError(null); }} needsClass={needsClass} />
+          <div className="tc-rule">
+            <div className="tc-rule-txt">
+              <b>Waiting room</b>
+              <p>
+                {teacherLed
+                  ? 'On: the room waits until you press Start in the live view. No phone joins a Teacher-led room either way.'
+                  : 'On: phones join and wait, and nothing is served until you press Start in the live view. Off: questions start as each phone joins.'}
+              </p>
+            </div>
+            <Switch label="Waiting room" checked={lobby} onChange={setLobby} />
+          </div>
+        </section>
 
         <section className="card tc-rules" aria-label="Room rules">
           <div className="tc-rules-head">
@@ -441,6 +713,62 @@ export default function Room({
             </div>
             <Switch label="Redemption" checked={redeem === 'on'} onChange={(on) => setRedeem(on ? 'on' : 'off')} />
           </div>
+          {teacherLed ? (
+            <div className="tc-rule">
+              <div className="tc-rule-txt">
+                <b>Levels and pace</b>
+                <p>No phone is served in a Teacher-led room, so moving levels, the start level, a cap on questions and a timer do not apply.</p>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="tc-rule">
+                <div className="tc-rule-txt">
+                  <b>Levels move</b>
+                  <p>
+                    {adapt
+                      ? 'On: each student moves up or down a level as they answer.'
+                      : 'Off: everyone stays at the start level. Answers are still recorded and counted, and nobody moves up or down. A student below 40% accuracy is still served Remember and Understand only.'}
+                  </p>
+                </div>
+                <Switch label="Levels move" checked={adapt} onChange={setAdapt} />
+              </div>
+              <div className="tc-rule">
+                <div className="tc-rule-txt">
+                  <b id="ro-start-h">Start level</b>
+                  <p>Where every student starts.{adapt ? '' : ' With levels fixed, where every student stays.'}</p>
+                </div>
+                <div className="ro-levels" role="radiogroup" aria-labelledby="ro-start-h">
+                  {LEVELS.map((l) => (
+                    <label key={l} className="ro-level" data-on={startLevel === l ? 'true' : undefined}>
+                      <input type="radio" name="ro-start" className="sr-only" value={l} checked={startLevel === l} onChange={() => setStartLevel(l)} />
+                      <Level level={l} solid={startLevel === l} />
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <NumberRule
+                id="ro-cap"
+                title="Questions per student"
+                line={`Each student is served this many, then told they have answered them all. ${CAP.min} to ${CAP.max}, or empty for no cap.`}
+                value={cap}
+                onChange={setCap}
+                unit="questions"
+                placeholder="No cap"
+                why={capped.why}
+              />
+              <NumberRule
+                id="ro-timer"
+                title="Time per question"
+                line={`The phone shows a timer and times each question itself. A late answer is still taken, and you see how long each took. ${TIMER.min} to ${TIMER.max} seconds, or empty for none.`}
+                value={timer}
+                onChange={setTimer}
+                unit="seconds"
+                placeholder="None"
+                why={timed.why}
+              />
+            </>
+          )}
           <div className="tc-rule">
             <div className="tc-rule-txt">
               <b>Question set</b>
@@ -461,7 +789,7 @@ export default function Room({
         </section>
       </div>
 
-      <WaitingRoom />
+      <WaitingRoom runMode={runMode} lobby={lobby} />
     </div>
   );
 }

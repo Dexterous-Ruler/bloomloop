@@ -1,0 +1,289 @@
+/* Course outcomes (account/Outcomes.jsx). Everything here is oc-.
+
+   One glass card holds the outcomes in order, each a row on a hairline with
+   its code, statement, target level and what is mapped to it; an editor opens
+   under the row it changes, set in from the code. The archived sit apart at
+   the foot of the same card. Coverage is a quiet table of counts, opened by
+   the one check that matters (mapped + excluded + unmapped = counted), then
+   what reaches no outcome. Questions mapped one by one come last.
+
+   Rows are laid out by their card's width (container queries on .ac-card), so
+   they read the same on a laptop and at 390 px. */
+
+.oc-ro { display: inline-flex; align-items: center; gap: 7px; font: 500 12.5px/1.4 var(--font); color: var(--text-2); }
+.oc-ro svg { color: var(--text-3); }
+
+.oc-k { font: 600 11px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.oc-quiet { font: 400 13px/1.5 var(--font); color: var(--text-3); }
+.oc-hint { font: 400 12px/1.45 var(--font); color: var(--text-3); max-width: 70ch; }
+.oc-pad { padding: 4px 22px 22px; }
+.oc-pad-x { padding: 0 22px 12px; }
+.oc-pad-b { padding: 0 22px 22px; }
+.oc-notes { display: flex; flex-direction: column; gap: 8px; padding: 0 22px 12px; }
+
+.oc-fold { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; margin-left: -8px; border: 0; border-radius: 7px; background: transparent; cursor: pointer; font: 600 12.5px/1 var(--font); color: var(--primary); }
+.oc-fold:hover { background: var(--hover); }
+.oc-fold svg { transform: rotate(-90deg); transition: transform var(--t-2) var(--ease); }
+.oc-fold[aria-expanded='true'] svg { transform: none; }
+
+/* A topic name the chapter's list no longer holds: said in words, with a mark. */
+.oc-renamed { display: flex; align-items: flex-start; gap: 6px; font: 500 12px/1.45 var(--font); color: var(--warn); }
+.oc-renamed svg { flex: none; margin-top: 1px; }
+
+/* ------------------------------------------------------------- skeleton */
+
+.oc-skel { display: flex; flex-direction: column; gap: 8px; padding: 20px 22px; }
+.oc-skel-row { display: flex; align-items: center; gap: 16px; padding: 14px 0 6px; border-top: 1px solid var(--line); }
+
+/* ------------------------------------------------------------- the list */
+
+.oc-head-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.oc-count { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 22px 8px; font: 500 12px/1.4 var(--font); color: var(--text-3); }
+.oc-count > span + span::before { content: '·'; margin-right: 14px; color: var(--text-4); }
+
+.oc-rows { display: flex; flex-direction: column; padding: 0 10px 8px; }
+.oc-row { border-top: 1px solid var(--line); }
+.oc-row-line {
+  display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; align-items: start; gap: 14px;
+  padding: 14px 12px; border-radius: 10px; transition: background var(--t-1) var(--ease);
+}
+.oc-row:not([data-open]) .oc-row-line:hover { background: var(--hover); }
+.oc-row[aria-busy='true'] .oc-row-line > :not(.oc-acts) { opacity: 0.55; }
+.oc-code {
+  display: inline-flex; align-items: center; justify-self: start; max-width: 100%; min-height: 24px; padding: 3px 8px; border-radius: 6px;
+  background: var(--primary-soft); font: 600 12.5px/1.2 var(--mono); letter-spacing: 0.02em; color: var(--primary); overflow-wrap: anywhere;
+}
+.oc-main { display: flex; flex-direction: column; gap: 7px; min-width: 0; padding-top: 2px; }
+.oc-stmt { font: 500 14px/1.5 var(--font); color: var(--text); overflow-wrap: anywhere; max-width: 78ch; }
+.oc-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font: 400 12.5px/1.45 var(--font); color: var(--text-3); }
+.oc-target { display: inline-flex; align-items: center; gap: 7px; }
+.oc-sub .lv { height: 22px; }
+.oc-topicline { color: var(--text-2); min-width: 0; overflow-wrap: anywhere; }
+.oc-direct { color: var(--text-2); }
+.oc-flag { display: inline-flex; align-items: center; gap: 5px; font-weight: 500; color: var(--warn); }
+.oc-arch-chip { height: 22px; }
+.oc-acts { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.oc-move { display: inline-flex; gap: 0; margin-right: 2px; }
+.oc-move .btn:disabled { opacity: 0.3; }
+.oc-row-err { margin: -6px 12px 12px 98px; font: 500 12.5px/1.45 var(--font); color: var(--bad); }
+
+/* The row being changed: a rule down its left, the editor set in from the code. */
+.oc-row[data-open] .oc-row-line { box-shadow: inset 2px 0 0 var(--primary); border-radius: 0 10px 10px 0; }
+.oc-editor {
+  display: flex; flex-direction: column; gap: 16px; margin: 0 12px 16px 98px; padding: 16px 18px 18px;
+  border-radius: 12px; border: 1px solid var(--line); background: var(--surface);
+  animation: rise var(--t-3) var(--ease) both;
+}
+.oc-editor-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+
+.oc-form { display: flex; flex-direction: column; gap: 14px; }
+.oc-form-pair { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 240px); gap: 14px; }
+.oc-statement { min-height: 84px; }
+
+.oc-adding { display: flex; flex-direction: column; gap: 12px; margin: 4px 22px 18px; padding: 16px 18px 18px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); animation: rise var(--t-3) var(--ease) both; }
+
+/* The archived: kept apart, quieter, code drawn as no longer in use. */
+.oc-archived { margin: 6px 10px 10px; border-top: 1px dashed var(--line-2); }
+.oc-archived-h { display: flex; flex-direction: column; gap: 3px; padding: 14px 12px 6px; }
+.oc-archived-h p { font: 400 12px/1.45 var(--font); color: var(--text-3); max-width: 72ch; }
+.oc-archived .oc-rows { padding: 0; }
+.oc-row[data-archived] .oc-stmt { color: var(--text-2); }
+.oc-row[data-archived] .oc-code { background: transparent; color: var(--text-2); box-shadow: inset 0 0 0 1px var(--line-2); }
+
+.oc-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 16px; margin: 0 22px 22px; padding: 18px; border-radius: 12px; border: 1px dashed var(--line-2); }
+.oc-empty > .stack { flex: 1 1 260px; }
+.oc-empty b { font: 600 14px/1.35 var(--font); color: var(--text); }
+.oc-empty-ic { width: 38px; height: 38px; flex: none; display: grid; place-items: center; border-radius: 10px; background: var(--primary-soft); color: var(--primary); }
+
+/* ------------------------------------------------- the topics of one outcome */
+
+.oc-topics { display: flex; flex-direction: column; gap: 12px; }
+.oc-topics-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.oc-maps { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; }
+.oc-map { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px 12px; padding: 9px 8px 9px 12px; }
+.oc-map + .oc-map { border-top: 1px solid var(--line); }
+.oc-map-t { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.oc-map-t > b { font: 600 13.5px/1.35 var(--font); color: var(--text); overflow-wrap: anywhere; }
+.oc-map-t > small { font: 400 12px/1.35 var(--font); color: var(--text-3); }
+.oc-weight { display: inline-flex; align-items: center; gap: 8px; font: 500 12px/1 var(--font); color: var(--text-3); }
+.oc-weight .input { width: 76px; font-family: var(--mono); }
+
+.oc-picker { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
+.oc-pick-box { display: flex; flex-direction: column; gap: 8px; }
+/* A search on white (the editor, a dialog) is drawn as the fields beside it. */
+.oc-pick-search, .oc-ovd .search { background: var(--surface); border-color: var(--line-2); box-shadow: inset 0 1px 2px rgba(20, 22, 26, 0.03); }
+.oc-pick-search { height: 34px; max-width: 320px; }
+.oc-picks { display: flex; flex-direction: column; max-height: 300px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; }
+.oc-picks > li + li { border-top: 1px solid var(--line); }
+.oc-pick { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; width: 100%; padding: 9px 12px; transition: background var(--t-1) var(--ease); }
+.oc-pick:hover { background: var(--hover); }
+.oc-pick:has(input:checked) { background: var(--primary-soft); }
+.oc-pick-t { font: 500 13px/1.4 var(--font); color: var(--text); overflow-wrap: anywhere; }
+.oc-pick-n { font: 400 12px/1.3 var(--font); color: var(--text-3); white-space: nowrap; }
+.oc-err { white-space: pre-line; overflow-wrap: anywhere; }
+
+/* ----------------------------------------------------------------- dialogs */
+
+.oc-dlg-stmt { display: flex; align-items: baseline; gap: 10px; font: 500 13.5px/1.5 var(--font); color: var(--text); }
+.oc-dlg-stmt .oc-code { flex: none; }
+.oc-figs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.oc-figs > div { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; }
+.oc-figs > div + div { border-left: 1px solid var(--line); }
+.oc-figs b { font: 600 24px/1 var(--font); letter-spacing: -0.03em; color: var(--text); }
+.oc-figs span { font: 500 12px/1.3 var(--font); color: var(--text-3); }
+.oc-skipped { display: flex; flex-direction: column; gap: 6px; padding-left: 12px; border-left: 2px solid var(--line); }
+.oc-skipped > li { font: 400 12.5px/1.45 var(--font); color: var(--text-2); }
+@media (max-width: 520px) {
+  .oc-figs { grid-template-columns: minmax(0, 1fr); }
+  .oc-figs > div + div { border-left: 0; border-top: 1px solid var(--line); }
+  .oc-figs > div { flex-direction: row; align-items: baseline; gap: 10px; padding: 10px 14px; }
+  .oc-figs b { font-size: 20px; }
+}
+
+/* ---------------------------------------------------------------- coverage */
+
+.oc-rooms { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; padding-top: 3px; max-width: 100%; }
+.oc-rooms .mono { font-size: 11.5px; letter-spacing: 0.04em; color: var(--text-3); overflow-wrap: anywhere; }
+
+/* The one check: counted = mapped + excluded + unmapped, written out. */
+.oc-sum { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 2px 22px 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--line); }
+.oc-sum-cell { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; background: var(--surface); min-width: 0; }
+.oc-sum-cell > span { font: 500 12px/1.3 var(--font); color: var(--text-3); }
+.oc-sum-cell > b { display: flex; align-items: baseline; gap: 10px; font: 600 24px/1 var(--font); letter-spacing: -0.03em; color: var(--text); font-variant-numeric: tabular-nums; }
+.oc-sum-cell > b > i { font: 500 16px/1 var(--mono); font-style: normal; color: var(--text-4); letter-spacing: 0; }
+.oc-sum-cell.is-total { background: var(--raised); }
+.oc-sum-note { padding: 8px 22px 0; font: 400 12px/1.45 var(--font); color: var(--text-3); max-width: 90ch; }
+
+.oc-cov { width: calc(100% - 44px); margin: 16px 22px 0; border-collapse: collapse; font: 400 13px/1.45 var(--font); }
+.oc-cov thead th { padding: 0 10px 8px; text-align: left; font: 600 11px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+.oc-cov .r { text-align: right; }
+.oc-cov thead th:first-child { padding-left: 0; }
+.oc-cov td { padding: 9px 10px; font: 500 13px/1.3 var(--mono); color: var(--text-2); font-variant-numeric: tabular-nums; vertical-align: top; }
+.oc-cov th[scope='row'] { padding: 9px 10px 9px 0; text-align: left; font-weight: 400; vertical-align: top; }
+.oc-cov-orow > th, .oc-cov-orow > td { padding-top: 14px; border-top: 1px solid var(--line); }
+.oc-cov-orow > td { font-weight: 600; color: var(--text); }
+.oc-cov-o:first-of-type .oc-cov-orow > * { border-top: 0; }
+/* The code in a fixed column, so statements, summaries and topics line up. */
+.oc-cov-name { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: start; gap: 10px; min-width: 0; }
+.oc-cov-what { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding-top: 3px; }
+.oc-cov-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.oc-cov-stmt { font: 500 13px/1.4 var(--font); color: var(--text); }
+.oc-cov-say { display: block; font: 400 12.5px/1.45 var(--font); color: var(--text-2); }
+.oc-cov-o[data-evidence='none'] .oc-cov-say { color: var(--text-3); }
+.oc-cov .oc-cov-trow > th[scope='row'] { padding-left: 68px; }
+.oc-cov-topic { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font: 500 13px/1.4 var(--font); color: var(--text); }
+.oc-cov-w { font: 500 11.5px/1 var(--mono); color: var(--text-3); }
+.oc-cov-ch { display: block; max-width: 60ch; margin-top: 2px; font: 400 12px/1.35 var(--font); color: var(--text-3); }
+.oc-cov-trow .oc-renamed { margin-top: 4px; }
+.oc-cov-o[data-archived] .oc-cov-stmt, .oc-cov-o[data-archived] td { color: var(--text-3); }
+.oc-cov-o[data-archived] .oc-code { background: transparent; color: var(--text-2); box-shadow: inset 0 0 0 1px var(--line-2); }
+.oc-cov-o:last-child > tr:last-child > * { padding-bottom: 4px; }
+
+/* What reaches no outcome. */
+.oc-un { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; padding: 16px 22px 18px; border-top: 1px solid var(--line); }
+.oc-un-h { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.oc-un-h h3 { font: 600 15px/1.35 var(--font); color: var(--text); }
+.oc-un-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; }
+.oc-un-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px 110px auto; align-items: center; gap: 6px 14px; padding: 10px 10px 10px 14px; }
+.oc-un-row + .oc-un-row { border-top: 1px solid var(--line); }
+.oc-un-t { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.oc-un-t > b { font: 600 13.5px/1.35 var(--font); color: var(--text); overflow-wrap: anywhere; }
+.oc-un-t > small { font: 400 12px/1.35 var(--font); color: var(--text-3); }
+.oc-un-n { font: 400 12.5px/1.3 var(--font); color: var(--text-3); white-space: nowrap; text-align: right; }
+.oc-un-n > b { font: 600 13px/1 var(--mono); color: var(--text); font-variant-numeric: tabular-nums; }
+.oc-un-row[data-renamed] { background: color-mix(in srgb, var(--warn-soft) 55%, transparent); }
+
+.oc-defs { display: flex; flex-direction: column; gap: 8px; padding: 0 22px 18px; }
+.oc-dl { display: flex; flex-direction: column; gap: 10px; padding: 4px 0 0 12px; border-left: 2px solid var(--line); max-width: 90ch; }
+.oc-dl dt { font: 600 12px/1.4 var(--font); color: var(--text); }
+.oc-dl dd { font: 400 12.5px/1.5 var(--font); color: var(--text-2); }
+
+@container (max-width: 760px) {
+  .oc-sum { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .oc-sum-cell.is-total { grid-column: 1 / -1; flex-direction: row; align-items: baseline; justify-content: space-between; }
+  .oc-sum-cell { padding: 12px 14px; }
+  .oc-sum-cell > b { font-size: 21px; gap: 6px; }
+
+  .oc-cov, .oc-cov tbody { display: block; }
+  .oc-cov thead { display: none; }
+  .oc-cov tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .oc-cov-o:first-of-type .oc-cov-orow { border-top: 0; }
+  .oc-cov .oc-cov-trow { padding-left: 16px; border-top-style: dashed; }
+  .oc-cov tr > th[scope='row'], .oc-cov .oc-cov-trow > th[scope='row'] { grid-column: 1 / -1; padding: 0; border: 0; }
+  .oc-cov tr > td, .oc-cov tr > td.r { display: flex; flex-direction: column; justify-content: space-between; gap: 3px; padding: 0; border: 0; text-align: left; }
+  .oc-cov td::before { content: attr(data-label); font: 600 10.5px/1.25 var(--font); letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); }
+  .oc-cov tr > td.oc-cov-none { display: none; }
+  .oc-cov-name { grid-template-columns: auto minmax(0, 1fr); }
+  .oc-cov-line { flex-wrap: wrap; }
+  .oc-cov-stmt.clip { white-space: normal; }
+
+  .oc-un-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .oc-un-t { grid-column: 1 / -1; }
+  .oc-un-n { text-align: left; }
+  .oc-un-row > .oc-un-n:nth-of-type(2) { justify-self: start; }
+  .oc-un-row > :last-child:not(.oc-un-n) { grid-column: 2; grid-row: 2 / span 2; align-self: center; }
+}
+
+/* ------------------------------------------------- questions one by one */
+
+.oc-ovs { display: flex; flex-direction: column; padding: 0 10px 8px; }
+.oc-ov { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: start; gap: 8px 16px; padding: 13px 12px; border-top: 1px solid var(--line); }
+.oc-ov[aria-busy='true'] > :not(.oc-ov-acts) { opacity: 0.55; }
+.oc-ov-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.oc-ov-q { font: 500 13.5px/1.5 var(--font); color: var(--text); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.oc-ov[data-gone] .oc-ov-q { color: var(--text-2); font-style: italic; }
+.oc-ov-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font: 400 12px/1.4 var(--font); color: var(--text-3); min-width: 0; }
+.oc-ov-meta .lv { height: 22px; }
+.oc-ov-meta > .clip { max-width: 36ch; }
+.oc-ov-note { font: 400 12.5px/1.45 var(--font); color: var(--text-2); }
+.oc-ov-to { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; padding-top: 1px; max-width: 280px; }
+.oc-ov-code { font-family: var(--mono); letter-spacing: 0.02em; }
+.oc-ov-arch { font-family: var(--font); font-weight: 500; color: var(--text-3); }
+.oc-ov-acts { display: flex; gap: 2px; }
+@container (max-width: 640px) {
+  .oc-ov { grid-template-columns: minmax(0, 1fr) auto; }
+  .oc-ov-main { grid-column: 1 / -1; }
+  .oc-ov-to { justify-content: flex-start; max-width: none; }
+}
+
+/* The dialog: a question picked from a chapter, then where it goes. */
+.oc-ovd { min-width: 0; }
+.oc-ovd-q { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: 10px; background: var(--raised); border: 1px solid var(--line); }
+.oc-ovd-text { font: 500 13.5px/1.5 var(--font); color: var(--text); overflow-wrap: anywhere; }
+.oc-qs { display: flex; flex-direction: column; max-height: min(42vh, 340px); overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; }
+.oc-qs > li + li { border-top: 1px solid var(--line); }
+.oc-q { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 10px 12px; border: 0; background: transparent; text-align: left; cursor: pointer; transition: background var(--t-1) var(--ease); }
+.oc-q:hover, .oc-q:focus-visible { background: var(--hover); }
+.oc-q-text { font: 500 13px/1.45 var(--font); color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.oc-q-has { font-weight: 600; color: var(--primary); }
+.oc-ovd-where { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.oc-ovd-where > legend { margin-bottom: 10px; padding: 0; }
+.oc-radio { color: var(--text); }
+.oc-ovd-outs { display: flex; flex-direction: column; gap: 6px; padding: 0 0 4px 26px; }
+.oc-ovd-outs .check { display: flex; min-width: 0; }
+.oc-ovd-outs .check b { flex: none; font-size: 12.5px; color: var(--text); }
+.oc-ovd-outs .check .clip { flex: 1; }
+
+/* ------------------------------------------------------------ narrow cards */
+
+@container (max-width: 760px) {
+  .oc-editor { margin-left: 12px; }
+  .oc-row-err { margin-left: 12px; }
+}
+@container (max-width: 600px) {
+  .oc-row-line { grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; padding: 12px 8px; }
+  .oc-main { padding-top: 1px; }
+  .oc-acts { grid-column: 1 / -1; justify-content: flex-start; margin-left: -4px; }
+  .oc-row-err { margin-left: 8px; }
+  .oc-editor { margin: 0 4px 14px; padding: 14px; }
+  .oc-form-pair { grid-template-columns: minmax(0, 1fr); }
+  .oc-map { grid-template-columns: minmax(0, 1fr) auto; }
+  .oc-map-t { grid-column: 1 / -1; }
+  .oc-adding { margin: 4px 12px 16px; padding: 14px; }
+  .oc-head-acts { flex: 1 1 100%; }
+  .oc-rows, .oc-ovs { padding: 0 8px 6px; }
+  .oc-sum, .oc-cov { margin-left: 16px; margin-right: 16px; }
+  .oc-cov { width: calc(100% - 32px); }
+  .oc-un, .oc-defs { padding-left: 16px; padding-right: 16px; }
+  .oc-sum-note { padding-left: 16px; padding-right: 16px; }
+}

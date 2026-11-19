@@ -1,46 +1,34 @@
 /**
  * One icon set: lucide, 16px, stroke 1.5. Screens ask for an icon by what it
- * means in BloomLoop; this file is the only place that knows which glyph that is.
+ * means in BloomLoop; this file and ui/staffIcons.js are the only places that
+ * know which glyph that is.
+ *
+ * Only the icons the student phone draws are here, because this file is in
+ * the first download at /join. The console's, the account screens' and the
+ * wall's are added by ui/staffIcons.js, which loads with those screens and
+ * before any of them renders.
  */
 
 import {
-  Activity, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, BookOpen, Building2,
-  ChartColumn, Check, ChevronDown, ChevronRight, CircleAlert, CircleCheck, Clock, Copy, Dices,
-  DoorOpen, Download, EllipsisVertical, Eye, EyeOff, FileText, FlaskConical, GraduationCap,
-  GripVertical, Info, KeyRound, Layers, LayoutDashboard, Link, ListChecks, ListFilter, Lock,
-  LogOut, Maximize, Menu, Merge, Minus, Monitor, Moon, Pause, Pencil, Play, Plus, Presentation,
-  QrCode, Radio, RefreshCw, Search, Settings, Shield, SlidersHorizontal, Split, Square, Sun,
-  Trash2, Undo2, Upload, User, UserPlus, Users, X,
-  Sparkles, Timer, Volume2, Target, Flag, LogIn, Wifi, WifiOff, Shuffle, History, Send, House, CircleHelp,
-  TrendingUp, TrendingDown, LayoutGrid, List, PanelLeft, Hand, Award, Calendar, Mail, School, Type, ZoomIn,
-  Contrast, Hourglass, CircleX, ChevronUp, ChevronLeft, Gauge, Share2, Megaphone, CircleDot, Map,
+  ArrowRight, BookOpen, Check, ChevronDown, ChevronRight, CircleAlert, CircleCheck, CircleDot,
+  Clock, Eye, GripVertical, Info, KeyRound, LayoutGrid, List, LogOut, Menu, Minus, Moon, Pause,
+  Play, Plus, RefreshCw, Send, Square, StickyNote, Sun, Target, Timer, Users, X,
 } from 'lucide-react';
 
 const SET = {
-  back: ArrowLeft, forward: ArrowRight, up: ArrowUp, down: ArrowDown, external: ArrowUpRight,
-  chevron: ChevronDown, chevronRight: ChevronRight, close: X, menu: Menu, more: EllipsisVertical,
-  search: Search, filter: ListFilter, settings: Settings, grip: GripVertical,
-  sun: Sun, moon: Moon, logout: LogOut, lock: Lock, key: KeyRound, shield: Shield,
-
-  material: FileText, deck: Presentation, bank: Layers, plan: SlidersHorizontal, write: FlaskConical,
-  room: Radio, projector: Monitor, live: Users, qr: QrCode, fullscreen: Maximize,
-  dashboard: LayoutDashboard, rooms: DoorOpen, analytics: ChartColumn, book: BookOpen,
-  user: User, users: Users, invite: UserPlus, school: GraduationCap, building: Building2,
-
-  upload: Upload, download: Download, copy: Copy, link: Link, edit: Pencil, trash: Trash2,
-  refresh: RefreshCw, undo: Undo2, merge: Merge, split: Split, plus: Plus, minus: Minus,
-  play: Play, pause: Pause, stop: Square, draw: Dices, checklist: ListChecks,
-
-  check: Check, ok: CircleCheck, alert: CircleAlert, info: Info, clock: Clock, activity: Activity,
-  eye: Eye, eyeOff: EyeOff,
-
-  spark: Sparkles, timer: Timer, volume: Volume2, target: Target, flag: Flag, login: LogIn, wifi: Wifi,
-  wifiOff: WifiOff, shuffle: Shuffle, history: History, send: Send, home: House, help: CircleHelp,
-  trendUp: TrendingUp, trendDown: TrendingDown, grid: LayoutGrid, list: List, sidebar: PanelLeft, hand: Hand,
-  award: Award, calendar: Calendar, mail: Mail, classroom: School, type: Type, zoom: ZoomIn, contrast: Contrast,
-  hourglass: Hourglass, wrong: CircleX, chevronUp: ChevronUp, chevronLeft: ChevronLeft, gauge: Gauge,
-  share: Share2, announce: Megaphone, dot: CircleDot, path: Map,
+  forward: ArrowRight, chevron: ChevronDown, chevronRight: ChevronRight, close: X, menu: Menu,
+  grip: GripVertical, sun: Sun, moon: Moon, logout: LogOut, key: KeyRound, book: BookOpen,
+  users: Users, refresh: RefreshCw, plus: Plus, minus: Minus, play: Play, pause: Pause,
+  stop: Square, check: Check, ok: CircleCheck, alert: CircleAlert, info: Info, clock: Clock,
+  eye: Eye, timer: Timer, target: Target, send: Send, grid: LayoutGrid, list: List, dot: CircleDot,
+  note: StickyNote,
 };
+
+/** Called once by ui/staffIcons.js. */
+export function addIcons(more) {
+  Object.assign(SET, more);
+}
+
 
 function GoogleMark({ size }) {
   return (
@@ -53,6 +41,10 @@ function GoogleMark({ size }) {
 export default function Icon({ name, size = 16, className, style }) {
   if (name === 'google') return <GoogleMark size={size} />;
   const Glyph = SET[name];
-  if (!Glyph) return null;
+  if (!Glyph) {
+    // A name nobody registered draws nothing; in development, say which.
+    if (import.meta.env.DEV) console.warn(`Icon "${name}" is not in ui/Icon.jsx or ui/staffIcons.js.`);
+    return null;
+  }
   return <Glyph size={size} strokeWidth={1.75} aria-hidden="true" focusable="false" className={className} style={{ flex: 'none', ...style }} />;
 }

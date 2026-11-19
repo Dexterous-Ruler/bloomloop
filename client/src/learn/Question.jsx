@@ -69,9 +69,36 @@ function ReadAloud({ question }) {
   );
 }
 
+/**
+ * The room's time per question, counted on this phone. It only informs: when
+ * it runs out the student is told they can still answer, and Submit stays
+ * exactly as it was, because the server takes a late answer like any other.
+ * Read out once when it ends, not every second.
+ */
+function Clock({ seconds, paused }) {
+  const [left, setLeft] = useState(seconds);
+  useEffect(() => {
+    if (paused || left <= 0) return undefined;
+    const t = setTimeout(() => setLeft((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [left, paused]);
+  const up = left <= 0;
+  const m = Math.floor(Math.max(0, left) / 60);
+  const ss = String(Math.max(0, left) % 60).padStart(2, '0');
+  return (
+    <>
+      <span className="ln-clock" data-up={up ? 'true' : undefined} role="timer" aria-label={up ? 'Time is up' : `${left} seconds left`}>
+        <Icon name="timer" size={14} />
+        <span className="num">{up ? '0:00' : `${m}:${ss}`}</span>
+      </span>
+      <p className="ln-clock-up" role="status">{up ? 'Time is up. You can still answer, and it will count.' : ''}</p>
+    </>
+  );
+}
+
 export default function Question({
   item, result, awaiting, sent, level, trail, auto, foot, onSubmit, onNext,
-  retry = null, triesLeft = 1, readAloud = false,
+  retry = null, triesLeft = 1, readAloud = false, timer = null, paused = false,
 }) {
   const question = item?.question;
 
@@ -134,6 +161,8 @@ export default function Question({
               ))}
             </span>
           )}
+          {/* Remounted per question, so each starts from the room's full time. */}
+          {timer && !result && <Clock key={`clock:${question._id}:${item.index}`} seconds={timer} paused={paused} />}
         </div>
 
         {/* Above the question, and remounted with it: the fold belongs to the
@@ -165,9 +194,12 @@ export default function Question({
           {(readAloud || question.source === 'fallback') && (
             <div className="cluster">
               {readAloud && <ReadAloud question={question} />}
+              {/* Since Phase 2 a question the professor wrote is `fallback` too,
+                  and the phone is not sent `model`, so it cannot tell the two
+                  apart: say only what is true of both. */}
               {question.source === 'fallback' && (
-                <Tip label="Written by the offline template generator, not by the language model.">
-                  <Chip>Offline template</Chip>
+                <Tip label="Your teacher wrote this question, or the offline template did. The language model did not.">
+                  <Chip>Not written by AI</Chip>
                 </Tip>
               )}
             </div>

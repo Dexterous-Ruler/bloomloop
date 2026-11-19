@@ -216,10 +216,17 @@ export default function LearnApp() {
   const [supports, setSupports] = useState(NO_SUPPORTS);
   const [awaiting, setAwaiting] = useState(false);
   const [ending, setEnding] = useState('');
+  // Why the set ended, when the server said: the room's cap per student.
+  const [endReason, setEndReason] = useState('');
   // The teacher has stopped the room. Not an ending and not a disconnection:
   // the socket stays up, the profile stays put, and the question stays mounted
   // under the panel that says so.
   const [paused, setPaused] = useState(false);
+  // A waiting room: the professor has not started the questions yet. The
+  // server's own sentence, or '' once a question arrives.
+  const [waiting, setWaiting] = useState('');
+  // A Teacher-led room takes no answers on phones: { title, message }.
+  const [led, setLed] = useState(null);
   // The levels served so far, newest last: this student's own path, not a
   // fraction of a bank they will never fully see.
   const [trail, setTrail] = useState([]);
@@ -351,6 +358,9 @@ export default function LearnApp() {
       // accepted back in is the proof: the server follows this with either a
       // question or a fresh `paused`.
       setPaused(false);
+      // The server follows this with a question, `paused` or `server:waiting`.
+      setWaiting('');
+      setLed(null);
       setSession(p.session || null);
       setSupports({ ...NO_SUPPORTS, ...(p.supports || {}) });
       // Drafts are kept per student per room from here on.
@@ -437,11 +447,15 @@ export default function LearnApp() {
       const backOn = Boolean(p.resumed) && silentRef.current;
       silentRef.current = false;
 
+      setWaiting('');
       setItem({
         question: p.question || null,
         reason: p.reason || '',
         index: Number(p.index) || 0,
         resumed: backOn,
+        // Seconds, when the room set a time per question. The phone times it
+        // and nothing more: a late answer is still taken.
+        timePerQuestion: Number(p.timePerQuestion) > 0 ? Number(p.timePerQuestion) : null,
       });
       // One entry per question served, so a question served twice - which is
       // what every reconnect mid-question is - must not add a second. Compared
@@ -482,7 +496,27 @@ export default function LearnApp() {
     const onExhausted = (p = {}) => {
       if (p.profile) setProfile(p.profile);
       pendingRef.current = null;
+      // Set when the student reached the room's questions-per-student cap.
+      setEndReason(p.reason || '');
       setEnding('exhausted');
+      setPhase('done');
+    };
+
+    // The room has not started: answered in place of a question, again to any
+    // `student:next` sent meanwhile. Nothing is owed, so no latch stays on.
+    const onWaiting = (p = {}) => {
+      awaitingRef.current = false;
+      setAwaiting(false);
+      setWaiting(p.message || 'You are in. Your professor will start the questions soon. Keep this page open.');
+    };
+
+    // Sent in place of `session:accepted`, and nothing follows it.
+    const onTeacherLed = (p = {}) => {
+      setJoining(false);
+      setRejected('');
+      pendingRef.current = null;
+      setLed({ title: p.title || '', message: p.message || '' });
+      setEnding('teacher-led');
       setPhase('done');
     };
     const onClosed = () => { pendingRef.current = null; setEnding('closed'); setPhase('done'); };
@@ -528,6 +562,8 @@ export default function LearnApp() {
     socket.on(EV.closed, onClosed);
     socket.on(EV.paused, onPaused);
     socket.on(EV.resumed, onResumed);
+    socket.on(EV.waiting, onWaiting);
+    socket.on(EV.teacherLed, onTeacherLed);
 
     return () => {
       socket.off('connect', onConnect);
@@ -541,6 +577,8 @@ export default function LearnApp() {
       socket.off(EV.closed, onClosed);
       socket.off(EV.paused, onPaused);
       socket.off(EV.resumed, onResumed);
+      socket.off(EV.waiting, onWaiting);
+      socket.off(EV.teacherLed, onTeacherLed);
       socket.disconnect();
     };
   }, []);
@@ -564,11 +602,12 @@ export default function LearnApp() {
 
   // Safety net: if the accept lands but no item follows, ask for one and do
   // not leave a phone on a skeleton.
+  // Not while the room waits: the professor's start sends the question.
   useEffect(() => {
-    if (paused || phase !== 'question' || item || awaiting) return undefined;
+    if (paused || waiting || phase !== 'question' || item || awaiting) return undefined;
     const t = setTimeout(() => requestNext(false), 1500);
     return () => clearTimeout(t);
-  }, [paused, phase, item, awaiting, requestNext]);
+  }, [paused, waiting, phase, item, awaiting, requestNext]);
 
   /* ---------------------------------------------------------------- signals */
 
@@ -879,6 +918,9 @@ export default function LearnApp() {
     setAwaiting(false);
     setRejected('');
     setRefusedResume('');
+    setWaiting('');
+    setLed(null);
+    setEndReason('');
     setSession(null);
     setProfile(null);
     setItem(null);
@@ -1021,6 +1063,12 @@ export default function LearnApp() {
         and if it will not come back, tell your teacher the room dropped you.
       </Hold>
     );
+  } else if (waiting && phase === 'question' && !item?.question) {
+    hold = (
+      <Hold icon="clock" title="Waiting to start">
+        {waiting}
+      </Hold>
+    );
   } else if (paused && phase === 'question') {
     hold = (
       <Hold icon="pause" title="Your teacher paused the room">
@@ -1144,7 +1192,7 @@ export default function LearnApp() {
               </>
             )}
 
-            {view === 'done' && <Finish profile={profile} ending={ending} onLeave={leave} />}
+            {view === 'done' && <Finish profile={profile} ending={ending} reason={endReason} led={led} onLeave={leave} />}
 
             {view === 'move' && (
               <>
@@ -1193,6 +1241,9 @@ export default function LearnApp() {
                   retry={retry}
                   triesLeft={triesLeft}
                   readAloud={supports.readAloud}
+                  // A support for more time, or none, is not shown a clock.
+                  timer={supports.noTimer || supports.extraTime ? null : item?.timePerQuestion}
+                  paused={paused}
                   foot={focusLine}
                   onSubmit={submit}
                   onNext={requestNext}

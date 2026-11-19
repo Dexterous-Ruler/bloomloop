@@ -43,6 +43,7 @@ const ACCOUNT_NAV = {
 };
 const SHARED_NAV = [
   { id: 'rooms', label: 'Rooms', icon: 'rooms' },
+  { id: 'classes', label: 'Classes', icon: 'users' },
   { id: 'review', label: 'Review answers', icon: 'checklist' },
   { id: 'analytics', label: 'Analytics', icon: 'analytics' },
 ];
@@ -242,7 +243,14 @@ export default function TeachApp() {
     live: Boolean(session),
   };
 
-  const onSession = (s) => { setSession(s); setClosed(false); };
+  const onSession = (s) => {
+    setSession(s);
+    setClosed(false);
+    // A Teacher-led room has no phones to let in, so its code on the
+    // projector would only invite people to a room that takes no answers:
+    // it goes straight to the room's own tools.
+    if (s?.settings?.mode === 'teacher-led') setView('live');
+  };
 
   // The projector takes the whole window: it is read from the back of a hall,
   // and nothing is allowed to compete with the code.
@@ -272,12 +280,16 @@ export default function TeachApp() {
       tone: s.id === 'live' && session ? (closed ? 'quiet' : 'live') : undefined,
     })),
     // The shared key reviews the rooms nobody owns, so it gets the queue too.
-    ...(role ? [] : [{ id: 'review', label: 'Review answers', icon: 'checklist', group: 'teach' }]),
+    ...(role ? [] : [
+      { id: 'classes', label: 'Classes', icon: 'users', group: 'teach' },
+      { id: 'review', label: 'Review answers', icon: 'checklist', group: 'teach' },
+    ]),
   ];
 
   const go = (id) => {
     if (id === 'dashboard') navigate(HOME_FOR[role] ?? '/');
     else if (id === 'rooms') navigate('/rooms');
+    else if (id === 'classes') navigate('/classes');
     else if (id === 'review') navigate('/review');
     else if (id === 'analytics') navigate('/analytics');
     else setView(id);

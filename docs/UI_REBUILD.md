@@ -256,6 +256,202 @@ shell have a new composition; the data layer (`client/src/lib/*`) is untouched.
   professor's dashboard say "N approved · M to review", never "no questions
   yet" while drafts wait.
 
+### Phase 3: classes, room modes, teacher records, insights, projector (19 Nov)
+
+Every Phase 3 control follows the server's `canEdit` (classes) or `canControl`
+(rooms), so a head of department reads and changes nothing. Server sentences
+(errors, 409 reasons, notes, privacy, caveats, rules) are shown as they come.
+None of the staff-only data reaches a phone or the wall.
+
+- **Classes (`account/Classes.jsx`, `/classes`, `/classes/:id`):** a "Classes"
+  item in every staff menu.
+  - **The list:** newest first, with a New class dialog.
+  - **One class, the roster:** in roll-number order.
+    - Names and roll numbers are edited inline.
+    - Removing is soft: the server's message is shown, with a way to put the
+      student back. Removed students sit in their own list.
+    - Students are added by pasting lines (roll and name), previewed exactly
+      as they will be sent. The result shows every refused line with its
+      reason, the ignored fields and the note.
+    - Nothing asks for a phone number, email, date of birth or photo. Roll
+      numbers are sent as typed.
+  - **One student's observations** across days, in a side sheet with the
+    privacy sentence.
+  - **Across rooms:** the last 4 or 8 rooms, oldest first.
+    - It shows the trend, the spread of accuracy (counts only), accuracy by
+      level and the hardest questions.
+    - The three level bands (Remember and Understand, Apply and Analyse,
+      Evaluate and Create) show first, with the six levels one press away:
+      decision 6, taken 19 Nov. Wherever the next question is chosen, and in
+      one student's detail, the six levels stay.
+    - Every figure says what it rests on, and no student is ranked.
+- **Opening a room (`teach/Room.jsx`):**
+  - **Class and mode:**
+    - A class (optional).
+    - The mode: Student devices, Teacher-led or Mixed, each with one plain
+      line.
+    - A waiting room.
+  - **Room rules:** levels move (adapt), the start level, questions per
+    student (1 to 500) and time per question (10 to 600 s, timed by the
+    phone, late answers still taken).
+  - A Teacher-led room without a class is explained before the server's 400.
+    A room left on the defaults sends exactly what it sent before.
+  - A new Teacher-led room goes straight to the live tools rather than the
+    join code.
+- **The live class (`teach/Live.jsx`):** a switch under the head between
+  Class, Insights, Attendance (class rooms), In the room and Projector, with
+  the class's "N / M present" beside it.
+  - A Teacher-led room opens on In the room and has no Class view or join-code
+    button.
+  - "Draw a student" became **Spin the wheel**, the server's draw. The old
+    client-side draw (`teach/Draw.jsx`, `fx/Drum.jsx` and their styles) is
+    removed.
+  - **Lobby (`teach/Lobby.jsx`):** while the room waits it shows phones joined
+    of students present (labelled as not the attendance figure), with Start.
+    Start is disabled with the server's reason when it cannot start yet. Pause
+    is hidden until the room starts.
+  - **Mixed and Teacher-led (`teach/FeedSplit.jsx`):** digital answers and
+    teacher records in two labelled blocks, never added together, with the
+    privacy sentence.
+  - **Attendance (`teach/Attendance.jsx`):**
+    - Present, late, absent and unmarked as four states that differ by shape
+      as well as colour. Unmarked is never shown as absent.
+    - Students are marked one at a time or several together, or everyone who
+      joined is marked present. That last one is hidden in a Teacher-led
+      room, with the reason.
+    - The caveat that a typed roll number is not proof of identity sits
+      beside "joined".
+    - Students not on the roster and removed students are listed apart.
+  - **In the room (`teach/Records.jsx` and its parts):** the wheel, the
+    raised-hands tally, observations and activities.
+  - **Insights (`teach/Insights.jsx`, `teach/StudentCard.jsx`):**
+    - The band counts and three figures, each with its start and change.
+    - The three cards, with their own action (ask at a level opens the
+      Projector, sort reorders the list, wheel opens the wheel) and Dismiss
+      with a note.
+    - The students in the server's three orders, with no position numbers.
+    - Teacher records apart from accuracy.
+    - A row opens the student's card, where the next set is labelled a plan.
+- **The projector:**
+  - **Controls (`teach/ProjectorControl.jsx`):** make a link and turn links
+    off. Choose question, diagram or progress, put a room question or a
+    question asked aloud up, reveal or hide the key, choose a diagram, show
+    first names or roll numbers, and take a pick down.
+    - The preview is the server's `shows`, drawn by the same component as the
+      wall.
+    - Reveal is disabled outside Teacher-led rooms for a bank question, with
+      the server's rule.
+  - **The wall (`/wall`, `teach/Wall.jsx`):** the page a classroom PC opens
+    from a link.
+    - The token rides in the hash. It is taken out of the address bar at
+      once and never stored, so a reload needs a new link.
+    - It holds no credentials and loads no account or console code. Its
+      socket sends only `projector:watch`.
+    - It draws each `projector:state` whole:
+      - the join code when nothing is up;
+      - the question, and its key only once it is revealed;
+      - the diagram;
+      - progress, with levels held back until enough students have answered,
+        saying why;
+      - the pick, as a roll number and first name.
+    - Closed and refused show the server's sentence.
+  - The old full-window join screen (code, QR, marbles) is still "Show the
+    code".
+- **Student phone:**
+  - A waiting room shows "Waiting to start" with the server's sentence, and
+    the phone stops asking for questions until the start sends one.
+  - A Teacher-led room shows the server's message and Leave, and nothing more.
+  - A timed room shows a small clock. At zero it says "Time is up. You can
+    still answer, and it will count." Submit never locks. A student with a
+    no-timer or extra-time support sees no clock.
+  - The room's cap shows the server's reason on the finish screen.
+  - The question chip "Offline template" became "Not written by AI", since a
+    professor's own question is `fallback` too and the phone is not sent
+    `model`.
+- **Rooms and Overview:** a Waiting state with "Open the lobby", and
+  Teacher-led, Mixed and "Class roster" marks on a room.
+
+### Phase 4: course outcomes, attainment, marks register, roster import (19 Nov)
+
+Three new tabs on a class page (`/classes/:id?view=outcomes|attainment|register`)
+and an "Import a CSV" button on its roster. All of it is staff only: no call is
+made from `/join`, the projector or the wall, and the phone bundle carries none
+of these routes. Writes follow the server's `canEdit`, so a head of department
+reads only. Server sentences are shown as they come.
+
+- **Calls (`lib/api.js`):** every Phase 4 route.
+  - Reports and files share one query, `{ from, to, rooms }`.
+  - `downloadCsv` fetches with the credentials in headers and saves the file
+    under the server's name.
+  - `openReport` opens a blank tab before the request (so it is not blocked
+    as a popup) and points it at a blob url of the printable page.
+  - Neither puts `?key=` in a url or builds a link to the API.
+  - The roster import is sent as `text/csv`, so a file over the app's JSON
+    limit still gets the import's own 1 MB sentence.
+- **The report window (`account/ReportWindow.jsx`):** a date range and, if
+  wanted, some of the class's rooms, shared by the attainment report and the
+  marks register. It says that deleted rooms and rooms not opened for the
+  class are not counted.
+- **Outcomes (`account/Outcomes.jsx`):**
+  - The class's course outcomes in order, with code, statement and target
+    level. Archived ones sit at the foot with Restore.
+  - Add, change, reorder and remove (the server's message says whether it was
+    archived or deleted).
+  - An editor per outcome maps a chapter's topics with weights. A 400 shows
+    the valid topics. A renamed topic says "renamed or no longer in the
+    chapter: map the old name to keep this evidence".
+  - Questions mapped one by one: their own outcomes, or excluded from this
+    class.
+  - Copy from another class, and Export CSV.
+  - **Coverage** writes out counted = reach an outcome + kept out by an
+    override + reach no outcome. It shows questions, answers and students per
+    outcome and topic, the summary sentences as given, and what reaches no
+    outcome with a way to map it.
+  - No student's name appears, and nothing maps or counts teacher records.
+- **Attainment (`account/Attainment.jsx`, `AttainmentFormula.jsx`,
+  `StudentAttainment.jsx`):**
+  - The formula's name, version and source, and its methodology word for
+    word.
+  - Per course outcome, and per Bloom band with the six levels one press
+    away, it shows:
+    - students on the roster, counted, attained, not attained, not enough
+      evidence and with no answers;
+    - the share (rounded down, never up) and the level the formula gives it;
+    - marks per evidence type, each "counted" or "shown, not counted", and
+      per question source (AI-generated, professor-written, offline
+      template), with the server's labels;
+    - students outside the figure beside it, not inside it;
+    - the summary sentence and what it rests on.
+  - The students table is in roll order with every state in words. "Not enough
+    evidence" is its own state, never a colour alone.
+  - Teacher records and unmapped answers have their own sections.
+  - A student opens one student's report: every answer behind each figure,
+    with Print.
+  - CSV (the outcomes sheet and the Bloom sheet) and a printable report.
+  - **The formula** sits inside the tab:
+    - Example presets by their own names, and only the changed fields sent.
+    - A refusal says why and keeps the draft; a version clash reads the
+      formula again and offers to apply the change again.
+    - Nothing calls a formula NAAC, NBA or a standard, and nothing offers to
+      count teacher records.
+- **Marks register (`account/Register.jsx`):**
+  - Students in roll order by rooms, oldest room first. Each cell has the
+    attendance mark (a shape and a word), joined, and obtained of possible.
+  - 0 of 0 reads "No answers", never 0 or 0%. An off-roster roll has no
+    attendance mark.
+  - The total carries the attendance counts. There are no teacher records and
+    nothing is sorted.
+  - It scrolls inside its card with the roll column fixed. CSV and a
+    printable page.
+- **Roster import (`account/RosterImport.jsx`):**
+  - A file or pasted text, then a dry run.
+  - The dry run shows what was read, who would be added, refused rows with
+    reasons, duplicates, removed students (each with Put back) and the ignored
+    columns by name only. Then the import, and the roster reads again.
+  - The file's contents are never shown, and no value from an ignored column
+    is drawn.
+- **Icons:** a print icon for the printable pages.
+
 ## References and what they shaped
 
 - Karim's Goodfor design (Claude Design file, Nov 2026) shaped the direction:
@@ -321,6 +517,104 @@ opened. Behance pages gave text but no images, and Pinterest was not used.
     teacher code.
   - The new gallery entries (bank, author, items, room) render with no
     console errors at 1280 and 390, in light and dark.
+- **Phase 3, against the Phase 3 server on the in-memory store (shared key):**
+  - **Classes:** create, paste a roster (refused lines with reasons; "03" and
+    "3" kept as two students), rename, a roll-number clash, remove, put back,
+    edit course and term. Also a student's observations, and the analytics at
+    last 4 and last 8.
+  - **Opening a room:** through the real form as Mixed with a waiting room,
+    adapt off, Apply, a cap of 5 and a 30 s timer. The reply carried the
+    settings, the class and `waiting`.
+  - **The lobby:** Start disabled with the server's reason until a phone
+    joined. Six pretend phones then showed "6 / 6 present" in the lobby
+    beside "6 / 25 present" for attendance, and Start served them.
+  - **Attendance:** one mark, a mark of several, and everyone who joined
+    (hand marks kept). A room with no class shows the server's 409 sentence.
+  - **The wheel:** draw; a bank question on a pick; Absent marking attendance,
+    and not when unticked; the empty-wheel 409; present only off; a new
+    round.
+  - **The tally:** made from the bank, plus and minus, the 0 case, reveal, and
+    a phone number refused.
+  - **Observations and activities:** observations set, cleared and noted
+    (an email refused), keys 1 to 4. An activity recorded and changed (a
+    group label with contact details refused).
+  - **Insights:** act and dismiss (a note with a phone number refused), and a
+    dismissal made elsewhere arriving by the socket. A student's card opened
+    from the list.
+  - **The projector:** a link made and turned off; on the wall, a question
+    revealed in a Teacher-led room and a diagram. Reveal was refused (409)
+    and disabled in a Student devices room, while a question asked aloud
+    could be revealed there. Progress held back until 5 had answered, then
+    pushed live. A wheel pick shown with and without names. A bad token
+    refused.
+  - **The phone:**
+    - A waiting room's screen and its start.
+    - The Teacher-led message.
+    - The clock: it counts down to "Time is up" and Submit stays open.
+  - **Bundles:**
+    - The build passes.
+    - `/join` is 155.7 KiB gzipped. The phone's new states added 1.3 KiB.
+      Splitting the icon set then took 6.6 KiB off: `ui/Icon.jsx` keeps the
+      31 icons the phone draws, and the 73 staff-only icons are in
+      `ui/staffIcons.js`, loaded with every staff screen and the wall. It
+      still loads no teacher, account or Supabase code.
+    - `/wall` loads its own chunk, its stylesheet and the staff icons beyond
+      the base. It never loads `api.js` or `auth.js`.
+    - No icon is missing on a fresh load of the live room, Classes, Rooms,
+      the wall or the phone: in development an unknown icon name is now a
+      console warning.
+    - The phone was run once more after the split:
+      - joined a room with a 15-second timer and a cap of 2;
+      - answered the second question after "Time is up" (it was taken);
+      - reached the finish screen with the cap's reason.
+  - **Galleries:** classes, attend, records, coach and wall, plus five new phone
+    states. Checked at 1280 and 390 in light and dark, with no console errors
+    and no sideways scroll.
+  - **Contrast:** worked out from the token pairs each screen uses, not
+    measured with a tool.
+- **Phase 4, against the Phase 4 working tree on the in-memory store (shared key):**
+  - **Outcomes:** on a class of the agent's own:
+    - copied outcomes from another class (a second copy is the clash 409);
+    - mapped topics (a weight over 100 is the 400);
+    - a duplicate code (409), an email in a statement (400), add, change,
+      reorder and delete;
+    - an outcome archived once answers reached it, and its restore refused
+      while its code was in use;
+    - an override set, changed to excluded and removed;
+    - coverage moving from 30 = 30 + 0 + 0 to 30 = 21 + 0 + 9 when a topic
+      was taken off;
+    - the CSV.
+  - **Attainment:** on the seeded class (366 answers over two rooms):
+    - the report, a window narrowed to one room (which showed students
+      outside the figure), one student's 22 answers;
+    - both CSV sheets, and both printable pages: the right report, no key in
+      the page.
+    - Formula saves on a class of the agent's own: a save (version 1), a 400
+      that kept the draft, a save with nothing changed, and a simulated 409
+      re-applied (version 2).
+  - **Register:** on the seeded class, the figures matched the JSON, a
+    one-room window, the CSV and the printable page.
+  - **Roster import:** on a class of the agent's own:
+    - a dry run with a Phone column (no digits shown anywhere);
+    - Put back, the import, a file over 1 MB (413), 2,001 rows (400) and a
+      file with no header (400).
+  - **After the server's review fixes (final field names), on a fresh store:**
+    - Attainment: CO1 at 11.76% (rounded down); "Outside the share" beside a
+      figure with its own evidence; the source split under the server's
+      labels; the definitions as sent.
+    - On a class of the agent's own, with a roll number changed after
+      answering: one row, each answer "Given as" its old roll, a removed
+      student and an off-roster roll each shown apart with the server's note.
+      A room weight outside the window reads "not in this report".
+    - Register: a "Who wrote the question" view beside "How it was marked";
+      an off-roster old roll with its tie note; the CSV with the new leading
+      rows and source columns.
+  - **Bundles:** the build passes. `/join` is still 155.7 KiB and contains
+    none of the Phase 4 routes.
+  - **Galleries and contrast:** outcomes, attain and register galleries (42
+    states), at 1280 and 390, light and dark, with no console errors and no
+    sideways scroll. Contrast was measured in the page and passes AA in both
+    themes.
 
 ## Not finished
 
@@ -346,6 +640,36 @@ opened. Behance pages gave text but no images, and Pinterest was not used.
   - A bearer-token caller: a professor's own chapter, and an HOD's read-only bank.
   - Generation by Gemini: every draft seen was an offline template.
   - A poll in the editor: it still says it has no editor.
+- **Phase 3, not run:**
+  - A head of department against the server. Every read-only state was
+    checked only by drawing it with `canEdit` or `canControl` false, since the
+    shared key may always write.
+  - The wheel's spin animation (only the reduced-motion landing ran in the
+    hidden pane), a screen reader, and the wall's reconnecting state.
+  - Opening the wall in a real new window: the built-in browser blocks
+    pop-ups.
+- **Phase 4, not run:**
+  - A head of department, a student or a signed-out caller: read-only is
+    drawn in the galleries only.
+  - A real version clash on saving a formula (simulated), a real renamed
+    topic, and the 50-outcome cap against the server.
+  - A print dialog, paper or a spreadsheet opening the CSV.
+- **Phase 4, not seen live:** a roll number off the roster whose attendance
+  mark was made for a roster student (`rollNotes[].tiedTo`) in the attainment
+  report. The register showed one; the note sentence carries it in both.
+- **Phase 3, wanted from the server:**
+  - A `canCreate` on `GET /api/classes`. The New class button follows the
+    role until then.
+  - The room's mode in `projector:state`. Today the wall shows the join code
+    in a Teacher-led room too, where a phone only gets the Teacher-led
+    message.
+  - `model` on the phone's question, so it could say "Offline template"
+    again where that is true.
+  - Rewording three server sentences that show API detail to people:
+    - the remove message's "(PATCH with { "active": true })";
+    - the Teacher-led `cardsNote`'s "teacherRecords";
+    - phone `reason` sentences that can name the below-40% band (an open
+      issue).
 - **Fewer choices:** for a student given that support, a stored choose-one or
   choose-all answer can name the wrong option text. The server keeps the full
   option list, not the shorter list the student saw.

@@ -1,11 +1,13 @@
 /**
  * The room step, drawn from sample banks. Development only.
  *
- * Room takes the bank as props and its one server call as `create`, so these
- * entries hand it sample banks in the shape of GET /api/bank/:id and a stand-in
- * for POST /api/session with the server's rules: a set is served as picked, the
- * whole bank needs 6 approved, and the reply carries `bankCount` and
- * `questionIds`. Nothing here talks to the server.
+ * Room takes the bank as props and its server calls as `create` and
+ * `loadClasses`, so these entries hand it sample banks in the shape of
+ * GET /api/bank/:id, a class list in the shape of GET /api/classes, and a
+ * stand-in for POST /api/session with the server's rules: a set is served as
+ * picked, the whole bank needs 6 approved, a Teacher-led room needs a class,
+ * and the reply carries `bankCount`, `questionIds`, `settings`, `classId` and
+ * `status`. Nothing here talks to the server.
  */
 
 import { useState } from 'react';
@@ -135,13 +137,47 @@ function serverFor(bank, refuse) {
     if (!ids && active.length < 6) {
       throw fail(`Only ${active.length} active questions in the bank for "${title}". Generate questions first - a session needs at least 6.`, 400);
     }
+    if (settings.classId && !CLASSES.some((c) => c.id === settings.classId && c.canEdit)) {
+      throw fail('That class was not found.', 404);
+    }
+    if (settings.mode === 'teacher-led' && !settings.classId) {
+      throw fail('A Teacher-led room needs a class: no phones join it, so the wheel, attendance and observations '
+        + 'work from the class roster. Send classId, or open the room for Student devices or Mixed.', 400);
+    }
     return {
       code: 'GA7KRX',
       sessionId: 'sample',
       bankCount: ids ? ids.length : active.length,
-      settings: { masteryGoal: settings.masteryGoal, reattempts: settings.reattempts, redemption: settings.redemption },
+      // Every setting comes back, the ones not sent at the old behaviour's value.
+      settings: {
+        masteryGoal: settings.masteryGoal, reattempts: settings.reattempts, redemption: settings.redemption,
+        mode: settings.mode ?? 'devices', adapt: settings.adapt ?? true, startLevel: settings.startLevel ?? 'understand',
+        questionsPerStudent: settings.questionsPerStudent ?? null, timePerQuestion: settings.timePerQuestion ?? null,
+      },
       questionIds: ids ?? null,
+      classId: settings.classId ?? null,
+      status: settings.lobby ? 'waiting' : 'open',
+      // Not in the server's reply: what the form sent, for this page's note.
+      sent: settings,
     };
+  };
+}
+
+/* GET /api/classes: newest first, without rosters. The last is a colleague's,
+   readable here (as an HOD reads a department) but not this account's to open
+   a room for, so the form leaves it out. */
+const CLASSES = [
+  { id: 'ec349fd84c312402e637884a', courseName: 'Operating Systems', section: 'SY-CS A', termLabel: 'Odd term 2026', size: 58, canEdit: true },
+  { id: 'a1b2c3d4e5f60718293a4b5c', courseName: 'Operating Systems', section: 'SY-CS B', termLabel: 'Odd term 2026', size: 61, canEdit: true },
+  { id: 'f0e1d2c3b4a5968778695a4b', courseName: 'Computer Networks', section: 'TY-CS A', termLabel: 'Odd term 2026', size: 49, canEdit: false },
+];
+
+function classesFor(kind) {
+  return async () => {
+    if (kind === 'loading') return new Promise(() => {});
+    await wait(350);
+    if (kind === 'error') throw fail('The class list could not be read: the server did not answer.', 503);
+    return { classes: kind === 'none' ? [] : CLASSES };
   };
 }
 
@@ -154,8 +190,9 @@ const NAV = [
   { id: 'live', label: 'Live class', icon: 'live', group: 'teach', locked: true, why: 'Open a room to watch the class.' },
 ];
 
-function Demo({ bank, initialSet = null, refuse = null }) {
+function Demo({ bank, initialSet = null, refuse = null, classes = 'some', initialRun }) {
   const [create] = useState(() => serverFor(bank, refuse));
+  const [loadClasses] = useState(() => classesFor(classes));
   const [opened, setOpened] = useState(null);
   const [went, setWent] = useState('');
   const [key, setKey] = useState(0);
@@ -176,7 +213,7 @@ function Demo({ bank, initialSet = null, refuse = null }) {
       {(opened || went) && (
         <Note tone={opened ? 'ok' : undefined} role="status">
           {opened
-            ? <>The sample server opened <b className="mono">{opened.code}</b> on {opened.questionIds ? `a set of ${opened.questionIds.length}` : 'the whole bank'}: <span className="mono">bankCount {opened.bankCount}</span>. In the console the projector takes over here.</>
+            ? <>The sample server opened <b className="mono">{opened.code}</b> on {opened.questionIds ? `a set of ${opened.questionIds.length}` : 'the whole bank'}: <span className="mono">bankCount {opened.bankCount}, status {opened.status}, classId {opened.classId ?? 'null'}</span>. Sent: <span className="mono">{JSON.stringify(Object.fromEntries(Object.entries(opened.sent).filter(([k]) => k !== 'questionIds')))}</span>. In the console the projector takes over here.</>
             : `In the console this goes to ${went}.`}
           {' '}
           <button type="button" className="link rs-linkbtn" onClick={() => { setOpened(null); setWent(''); setKey((k) => k + 1); }}>Start again</button>
@@ -190,7 +227,9 @@ function Demo({ bank, initialSet = null, refuse = null }) {
         draftCount={questions.filter((q) => q.status === 'draft').length}
         levels={levels}
         initialSet={initialSet}
+        initialRun={initialRun}
         create={create}
+        loadClasses={loadClasses}
         onSession={setOpened}
         onBack={() => setWent('the question bank')}
         onDrafts={() => setWent('the bank’s Drafts view')}
@@ -239,6 +278,62 @@ export default [
         }}
       />
     ),
+  },
+  {
+    id: 'room-mixed-lobby',
+    title: 'Room set-up: a class, Mixed, with a waiting room',
+    note: 'SY-CS A chosen, Mixed, a waiting room, levels fixed at Apply, 12 questions each and 60 seconds a question. Open it to see what is sent and the reply.',
+    render: () => (
+      <Demo
+        bank={BANKS.whole}
+        initialRun={{ classId: CLASSES[0].id, mode: 'mixed', lobby: true, adapt: false, startLevel: 'apply', cap: '12', timer: '60' }}
+      />
+    ),
+  },
+  {
+    id: 'room-teacher-led-no-class',
+    title: 'Room set-up: Teacher-led with no class',
+    note: 'Explained before the server would refuse it, and Open stays off until a class is chosen. The pace rules do not apply.',
+    render: () => <Demo bank={BANKS.whole} initialRun={{ mode: 'teacher-led' }} />,
+  },
+  {
+    id: 'room-teacher-led-400',
+    title: 'Room set-up: the server refuses Teacher-led',
+    note: 'A class is chosen here, but the stand-in server answers as if it were not. Press Open the room: its sentence is shown as given.',
+    render: () => (
+      <Demo
+        bank={BANKS.whole}
+        initialRun={{ classId: CLASSES[1].id, mode: 'teacher-led' }}
+        refuse={{
+          status: 400,
+          message: 'A Teacher-led room needs a class: no phones join it, so the wheel, attendance and observations work from the class roster. Send classId, or open the room for Student devices or Mixed.',
+        }}
+      />
+    ),
+  },
+  {
+    id: 'room-out-of-range',
+    title: 'Room set-up: a cap and a timer out of range',
+    note: '0 questions and 5 seconds: each says its range under it, and Open stays off.',
+    render: () => <Demo bank={BANKS.whole} initialRun={{ cap: '0', timer: '5' }} />,
+  },
+  {
+    id: 'room-no-class',
+    title: 'Room set-up: no class yet',
+    note: 'The account has no class. The form says so, with a way to set one up in a new tab; the list is read again when this tab comes back into focus.',
+    render: () => <Demo bank={BANKS.whole} classes="none" />,
+  },
+  {
+    id: 'room-classes-loading',
+    title: 'Room set-up: reading the classes',
+    note: 'The class list has not answered yet.',
+    render: () => <Demo bank={BANKS.whole} classes="loading" />,
+  },
+  {
+    id: 'room-classes-error',
+    title: 'Room set-up: the class list failed',
+    note: 'The sentence as given, and a way to try again. The room can still open with no class.',
+    render: () => <Demo bank={BANKS.whole} classes="error" />,
   },
   {
     id: 'room-empty',

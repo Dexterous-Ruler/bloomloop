@@ -186,6 +186,8 @@ function Brief({ counts, sessions, running, roster, bloom, contents, onAnalytics
     );
   } else if (focus.status === 'paused') {
     lead = <><em>{focus.title || 'Untitled room'}</em> is paused, with {plural(focus.joined, 'student')} holding their place.</>;
+  } else if (focus.status === 'waiting') {
+    lead = <><em>{focus.title || 'Untitled room'}</em> is waiting for you to start it, with {plural(focus.joined, 'student')} in.</>;
   } else {
     lead = (
       <>
@@ -225,7 +227,7 @@ function Brief({ counts, sessions, running, roster, bloom, contents, onAnalytics
           </div>
         )}
         <div className="ac-brief-acts">
-          {focus && (focus.status === 'open' || focus.status === 'paused') ? (
+          {focus && (focus.status === 'open' || focus.status === 'paused' || focus.status === 'waiting') ? (
             <Link className="btn btn-accent ac-tap" to={roomLink(focus.code, 'live')}><Icon name="live" />Open the class</Link>
           ) : (
             <Button variant="accent" className="ac-tap" icon="analytics" onClick={onAnalytics}>Read the analytics</Button>
@@ -672,6 +674,7 @@ function RoomFeed({ sessions, running, contents, onOpenRoom }) {
                   <span className="clip" title={r.title || undefined}>{r.title || 'Untitled room'}</span>
                   {r.status === 'open' && <Chip tone="ok" dot className="chip-live">Live</Chip>}
                   {r.status === 'paused' && <Chip tone="warn">Paused</Chip>}
+                  {r.status === 'waiting' && <Chip tone="line" icon="clock">Waiting</Chip>}
                 </span>
                 <span className="t-meta">
                   <span className="mono">{r.code}</span>
@@ -790,7 +793,7 @@ export function OverviewView({
     if (inspected != null && !details[inspected]) onInspect?.(inspected);
   }, [inspected, details, onInspect]);
 
-  const running = sessions.filter((s) => s.status === 'open' || s.status === 'paused');
+  const running = sessions.filter((s) => s.status === 'open' || s.status === 'paused' || s.status === 'waiting');
   const live = running.filter((s) => s.status === 'open');
 
   const crumb = (

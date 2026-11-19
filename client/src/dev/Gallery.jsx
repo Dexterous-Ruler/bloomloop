@@ -34,6 +34,14 @@ const AREAS = {
   author: { title: 'Authoring', line: 'Editing and writing questions: the new kinds, passages and images.' },
   items: { title: 'Item statistics', line: 'How each question did with this class, and the wrong-key flag.' },
   room: { title: 'Room set-up', line: 'The question set a room serves, and why a room cannot open yet.' },
+  classes: { title: 'Classes', line: 'Rosters, removed students and a class across its rooms.' },
+  attend: { title: 'Lobby and attendance', line: 'The waiting room, attendance against the class, and the two halves of a Mixed room.' },
+  records: { title: 'Teacher records', line: 'The wheel, the raised-hands tally, observations and activities. Staff only.' },
+  coach: { title: 'Live insights', line: 'Bands, the three cards, KPI tiles and one student’s card. Staff only.' },
+  wall: { title: 'Projector', line: 'What the wall shows, its controls and its links.' },
+  outcomes: { title: 'Course outcomes', line: 'A class’s outcomes, what maps to them and what reaches none. Staff only.' },
+  attain: { title: 'Attainment', line: 'Outcome and Bloom attainment, one student’s evidence, and the formula behind it. Staff only.' },
+  register: { title: 'Marks register and roster import', line: 'Marks by room in roll order, and a roster from a CSV file. Staff only.' },
   auth: { title: 'Auth', line: 'Sign in, sign up and the profile.' },
 };
 

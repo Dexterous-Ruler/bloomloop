@@ -37,6 +37,7 @@ export function navFor(role, hasKey) {
     return [
       HOME_ITEM[role],
       { id: 'rooms', label: 'Rooms', icon: 'rooms', group: 'overview' },
+      { id: 'classes', label: 'Classes', icon: 'users', group: 'overview' },
       { id: 'review', label: 'Review answers', icon: 'checklist', group: 'overview' },
       { id: 'analytics', label: 'Analytics', icon: 'analytics', group: 'overview' },
       { id: 'console', label: 'Teacher console', icon: 'material', group: 'teach' },
@@ -48,6 +49,7 @@ export function navFor(role, hasKey) {
     ? [
       { id: 'console', label: 'Teacher console', icon: 'material', group: 'teach' },
       { id: 'rooms', label: 'Rooms', icon: 'rooms', group: 'teach' },
+      { id: 'classes', label: 'Classes', icon: 'users', group: 'teach' },
       { id: 'review', label: 'Review answers', icon: 'checklist', group: 'teach' },
       PROFILE,
     ]
