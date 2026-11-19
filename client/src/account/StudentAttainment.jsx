@@ -10,6 +10,12 @@
  * words ("Not enough evidence" is its own state, never "not attained"), and
  * every figure says how many answers it rests on.
  *
+ * Batch 8: an answer to a question the student had practised in the Learning
+ * Hub first carries the server's `practisedNote`, shown under it as a neutral
+ * note, never as a label on the student; each answer's `answerKey` (the key it
+ * was stored under, the phone's own id for it when it sent one) is its
+ * "Reference", for tracing a kept answer to its stored row.
+ *
  * The first half of the file is the shared vocabulary: evidence types, states,
  * shares and the evidence table, which account/Attainment.jsx imports.
  */
@@ -20,6 +26,8 @@ import { LABEL, LEVELS } from '../lib/bloom.js';
 import { KIND_LABEL } from '../lib/kinds.js';
 import { Button, Chip, Dialog, Icon, Level, Note, Segmented } from '../ui/index.jsx';
 import { dayOf } from './dashParts.jsx';
+
+import '../styles/levels.css';
 
 /* ------------------------------------------------------- shared words */
 
@@ -280,8 +288,10 @@ function AnswerItem({ a, typeLabel, sourceLabel }) {
             {a.via && VIA[a.via] ? `, ${VIA[a.via]}` : ''}
           </dd>
         </div>
+        {a.answerKey && <div><dt>Reference</dt><dd className="ev-key">{a.answerKey}</dd></div>}
       </dl>
       {a.note && a.note !== 'Counted.' && <p className="atn-ans-note">{a.note}</p>}
+      {a.practisedInHub && a.practisedNote && <p className="ev-practised"><Icon name="path" size={12} />{a.practisedNote}</p>}
     </li>
   );
 }

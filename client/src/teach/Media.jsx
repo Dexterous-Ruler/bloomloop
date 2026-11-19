@@ -11,11 +11,14 @@
  * questions share one by each carrying an equal copy (docs/API.md, Phase 2).
  */
 
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import { api } from '../lib/api.js';
 import Stimulus from '../learn/Stimulus.jsx';
 import { Button, Field, Icon, Note, Segmented } from '../ui/index.jsx';
+// Batch 8 (B2): a figure the server draws, a picture from the slides, regions on a picture.
+import { FigureCard, FigureDialog, TypeGlyph, useFigureKinds } from './FigureBuilder.jsx';
+import { RegionTool, SlidePicker, isPlaceholderAlt, regionProblem, useSlidePictures } from './SlidePictures.jsx';
 
 /** MAX_STIMULUS_TEXT and MAX_STIMULUS_SOURCE in server/src/questionTypes.js. */
 export const MAX_PASSAGE = 4000;
@@ -78,11 +81,15 @@ function Picture({ src, alt }) {
  * A question's stimulus as a teacher checks it: the passage or the picture,
  * where it is from, and an image's alt text. For the bank and the answer key.
  */
-export function StimulusView({ stimulus, className = '' }) {
+export function StimulusView({ stimulus, figure = null, className = '' }) {
   const isImage = stimulus?.kind === 'image';
   const { src, failed } = useMedia(isImage ? stimulus.url : null);
+  // Batch 8: a figure, as the bank reads it (`question.figure`): the drawing,
+  // a molecule's worked-out formula, or the sentence when it could not be drawn.
+  if (stimulus?.kind === 'figure') return <FigureCard figure={figure} spec={stimulus.spec} />;
   if (!stimulus || (!isImage && stimulus.kind !== 'passage')) return null;
   const source = String(stimulus.sourceRef ?? '').trim();
+  const regions = isImage && Array.isArray(stimulus.regions) ? stimulus.regions : [];
 
   return (
     <figure className={`au-stim ${className}`}>
@@ -107,6 +114,11 @@ export function StimulusView({ stimulus, className = '' }) {
       </div>
       {isImage && stimulus.alt && (
         <p className="au-stim-alt"><span className="t-label">Alt text</span> {stimulus.alt}</p>
+      )}
+      {regions.length > 0 && (
+        <p className="au-stim-alt">
+          <span className="t-label">Regions</span> {regions.map((r) => `${r.id} ${r.label}`).join(' · ')}
+        </p>
       )}
     </figure>
   );
@@ -139,14 +151,21 @@ function PhonePreview({ stimulus }) {
 
 /* ------------------------------------------------------------- editing */
 
-/** The editor's working copy of a stored stimulus. Both kinds' fields are kept, so switching back loses nothing. */
-export function seedStimulus(s) {
-  const kind = s?.kind === 'passage' || s?.kind === 'image' ? s.kind : 'none';
+/**
+ * The editor's working copy of a stored stimulus. Every kind's fields are kept,
+ * so switching back loses nothing. `figure` is the bank's drawing of a figure
+ * stimulus (`question.figure`), kept to show and never sent.
+ */
+export function seedStimulus(s, figure = null) {
+  const kind = s?.kind === 'passage' || s?.kind === 'image' || s?.kind === 'figure' ? s.kind : 'none';
   return {
     kind,
     text: kind === 'passage' ? String(s.text ?? '') : '',
     url: kind === 'image' ? String(s.url ?? '') : '',
     alt: kind === 'image' ? String(s.alt ?? '') : '',
+    regions: kind === 'image' && Array.isArray(s.regions) ? s.regions : [],
+    spec: kind === 'figure' ? s.spec ?? null : null,
+    figure: kind === 'figure' ? figure : null,
     sourceRef: String(s?.sourceRef ?? ''),
   };
 }
@@ -155,7 +174,12 @@ export function seedStimulus(s) {
 export function stimulusFor(d) {
   const source = d.sourceRef.trim() ? { sourceRef: d.sourceRef.trim() } : {};
   if (d.kind === 'passage') return { kind: 'passage', text: d.text, ...source };
-  if (d.kind === 'image') return { kind: 'image', url: d.url.trim(), alt: d.alt, ...source };
+  if (d.kind === 'image') {
+    const regions = Array.isArray(d.regions) && d.regions.length ? { regions: d.regions } : {};
+    return { kind: 'image', url: d.url.trim(), alt: d.alt, ...regions, ...source };
+  }
+  // A figure is its spec, which the server checks and draws when the question is saved.
+  if (d.kind === 'figure') return d.spec ? { kind: 'figure', spec: d.spec, ...source } : null;
   return null;
 }
 
@@ -171,19 +195,74 @@ function Count({ n, max }) {
 const kb = (bytes) => `${Math.max(1, Math.round(bytes / 1024)).toLocaleString('en-GB')} KB`;
 
 /**
- * None, a passage or an image. `onChange` takes an updater, so an upload that
- * lands after a keystroke does not put the old text back.
+ * The picture once attached: its regions, behind a disclosure, since most
+ * pictures carry none. A region is a polygon in percentages with a name and a
+ * label, for "tap the part" questions; they stay on the professor's side.
+ */
+function Regions({ value, onChange, disabled }) {
+  const src = useMediaSrc(value.url);
+  const [open, setOpen] = useState(() => (value.regions ?? []).length > 0);
+  const regions = value.regions ?? [];
+  const bad = regions.filter((r, i) => regionProblem(r, i, regions)).length;
+  return (
+    <div className="stack stack-2">
+      <button type="button" className="fe-more-btn" aria-expanded={open} disabled={disabled} onClick={() => setOpen((v) => !v)}>
+        <Icon name={open ? 'chevron' : 'chevronRight'} size={14} />
+        Regions on the picture
+        <span className="t-meta">· optional · {regions.length} marked{bad ? `, ${bad} to fix` : ''}</span>
+      </button>
+      {open && (src
+        ? <RegionTool src={src} alt={value.alt} regions={regions} onChange={(next) => onChange((s) => ({ ...s, regions: next }))} />
+        : <div className="skel" style={{ height: 160 }} aria-label="Loading the picture" />)}
+    </div>
+  );
+}
+
+/**
+ * None, a passage, an image or a figure. `onChange` takes an updater, so an
+ * upload that lands after a keystroke does not put the old text back.
+ *
+ * Batch 8: an image may come from the chapter's slides (described here first:
+ * the server refuses a slide picture's placeholder) and carry regions; a
+ * figure is built in its own dialog and drawn by the server. Both options hide
+ * on a server without those routes.
  */
 export function StimulusEditor({ value, onChange, contentId, services = api, disabled = false }) {
   const id = useId();
   const [way, setWay] = useState(value.url && !isMediaUrl(value.url) ? 'link' : 'upload');
+  const chose = useRef(false);
   const [file, setFile] = useState(null);
   const [link, setLink] = useState('');
+  const [picked, setPicked] = useState(null);
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState('');
+  const [building, setBuilding] = useState(false);
+  const figures = useFigureKinds(services);
+  const choosing = value.kind === 'image' && !value.url.trim();
+  const slides = useSlidePictures(contentId, services, choosing);
+  const slideCount = (slides.data?.pictures ?? []).length;
+  const fromSlides = slides.state !== 'absent';
+
+  // A chapter whose deck kept pictures opens on them, until another way is chosen.
+  useEffect(() => {
+    if (!chose.current && slides.state === 'ready' && slideCount > 0) setWay('slides');
+  }, [slides.state, slideCount]);
+
+  // A figure loaded without its drawing (a stored spec only) asks for one.
+  useEffect(() => {
+    if (value.kind !== 'figure' || !value.spec || value.figure || !services.previewFigure) return undefined;
+    let live = true;
+    services.previewFigure(value.spec).then(
+      (r) => { if (live) onChange((s) => (s.spec === value.spec ? { ...s, figure: r.figure } : s)); },
+      () => {},
+    );
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value.kind, value.spec, value.figure, services]);
 
   const set = (patch) => { setRefused(''); onChange((s) => ({ ...s, ...patch })); };
   const off = disabled || busy;
+  const pickWay = (w) => { chose.current = true; setRefused(''); setWay(w); };
 
   async function upload() {
     setBusy(true);
@@ -216,11 +295,15 @@ export function StimulusEditor({ value, onChange, contentId, services = api, dis
     </Field>
   );
 
+  const placeholder = isPlaceholderAlt(value.alt);
+  const choosingSlides = choosing && way === 'slides' && fromSlides;
   const alt = (
     <Field
       label="Alt text"
       htmlFor={`${id}-alt`}
-      hint="Required. What a student who cannot see the image needs to know to answer."
+      hint={choosingSlides
+        ? 'Required. A picture from the slides has no description yet: write what a student who cannot see it needs to know to answer.'
+        : 'Required. What a student who cannot see the image needs to know to answer.'}
     >
       <textarea
         id={`${id}-alt`}
@@ -228,13 +311,21 @@ export function StimulusEditor({ value, onChange, contentId, services = api, dis
         value={value.alt}
         disabled={off}
         aria-required="true"
+        aria-invalid={placeholder || undefined}
         onChange={(e) => set({ alt: e.target.value })}
       />
     </Field>
   );
 
   const shown = value.kind === 'passage' ? value.text.trim() : value.kind === 'image' ? value.url.trim() : '';
-  const altMissing = !value.alt.trim();
+  const altMissing = !value.alt.trim() || placeholder;
+  const offerFigure = figures.state === 'ready' || value.kind === 'figure';
+  const ways = [
+    ...(fromSlides ? [{ id: 'slides', label: 'From the slides', disabled: off }] : []),
+    { id: 'upload', label: 'Upload a file', disabled: off },
+    { id: 'link', label: 'Use an address', disabled: off },
+  ];
+  const at = way === 'slides' && !fromSlides ? 'upload' : way;
 
   return (
     <div className="stack stack-3">
@@ -246,12 +337,13 @@ export function StimulusEditor({ value, onChange, contentId, services = api, dis
           { id: 'none', label: 'Nothing', disabled: off },
           { id: 'passage', label: 'A passage', disabled: off },
           { id: 'image', label: 'An image', disabled: off },
+          ...(offerFigure ? [{ id: 'figure', label: 'A figure', disabled: off }] : []),
         ]}
       />
 
       {value.kind === 'none' && (
         <p className="hint">
-          A passage or an image here sits above the question on every phone. Several questions can carry the same one.
+          A passage, an image{offerFigure ? ' or a figure' : ''} here sits above the question on every phone. Several questions can carry the same one.
         </p>
       )}
 
@@ -273,15 +365,12 @@ export function StimulusEditor({ value, onChange, contentId, services = api, dis
         </>
       )}
 
-      {value.kind === 'image' && !value.url.trim() && (
+      {choosing && (
         <>
-          <Segmented
-            label="Where the image comes from"
-            value={way}
-            onChange={(w) => { setRefused(''); setWay(w); }}
-            options={[{ id: 'upload', label: 'Upload a file', disabled: off }, { id: 'link', label: 'Use an address', disabled: off }]}
-          />
-          {way === 'upload' ? (
+          <Segmented label="Where the image comes from" value={at} onChange={pickWay} options={ways} />
+          {at === 'slides' ? (
+            <SlidePicker read={slides} services={services} chosen={picked?.url} onPick={(p) => { setRefused(''); setPicked(p); }} />
+          ) : at === 'upload' ? (
             <label className="au-drop" htmlFor={`${id}-file`} data-busy={busy ? 'true' : undefined}>
               <input
                 id={`${id}-file`}
@@ -303,31 +392,42 @@ export function StimulusEditor({ value, onChange, contentId, services = api, dis
               <input id={`${id}-url`} className="input mono" value={link} disabled={off} placeholder="https://" onChange={(e) => { setRefused(''); setLink(e.target.value); }} />
             </Field>
           )}
-          {alt}
+          {(at !== 'slides' || picked) && alt}
           {refused && <Note tone="bad" role="alert">{refused}</Note>}
-          <div className="cluster">
-            {way === 'upload' ? (
-              <Button
-                icon="upload"
-                busy={busy}
-                disabled={off || !file || altMissing}
-                title={!file ? 'Choose an image first' : altMissing ? 'Write the alt text first' : undefined}
-                onClick={upload}
-              >
-                Upload and attach
-              </Button>
-            ) : (
-              <Button
-                icon="link"
-                disabled={off || !link.trim() || altMissing}
-                title={!link.trim() ? 'Type the address first' : altMissing ? 'Write the alt text first' : undefined}
-                onClick={() => set({ url: link.trim() })}
-              >
-                Use this image
-              </Button>
-            )}
-            <span className="t-meta">It is attached when you save the question.</span>
-          </div>
+          {(at !== 'slides' || (slides.data?.pictures ?? []).length > 0) && (
+            <div className="cluster">
+              {at === 'slides' ? (
+                <Button
+                  icon="check"
+                  disabled={off || !picked || altMissing}
+                  title={!picked ? 'Choose a picture first' : altMissing ? 'Describe the picture first' : undefined}
+                  onClick={() => set({ url: picked.url, sourceRef: value.sourceRef.trim() ? value.sourceRef : `Slide ${picked.slide}` })}
+                >
+                  Use this picture
+                </Button>
+              ) : at === 'upload' ? (
+                <Button
+                  icon="upload"
+                  busy={busy}
+                  disabled={off || !file || altMissing}
+                  title={!file ? 'Choose an image first' : altMissing ? 'Write the alt text first' : undefined}
+                  onClick={upload}
+                >
+                  Upload and attach
+                </Button>
+              ) : (
+                <Button
+                  icon="link"
+                  disabled={off || !link.trim() || altMissing}
+                  title={!link.trim() ? 'Type the address first' : altMissing ? 'Write the alt text first' : undefined}
+                  onClick={() => set({ url: link.trim() })}
+                >
+                  Use this image
+                </Button>
+              )}
+              <span className="t-meta">It is attached when you save the question.</span>
+            </div>
+          )}
         </>
       )}
 
@@ -336,10 +436,63 @@ export function StimulusEditor({ value, onChange, contentId, services = api, dis
           <div className="au-attached">
             <Icon name="ok" />
             <span className="grow clip mono" title={value.url}>{isMediaUrl(value.url) ? 'Uploaded to this chapter' : value.url}</span>
-            <Button size="sm" variant="ghost" icon="refresh" disabled={off} onClick={() => { setLink(''); setWay('upload'); set({ url: '' }); }}>Replace</Button>
+            <Button
+              size="sm" variant="ghost" icon="refresh" disabled={off}
+              onClick={() => { setLink(''); setPicked(null); setWay('upload'); chose.current = false; set({ url: '', regions: [] }); }}
+            >
+              Replace
+            </Button>
           </div>
           {alt}
+          {placeholder && <Note tone="bad" role="alert">Describe this picture from the slides first: a student who cannot see it gets only that description.</Note>}
           {source}
+          <Regions value={value} onChange={onChange} disabled={off} />
+        </>
+      )}
+
+      {value.kind === 'figure' && (
+        <>
+          {(figures.state === 'absent' || figures.state === 'failed') && (
+            <Note tone={value.spec ? undefined : 'bad'}>
+              {figures.state === 'absent'
+                ? 'This server does not draw figures, so a figure cannot be built or changed here.'
+                : `What the figure engines accept did not load: ${figures.error || 'try again in a moment.'}`}
+            </Note>
+          )}
+          {value.spec ? (
+            <FigureCard
+              figure={value.figure}
+              spec={value.spec}
+              actions={(
+                <>
+                  <Button size="sm" variant="ghost" icon="edit" disabled={off || figures.state !== 'ready'} onClick={() => setBuilding(true)}>Edit</Button>
+                  <Button size="sm" variant="ghost" icon="close" disabled={off} onClick={() => set({ spec: null, figure: null })}>Remove</Button>
+                </>
+              )}
+            />
+          ) : (figures.state === 'ready' || figures.state === 'loading') && (
+            <div className="fe-empty">
+              <TypeGlyph type="plot" />
+              <div className="grow">
+                <b>Describe a figure, and the server draws it</b>
+                <p>
+                  A graph, a chart, a number line, geometry or a ray diagram, a timeline, a diagram, a molecule, a pattern or a
+                  call stack. Every phone, the projector and printed pages show the same drawing, with its description and data.
+                </p>
+                <Button icon="plus" busy={figures.state === 'loading'} disabled={off} onClick={() => setBuilding(true)}>Build a figure</Button>
+              </div>
+            </div>
+          )}
+          {value.spec && source}
+          <FigureDialog
+            open={building}
+            onOpenChange={setBuilding}
+            initial={value.spec}
+            kinds={figures.kinds}
+            services={services}
+            title={value.spec ? 'Edit the figure' : 'Build a figure'}
+            onUse={(spec, figure) => { set({ spec, figure }); setBuilding(false); }}
+          />
         </>
       )}
 

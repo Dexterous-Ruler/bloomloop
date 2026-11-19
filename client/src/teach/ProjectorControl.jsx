@@ -26,6 +26,10 @@
  * closed with the key revealed, on the console's Class question space. A
  * Teacher-led room takes no phones, so its wall shows no code and the controls
  * offer none.
+ *
+ * Batch 8 (gap P1): a figure the server drew may be a question's or the
+ * diagram screen's stimulus. When it has steps, Back, Next and Start over move
+ * the wall through them (PATCH { step }, 0 being the figure itself).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -56,7 +60,11 @@ function clock(iso) {
 }
 
 const same = (a, b) => String(a ?? '').toLowerCase() === String(b ?? '').toLowerCase();
-const stimulusKey = (s) => `${s.kind}|${s.url ?? ''}|${s.text ?? ''}`;
+// A figure (Batch 8) is the same figure when its spec is.
+const stimulusKey = (s) => `${s.kind}|${s.url ?? ''}|${s.text ?? ''}|${s.spec ? JSON.stringify(s.spec) : ''}`;
+const STIM_LABEL = { image: 'Picture', passage: 'Passage', figure: 'Figure' };
+// A drawing as a thumbnail: an image of the SVG, so its ids never meet the preview's.
+const svgSrc = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 const excerpt = (text, n) => (text.length > n ? `${text.slice(0, n).trimEnd()}…` : text);
 // What the wall shows with nothing up: a Teacher-led room has no way in to show.
 const nothingUp = (roomMode) => (roomMode === 'teacher-led'
@@ -127,19 +135,22 @@ function Item({ q, up, canWrite, busy, onPut, diagram }) {
       {diagram && q.stimulus && (
         q.stimulus.kind === 'image'
           ? <img className="bm-thumb" src={q.stimulus.url} alt={q.stimulus.alt || ''} loading="lazy" />
-          : <span className="bm-thumb bm-thumb-text" aria-hidden="true"><Icon name="book" /></span>
+          : q.figure?.svg
+            ? <img className="bm-thumb bm-thumb-fig" src={svgSrc(q.figure.svg)} alt="" loading="lazy" />
+            : <span className="bm-thumb bm-thumb-text" aria-hidden="true"><Icon name="book" /></span>
       )}
       <div className="bm-item-main">
         <span className="bm-item-meta">
           <Level level={q.bloom} />
-          <span>{diagram ? (q.stimulus?.kind === 'image' ? 'Picture' : 'Passage') : KIND_LABEL[q.kind] ?? q.kind}</span>
+          <span>{diagram ? (STIM_LABEL[q.stimulus?.kind] ?? 'Passage') : KIND_LABEL[q.kind] ?? q.kind}</span>
           {!diagram && q.stimulus && (
-            <span className="bm-has"><Icon name={q.stimulus.kind === 'image' ? 'zoom' : 'book'} size={13} /><span className="sr-only">Has a diagram or passage</span></span>
+            <span className="bm-has"><Icon name={q.stimulus.kind === 'passage' ? 'book' : 'zoom'} size={13} /><span className="sr-only">Has a diagram, figure or passage</span></span>
           )}
         </span>
         <span className="bm-item-text">
           {!diagram ? q.text
-            : q.stimulus?.kind === 'passage' ? `“${excerpt(q.stimulus.text || '', 150)}”` : q.stimulus?.alt || q.text}
+            : q.stimulus?.kind === 'passage' ? `“${excerpt(q.stimulus.text || '', 150)}”`
+              : q.stimulus?.kind === 'figure' ? [q.figure?.title, excerpt(q.text, 120)].filter(Boolean).join(' · ') : q.stimulus?.alt || q.text}
         </span>
       </div>
       {up
@@ -214,7 +225,7 @@ function QuestionPicker({
     <div className="bm-picker">
       <div className="bm-picker-head">
         {diagram
-          ? <h4>Diagrams and passages in this room’s questions</h4>
+          ? <h4>Diagrams, figures and passages in this room’s questions</h4>
           : (
             <Segmented
               label="Where the question comes from"
@@ -243,7 +254,7 @@ function QuestionPicker({
             : shown.length === 0 ? (
               <p className="bm-quiet">
                 {pool.length === 0 && diagram
-                  ? 'None of this room’s questions carries a diagram or a passage.'
+                  ? 'None of this room’s questions carries a diagram, a figure or a passage.'
                   : pool.length === 0 ? 'This room has no questions to put up.' : 'None of them is at this level.'}
               </p>
             ) : (
@@ -387,6 +398,48 @@ function NowClass({ q, screen, canWrite, busy, onPatch }) {
   );
 }
 
+/**
+ * A stepped figure on the wall (Batch 8, gap P1): where it is, a dot per step,
+ * and Back, Next and Start over. Step 0 is the figure itself. Each press is
+ * one PATCH { step }, and the reply's figure says where the wall is now; a
+ * refusal is the server's sentence, shown with the others. The server puts a
+ * new question, diagram or screen back at 0, so nothing is kept here.
+ */
+function WallSteps({ fig, canWrite, busy, onPatch }) {
+  const n = fig.stepCount;
+  const at = Math.min(n, Math.max(0, Number(fig.step) || 0));
+  const go = (step, key) => onPatch({ step }, key);
+  return (
+    <div className="bm-steps">
+      <div className="bm-steps-head">
+        <span className="bm-steps-at" role="status">
+          {at ? `Step ${at} of ${n}` : `The whole figure, before step 1 of ${n}`}
+        </span>
+        <ol className="bm-dots" aria-hidden="true">
+          {Array.from({ length: n }, (_, i) => <li key={i} data-on={i < at || undefined} />)}
+        </ol>
+      </div>
+      {at > 0 && fig.caption && <p className="bm-steps-cap">{fig.caption}</p>}
+      {canWrite && (
+        <div className="bm-now-acts">
+          <Button size="sm" variant="ghost" icon="back" busy={busy === 'step:back'} disabled={Boolean(busy) || at === 0} onClick={() => go(at - 1, 'step:back')}>
+            Back
+          </Button>
+          <Button size="sm" icon="forward" busy={busy === 'step:next'} disabled={Boolean(busy) || at >= n} onClick={() => go(at + 1, 'step:next')}>
+            Next
+          </Button>
+          <Button size="sm" variant="ghost" icon="undo" busy={busy === 'step:0'} disabled={Boolean(busy) || at === 0} onClick={() => go(0, 'step:0')}>
+            Start over
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A figure on the wall that has steps to move through, or null. */
+const stepped = (s) => (s?.kind === 'figure' && s.stepCount > 0 ? s : null);
+
 /** What is up now in the question screen, with its key and its way down. */
 function NowQuestion({ shows, screen, tallies, roomMode, canWrite, busy, onPatch }) {
   const q = shows.question;
@@ -398,11 +451,13 @@ function NowQuestion({ shows, screen, tallies, roomMode, canWrite, busy, onPatch
   const keyBlocked = roomMode !== 'teacher-led' && (q.source === 'bank' || !tally || Boolean(tally.questionId));
   const hasKey = q.source === 'tally' ? !tally || tally.correct != null : (q.options ?? []).length > 0 && q.kind !== 'poll';
   const revealed = screen.revealed;
+  const fig = q.source === 'bank' ? stepped(q.stimulus) : null;
 
   return (
     <div className="bm-now">
       <span className="bm-k">{q.source === 'tally' ? 'Asked aloud, on the wall' : 'On the wall'}</span>
       <p className="bm-now-text">{q.text}</p>
+      {fig && <WallSteps fig={fig} canWrite={canWrite} busy={busy} onPatch={onPatch} />}
       {canWrite && (
         <div className="bm-now-acts">
           {hasKey && (
@@ -437,10 +492,16 @@ function NowQuestion({ shows, screen, tallies, roomMode, canWrite, busy, onPatch
 function NowDiagram({ shows, roomMode, canWrite, busy, onPatch }) {
   const s = shows.diagram?.stimulus;
   if (!s) return <p className="bm-quiet">{nothingUp(roomMode)}</p>;
+  const fig = stepped(s);
   return (
     <div className="bm-now">
-      <span className="bm-k">{s.kind === 'image' ? 'Diagram on the wall' : 'Passage on the wall'}</span>
-      <p className="bm-now-text">{s.kind === 'image' ? (s.alt || 'A picture with no description') : `“${excerpt(s.text || '', 180)}”`}</p>
+      <span className="bm-k">{s.kind === 'image' ? 'Diagram on the wall' : s.kind === 'figure' ? 'Figure on the wall' : 'Passage on the wall'}</span>
+      <p className="bm-now-text">
+        {s.kind === 'image' ? (s.alt || 'A picture with no description')
+          : s.kind === 'figure' ? (s.title || 'A figure')
+            : `“${excerpt(s.text || '', 180)}”`}
+      </p>
+      {fig && <WallSteps fig={fig} canWrite={canWrite} busy={busy} onPatch={onPatch} />}
       {canWrite && (
         <div className="bm-now-acts">
           <Button size="sm" variant="ghost" icon="close" busy={busy === 'ddown'} disabled={Boolean(busy)} onClick={() => onPatch({ diagram: null }, 'ddown')}>
@@ -733,7 +794,7 @@ export default function ProjectorControl({ code, canControl, info, askLevel }) {
     const read = contentId
       ? api.getBank(contentId).then((b) => (b.questions ?? [])
         .filter((q) => q.status === 'active' && (!wanted || wanted.has(String(q._id).toLowerCase())))
-        .map((q) => ({ id: String(q._id), text: q.text ?? '', kind: q.kind, bloom: q.bloom, stimulus: q.stimulus ?? null })))
+        .map((q) => ({ id: String(q._id), text: q.text ?? '', kind: q.kind, bloom: q.bloom, stimulus: q.stimulus ?? null, figure: q.figure ?? null })))
       : api.roomItems(code).then((r) => (r.items ?? [])
         .filter((i) => i.status === 'active')
         .map((i) => ({ id: String(i.questionId), text: i.text ?? '', kind: i.kind, bloom: i.bloom, stimulus: null })));

@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
+import Figure from '../learn/Figure.jsx';
 import { api } from '../lib/api.js';
 import { KIND_LABEL } from '../lib/kinds.js';
 import AccountShell from '../shell/AccountShell.jsx';
@@ -33,6 +34,8 @@ import {
   Avatar, Button, Chip, Dialog, Empty, Icon, Level, Note, Num, Panel, Segmented, Spark, Tip,
 } from '../ui/index.jsx';
 import { ago, dayParts, plural, stampOf, timeOf, useMedia } from './dashParts.jsx';
+
+import '../styles/levels.css';
 
 /* The server's own words for the three states, and what this screen calls them. */
 const STATUS = [
@@ -329,9 +332,19 @@ function QueueItem({ item, active, open, showStatus, onPick }) {
 
 /* ---------------------------------------------------------------- stimulus */
 
-function Stimulus({ stimulus }) {
+function Stimulus({ stimulus, figure }) {
   const [broken, setBroken] = useState(false);
-  if (!stimulus) return null;
+  // Batch 8: a figure is drawn by the server from the answer's snapshot, as the
+  // student saw it (question.figure); the snapshot's stimulus holds only its spec.
+  if (figure) {
+    return (
+      <>
+        <Figure figure={figure} />
+        {figure.ok === false && figure.reason && <p className="hint">{figure.reason}</p>}
+      </>
+    );
+  }
+  if (!stimulus || stimulus.kind === 'figure') return null;
   if (stimulus.kind === 'image') {
     return (
       <figure className="rv-stim">
@@ -560,13 +573,15 @@ function Detail({ item, entry, onRetryLog, role, readOnly, draft, onDraft, onSub
 
       <section className="rv-d-sec" aria-label="The question">
         <div className="rv-label">Question</div>
-        <Stimulus stimulus={item.question?.stimulus} />
+        <Stimulus stimulus={item.question?.stimulus} figure={item.question?.figure} />
         <p className="rv-q">{item.question?.text || 'The question text was not stored with this answer.'}</p>
       </section>
 
       <section className="rv-d-sec" aria-label="The student's answer">
         <div className="rv-label">Their answer</div>
         <p className="rv-answer">{text || 'No answer text was recorded.'}</p>
+        {/* Batch 8 (9c): the key the row was stored under, the phone's own id for it when it sent one. `answerId` stays the row id the review routes take. */}
+        {item.answerKey && <p className="hint">Answer reference <span className="ev-key">{item.answerKey}</span></p>}
       </section>
 
       <section className="rv-d-sec" aria-label="Rubric">

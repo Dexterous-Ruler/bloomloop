@@ -11,11 +11,15 @@
  * Phase 5: a class question on the wall (question.source 'class', docs/API.md
  * "What the projector shows") through open, pause, re-vote and close, with
  * counts off, held and up; a Teacher-led room's wall, which has no code.
+ *
+ * Batch 8: figures the b8-vis server drew (dev/samples-b8-figures.js), on the
+ * wall at a step and on the console with Back, Next and Start over.
  */
 
 import AccountShell from '../shell/AccountShell.jsx';
 import { ProjectorConsole, ProjectorSkeleton } from '../teach/ProjectorControl.jsx';
 import { WallNotice, WallScreen } from '../teach/Wall.jsx';
+import { projectorFigure, STAFF, studentFigure } from './samples-b8-figures.js';
 
 /* ------------------------------------------------------------------ sample */
 
@@ -169,6 +173,20 @@ const STATE = {
 
 const ON = (q) => ({ ...BASE, roomMode: 'devices', question: q });
 
+/* Batch 8: figures, as projector:state carries them (figureAtStep). */
+const FIG_Q = (name, step, text) => ({ ...MCQ, text, options: OPTS('Where the line crosses the y-axis', 'Where the two graphs meet', 'Where the parabola turns', 'Where the step graph jumps'), stimulus: projectorFigure(name, step) });
+const PLOT_TEXT = 'At which points do the line y = 2x + 1 and the parabola y = x² − 4 meet?';
+const STACK_TEXT = 'How many calls to fact are waiting when fact(1) returns?';
+const FIG = {
+  question: { ...BASE, question: FIG_Q('plot', 0, PLOT_TEXT) },
+  questionStep: { ...BASE, question: { ...FIG_Q('stack', 2, STACK_TEXT), options: OPTS('One', 'Two', 'Three', 'None') } },
+  diagram: { ...BASE, mode: 'diagram', diagram: { stimulus: projectorFigure('plot', 0) } },
+  diagramStep: { ...BASE, mode: 'diagram', diagram: { stimulus: projectorFigure('diagram', 1) } },
+  diagramLast: { ...BASE, mode: 'diagram', diagram: { stimulus: projectorFigure('plot', 2) } },
+  // A class question carries a figure with no steps (stimulusView).
+  cq: ON({ ...CQ_STATE.paused, text: 'Which month had the most rain?', options: OPTS('June', 'July', 'August', 'They were the same'), stimulus: studentFigure('bar') }),
+};
+
 const RULE = 'The projector shows the question (its key only once you reveal it, and a bank question\'s key only in a Teacher-led room, where no phone can still be served it), a diagram, counts for the class (per level only once 5 students have answered), and the wheel\'s pick as a roll number and first name. Never a score, accuracy, band, observation or any other name. A projector link works for 12 hours from when it is made. A class question shows how many have voted; its votes per option and confidence taps only when you choose to show counts, once a round has closed and 5 or more voted in it; and its key, share right and changes only once you reveal the key as it closes.';
 const KEY_409 = 'That key cannot go on the wall: this room\'s phones may still be served this question, and a phone that has not answered it yet would have been shown its answer. A bank question\'s key is revealed on the projector only in a Teacher-led room; nothing was changed.';
 
@@ -189,6 +207,15 @@ const BANK = [
   { id: 'q8', bloom: 'evaluate', kind: 'order', text: 'Put the steps of closing a TCP connection in order.', stimulus: null },
   { id: 'q9', bloom: 'create', kind: 'open', text: 'Design a simple reliable protocol over UDP for a classroom quiz app, and say what it keeps from TCP.', stimulus: { kind: 'passage', text: PASSAGE } },
 ];
+
+// Batch 8: the bank's figure questions (GET /api/bank/:contentId gives each its figure).
+const FIG_BANK = [
+  ...BANK,
+  { id: 'f1', bloom: 'remember', kind: 'mcq', text: PLOT_TEXT, stimulus: { kind: 'figure', spec: { type: 'plot', n: 1 } }, figure: STAFF.plot },
+  { id: 'f2', bloom: 'remember', kind: 'mcq', text: 'Which box does the program reach when n is 0?', stimulus: { kind: 'figure', spec: { type: 'diagram', n: 2 } }, figure: STAFF.diagram },
+  { id: 'f3', bloom: 'understand', kind: 'match', text: STACK_TEXT, stimulus: { kind: 'figure', spec: { type: 'stack', n: 3 } }, figure: STAFF.stack },
+];
+const STEP_400 = 'This figure has 2 steps: choose one from 0 (the figure itself) to 2.';
 
 // The room's class questions as GET …/class-questions lists them (staff body, trimmed).
 const CLASS_QS = [
@@ -266,6 +293,12 @@ export default [
   wall('cq-passage', 'class question with a passage, everything up', 'The fullest screen: a passage, long options, both rounds and the changes. The type steps down until it fits the frame.', ON(CQ_STATE.passage)),
   wall('cq-truefalse', 'class question, true or false, second vote', 'Two options, A True and B False.', ON(CQ_STATE.truefalse)),
   wall('cq-pick', 'class question beside a pick', 'The wheel’s pick takes a column: the side and the bars give way.', STATE.cqPick),
+  wall('fig-question', 'a question with a figure', 'Batch 8: a bank question whose stimulus is a figure, drawn by the server, on its own light card beside the question.', FIG.question),
+  wall('fig-question-step', 'a question with a stepped figure, step 2 of 3', 'The professor moved the figure on: the drawing at step 2, with “Step 2 of 3” and the step’s caption under it.', FIG.questionStep),
+  wall('fig-diagram', 'a figure on the diagram screen', 'A figure put up on its own, at the figure itself (step 0): no step line yet.', FIG.diagram),
+  wall('fig-diagram-step', 'a figure on the diagram screen, step 1 of 2', 'A flowchart at step 1: the step’s part lit, its caption and “Step 1 of 2”.', FIG.diagramStep),
+  wall('fig-diagram-last', 'a figure on the diagram screen, last step', 'The plot at its last step.', FIG.diagramLast),
+  wall('fig-cq', 'class question with a figure', 'A class question carries its figure with no steps; counts up after the pause.', FIG.cq),
   { id: 'wall-closed', title: 'Wall: link turned off', role: null, note: 'projector:closed: the wall stops and shows the reason.', render: () => <Notice kind="closed" reason="This projector link was turned off." /> },
   { id: 'wall-refused', title: 'Wall: link refused', role: null, note: 'projector:refused: the server’s one sentence for every link that does not work.', render: () => <Notice kind="refused" reason="That projector link does not work: it may have been turned off. Ask your professor for a new one." /> },
   { id: 'wall-nolink', title: 'Wall: opened with no link', role: null, note: '/wall with nothing after the #.', render: () => <Notice kind="nolink" /> },
@@ -354,6 +387,34 @@ export default [
     role: 'hod',
     note: 'A head of department: the preview and the links, and no controls.',
     render: () => <Console roomMode="devices" canControl={false} body={body(STATE.question, { question: { source: 'bank', id: 'q1' } })} />,
+  },
+  {
+    id: 'beam-figure-diagram',
+    title: 'Controls: a stepped figure on the diagram screen',
+    role: 'professor',
+    note: 'Batch 8 (P1): the plot at step 1 of 2. Back, Next and Start over send PATCH { step }; the dots and the caption say where the wall is.',
+    render: () => <Console roomMode="devices" questions={FIG_BANK} body={body({ ...BASE, mode: 'diagram', diagram: { stimulus: projectorFigure('plot', 1) } }, { diagram: { questionId: 'f1' }, step: 1 })} />,
+  },
+  {
+    id: 'beam-figure-start',
+    title: 'Controls: a stepped figure, the figure itself',
+    role: 'professor',
+    note: 'A question whose figure has three steps, just put up: step 0, so Back and Start over wait.',
+    render: () => <Console roomMode="teacher-led" questions={FIG_BANK} body={body({ ...BASE, roomMode: 'teacher-led', question: { ...FIG_Q('stack', 0, STACK_TEXT), options: OPTS('One', 'Two', 'Three', 'None') } }, { question: { source: 'bank', id: 'f3' }, step: 0 })} />,
+  },
+  {
+    id: 'beam-figure-refused',
+    title: 'Controls: a step refused',
+    role: 'professor',
+    note: 'The server’s sentence for a step past the end, as every refusal is shown. At the last step Next waits.',
+    render: () => <Console roomMode="devices" questions={FIG_BANK} error={STEP_400} body={body(FIG.diagramLast, { diagram: { questionId: 'f1' }, step: 2 })} />,
+  },
+  {
+    id: 'beam-figure-readonly',
+    title: 'Controls: a stepped figure, read only',
+    role: 'hod',
+    note: 'A head of department sees where the wall is in the figure, with no buttons.',
+    render: () => <Console roomMode="devices" canControl={false} body={body(FIG.diagramStep, { diagram: { questionId: 'f2' }, step: 1 })} />,
   },
   {
     id: 'beam-loading',

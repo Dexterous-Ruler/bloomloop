@@ -35,6 +35,7 @@ import {
 } from '../ui/index.jsx';
 import Attainment from './Attainment.jsx';
 import { dateOf, dayOf, plural, roomLink, stampOf, timeOf } from './dashParts.jsx';
+import { BankLink, LevelChange } from './LevelChange.jsx';
 import Outcomes from './Outcomes.jsx';
 import Register from './Register.jsx';
 import { ClassMisconceptions } from '../teach/Misconceptions.jsx';
@@ -1467,6 +1468,7 @@ function Hardest({ hd }) {
                   {uncertain && it.levelCheck.sentence && <p className="cl-q-note">{it.levelCheck.sentence}</p>}
                   {it.languages?.warning?.text && <Note tone="warn" icon="alert">{it.languages.warning.text}</Note>}
                   {!it.languages?.warning && it.languages?.note && <p className="cl-q-note">{it.languages.note}</p>}
+                  <BankLink item={it} />
                 </div>
                 <span className="cl-q-fig">
                   <b>{pct(it.proportionCorrect)}</b>
@@ -1528,6 +1530,7 @@ export function ClassAnalytics({ analytics, onLast, onRetry, firstReading }) {
             <Spread h={a.histogram} />
             <Levels a={a} first={firstReading} />
           </div>
+          <LevelChange c={a.comparison} bands={a.levelBands} first={firstReading} />
           <Hardest hd={a.hardest} />
         </>
       )}

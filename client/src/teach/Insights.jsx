@@ -22,6 +22,13 @@
  *                server's default order (`sort.default`, roll order since the Phase 5 follow-ups)
  *     onAct      (card.action) after an "acted" is recorded: { do: 'ask', level } |
  *                { do: 'sort', sort } | { do: 'wheel' }. A sort is also applied here.
+ *     move       Batch 8: the "Suggest a move" card (teach/Moves.jsx), drawn under the
+ *                three cards; not in a Teacher-led room, which has no graded answers
+ *
+ * Batch 8 (teach/LevelsOverTime.jsx): each level's accuracy minute by minute with
+ * the room's goal (`series.points[].levels`, `series.threshold`), and under the
+ * Needs support tile the same students in the class's previous room
+ * (`kpis.support.previousRoom`). Each is left out when the reply has no such field.
  *   <InsightsView data ... onAction />  the same, drawn from a body (the gallery uses it)
  */
 
@@ -30,6 +37,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { record, useSynced } from '../lib/consoleOutbox.js';
 import { Button, Icon, Level, Note, Num, Panel, Segmented, Spark } from '../ui/index.jsx';
+import { LevelTrend, SupportThen } from './LevelsOverTime.jsx';
 
 const list = (v) => (Array.isArray(v) ? v : []);
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -163,6 +171,7 @@ function Brief({ data }) {
             now={num(par.value) === null ? 'Nobody present yet' : `${par.answered ?? 0} of ${par.present ?? 0} present have answered`}
             start={startOf(par.start, (s) => `${pct(s.value)}, ${s.present ?? 0} present`)}
           />
+          <SupportThen p={sup.previousRoom} />
         </div>
       )}
     </Panel>
@@ -455,7 +464,7 @@ function Skeleton() {
  * The insights drawn from one body. `onAction(card, 'acted' | 'dismissed', note)`
  * records the action and returns a promise; a refusal's sentence is shown on the card.
  */
-export function InsightsView({ data, error, onRetry, canControl = false, sort, onSort, onAction, onOpenStudent }) {
+export function InsightsView({ data, error, onRetry, canControl = false, sort, onSort, onAction, onOpenStudent, move = null }) {
   // Roll order unless someone chooses otherwise: the server's own default.
   const [ownSort, setOwnSort] = useState(null);
   const listRef = useRef(null);
@@ -486,6 +495,8 @@ export function InsightsView({ data, error, onRetry, canControl = false, sort, o
     <div className="co" data-led={led ? 'true' : undefined}>
       <Brief data={data} />
       {!led && <Cards data={data} canControl={canControl} onRun={onRun} />}
+      {!led && move}
+      {!led && <LevelTrend series={data.series} />}
       <div className="co-cols">
         {(!led || list(data.students).length > 0) && (
           <Students data={data} sort={cur} onSort={changeSort} onOpenStudent={onOpenStudent} listRef={listRef} />
@@ -514,7 +525,7 @@ function withKept(data, kept) {
 }
 
 /** The live insights for one room: the pushed body when there is one, else read here. */
-export default function Insights({ code, insights, canControl = false, sort, onSort, onAct, onOpenStudent }) {
+export default function Insights({ code, insights, canControl = false, sort, onSort, onAct, onOpenStudent, move = null }) {
   const [own, setOwn] = useState(null);
   const [error, setError] = useState('');
   const [kept, setKept] = useState({});
@@ -565,6 +576,7 @@ export default function Insights({ code, insights, canControl = false, sort, onS
       onSort={onSort}
       onAction={onAction}
       onOpenStudent={onOpenStudent}
+      move={move}
     />
   );
 }

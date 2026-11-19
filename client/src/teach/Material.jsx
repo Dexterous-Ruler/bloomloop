@@ -14,6 +14,7 @@ import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
 import { Button, Dialog, Empty, Field, Icon, Note, Num, Panel, Section, Segmented, Tick, Tip } from '../ui/index.jsx';
 import { LevelSpread } from '../ui/viz.jsx';
+import { LevelSupportGrid, TopicSource, useChapterInfo } from './MaterialInfo.jsx';
 import { startTotal } from './Planner.jsx';
 
 const fmtSize = (bytes) => {
@@ -136,7 +137,7 @@ function Source({ busy, onFile, onText }) {
   );
 }
 
-function Library({ saved, loaded, currentId, busy, onOpen }) {
+export function Library({ saved, loaded, currentId, busy, onOpen }) {
   return (
     <section className="card tc-lib" aria-label="Reuse a chapter">
       <div className="tc-lib-head">
@@ -172,6 +173,8 @@ function Library({ saved, loaded, currentId, busy, onOpen }) {
                     ]
                       .filter(Boolean).join(' · ')}
                   </small>
+                  {/* Batch 8 (M5): the newest room opened on it, on a line of its own so it is never clipped. */}
+                  {c.lastUsed?.at && <small>used {fmtDay(c.lastUsed.at)}</small>}
                 </span>
                 {here ? (
                   <span className="tc-lib-here"><Icon name="check" size={13} />Open</span>
@@ -200,7 +203,8 @@ function LevelTicks({ mix, peak }) {
   );
 }
 
-export default function Material({ content, selected, bank, hasBank, drafts = 0, onContent, onSelected, onNext }) {
+// `info`: the Batch 8 parts given rather than read (the gallery); see MaterialInfo.jsx.
+export default function Material({ content, selected, bank, hasBank, drafts = 0, onContent, onSelected, onNext, info: given = null }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -240,6 +244,10 @@ export default function Material({ content, selected, bank, hasBank, drafts = 0,
     return () => { alive = false; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content?.contentId, hasBank, selectedKey]);
+
+  // Batch 8 (M1, M2): where each topic came from and the levels the material supports.
+  const read = useChapterInfo(given ? null : content?.contentId, topics.join('\u0000'));
+  const info = given ?? read;
 
   // Once a bank exists, the counts are the bank's own.
   const inBank = useMemo(() => (bank?.questions ?? []).filter((q) => q.status !== 'discarded'), [bank]);
@@ -387,6 +395,8 @@ export default function Material({ content, selected, bank, hasBank, drafts = 0,
             </div>
             <Button size="sm" icon="refresh" onClick={() => setSwap(true)}>Replace</Button>
           </div>
+          {/* Batch 8: after a .pptx upload, what was kept of the slides' pictures (sent only when the deck had any). */}
+          {content.slidePictures?.note && <Note icon="deck">{content.slidePictures.note}</Note>}
 
           <div className="tc-topics-head">
             <Section title="Topics found" sub={`${selected.length} of ${topics.length} ticked. Rename anything the reader got wrong.`} />
@@ -443,7 +453,10 @@ export default function Material({ content, selected, bank, hasBank, drafts = 0,
                       >
                         <Tick on={on} />
                         <span className="tc-ref">{String(idx + 1).padStart(2, '0')}</span>
-                        <span className="tc-topic-name">{topic}</span>
+                        <span className="tc-topic-name">
+                          {topic}
+                          <TopicSource source={info?.sources?.find((s) => s.topic === topic)} />
+                        </span>
                         <LevelTicks mix={on || hasBank ? row?.mix : null} peak={peak} />
                         <span className="tc-est">
                           {row && (on || hasBank) ? `${hasBank ? '' : '~'}${row.count}` : '—'}
@@ -474,6 +487,8 @@ export default function Material({ content, selected, bank, hasBank, drafts = 0,
             />
             <Button type="submit" size="sm" disabled={!added.trim() || saving}>Add</Button>
           </form>
+
+          {info?.support && topics.length > 0 && <LevelSupportGrid support={info.support} selected={selected} />}
         </section>
 
         <aside className="tc-chap-side">

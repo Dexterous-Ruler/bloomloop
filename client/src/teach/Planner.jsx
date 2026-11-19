@@ -20,6 +20,8 @@ import { KIND_LABEL } from '../lib/kinds.js';
 import { Button, Icon, Level, Note, Num, Panel, Section, Segmented } from '../ui/index.jsx';
 import { LevelSpread } from '../ui/viz.jsx';
 
+import '../styles/material8.css';
+
 const HARD_CAP = 200;
 const CONFIRM_ABOVE = 120;
 const MIN_TOTAL = 1;
@@ -56,6 +58,7 @@ export default function Planner({ contentId, topics, existing, drafts = 0, draft
 
   const { total, preset, mix, mode } = draft;
   const kinds = draft.kinds ?? {};
+  const ai = draft.writer !== 'templates';
 
   useEffect(() => {
     let alive = true;
@@ -280,10 +283,29 @@ export default function Planner({ contentId, topics, existing, drafts = 0, draft
         {previewError && <Note tone="bad">Could not resolve that plan: {previewError}</Note>}
         {plan?.warnings?.map((w) => <Note key={w}>{w}</Note>)}
 
+        {/* Batch 8 (M3): off asks for the built-in templates on purpose (writer: 'templates'). */}
+        <div className="m8-writer">
+          <label className="m8-writer-row">
+            <button
+              type="button"
+              role="switch"
+              className="switch"
+              aria-checked={ai ? 'true' : 'false'}
+              aria-describedby="m8-writer-said"
+              onClick={() => onDraft({ writer: ai ? 'templates' : 'auto' })}
+            />
+            Write with AI
+          </label>
+          <p id="m8-writer-said">
+            {ai
+              ? 'The AI model writes them from your material. You approve each one before a room serves it.'
+              : 'The built-in templates write them from your material. No AI model is called.'}
+          </p>
+        </div>
+
         {held && plan ? (
           <Note icon="alert">
-            <b>{plan.total} questions is a big run.</b> It takes about {mmss(plan.estimateSeconds)} and spends real model
-            quota. {held.mode === 'replace'
+            <b>{plan.total} questions is a big run.</b> It takes about {mmss(plan.estimateSeconds)}{ai ? ' and spends real model quota' : ''}. {held.mode === 'replace'
               ? 'Everything already in this bank, drafts and discarded questions included, is deleted first.'
               : `They are added on top of the ${existing} already in this bank.`}
             <div className="cluster" style={{ marginTop: 12 }}>

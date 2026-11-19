@@ -1,0 +1,117 @@
+/* Batch 8: material and the shared bank (teach/MaterialInfo.jsx,
+   teach/RoomsOnly.jsx, the planner's writer switch, hubstaff/LessonSections.jsx).
+   Prefix m8-. Forest tokens only; a level colour is always beside its name. */
+
+/* ---- under a topic's name: where it came from */
+
+.m8-src {
+  display: flex; align-items: flex-start; gap: 5px; margin-top: 3px;
+  font: 500 11.5px/1.4 var(--font); color: var(--text-3); letter-spacing: 0;
+}
+.m8-src svg { flex: none; margin-top: 1px; }
+.m8-src[data-none='true'] { font-weight: 400; color: var(--text-4); }
+.m8-src[data-none='true'] span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tc-topic-name .m8-src { font-weight: 500; }
+.tc-topic[data-on='false'] .tc-topic-name .m8-src { color: var(--text-4); }
+
+/* ---- the topic-by-level grid */
+
+.m8-grid { display: flex; flex-direction: column; gap: 14px; padding: 20px 20px 20px 24px; border-top: 1px solid var(--line); }
+.m8-grid-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 20px; }
+.m8-grid-head .sec > h3 { font: 700 15px/1.3 var(--font); letter-spacing: -0.01em; }
+
+.m8-key { display: flex; flex-wrap: wrap; gap: 6px 14px; font: 500 12px/1.3 var(--font); color: var(--text-3); }
+.m8-key li { display: inline-flex; align-items: center; gap: 7px; }
+.m8-key .m8-cell { --lv: var(--primary); --lv-ink: var(--on-primary); width: 22px; height: 16px; }
+
+.m8-grid-wrap { overflow-x: auto; margin: 0 -4px; padding: 2px 4px 4px; }
+.m8-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.m8-table th, .m8-table td { padding: 0; }
+.m8-th-topic {
+  width: 32%; padding: 0 12px 8px 0 !important; text-align: left;
+  font: 600 10.5px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-4);
+}
+.m8-th-lv { padding: 0 1px 8px !important; text-align: center; font: 500 11px/1.25 var(--font); color: var(--text-3); vertical-align: bottom; }
+.m8-th-lv .swatch { display: block; margin: 0 auto 5px; }
+.m8-lvn { display: none; font: 500 10.5px/1 var(--mono); }
+.m8-lvl { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 10.5px; }
+.m8-table thead th { border-bottom: 1px solid var(--line); }
+
+.m8-table tbody tr + tr > * { border-top: 1px solid var(--line); }
+.m8-th-row { padding: 9px 12px 9px 0 !important; text-align: left; vertical-align: middle; font-weight: inherit; }
+.m8-row-name { display: block; font: 600 13px/1.4 var(--font); color: var(--text); overflow-wrap: anywhere; }
+.m8-table tr[data-on='false'] .m8-row-name { font-weight: 500; color: var(--text-3); }
+.m8-row-no { display: block; margin-top: 2px; font: 400 11.5px/1.4 var(--font); color: var(--text-3); }
+
+.m8-table td { padding: 6px 3px !important; vertical-align: middle; cursor: default; border-radius: 8px; outline-offset: -1px; }
+.m8-table td:focus-visible { outline: 2px solid var(--primary); }
+.m8-table td[aria-selected='true'] .m8-cell { box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--text-3); }
+
+/* One cell: three marks that differ in shape as well as colour.
+   on  = filled with the level's colour and a tick
+   off = the level's tint inside a ring
+   no  = hatched, dashed edge, no colour */
+.m8-cell {
+  display: grid; place-items: center; width: 100%; height: 24px; border-radius: 6px;
+  font-style: normal; color: var(--lv-ink); transition: background var(--t-2) var(--ease), box-shadow var(--t-2) var(--ease);
+}
+.m8-cell[data-cell='on'] { background: var(--lv); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 22%, transparent); }
+.m8-cell[data-cell='off'] { background: var(--lv-soft); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--lv) 55%, var(--text-3)); }
+.m8-cell[data-cell='no'] {
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--text-4) 34%, transparent) 0 1.5px, transparent 1.5px 6px);
+  box-shadow: none; border: 1px dashed var(--text-4);
+}
+
+.m8-grid-why { min-height: 20px; font: 400 12.5px/1.5 var(--font); color: var(--text-2); max-width: 90ch; }
+.m8-grid-why b { font-weight: 600; color: var(--text); }
+.m8-grid-why[data-empty='true'] { color: var(--text-4); }
+
+@media (max-width: 760px) {
+  .m8-grid { padding-left: 16px; padding-right: 14px; }
+  .m8-th-topic { width: 40%; }
+  .m8-lvn { display: block; }
+  .m8-lvl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .m8-table td { padding: 6px 2px !important; }
+  .m8-cell { height: 22px; }
+}
+
+/* ---- the planner: who writes the questions */
+
+.m8-writer { display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
+.m8-writer-row { display: flex; align-items: center; gap: 10px; font: 600 13.5px/1.3 var(--font); color: var(--text); cursor: pointer; }
+.m8-writer p { font: 400 12px/1.5 var(--font); color: var(--text-3); }
+
+/* ---- the bank: rooms only */
+
+.m8-rooms { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); }
+.m8-rooms-row { display: flex; align-items: center; gap: 10px; font: 600 13px/1.3 var(--font); color: var(--text); cursor: pointer; }
+.m8-rooms p { max-width: 80ch; font: 400 12px/1.5 var(--font); color: var(--text-3); }
+.m8-rooms p[data-said='true'] { color: var(--text-2); }
+.m8-rooms p[data-tone='bad'] { color: var(--bad); }
+
+/* ---- a lesson's concept panel, as its professor reviews it */
+
+.m8-sec { display: flex; flex-direction: column; gap: 14px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--raised); }
+.m8-sec[data-draft='true'] { box-shadow: inset 2px 0 0 var(--warn-fill); }
+.m8-sec-head { display: flex; flex-direction: column; gap: 4px; }
+.m8-sec-head .hq-step-k .it-draft { margin-left: 2px; }
+.m8-sec-head p { max-width: 88ch; font: 500 12.5px/1.5 var(--font); }
+.m8-sec-part { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.m8-sec h5 { margin: 0; display: flex; align-items: center; gap: 8px; font: 600 13px/1.3 var(--font); color: var(--text); }
+.m8-sec .hub-rich { font-size: 14px; }
+.m8-lang { font: 500 11px/1 var(--mono); color: var(--text-3); padding: 3px 6px; border-radius: 5px; background: var(--surface); border: 1px solid var(--line); }
+.m8-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.m8-fact { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+.m8-fact-k { font: 600 11px/1.4 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.m8-steps { display: flex; flex-direction: column; gap: 10px; padding-left: 22px; list-style: decimal; }
+.m8-steps li::marker { color: var(--text-3); font: 600 12px var(--mono); }
+.m8-steps li > b, .m8-steps li > .hub-rich { display: block; }
+.m8-steps li > * + *, .m8-mistakes li > * + * { margin-top: 4px; }
+.m8-steps li > b { font: 700 14px/1.4 var(--font); color: var(--text); }
+.m8-caption { color: var(--text-2); }
+.m8-sec .m8-caption.hub-rich { font-size: 13px; }
+.m8-mistakes { display: flex; flex-direction: column; gap: 10px; padding-left: 20px; list-style: disc; }
+.m8-mistakes li::marker { color: var(--text-4); }
+.m8-mistakes li > .hub-rich { display: block; }
+.m8-sec-none { margin-top: 2px; }
+.hq-lesson .m8-sec { margin: 6px 0 8px; }

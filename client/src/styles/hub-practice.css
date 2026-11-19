@@ -403,6 +403,21 @@
 .hub-test-path li[data-next] .hub-test-path-t { padding: 10px 12px; margin: -6px 0 0 -4px; border-radius: 12px; background: color-mix(in srgb, var(--primary-soft) 60%, transparent); }
 .hub-test-path-rule { padding: 0 24px 20px; font: 400 12.5px/1.5 var(--font); color: var(--text-3); }
 
+/* Batch 8: why the path is what it is, in the server's words, with where the evidence came from. */
+.hub-test-pathwhy { display: flex; flex-direction: column; gap: 6px; margin: 4px 24px 6px; padding: 14px 16px; border-radius: 12px; background: var(--raised); border: 1px solid var(--line); }
+.hub-test-pathwhy-l { font: 500 10px/1.4 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-3); }
+.hub-test-pathwhy p { font: 400 13.5px/1.55 var(--font); color: var(--text); max-width: 72ch; }
+.hub-test-pathwhy .hub-test-pathwhy-src { display: flex; align-items: center; gap: 6px; font: 400 12.5px/1.45 var(--font); color: var(--text-3); }
+.hub-test-pathwhy-src svg { flex: none; }
+
+/* Batch 8: ending a check early, at the foot of its side panel. */
+.hub-test-end { display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.hub-test-end > .btn { align-self: flex-start; }
+.hub-test-end [role='group'] { display: flex; flex-direction: column; gap: 10px; }
+.hub-test-end p { font: 400 12.5px/1.5 var(--font); color: var(--on-panel-2); }
+.hub-test-end .hub-test-end-err { color: #F5A3A3; }
+.hub-test-ended { color: var(--on-panel); }
+
 @media (max-width: 960px) {
   .hub-test-sums { grid-template-columns: minmax(0, 1fr); }
 }
@@ -410,5 +425,6 @@
   .hub-test-past li { padding: 14px 16px; }
   .hub-test-sum { padding: 4px 16px 12px; }
   .hub-test-path-rule { padding: 0 16px 16px; }
+  .hub-test-pathwhy { margin: 4px 16px 6px; }
   .hub-test-resume { padding: 16px; }
 }

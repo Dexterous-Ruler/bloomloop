@@ -82,6 +82,9 @@
 .cq-stim > p { margin-top: 8px; text-wrap: pretty; }
 .cq-stim-img { padding: 8px; }
 .cq-stim-img img { display: block; max-width: 100%; max-height: 260px; border-radius: 8px; }
+/* A figure the server drew (Batch 8): its own card; only placed here. */
+.cq-fig { margin: 0 22px 12px; }
+.cq-fig .fig-card svg { width: auto; max-height: 300px; }
 
 .cq-opts { display: flex; flex-direction: column; margin: 0; padding: 0 22px 12px; list-style: none; }
 .cq-opt { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
@@ -241,6 +244,6 @@
   .cq-tile > b { font-size: 26px; }
   .cq-card-h, .cq-opts, .cq-comp-body, .cq-conf-body, .cq-moves, .cq-taps-wrap, .cq-rights, .cq-facts, .cq-foot-lines { padding-left: 16px; padding-right: 16px; }
   .cq-note { padding-left: 16px; padding-right: 16px; }
-  .cq-stim { margin-left: 16px; margin-right: 16px; }
+  .cq-stim, .cq-fig { margin-left: 16px; margin-right: 16px; }
   .cq-asked-row > time { display: none; }
 }

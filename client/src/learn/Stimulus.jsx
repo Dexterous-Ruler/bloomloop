@@ -14,6 +14,7 @@
 import { useId, useState } from 'react';
 
 import { Icon } from '../ui/index.jsx';
+import Figure from './Figure.jsx';
 import { rt } from './parts.jsx';
 
 /** `html`: the passage as the server built it (`question.rich.passage`), when it holds a formula or code. */
@@ -27,7 +28,10 @@ export default function Stimulus({ stimulus, html }) {
 
   if (!stimulus) return null;
   const isImage = stimulus.kind === 'image';
-  const peek = isImage ? (stimulus.alt ?? '') : String(stimulus.text ?? '');
+  // Batch 8: a figure the server drew ({ svg, description, table, title }).
+  const isFigure = stimulus.kind === 'figure';
+  const peek = isFigure ? (stimulus.title ?? '') : isImage ? (stimulus.alt ?? '') : String(stimulus.text ?? '');
+  const what = isFigure ? 'figure' : isImage ? 'image' : 'passage';
 
   return (
     <section className="ln-stim">
@@ -39,7 +43,7 @@ export default function Stimulus({ stimulus, html }) {
         onClick={() => setOpen((o) => !o)}
       >
         <Icon name="book" />
-        <span className="strong">{isImage ? 'Image' : 'Passage'}</span>
+        <span className="strong">{isFigure ? 'Figure' : isImage ? 'Image' : 'Passage'}</span>
         {/* Folded, it still says what it was, so opening it is never a tap into
             the dark. */}
         <span className="clip grow muted">{open ? '' : peek}</span>
@@ -49,16 +53,16 @@ export default function Stimulus({ stimulus, html }) {
 
       {open && (
         <div
-          className="ln-stim-body"
+          className={`ln-stim-body${isFigure ? ' ln-stim-fig' : ''}`}
           id={bodyId}
           /* It scrolls, so it has to be focusable, or a keyboard cannot read
              past the first screenful. Labelled, because an unnamed region is
-             announced as "group". */
-          tabIndex={0}
+             announced as "group". A figure is not capped, so it does not scroll. */
+          tabIndex={isFigure ? undefined : 0}
           role="region"
-          aria-label={isImage ? 'The image this question is about' : 'The passage this question is about'}
+          aria-label={`The ${what} this question is about`}
         >
-          {isImage
+          {isFigure ? <Figure figure={stimulus} /> : isImage
             ? (broken
               ? <p>{stimulus.alt}</p>
               : <img src={stimulus.url} alt={stimulus.alt ?? ''} onError={() => setBroken(true)} />)

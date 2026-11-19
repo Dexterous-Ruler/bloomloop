@@ -11,6 +11,11 @@
  * connection). After the reply: right or wrong, the right answer and why, and
  * the topic's new state. `question: null` is the server's message.
  *
+ * Batch 8: the next-question reply's serveToken goes back with the answer. An
+ * answer refused for it (not sent with the question, or too long ago) is kept
+ * on the device with the server's sentence, and the question can be opened
+ * again; the brief lists any such answer kept from earlier.
+ *
  * The language is the server's (useHubLanguage): after a switch an unanswered
  * question is asked for again, in the new language.
  *
@@ -25,18 +30,13 @@ import { Button, Empty, Icon, Note, Panel } from '../ui/index.jsx';
 import HubPage from './HubPage.jsx';
 import { hub } from './hubApi.js';
 import { langAttr, useHubLanguage } from './lang.js';
-import { usePending } from './pending.js';
+import { discardPending, usePending } from './pending.js';
 import QuestionCard, { qid } from './QuestionCard.jsx';
 import RichText from './RichText.jsx';
 import { HubTrouble, StateBrief, StateMark } from './Topic.jsx';
 
 const same = (a, b) => String(a ?? '').toLowerCase() === String(b ?? '').toLowerCase();
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-
-/** Any opaque token the next-question reply carries (a serve token), echoed with the answer as sent. */
-const tokensOf = (turn) => Object.fromEntries(
-  Object.entries(turn ?? {}).filter(([k, v]) => /token$/i.test(k) && typeof v === 'string'),
-);
 
 /** The calls one shown question's card makes. */
 export const practiceCalls = (turn) => {
@@ -52,8 +52,9 @@ export const practiceCalls = (turn) => {
       mode,
       timeTakenMs,
       shown: { language: turn.language ?? 'en', translationId: turn.translationId ?? null },
-      ...tokensOf(turn),
-    }),
+      // Batch 8: the next-question reply's proof that practice served this question.
+      ...(turn.serveToken ? { serveToken: turn.serveToken } : {}),
+    }, { to: topicId ? `/hub/t/${topicId}/practice` : null }),
     askHint: (attemptId, step) => hub.hint({ attemptId, questionId, topicId, mode, step }),
     opened: (attemptId) => hub.hintsOpened({ attemptId, questionId, topicId }),
   };
@@ -81,12 +82,17 @@ function Crumb({ review, topic }) {
  * @param answered the current question has its reply (or is kept), so Next is offered
  * @param given    answers given in this sitting
  * @param finished the review set is done
- * @param kept     answers waiting on this device (usePending)
+ * @param kept     answers waiting on this device to be sent (usePending)
+ * @param refused  answers kept on this device that were refused for their serve token (batch 8):
+ *                 [{ key, sentence, to }], each with the server's sentence and where its question opens again
+ * @param round    how many times this question was opened again, so its card starts afresh
  * @param calls    (turn) => { send, askHint, opened } for the card
+ * @param onReopen opens the shown question again after its answer was refused for its serve token
+ * @param onForget (key) => forgets one refused answer, at the student's word
  */
 export function PracticeView({
   mode = 'practice', turn, states = {}, number = 1, answered = false, given = 0, finished = false, kept = 0,
-  calls, onResult, onNext, nextBusy = false, nextError = null,
+  refused = [], round = 0, calls, onResult, onNext, onReopen, onForget, nextBusy = false, nextError = null,
 }) {
   const review = mode === 'review';
   const topics = turn.topics?.length ? turn.topics : turn.topic ? [turn.topic] : [];
@@ -94,12 +100,13 @@ export function PracticeView({
   const setSize = turn.setSize ?? null;
   const last = review && setSize && given >= setSize;
   const back = review ? '/hub/review' : topic ? `/hub/t/${topic.id}` : '/hub';
+  const here = !review && topic ? `/hub/t/${topic.id}/practice` : null;
   const slot = useRef(null);
   const q = turn.question;
 
   // A new question (or the end) takes focus, so a keyboard lands on it, not on
   // the button that fetched it. Not on arrival: the page itself is new then.
-  const shownKey = finished ? 'end' : q ? qid(q) + number : 'none';
+  const shownKey = finished ? 'end' : q ? `${qid(q)}${number}:${round}` : 'none';
   const lastShown = useRef(shownKey);
   useEffect(() => {
     if (lastShown.current === shownKey) return;
@@ -151,6 +158,18 @@ export function PracticeView({
               {plural(kept, 'answer', 'answers')} kept on this device, sent when {kept === 1 ? 'it' : 'they'} can be.
             </p>
           )}
+          {refused.map((p) => (
+            <div key={p.key} className="hub-topic-keptline" data-refused="true">
+              <Icon name="refresh" size={14} />
+              <div>
+                <p><b>An answer kept on this device.</b> {p.sentence}</p>
+                <p className="hub-topic-keptdo">
+                  {p.to && p.to !== here && <Link to={p.to}>Open the question again</Link>}
+                  {onForget && <button type="button" className="hub-topic-linkbtn" onClick={() => { onForget(p.key); slot.current?.focus(); }}>Forget this answer</button>}
+                </p>
+              </div>
+            </div>
+          ))}
         </Panel>
 
         <div className="hub-topic-run">
@@ -188,7 +207,7 @@ export function PracticeView({
             <>
               <section className="hub-topic-slot" ref={slot} tabIndex={-1} aria-label={`Question ${number}`}>
                 <QuestionCard
-                  key={qid(q) + number}
+                  key={`${qid(q)}${number}:${round}`}
                   question={q}
                   slot={`${turn.mode}:${qid(q)}`}
                   label={review && setSize ? `Question ${number} of ${setSize}` : `Question ${number}`}
@@ -199,6 +218,7 @@ export function PracticeView({
                   offer={turn.hints ?? null}
                   {...(calls ? calls(turn) : {})}
                   onResult={onResult}
+                  onReopen={onReopen}
                 />
               </section>
               {nextError && (
@@ -242,9 +262,14 @@ export default function Practice() {
   const mode = !topicId && params.get('mode') === 'review' ? 'review' : 'practice';
   const scope = topicId ?? topicIds.join(',');
   const { version } = useHubLanguage();
-  const kept = usePending().length;
-
+  const pending = usePending();
   const [turn, setTurn] = useState(null);
+  const kept = pending.filter((p) => !p.reopen).length;
+  // Refused for their serve token (batch 8), except the one for the question on screen: its card says so.
+  const refused = pending
+    .filter((p) => p.reopen && !(p.path === '/hub/practice/attempts' && same(p.body?.questionId, qid(turn?.question ?? {}))))
+    .map((p) => ({ key: p.key, sentence: p.sentence, to: p.to ?? (p.body?.topicId ? `/hub/t/${p.body.topicId}/practice` : null) }));
+
   const [error, setError] = useState(null);
   const [reading, setReading] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -255,6 +280,7 @@ export default function Practice() {
   const [finished, setFinished] = useState(false);
   const [nextBusy, setNextBusy] = useState(false);
   const [nextError, setNextError] = useState(null);
+  const [round, setRound] = useState(0);
   const seen = useRef(version);
 
   const next = useCallback(
@@ -310,6 +336,19 @@ export default function Practice() {
       .finally(() => setNextBusy(false));
   };
 
+  // Batch 8: an answer refused for its serve token. Practice is asked again
+  // (nothing was stored, so it serves the same question with a fresh token);
+  // the card starts afresh, and the kept answer gives way to the new one.
+  const onReopen = () => {
+    if (nextBusy) return;
+    setNextBusy(true);
+    setNextError(null);
+    next()
+      .then((t) => { setTurn(t); setAnswered(false); setGiven((n) => Math.max(0, n - 1)); setRound((r) => r + 1); })
+      .catch((e) => setNextError(e))
+      .finally(() => setNextBusy(false));
+  };
+
   if (error) return <HubTrouble error={error} what="Practice" onRetry={() => setReading((n) => n + 1)} busy={busy} />;
   if (!turn) return <PracticeLoading review={mode === 'review'} />;
   if (topicId && turn.topic && !same(turn.topic.id, topicId)) return <PracticeLoading />;
@@ -324,9 +363,13 @@ export default function Practice() {
       given={given}
       finished={finished}
       kept={kept}
+      refused={refused}
+      round={round}
       calls={practiceCalls}
       onResult={onResult}
       onNext={onNext}
+      onReopen={onReopen}
+      onForget={discardPending}
       nextBusy={nextBusy}
       nextError={nextError}
     />

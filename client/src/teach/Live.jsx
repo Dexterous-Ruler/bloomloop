@@ -48,6 +48,7 @@ import Insights from './Insights.jsx';
 import { ItemList, Thresholds } from './ItemStats.jsx';
 import Lobby from './Lobby.jsx';
 import ProjectorControl from './ProjectorControl.jsx';
+import { MoveCard } from './Moves.jsx';
 import Records, { RECORD_TABS } from './Records.jsx';
 import ClassQuestions, { RoomConfidence } from './ClassQuestions.jsx';
 import { RoomMisconceptions } from './Misconceptions.jsx';
@@ -518,6 +519,8 @@ function RoomAnswers({ code, roll, signature }) {
                           {a.review?.status === 'confirmed' && a.review.reviewedAt && <> Reviewed at {stamp(a.review.reviewedAt)}.</>}
                           {rv && a.review.status === 'provisional' && <> {rv.say}</>}
                         </dd>
+                        {/* Batch 8 (9c): the key the row was stored under, the phone's own id for it when it sent one. */}
+                        {a.answerKey && <><dt title="Answer reference">Ref</dt><dd className="mono">{a.answerKey}</dd></>}
                       </dl>
                     )}
                   </div>
@@ -740,7 +743,7 @@ function useRoomInfo(code, status) {
 }
 
 export default function Live({ code, title, closed, onClosed, onProjector, onOpenQuestion }) {
-  const { rows, room, insights, classQuestion, setClassQuestion, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus } = useRoomFeed(code);
+  const { rows, room, insights, classQuestion, setClassQuestion, teachingMove, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus } = useRoomFeed(code);
   const info = useRoomInfo(code, roomStatus);
   const known = info !== undefined;
   const mode = info?.settings?.mode ?? 'devices';
@@ -1179,6 +1182,13 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
               </>
             )}
           </div>
+          {/* Batch 8 (L2): the class's course and section, and its term, from the room list. */}
+          {info?.class?.courseName && (
+            <p className="lc-class">
+              {[info.class.courseName, info.class.section].filter(Boolean).join(' · ')}
+              {info.class.termLabel && <span>{info.class.termLabel}</span>}
+            </p>
+          )}
           <h1>{title || 'Live room'}</h1>
           <p className="sub">
             {closed ? 'Where everyone finished, level by level. It stays readable for as long as the room exists.' : 'Who is working at which level, who just moved, and who needs you next.'}
@@ -1803,6 +1813,15 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
           onSort={setInsightSort}
           onAct={onAct}
           onOpenStudent={setCardRoll}
+          move={(
+            <MoveCard
+              code={code}
+              canControl={canControl && known}
+              closed={closed}
+              pushed={teachingMove}
+              onOpenActivities={() => setAddress({ space: 'room', tab: 'activities' })}
+            />
+          )}
         />
       )}
       {/* Phase 5: which wrong options students chose, by the misunderstanding
@@ -1825,7 +1844,7 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
         <Attendance code={code} canControl={canControl} mode={mode} summary={room.attendance} />
       )}
       {current === 'room' && (
-        <Records code={code} canControl={canControl} info={info} rows={rows} tab={recordsTab} onTab={setRecordsTab} onProject={() => setSpace('projector')} />
+        <Records code={code} canControl={canControl} info={info} rows={rows} tab={recordsTab} onTab={setRecordsTab} onProject={() => setSpace('projector')} teachingMove={teachingMove} />
       )}
       {current === 'projector' && (
         <ProjectorControl code={code} canControl={canControl} info={info} askLevel={askLevel} />

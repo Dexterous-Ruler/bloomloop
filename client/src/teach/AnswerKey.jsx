@@ -294,7 +294,7 @@ export default function AnswerKey({ q }) {
   if (!q.stimulus) return <Key q={q} />;
   return (
     <div className="stack stack-3">
-      <StimulusView stimulus={q.stimulus} />
+      <StimulusView stimulus={q.stimulus} figure={q.figure ?? null} />
       <Key q={q} />
     </div>
   );

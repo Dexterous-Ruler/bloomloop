@@ -11,6 +11,12 @@
  * A quick check's question can be put on the projector from here ("Project to
  * class"): the question and its options, never the hands. Then `onProject`,
  * when the page gives one, takes the professor to the projector.
+ *
+ * Batch 8 (C2): each kind can also "Ask AI for a prompt", written by the
+ * server from the chapter's own slides (optionally for one of its topics) and
+ * shown large with its citation and "AI suggestion, your call" (teach/Moves.jsx).
+ * "Use it" records the activity with the suggestion's id, and the record then
+ * says it came from one. Hidden on a server without teaching moves (404).
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -20,6 +26,7 @@ import { record, shownOf, useSynced } from '../lib/consoleOutbox.js';
 import { Button, Empty, Field, Icon, Note, Segmented } from '../ui/index.jsx';
 import { toast } from '../ui/toast.jsx';
 import { Privacy, ReadFailed, clock } from './Wheel.jsx';
+import { PromptPanel, recordSuggestion, useMoveAsk } from './Moves.jsx';
 
 const MAX_OUTCOME = 280;
 const MAX_LABEL = 40;
@@ -180,6 +187,7 @@ function Recorded({
           {activity.sync === 'new' && <span className="t-meta"><Icon name="clock" size={12} /> Waiting to sync</span>}
           {canControl && !editing && activity.sync !== 'new' && <Button size="sm" variant="ghost" icon="edit" onClick={onEdit} aria-label={`Change ${activity.label} at ${clock(activity.createdAt)}`} />}
         </div>
+        {activity.suggestionId && <p className="mv-from"><Icon name="spark" size={12} />From an AI suggestion</p>}
         {editing ? (
           <Composer
             kind={activity.kind}
@@ -242,7 +250,7 @@ function ActivitiesSkeleton() {
 export function ActivitiesView({
   data, load, canControl, tallies, busy = '', error = { for: '', message: '' },
   onCreate, onUpdate, onRetry, onTab, onNeedTallies, initialDraft = null, initialEdit = null,
-  closed = false, onProjectTally,
+  closed = false, onProjectTally, ai = null,
 }) {
   const [draft, setDraft] = useState(initialDraft);   // the kind being recorded
   const [edit, setEdit] = useState(initialEdit);      // the activity id being changed
@@ -274,16 +282,25 @@ export function ActivitiesView({
             {kinds.map((k) => {
               const about = ABOUT[k.id] ?? { icon: 'activity', line: '' };
               const open = draft === k.id;
+              // `ai`: Batch 8's prompt panel, when the server writes prompts.
+              const aiHere = ai?.open === k.id;
+              const recordBtn = !open && <Button size="sm" icon="plus" onClick={() => { setDraft(k.id); setEdit(null); }} aria-label={`Record ${k.label}`}>Record</Button>;
               return (
-                <li key={k.id} className="rc-kind" data-open={open ? 'true' : undefined}>
+                <li key={k.id} className="rc-kind" data-open={open ? 'true' : undefined} data-ai={aiHere && !open ? 'true' : undefined}>
                   <div className="rc-kind-row">
                     <span className="rc-act-ic"><Icon name={about.icon} size={15} /></span>
                     <div className="grow">
                       <h3>{k.label}</h3>
                       {about.line && <p>{about.line}</p>}
+                      {ai && !aiHere && (
+                        <button type="button" className="mv-link mv-ask" onClick={() => ai.onOpen(k.id)} aria-label={`Ask AI for a prompt: ${k.label}`}>
+                          <Icon name="spark" size={13} />Ask AI for a prompt
+                        </button>
+                      )}
                     </div>
-                    {!open && <Button size="sm" icon="plus" onClick={() => { setDraft(k.id); setEdit(null); }} aria-label={`Record ${k.label}`}>Record</Button>}
+                    {recordBtn}
                   </div>
+                  {aiHere && ai.panel(k)}
                   {open && (
                     <Composer
                       kind={k.id}
@@ -347,12 +364,19 @@ export function ActivitiesView({
 
 /* ------------------------------------------------------------- the screen */
 
-export default function Activities({ code, canControl, onTab, closed, onProject }) {
+export default function Activities({ code, canControl, onTab, closed, onProject, contentId, pushed = null }) {
   const [data, setData] = useState(null);
   const [load, setLoad] = useState({ status: 'loading', error: '' });
   const [tallies, setTallies] = useState({ status: 'idle', list: [], error: '' });
   const [busy, setBusy] = useState('');
   const [error, setError] = useState({ for: '', message: '' });
+  // Batch 8 (C2): the AI prompt per kind. One request at a time, as the server allows.
+  const [aiReady, setAiReady] = useState(false);
+  const [aiOpen, setAiOpen] = useState(null);
+  const [topics, setTopics] = useState(null);
+  const [topic, setTopic] = useState('');
+  const [aiUse, setAiUse] = useState(null);
+  const { state: aiState, ask: askPrompt } = useMoveAsk(code, pushed);
 
   const read = useCallback(async () => {
     try {
@@ -380,6 +404,26 @@ export default function Activities({ code, canControl, onTab, closed, onProject 
   useEffect(() => {
     if (tallies.status === 'idle' && data?.activities?.some((a) => a.tallyId)) readTallies();
   }, [data, tallies.status, readTallies]);
+
+  // Whether this server writes prompts (a 404 hides the option); only for whoever runs a room still open.
+  useEffect(() => {
+    if (!canControl || closed) return undefined;
+    let alive = true;
+    api.teachingMoves(code).then(
+      () => { if (alive) setAiReady(true); },
+      (err) => { if (alive) setAiReady(err.status !== 404); },
+    );
+    return () => { alive = false; };
+  }, [code, canControl, closed]);
+  // The chapter's topics, read the first time a prompt is opened.
+  useEffect(() => {
+    if (!aiOpen || topics !== null) return;
+    if (!contentId) { setTopics([]); return; }
+    api.getContent(contentId).then((c) => setTopics(Array.isArray(c?.topics) ? c.topics : []), () => setTopics([]));
+  }, [aiOpen, topics, contentId]);
+  // A new prompt starts with "Use it" again.
+  const promptId = aiState.phase === 'done' ? aiState.suggestion?.id : null;
+  useEffect(() => { setAiUse(null); }, [promptId]);
 
   /** An activity as recorded here, before the server has it: groups carry their result's label. */
   const drawn = (a) => ({
@@ -424,6 +468,37 @@ export default function Activities({ code, canControl, onTab, closed, onProject 
     return true;
   }
 
+  /** "Use it" on a prompt: the activity, recorded with the suggestion's id. */
+  async function usePrompt(s) {
+    setAiUse({ busy: true });
+    const out = await recordSuggestion(code, s);
+    if (out.ok && out.activity) setData((d) => d && { ...d, activities: [...d.activities, out.activity] });
+    if (out.kept) {
+      const local = drawn({ id: `waiting-${Date.now()}`, kind: s.kind, label: s.kindLabel, outcome: '', groups: [], tallyId: null, suggestionId: s.id, createdAt: new Date().toISOString(), sync: 'new' });
+      setData((d) => d && { ...d, activities: [...d.activities, local] });
+    }
+    setAiUse(out.error ? { error: out.error } : out.kept ? { kept: true } : { at: out.activity?.createdAt ?? new Date().toISOString(), label: out.activity?.label ?? s.kindLabel });
+  }
+
+  const ai = aiReady && canControl && !closed ? {
+    open: aiOpen,
+    onOpen: setAiOpen,
+    panel: (k) => (
+      <PromptPanel
+        kind={k}
+        // The one request belongs to the kind it was asked for.
+        state={aiState.body?.kind === k.id ? aiState : undefined}
+        topics={topics}
+        topic={topic}
+        onTopic={setTopic}
+        onAsk={() => askPrompt({ kind: k.id, ...(topic ? { topic } : {}) })}
+        onUse={usePrompt}
+        use={aiState.body?.kind === k.id ? aiUse : null}
+        onClose={() => setAiOpen(null)}
+      />
+    ),
+  } : null;
+
   /** The check's question on the wall, as the projector's own control puts a tally up. */
   async function project(activityId, tallyId) {
     setBusy(`project:${activityId}`);
@@ -455,6 +530,7 @@ export default function Activities({ code, canControl, onTab, closed, onProject 
       onNeedTallies={readTallies}
       closed={closed}
       onProjectTally={project}
+      ai={ai}
     />
   );
 }

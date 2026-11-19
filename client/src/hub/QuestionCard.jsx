@@ -20,6 +20,9 @@
  * is sent, so a reload asks the server for the hints already opened (GET)
  * instead of losing them. Answers go
  * through pending.js: a 409 or no connection keeps the answer on this device.
+ * Batch 8: an answer refused for its serve token (not sent with the question,
+ * or too long ago) is kept too, with the server's sentence and, when the
+ * screen can, "Open the question again" (`onReopen`).
  */
 
 import { Fragment, useEffect, useId, useRef, useState } from 'react';
@@ -261,7 +264,10 @@ function After({ topic }) {
  * @param choice    the option(s) chosen, for choose one / true or false / choose all
  * @param sent      the response sent for a phone-drawn kind, or null
  * @param result    the attempt's reply, or null before it
- * @param kept      { sentence } when the answer is kept on this device, else null
+ * @param kept      { sentence, reopen? } when the answer is kept on this device, else null; `reopen`
+ *                  when it was refused for its serve token and waits for the question to be opened again
+ * @param onReopen  opens the question again (a fresh serve token), or undefined where the screen cannot
+ * @param reopened  this card is the question opened again: it takes focus once, where the button was
  * @param busy      'hint' | 'attempt' | null
  * @param error     { on: 'hint' | 'attempt', message } | null
  */
@@ -269,7 +275,7 @@ export function QuestionCardView({
   question: q, label, topicName, lang, note = null, why = null, offer = null, hintNote = true,
   hints = [], hintWhy = '', hintLeft = null, hintSaid = '', onHint,
   choice = null, onChoose, onCheck, sent = null, onSubmit,
-  result = null, kept = null, busy = null, error = null,
+  result = null, kept = null, onReopen, reopened = false, busy = null, error = null,
 }) {
   const uid = useId();
   const kind = q.kind ?? 'mcq';
@@ -298,6 +304,12 @@ export function QuestionCardView({
     }
     marked.current = Boolean(result);
   }, [result, drawn]);
+
+  // Opened again (batch 8): the button that did it is gone, so focus lands on the question.
+  useEffect(() => {
+    if (reopened) art.current?.querySelector('input, textarea, select, button')?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const graded = result && !result.ungraded;
   const tone = !graded ? null : result.correct ? 'yes' : result.score > 0 && result.score < 1 ? 'part' : 'no';
@@ -376,10 +388,10 @@ export function QuestionCardView({
       <div className="hub-q-result" role="status">
         {kept && (
           <p className="hub-q-kept">
-            <Icon name="clock" size={15} />
+            <Icon name={kept.reopen ? 'refresh' : 'clock'} size={15} />
             <span>
               {kept.sentence && <>{kept.sentence} </>}
-              <b>Kept on this device, sent when it can be.</b>
+              <b>{kept.reopen ? 'Your answer is kept on this device.' : 'Kept on this device, sent when it can be.'}</b>
             </span>
           </p>
         )}
@@ -438,6 +450,11 @@ export function QuestionCardView({
           </>
         )}
       </div>
+      {kept?.reopen && onReopen && (
+        <div className="hub-q-reopen">
+          <Button size="sm" icon="refresh" onClick={onReopen}>Open the question again</Button>
+        </div>
+      )}
     </article>
   );
 }
@@ -514,7 +531,7 @@ export default function QuestionCard({ question, slot, send, askHint, opened, on
       .catch((e) => {
         if (e.kept) {
           forget(slot);
-          setKept({ sentence: e.offline ? 'No connection right now.' : e.message });
+          setKept({ sentence: e.offline ? 'No connection right now.' : e.message, reopen: Boolean(e.reopen) });
           onResult?.({ kept: true });
           return;
         }

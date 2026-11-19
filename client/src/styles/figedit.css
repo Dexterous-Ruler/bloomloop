@@ -1,0 +1,222 @@
+/* The figure builder, slide pictures and the region tool (batch 8, B2). `fe-`.
+
+   A form beside a preview. The preview is the server's drawing on its own light
+   card (the figure is drawn for paper and is never recoloured), with the
+   server's sentence above it when a change did not draw. The form is quiet:
+   small labelled boxes in lines, optional lists behind "Also" and "More". */
+
+.fe { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+/* --- the type ----------------------------------------------------------- */
+.fe-types { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 720px) { .fe-types { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 440px) { .fe-types { grid-template-columns: minmax(0, 1fr); } }
+.fe-type {
+  display: flex; align-items: flex-start; gap: 11px; padding: 12px 13px; text-align: left; cursor: pointer;
+  border: 1px solid var(--line); border-radius: var(--r-3); background: var(--surface); color: var(--text);
+  transition: border-color var(--t-1) var(--ease), background var(--t-1) var(--ease), box-shadow var(--t-1) var(--ease);
+}
+.fe-type:hover { border-color: var(--line-2); background: var(--hover); }
+.fe-type:focus-visible { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
+.fe-type[aria-checked='true'] { border-color: var(--primary); background: var(--primary-soft); }
+.fe-type .fe-glyph { flex: none; margin-top: 1px; color: var(--primary); }
+.fe-type-t { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fe-type-t b { font: 600 13.5px/1.3 var(--font); }
+.fe-type-t small { font: 400 12px/1.4 var(--font); color: var(--text-3); }
+
+.fe-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fe-head-type { display: inline-flex; align-items: center; gap: 8px; font: 600 15px/1.3 var(--font); }
+.fe-head-type .fe-glyph { color: var(--primary); }
+
+/* --- form beside preview ------------------------------------------------ */
+.fe-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 22px; align-items: start; }
+.fe-cols > .fe-preview { order: 2; position: sticky; top: 0; }
+.fe-cols > .fe-form { order: 1; }
+@media (max-width: 760px) {
+  .fe-cols { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .fe-cols > .fe-preview { order: 0; position: static; }
+}
+.fe-form { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+
+/* --- the preview --------------------------------------------------------- */
+.fe-preview {
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px;
+  border: 1px solid var(--line); border-radius: var(--r-4); background: var(--raised);
+}
+.fe-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fe-status { display: inline-flex; align-items: center; gap: 6px; font: 500 12px/1.3 var(--font); color: var(--text-3); }
+.fe-status[data-tone='ok'] svg { color: var(--ok); }
+.fe-status[data-tone='bad'] { color: var(--bad); }
+.fe-status .spinner { width: 12px; height: 12px; }
+.fe-refusal {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 9px 11px; border-radius: var(--r-2);
+  background: var(--bad-soft); color: var(--bad); font: 500 12.5px/1.5 var(--font);
+}
+.fe-refusal svg { flex: none; margin-top: 2px; }
+.fe-preview-fig { min-width: 0; transition: opacity var(--t-2) var(--ease); }
+.fe-preview-fig[data-stale='true'] { opacity: 0.45; }
+.fe-preview-skel { height: 220px; border-radius: var(--r-3); }
+.fe-formula { margin: 0; font: 400 12.5px/1.45 var(--font); color: var(--text-2); }
+.fe-formula .mono { font-weight: 600; color: var(--text); }
+
+/* The drawing keeps its own white card (learn/Figure.jsx); here it is only kept to a height. */
+.fe-preview-fig .fig-card svg { max-height: 360px; }
+.fe-card-body .fig-card svg { max-height: 260px; }
+
+/* --- groups, lines and fields ------------------------------------------- */
+.fe-group { display: flex; flex-direction: column; gap: 10px; padding: 14px 0; }
+.fe-group + .fe-group, .fe-line + .fe-group, .fe-group + .fe-also { border-top: 1px solid var(--line); }
+.fe-group-head { display: flex; align-items: baseline; gap: 10px; }
+.fe-group-head h5 { font: 600 11px/1.3 var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+
+.fe-line { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; min-width: 0; }
+.fe-f { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.fe-f .input, .fe-f .select { width: 100%; }
+.fe-f .num { width: 82px; }
+.fe-f[data-grow='true'] { flex: 1 1 160px; }
+.fe-f[data-wide='true'] .num { width: 120px; }
+.fe-f-k { font: 500 11.5px/1.3 var(--font); color: var(--text-3); white-space: nowrap; }
+.fe-flag { min-height: 30px; font-size: 12.5px; }
+.fe-axis { display: inline-grid; place-items: center; width: 22px; height: 30px; font-size: 13px; font-weight: 600; color: var(--text-2); }
+.fe-id { display: inline-grid; place-items: center; min-width: 30px; height: 30px; padding: 0 6px; border-radius: 8px; background: var(--sunk); font-size: 12.5px; font-weight: 600; }
+.fe-date { width: 118px; }
+.fe-eq { margin: 0; font-size: 12px; color: var(--text-3); }
+.fe-said { display: flex; align-items: center; gap: 6px; margin: 0; font: 400 12px/1.4 var(--font); color: var(--text-3); }
+.fe-said svg { flex: none; color: var(--ok); }
+.fe-values { min-height: 76px; font-size: 12.5px; }
+
+.fe-rows { display: flex; flex-direction: column; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.fe-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 10px; border: 1px solid var(--line); border-radius: var(--r-3); background: var(--surface); }
+.fe-row-n { padding-top: 22px; font-size: 11px; color: var(--text-4); text-align: center; }
+.fe-row-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.fe-row > .btn { margin-top: 18px; }
+.fe-sub { display: flex; flex-direction: column; gap: 8px; padding-left: 10px; border-left: 2px solid var(--line); }
+
+.fe-more-btn {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 0; border: 0; background: none; cursor: pointer;
+  font: 600 12px/1.3 var(--font); color: var(--text-3);
+}
+.fe-more-btn:hover { color: var(--text); }
+.fe-more-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+.fe-more-body { padding-top: 8px; }
+
+.fe-also { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 12px 0 4px; }
+.fe-also .t-meta { margin-right: 4px; }
+
+.fe-chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border-radius: var(--r-full);
+  border: 1px solid var(--line-2); background: var(--surface); cursor: pointer;
+  font: 500 12px/1 var(--font); color: var(--text-2); max-width: 100%;
+}
+.fe-chip:hover:not(:disabled) { border-color: var(--field-line); color: var(--text); }
+.fe-chip:focus-visible { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
+.fe-chip[aria-pressed='true'] { border-color: var(--primary); background: var(--primary-soft); color: var(--text); }
+.fe-chip[aria-pressed='true'] svg { color: var(--primary); }
+.fe-chip:disabled { opacity: 0.5; cursor: not-allowed; }
+.fe-parts { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.fe-corners { display: flex; flex-direction: column; gap: 6px; }
+.fe-corner-list { font-size: 12.5px; color: var(--text); }
+
+/* A bar or line chart's numbers. */
+.fe-grid-wrap { overflow-x: auto; }
+.fe-grid { border-collapse: separate; border-spacing: 0 6px; min-width: 100%; }
+.fe-grid th, .fe-grid td { padding: 0 6px 0 0; text-align: left; font-weight: 400; vertical-align: middle; }
+.fe-grid thead th { font: 500 11.5px/1.3 var(--font); color: var(--text-3); }
+.fe-grid th[scope='row'] .input { width: 130px; }
+.fe-grid td .num { width: 96px; }
+.fe-grid-h { display: flex; align-items: center; gap: 2px; }
+.fe-grid-h .input { width: 96px; }
+
+/* A pattern's items, one at a time. */
+.fe-strip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.fe-tile {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line-2); background: var(--surface); font: 500 12px/1 var(--font); color: var(--text-2);
+}
+.fe-tile .mono { font-size: 11px; color: var(--text-4); }
+.fe-tile[aria-pressed='true'] { border-color: var(--primary); background: var(--primary-soft); color: var(--text); }
+.fe-tile:focus-visible { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
+.fe-tile-ed { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: var(--r-3); background: var(--raised); }
+
+/* --- steps -------------------------------------------------------------- */
+.fe-steps { display: flex; flex-direction: column; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.fe-step { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px 12px; border: 1px solid var(--line); border-radius: var(--r-3); background: var(--surface); }
+.fe-step[data-showing='true'] { border-color: var(--primary); box-shadow: inset 3px 0 0 var(--primary); }
+.fe-step-head { display: flex; align-items: center; gap: 8px; }
+.fe-step-n { font: 600 12.5px/1.3 var(--font); color: var(--text); }
+.fe-step .fe-group { padding: 4px 0 0; }
+
+/* --- a drawn figure in a list ------------------------------------------- */
+.fe-card { margin: 0; min-width: 0; border: 1px solid var(--line); border-radius: var(--r-3); background: var(--surface); overflow: hidden; }
+.fe-card-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--line); font: 500 12.5px/1.3 var(--font); min-width: 0; }
+.fe-card-head .fe-glyph { flex: none; color: var(--primary); }
+.fe-card-body { padding: 10px 12px 12px; }
+.fe-card-bad { display: flex; gap: 8px; align-items: flex-start; margin: 0; padding: 11px 12px; color: var(--warn); font: 500 12.5px/1.5 var(--font); background: var(--warn-soft); }
+.fe-card-bad svg { flex: none; margin-top: 2px; }
+.fe-card-wait { padding: 12px; }
+.fe-card > .fe-formula { padding: 0 12px 11px; }
+.fe-card[data-compact='true'] .fe-card-body svg { max-height: 150px; }
+
+/* The empty figure stimulus: what it is, and the one button. */
+.fe-empty { display: flex; align-items: flex-start; gap: 12px; padding: 14px; border: 1px dashed var(--line-2); border-radius: var(--r-3); }
+.fe-empty .fe-glyph { flex: none; color: var(--primary); margin-top: 2px; }
+.fe-empty p { margin: 2px 0 10px; font: 400 12.5px/1.5 var(--font); color: var(--text-3); }
+.fe-empty b { font: 600 13.5px/1.35 var(--font); }
+
+/* In the bank list: a figure question's quiet tag and its problem, if any. */
+.fe-qtag { display: inline-flex; align-items: center; gap: 5px; }
+.fe-qtag .fe-glyph { color: var(--text-3); }
+.fe-qbad { display: flex; align-items: flex-start; gap: 6px; font: 500 12.5px/1.45 var(--font); color: var(--warn); }
+.fe-qbad svg { flex: none; margin-top: 2px; }
+
+/* --- slide pictures ----------------------------------------------------- */
+.fe-pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.fe-pic {
+  display: flex; flex-direction: column; gap: 6px; padding: 6px; border: 1px solid var(--line); border-radius: var(--r-3);
+  background: var(--surface); cursor: pointer; text-align: left; color: var(--text);
+}
+.fe-pic:hover { border-color: var(--line-2); }
+.fe-pic:focus-visible { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
+.fe-pic[aria-checked='true'] { border-color: var(--primary); background: var(--primary-soft); }
+.fe-pic-img { display: grid; place-items: center; aspect-ratio: 4 / 3; border-radius: var(--r-2); background: var(--sunk); overflow: hidden; }
+.fe-pic-img img { width: 100%; height: 100%; object-fit: contain; }
+.fe-pic-img .skel { width: 100%; height: 100%; }
+.fe-pic small { display: flex; justify-content: space-between; gap: 6px; font: 500 11.5px/1.3 var(--font); color: var(--text-3); }
+.fe-pic small b { color: var(--text); font-weight: 600; }
+
+/* --- the region tool ---------------------------------------------------- */
+.fe-reg { display: flex; flex-direction: column; gap: 12px; }
+.fe-reg-stage { position: relative; align-self: flex-start; max-width: 100%; border-radius: var(--r-2); overflow: hidden; background: var(--sunk); line-height: 0; }
+.fe-reg-stage img { display: block; max-width: 100%; max-height: 420px; height: auto; user-select: none; -webkit-user-drag: none; }
+.fe-reg-svg { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.fe-reg-svg:focus { outline: none; }
+.fe-reg-stage:has(.fe-reg-svg:focus-visible) { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 45%, transparent); }
+.fe-reg-stage[data-drawing='true'] .fe-reg-svg { cursor: crosshair; }
+.fe-reg-poly { fill: rgba(47, 107, 79, 0.16); stroke: #2F6B4F; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.fe-reg-poly[data-on='true'] { fill: rgba(183, 134, 43, 0.22); stroke: #8A5A12; }
+.fe-reg-draft { fill: rgba(183, 134, 43, 0.14); stroke: #8A5A12; stroke-width: 2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+/* Markers are HTML over the picture, so they keep their shape however the picture is scaled. */
+.fe-reg-label, .fe-reg-pt, .fe-reg-x { position: absolute; translate: -50% -50%; pointer-events: none; line-height: 1; }
+.fe-reg-label {
+  padding: 3px 6px; border-radius: 6px; background: rgba(255, 255, 255, 0.92); color: #14161A;
+  font: 700 11.5px/1 var(--mono); box-shadow: 0 1px 3px rgba(20, 22, 26, 0.25);
+}
+.fe-reg-label[data-on='true'] { background: #8A5A12; color: #FFFFFF; }
+.fe-reg-pt { width: 9px; height: 9px; border-radius: 50%; background: #FFFFFF; border: 2px solid #8A5A12; }
+.fe-reg-x { width: 22px; height: 22px; }
+.fe-reg-x::before, .fe-reg-x::after { content: ''; position: absolute; background: #14161A; box-shadow: 0 0 0 1.5px #FFFFFF; }
+.fe-reg-x::before { left: 10px; top: 0; width: 2px; height: 22px; }
+.fe-reg-x::after { top: 10px; left: 0; width: 22px; height: 2px; }
+.fe-reg-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 11px; border-radius: var(--r-2); background: var(--warn-soft); font: 500 12.5px/1.45 var(--font); color: var(--text); }
+.fe-reg-bar kbd { font: 600 11px/1 var(--mono); padding: 2px 5px; border-radius: 4px; border: 1px solid var(--line-2); background: var(--surface); }
+.fe-reg-list { display: flex; flex-direction: column; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.fe-reg-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; padding: 10px; border: 1px solid var(--line); border-radius: var(--r-3); background: var(--surface); }
+.fe-reg-row[data-on='true'] { border-color: var(--warn-fill); }
+.fe-reg-row .fe-f .input { width: 110px; }
+.fe-reg-row .fe-f[data-grow='true'] .input { width: 100%; }
+.fe-reg-bad { flex-basis: 100%; margin: 0; font: 500 12px/1.4 var(--font); color: var(--bad); }
+
+/* A lesson's "Add a figure": the words beside it and where it goes, under the builder. */
+.hq-addfig { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 300px); gap: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+@media (max-width: 720px) { .hq-addfig { grid-template-columns: minmax(0, 1fr); } }

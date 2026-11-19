@@ -24,6 +24,7 @@ import { LABEL } from '../lib/bloom.js';
 import { KIND_LABEL } from '../lib/kinds.js';
 import AccountShell from '../shell/AccountShell.jsx';
 import ClassQuestions, { ClassQuestionsView, RoomConfidence, RoomConfidenceView, blockedReason, withBody } from '../teach/ClassQuestions.jsx';
+import { studentFigure } from './samples-b8-figures.js';
 import { StudentCardView } from '../teach/StudentCard.jsx';
 import useRoomFeed from '../teach/useRoomFeed.js';
 
@@ -175,6 +176,9 @@ const CLOSED = cqBody(B1, {
   seq: 2, state: 'closed', rounds: [R1, R2], revealed: true, changes: changesOf(B1, R1, R2, { onlyBefore: 1, onlyAfter: 1 }),
   startedAt: at(10, 31), times: { pausedAt: at(10, 33), revoteAt: at(10, 37), closedAt: at(10, 39), closedBy: 'p1' },
 });
+
+/* Batch 8: the same pause, the question carrying a figure the server drew (stimulusView). */
+const PAUSED_FIG = { ...PAUSED, question: { ...PAUSED.question, stimulus: studentFigure('bar') } };
 
 /* Earlier ones: a poll with its re-vote, and a choose-all closed after the first vote. */
 const B5 = bankQ('b05');
@@ -454,6 +458,13 @@ export default [
     role: 'professor',
     note: 'The first vote’s spread, the share right with its count, and the taps by right and wrong. Open the re-vote from here.',
     render: () => <Sample key="ask-paused" items={[POLL, PAUSED]} ticking={false} />,
+  },
+  {
+    id: 'ask-figure',
+    title: 'Class question: a question with a figure',
+    role: 'professor',
+    note: 'Batch 8: the question’s figure, drawn by the server, above the answers with Describe and Show the data.',
+    render: () => <Sample key="ask-figure" items={[POLL, PAUSED_FIG]} ticking={false} />,
   },
   {
     id: 'ask-revote',

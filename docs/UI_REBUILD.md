@@ -1052,6 +1052,96 @@ That note wins where it differs from the builders' notes.
   - The 429 lock-out sentence is shown at the gate as it is, never retried
     by itself.
 
+### Batch 8: figures and the design zip's remaining gaps (19 Nov, before the server landed)
+
+Built against the three batch 8 server branches (worktrees `b8-vis`, `b8-z1` and
+`b8-z2`), each run on a side port behind a second dev client, and in
+galleries fed with their real replies. This branch's server did not have batch
+8 yet, so every new control hides when its field is absent or its route
+answers 404, and everything that works today works as before.
+
+- **Figures:**
+  - `learn/Figure.jsx`, used everywhere a figure is shown:
+    - the server's SVG as given, on its own light card in both themes,
+      never recoloured;
+    - "Describe" opens the description, "Show the data" a real table, and
+      "Step n of m" shows with its caption;
+    - the description alone when there is no SVG.
+  - `ui/FigureSteps.jsx` steps through a figure in a Hub lesson: Back, Next
+    (Replay at the end), dots and a live caption. Every step is in the
+    payload, so it works offline.
+  - The phone's stimulus (`learn/Stimulus.jsx`) has a figure branch, and the
+    Hub's practice, self-test and Get Ready questions get it through the
+    same component. So does the answer review screen.
+  - "Print figures" in the bank's room panel fetches the printable page with
+    the key in a header, never in the address, and opens it from a blob
+    with the page's CSP.
+  - The projector console (`teach/ProjectorControl.jsx`, gap P1): Back,
+    Next and Start over with "Step n of m" and dots for a stepped figure. A
+    refusal is the server's sentence, and the step goes back to 0 when the
+    question, diagram or mode changes.
+  - The wall and the class-question console show figure stimuli.
+- **The figure builder (`teach/FigureBuilder.jsx`, `FigureForms.jsx`,
+  `figureSpec.js`):**
+  - "A figure" in the bank editor: the nine types, each opening on a
+    working example, with forms built from `/api/figures/kinds`.
+  - A debounced live preview, with the server's refusal shown beside the
+    last good drawing, and a steps editor.
+  - Saved as a figure stimulus. The bank list shows the type, a molecule's
+    formula, and the reason when a figure no longer draws.
+  - Slide pictures with professor-written alt text (`teach/SlidePictures.jsx`)
+    and a region tool (polygons in %, by pointer or keyboard).
+  - The `.pptx` upload note, and "Add a figure" on a staff Hub lesson.
+- **The live room and the wheel (`teach/Moves.jsx`):**
+  - "Suggest a move" (L1), a quiet card under the insight cards:
+    - "Reading the class data…" until the socket or the poll says done;
+    - then the title, the text, the basis sentence with "AI suggestion,
+      your call", and the cited slides;
+    - "Another idea", and "Use it", which records the activity through the
+      console outbox;
+    - with no model, the server's sentence and never a template;
+    - hidden for an HOD, a closed room and a Teacher-led room.
+  - "Ask AI for a prompt" per activity kind (C2).
+  - The course, section and term on the live head and the rooms list (L2).
+  - The wheel's "Question + student" mode with "Drawn from N" and "Another"
+    (W2); the client never picks the question.
+  - "Verbal question" from the server's list of asks.
+- **Levels over time (`teach/LevelsOverTime.jsx`, `account/LevelChange.jsx`):**
+  - A small accuracy line per level in insights, with the room's goal line
+    and sentence, following the pointer or arrow keys together, with "Show
+    the data".
+  - The support band against the previous room, including its
+    sentence-only cases.
+  - A class's change since its previous room: three bands first, six levels
+    on a switch, the signed change and the sentence.
+  - "Open in question bank" on the hardest questions (the console now reads
+    `?question=`).
+  - `answerKey` as a reference on staff answer details.
+  - The practised-in-the-Hub note on the student card and attainment,
+    neutral, never a label on the student.
+- **Material and the shared bank (`teach/MaterialInfo.jsx`, `RoomsOnly.jsx`,
+  `hubstaff/LessonSections.jsx`):**
+  - Where each topic came from ("Slides 3–4", "Line 3", or the server's
+    note).
+  - A topic-by-level grid with "Ticked / Not ticked / Not supported by the
+    material", reasons as tooltips and on a line, one Tab stop with arrow
+    keys.
+  - "used <date>" in the library, and the "Write with AI" switch with the
+    writer's sentence after a run.
+  - A "Rooms only" chip and switch on bank questions.
+  - Lesson sections with the AI-draft tag in the staff view, rooms-only rows
+    with their note, and the new lesson fields in the translation editor.
+- **The Hub:**
+  - The concept panel replaces the empty states: the Introduction (intro and
+    three fact cards) and the Explanation (key ideas with the term in bold,
+    the code example and caption, common mistakes), each piece with its
+    cite.
+  - Lesson figure steps.
+  - The serve token is passed through with practice and lesson answers, only
+    when the reply carried one. A refusal for a missing or old token keeps
+    the answer and offers "Open the question again" or "Forget this answer".
+  - Get Ready's "End this check", and "Why this path" with its source.
+
 ## References and what they shaped
 
 - Karim's Goodfor design (Claude Design file, Nov 2026) shaped the direction:
@@ -1529,6 +1619,31 @@ Nov, with labels added to seven questions of the seeded chapter.
   - The staff analytics answer list carries no `detail`, so kept answers
     cannot be marked there. The misconceptions report has no leave-out
     option (its rooms carry no `importedFrom`).
+- **Batch 8, not run or not finished (deadline, 19 Nov 22:35):**
+  - The batch 8 server had not landed on this branch: nothing was wired
+    against this branch's own server. Checks ran against the three worktree
+    servers, with no model, so every AI suggestion, prompt and draft was seen
+    in its offline form live and in its done form in galleries only.
+  - Kept out:
+    - the phone's reply matching by `answerId` for every reply (9a) was
+      written but untested, so it was reverted; the phone is as at eb397c5
+      apart from figures (the version is kept in the UI session's
+      scratchpad, `b1b/`);
+    - the staff view of a student's Get Ready `path.why`.
+  - The figure builder has no gallery entries. Slide pictures, regions and a
+    lesson's "Add a figure" were built but not seen live.
+  - Not run for several areas: 390 wide, light theme, scripted contrast and
+    keyboard passes (the figure views, projector, live room and wheel were
+    checked at both widths and both themes; material, the Hub's batch 8 parts
+    and the figure builder were not).
+  - "End this check" was checked by script, not clicked on the page.
+  - `/join` is 169,951 bytes gzip, 33 under the 166 KiB ceiling (the figure
+    view costs about 0.3 KiB). Anything more on the phone needs a trim
+    first.
+  - For the server: the translation check names list items by raw keys
+    (`sections.facts.0`); the timeline's text is very small at phone width;
+    the molecule colours O in the drawing library's red, not the Forest
+    palette; a plot's description says "a arrow".
 - **Wanted from the server:**
   - `answerId` echoed in `server:result`, `server:exhausted` and
     `session:rejected`, so the outbox matches a reply by key, not by order

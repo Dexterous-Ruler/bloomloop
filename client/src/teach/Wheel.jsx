@@ -18,6 +18,15 @@
  *
  * Also exported for the other records screens: the privacy line, the clock and
  * the bank-question picker, so the four tools say these things one way.
+ *
+ * Batch 8 (W2): "Question + student" asks the server to draw one of the room's
+ * approved questions with the student (withQuestion: true), with the same
+ * randomness; the pick then shows its question and "drawn from N". "Another"
+ * asks the server for the pick's next question; this screen never picks one.
+ * The mode is this screen's own (kept with think time and names) and shows only
+ * on a server that draws questions. Gap 9: "Verbal question" is one of the
+ * server's asks, so it is in the picker with the others; like a diagram or a
+ * demo it names no bank question, so it has no question picker.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -63,7 +72,15 @@ export function ReadFailed({ message, onRetry }) {
 
 export const THINK_SECONDS = 10;
 const PREFS_KEY = 'bloomloop.wheelScreen';
-const PREFS = { think: false, names: true };
+const PREFS = { think: false, names: true, withQuestion: false };
+
+/**
+ * Whether this server draws questions with the student (Batch 8): it lists the
+ * verbal ask, or its picks carry questionDraw. Both came with the same change,
+ * so an older server shows no "Question + student".
+ */
+export const drawsQuestions = (wheel) => (wheel?.asks ?? []).some((a) => a.id === 'verbal')
+  || (wheel?.picks ?? []).some((p) => p && 'questionDraw' in p);
 
 /**
  * Think time and names: kept in sessionStorage for this tab, so they survive
@@ -324,10 +341,13 @@ function Responses({ pick, statuses, canControl, busy, onStatus }) {
  */
 export function PickCard({
   pick, wheel, canControl, classRoom, busy, error, outcome, markAbsent, onMarkAbsent, onPick, questions, drawing, names = true,
+  onAnother = null, drawNote = '', questionError = '',
 }) {
   const asks = wheel?.asks ?? [];
   const statuses = wheel?.statuses ?? [];
-  const working = busy === `pick:${pick?.id}`;
+  const drawingQ = busy === `another:${pick?.id}`;
+  const working = busy === `pick:${pick?.id}` || drawingQ;
+  const qDraw = pick?.questionDraw;
 
   if (drawing) {
     return (
@@ -380,6 +400,22 @@ export function PickCard({
               {pick.question ? (
                 <p className="rc-qtext"><Level level={pick.question.bloom} />{pick.question.text}</p>
               ) : !canControl && <p className="hint">No question was named.</p>}
+              {/* Batch 8: drawn by the server with the student, and "Another" for the next. */}
+              {pick.question && qDraw && (
+                <div className="mv-qdraw">
+                  <span className="mv-qdraw-line">
+                    Drawn from {qDraw.poolSize} {qDraw.poolSize === 1 ? 'question' : 'questions'}, each equally likely
+                    {qDraw.draws > 1 ? `; question ${qDraw.order} drawn for this pick` : ''}.
+                  </span>
+                  {canControl && onAnother && (
+                    <Button size="sm" variant="ghost" icon="shuffle" busy={drawingQ} disabled={working} onClick={() => onAnother(pick.id)}>
+                      Another
+                    </Button>
+                  )}
+                </div>
+              )}
+              {drawNote && <p className="mv-qnote" role="status">{drawNote}</p>}
+              {questionError && <p className="mv-qnote" role="alert">{questionError}</p>}
             </div>
           )}
         </div>
@@ -513,7 +549,7 @@ export function WheelView({
   selectedId, onSelect, onDraw, onRound, onSetting, onPick, onRetry,
   outcome = {}, pickError = {}, markAbsent = true, onMarkAbsent, questions,
   prefs = PREFS, onPref, think = null, thinkQ = null, onThinkQ, onSkip, onCancel,
-  drawWaiting = false,
+  drawWaiting = false, onAnother = null, drawNotes = {}, questionError = {},
 }) {
   const drawBtn = useRef(null);
   const refocus = useRef(false);
@@ -539,7 +575,10 @@ export function WheelView({
   const thinking = Boolean(think);
   const blocked = closed || Boolean(busy) || spinning || thinking;
   const names = prefs.names !== false;
-  const thinkQuestion = thinking && thinkQ ? (questions?.list ?? []).find((q) => q.questionId === thinkQ) : null;
+  // Batch 8: "Question + student", where the server draws questions.
+  const canDrawQ = drawsQuestions(wheel);
+  const withQ = canDrawQ && Boolean(prefs.withQuestion);
+  const thinkQuestion = thinking && thinkQ && !withQ ? (questions?.list ?? []).find((q) => q.questionId === thinkQ) : null;
   const emptyLine = error || pool.empty;
   // Everyone has had a turn: a new round is the fix, so it sits with the reason.
   const roundFixes = canControl && !closed && round.noRepeat && round.picks > 0 && pool.total > 0 && pool.left === 0;
@@ -565,12 +604,25 @@ export function WheelView({
             <div className="rc-stage-side">
               {canControl && (
                 <div className="rc-draw">
+                  {canDrawQ && (
+                    <div className="mv-mode">
+                      <Segmented
+                        label="What a draw picks"
+                        value={withQ ? 'question' : 'student'}
+                        onChange={(v) => onPref?.('withQuestion', v === 'question')}
+                        options={[{ id: 'student', label: 'Student' }, { id: 'question', label: 'Question + student' }]}
+                      />
+                      {withQ && <p className="hint">Each draw also draws one of the room’s approved questions, on the server, as fairly as the student. Polls are left out.</p>}
+                    </div>
+                  )}
                   {thinking && (
                     <div className="rc-think">
                       <span className="eyebrow">Think time · everyone</span>
                       {thinkQuestion
                         ? <p className="rc-think-q"><Level level={thinkQuestion.bloom} />{thinkQuestion.text}</p>
-                        : <p className="rc-think-line">Everyone thinks it through. The draw is asked for when the time is up.</p>}
+                        : withQ
+                          ? <p className="rc-think-line">Everyone gets ready. The question and the student are drawn together when the time is up.</p>
+                          : <p className="rc-think-line">Everyone thinks it through. The draw is asked for when the time is up.</p>}
                     </div>
                   )}
                   <div className="rc-draw-row">
@@ -654,7 +706,7 @@ export function WheelView({
                     onChange={(v) => onPref?.('think', v)}
                   />
                 )}
-                {canControl && prefs.think && (
+                {canControl && prefs.think && !withQ && (
                   <div className="rc-think-pick">
                     <label className="label" htmlFor="rc-think-q">Question to think about <span className="opt">optional</span></label>
                     <QuestionPicker id="rc-think-q" label="Question to think about" questions={questions} value={thinkQ} disabled={thinking || spinning} onChange={(id) => onThinkQ?.(id)} />
@@ -694,6 +746,9 @@ export function WheelView({
           questions={questions}
           drawing={spinning && selected?.id === spin?.pick?.id}
           names={names}
+          onAnother={closed ? null : onAnother}
+          drawNote={selected ? drawNotes[selected.id] ?? '' : ''}
+          questionError={questionError.id === selected?.id ? questionError.message : ''}
         />
       </div>
 
@@ -714,6 +769,7 @@ export function WheelView({
 
 // The server draws, so a draw is never kept for later the way a record is.
 const OFFLINE_DRAW = 'The server makes each draw, so Draw needs the connection. Everything else you record meanwhile is kept on this device.';
+const OFFLINE_ANOTHER = 'The server draws the next question, so Another needs the connection.';
 
 /** A pick as filled in on this screen, before the server has it (`local`). */
 function localPick(p, patch, wheel, questions) {
@@ -754,6 +810,9 @@ export default function Wheel({ code, canControl, closed, classRoom, signal, que
   const [markAbsent, setMarkAbsent] = useState(true);
   const [prefs, setPref] = useWheelPrefs();
   const [thinkQ, setThinkQ] = useState(null);
+  // Batch 8: per pick, the note of its last "Another" (the pool widened), and a refusal.
+  const [drawNotes, setDrawNotes] = useState({});
+  const [questionError, setQuestionError] = useState({});
   // The draw is asked for only when the think time ends (or is skipped).
   const think = useThinkTime(() => draw(thinkQ));
 
@@ -780,6 +839,9 @@ export default function Wheel({ code, canControl, closed, classRoom, signal, que
     if (busy || spin || !wheel || drawWaiting) return;
     if (offlineNow()) { setError(OFFLINE_DRAW); return; }
     const ring = ringOf(wheel);
+    // "Question + student": the server draws the question too, so none is chosen here.
+    const withQuestion = drawsQuestions(wheel) && Boolean(prefs.withQuestion);
+    if (withQuestion) questionId = null;
     setBusy('draw');
     setError('');
     // A draw whose reply was lost goes again with its key, so it is drawn once.
@@ -792,7 +854,10 @@ export default function Wheel({ code, canControl, closed, classRoom, signal, que
       setSelectedId(made.id);
       if (questionId) { setThinkQ(null); pick(made.id, { ask: 'bank', questionId }, made); }
     };
-    const out = await record('draw', { code }, { label: 'A draw', onSettle: late });
+    const out = await record('draw', { code, settings: withQuestion ? { withQuestion: true } : undefined }, {
+      label: withQuestion ? 'A draw, question and student' : 'A draw',
+      onSettle: late,
+    });
     setBusy('');
     if (out.kept) return;
     if (out.refused) {
@@ -809,6 +874,26 @@ export default function Wheel({ code, canControl, closed, classRoom, signal, que
     if (questionId) {
       setThinkQ(null);
       await pick(made.id, { ask: 'bank', questionId }, made);
+    }
+  }
+
+  /**
+   * "Another": the server draws the pick's next question. Not kept for later:
+   * like the draw, it needs the server. Its 409 says why none was drawn.
+   */
+  async function another(id) {
+    if (busy) return;
+    if (offlineNow()) { setQuestionError({ id, message: OFFLINE_ANOTHER }); return; }
+    setBusy(`another:${id}`);
+    setQuestionError({});
+    try {
+      const r = await api.wheelNextQuestion(code, id);
+      if (r?.pick) setWheel((w) => w && { ...w, picks: w.picks.map((p) => (p.id === id ? r.pick : p)) });
+      setDrawNotes((n) => ({ ...n, [id]: r?.draw?.note ?? '' }));
+    } catch (err) {
+      setQuestionError({ id, message: err.message });
+    } finally {
+      setBusy('');
     }
   }
 
@@ -902,6 +987,9 @@ export default function Wheel({ code, canControl, closed, classRoom, signal, que
       markAbsent={markAbsent}
       onMarkAbsent={setMarkAbsent}
       questions={questions}
+      onAnother={canControl ? another : null}
+      drawNotes={drawNotes}
+      questionError={questionError}
     />
   );
 }

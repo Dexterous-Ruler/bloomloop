@@ -119,4 +119,8 @@ export const EV = {
   // good (kept on the phone, never sent again).
   kept: 'server:kept',
   refused: 'server:refused',
+  // Batch 8: a teaching move or activity prompt asked for on the console has
+  // been written (or could not be): { code, requestId, state: done|failed,
+  // suggestion, message }. To the room's teacher screens only.
+  teachingMove: 'teacher:teaching-move',
 };

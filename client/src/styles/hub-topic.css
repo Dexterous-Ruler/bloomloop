@@ -50,6 +50,13 @@
 .hub-topic-review svg { flex: none; margin-top: 3px; color: var(--mint); }
 .hub-topic-keptline { display: flex; gap: 8px; align-items: flex-start; padding-top: 12px; border-top: 1px solid var(--panel-line); font: 500 13px/1.5 var(--font); color: var(--on-panel); }
 .hub-topic-keptline svg { flex: none; margin-top: 3px; color: var(--warn-fill); }
+/* Batch 8: a kept answer refused for its serve token, with the way back to its question. */
+.hub-topic-keptline > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.hub-topic-keptline[data-refused] > div > p:first-child { font-weight: 400; color: var(--on-panel-2); }
+.hub-topic-keptline[data-refused] b { font-weight: 600; color: var(--on-panel); }
+.hub-topic-keptdo { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.hub-topic-keptdo a, .hub-topic-keptdo button { color: var(--mint); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.hub-topic-keptdo a:focus-visible, .hub-topic-keptdo button:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; border-radius: 3px; }
 
 /* A review set's topics, each with its state. */
 .hub-topic-setlist { display: flex; flex-direction: column; gap: 10px; }
@@ -102,11 +109,49 @@
 
 .hub-topic-before { display: flex; flex-direction: column; gap: 12px; padding-top: 20px; border-top: 1px solid var(--line); }
 
-/* What is coming later: a dashed outline, never a faked figure. */
-.hub-topic-later { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: 12px; border: 1px dashed var(--line-2); }
-.hub-topic-later-ic { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 9px; background: var(--raised); color: var(--text-3); }
-.hub-topic-later b { display: block; font: 600 13.5px/1.4 var(--font); color: var(--text); }
-.hub-topic-later p { margin-top: 2px; font: 400 13px/1.5 var(--font); color: var(--text-3); }
+/* ------------------------------------------- the concept panel (batch 8) */
+
+/* The lesson has none: the server's sentence, one quiet line. */
+.hub-concept-none { display: flex; gap: 8px; align-items: flex-start; font: 400 13px/1.5 var(--font); color: var(--text-3); }
+.hub-concept-none svg { flex: none; margin-top: 3px; }
+
+.hub-concept { display: flex; flex-direction: column; gap: 16px; min-width: 0; container-type: inline-size; }
+.hub-concept-intro { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.hub-concept-lead.hub-rich { font-size: 17px; line-height: 1.65; max-width: 66ch; color: var(--text); }
+.hub-concept-lead[lang='hi'], .hub-concept-lead[lang='mr'] { font-size: 17.5px; line-height: 1.85; }
+
+/* Three fact cards: one above the other in the reading column, side by side where there is room. */
+.hub-concept-facts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+@container (min-width: 660px) { .hub-concept-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.hub-concept-facts li {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0;
+  padding: 14px 16px; border-radius: 12px; background: var(--raised); border: 1px solid var(--line);
+}
+.hub-concept-fact.hub-rich { flex: 1; font-size: 14px; line-height: 1.55; color: var(--text); }
+.hub-concept-fact[lang='hi'], .hub-concept-fact[lang='mr'] { line-height: 1.75; }
+
+/* Key ideas, the code example and the common mistakes, after the lesson's steps. */
+.hub-concept-explain { gap: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
+.hub-concept-part { display: flex; flex-direction: column; gap: 12px; margin: 0; min-width: 0; }
+.hub-concept-steps { display: flex; flex-direction: column; gap: 12px; }
+.hub-concept-steps li { display: flex; align-items: flex-start; gap: 12px; }
+.hub-concept-steptext { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding-top: 3px; }
+.hub-concept-steptext p { font: 400 15px/1.6 var(--font); color: var(--text); max-width: 66ch; }
+.hub-concept-steptext .hub-rich[lang='hi'], .hub-concept-steptext .hub-rich[lang='mr'] { line-height: 1.8; }
+.hub-concept-term { font-weight: 700; }
+.hub-concept-steptext .hub-rich { display: inline; font: inherit; color: inherit; }
+.hub-concept-steptext .hub-topic-src, .hub-concept-mistakes .hub-topic-src { display: block; }
+
+.hub-concept-pre .shiki { margin: 0; border: 1px solid var(--line); }
+.hub-concept-code figcaption { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; font: 400 13.5px/1.55 var(--font); color: var(--text-2); }
+.hub-concept-code figcaption .hub-rich { font: inherit; color: inherit; }
+
+.hub-concept-mistakes ul { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 12px; background: var(--raised); border: 1px solid var(--line); }
+.hub-concept-mistakes li { display: flex; align-items: flex-start; gap: 10px; }
+.hub-concept-mistakes li > svg { flex: none; margin-top: 3px; color: var(--text-3); }
+.hub-concept-mistakes li > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hub-concept-mistakes .hub-rich { font-size: 14px; line-height: 1.55; }
+.hub-concept-mistakes .hub-rich:is([lang='hi'], [lang='mr']), .hub-concept-code figcaption .hub-rich:is([lang='hi'], [lang='mr']) { line-height: 1.75; }
 
 /* ------------------------------------------------------- a lesson step */
 
@@ -266,6 +311,7 @@
 .hub-q-kept { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: var(--warn-soft); font: 400 14px/1.5 var(--font); color: var(--text); }
 .hub-q-kept svg { flex: none; margin-top: 3px; color: var(--warn); }
 .hub-q-kept b { font-weight: 600; }
+.hub-q-reopen { display: flex; margin-top: -4px; }
 .hub-q-verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font: 400 14px/1.4 var(--font); color: var(--text-2); }
 .hub-q-verdict b { font: 700 16px/1.3 var(--font); color: var(--text); }
 .hub-q-disc { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border-radius: var(--r-full); color: #FFFFFF; background: var(--ok-fill); }

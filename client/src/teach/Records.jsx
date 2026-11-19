@@ -90,7 +90,7 @@ export function RecordsLayout({ tab, onTab, canControl, children }) {
   );
 }
 
-export default function Records({ code, canControl, info, rows, tab, onTab, onProject }) {
+export default function Records({ code, canControl, info, rows, tab, onTab, onProject, teachingMove = null }) {
   const questions = useRoomQuestions(code, info);
   const current = RECORD_TABS.some((t) => t.id === tab) ? tab : 'wheel';
   const signal = Array.isArray(rows) ? rows.length : 0;
@@ -105,7 +105,10 @@ export default function Records({ code, canControl, info, rows, tab, onTab, onPr
       )}
       {current === 'tally' && <Tally {...shared} signal={signal} questions={questions} />}
       {current === 'observe' && <Observe {...shared} signal={signal} classRoom={classRoom} />}
-      {current === 'activities' && <Activities {...shared} onTab={onTab} closed={closed} onProject={onProject} />}
+      {current === 'activities' && (
+        // Batch 8 (C2): the chapter's topics for "Ask AI for a prompt", and the prompt's push.
+        <Activities {...shared} onTab={onTab} closed={closed} onProject={onProject} contentId={info?.contentId} pushed={teachingMove} />
+      )}
     </RecordsLayout>
   );
 }

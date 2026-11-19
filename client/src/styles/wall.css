@@ -278,6 +278,24 @@
 .wl-passage[data-big][data-size='m'] { font-size: calc(var(--u) * 1.55); }
 .wl-passage[data-big][data-size='s'] { font-size: calc(var(--u) * 1.22); }
 
+/* A figure the server drew (Batch 8): its own light card, as on every screen,
+   sized here in u like a picture. The SVG keeps its proportions; its height is
+   the limit. Nobody clicks a wall: the Describe and data toggles stay off it. */
+.wl .wl-figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 0.8); min-width: 0; min-height: 0; max-width: 100%; }
+.wl .wl-figure .fig-card {
+  max-width: 100%; padding: calc(var(--u) * 0.9); border-radius: calc(var(--u) * 0.8);
+  box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.6);
+}
+.wl .wl-figure .fig-card svg { display: block; width: auto; max-width: 100%; height: calc(var(--u) * 26); }
+.wl .wl-figure-big .fig-card svg { height: calc(var(--u) * 31); }
+.wl-cq .wl-figure .fig-card svg { height: calc(var(--u) * 15); }
+.wl .wl-figure .fig-step {
+  justify-content: center; max-width: 60ch; gap: calc(var(--u) * 0.3) calc(var(--u) * 0.9); text-align: center;
+  font: 500 calc(var(--u) * 1.3)/1.45 var(--font); color: var(--on-panel);
+}
+.wl .wl-figure .fig-step b { color: var(--mint); font-weight: 700; }
+.wl .wl-figure .fig-more { display: none; }
+
 .wl-diagram { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--u) * 1.4); }
 
 /* --------------------------------------------------------- the class so far */

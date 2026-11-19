@@ -12,6 +12,12 @@
  * once a second language exists, which answers were in another language
  * (languages). A provisional band or level is never drawn as a firm one.
  *
+ * Batch 8: an answer to a question the student had practised in the Learning
+ * Hub first carries the server's `practisedNote`, shown under that answer as a
+ * neutral note, never as a label on the student; and each answer's `answerKey`
+ * (the key it was stored under, the phone's own id for it when it sent one) is
+ * listed under "Answer references", folded away, for tracing a kept answer.
+ *
  * Every figure and sentence is the server's (GET /api/session/:code/students/
  * :roll/card, docs/API.md). The next set is the selector's plan and is labelled
  * as one, never as a promise.
@@ -26,6 +32,8 @@ import { api } from '../lib/api.js';
 import { LABEL } from '../lib/bloom.js';
 import { Dialog, Icon, Level, Note } from '../ui/index.jsx';
 import { TapBars } from './ClassQuestions.jsx';
+
+import '../styles/levels.css';
 
 const list = (v) => (Array.isArray(v) ? v : []);
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -142,11 +150,32 @@ function LastAnswers({ answers, languages }) {
                 )}
                 {a.answeredAt && <time>{clock(a.answeredAt)}</time>}
               </p>
+              {a.practisedInHub && a.practisedNote && <p className="ev-practised"><Icon name="path" size={12} />{a.practisedNote}</p>}
             </div>
           </li>
         );
       })}
     </ol>
+  );
+}
+
+/** The key each answer was stored under, folded away: for tracing an answer a phone kept and sent later. */
+function AnswerKeys({ answers }) {
+  const items = list(answers?.items).filter((a) => a.answerKey);
+  if (!items.length) return null;
+  return (
+    <details className="ev-refs">
+      <summary><Icon name="chevron" size={14} />Answer references</summary>
+      <p>The key each answer above was stored under: the phone’s own id for it when it sent one.</p>
+      <ol>
+        {items.map((a) => (
+          <li key={a.answerId ?? a.answerKey}>
+            <time className="mono">{clock(a.answeredAt)}</time>
+            <span className="ev-key">{a.answerKey}</span>
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }
 
@@ -375,6 +404,7 @@ export function StudentCardView({ card, error, roll, onClose }) {
           <Sec title="Last answers" aside={<span className="co-sc-aside">Final answers, newest first</span>}>
             {card.languages?.note && <p className="co-lang-note"><Icon name="info" size={14} /><span>{card.languages.note}</span></p>}
             <LastAnswers answers={card.lastAnswers} languages={card.languages} />
+            <AnswerKeys answers={card.lastAnswers} />
           </Sec>
 
           <Sec title="Teacher records" aside={<span className="co-sc-aside">{card.records?.day}</span>}>

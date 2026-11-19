@@ -1,0 +1,74 @@
+/* Batch 8 figures: learn/Figure.jsx and ui/FigureSteps.jsx. Imported by
+   Figure.jsx itself, so every screen that shows a figure has it. The drawing is
+   the server's, in the Forest palette on white: it keeps that white card in
+   both themes and is never recoloured. Everything around it uses the tokens.
+   The root is .fig-view, not .fig: ui.css already has .fig for a stat figure. */
+
+.fig-view { margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+.fig-card {
+  /* The figure's own paper, in both themes: the SVG is drawn for white. */
+  background: #fff;
+  color-scheme: light;
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  padding: 8px;
+  overflow: hidden;
+}
+.fig-card svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+
+/* No drawing: the description is the figure. */
+.fig-alone {
+  margin: 0; padding: 12px 14px; border: 1px dashed var(--line-2); border-radius: var(--r-3);
+  font: 400 14px/1.55 var(--font); color: var(--text-2);
+}
+
+.fig-step, .fig-steps-now {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin: 0;
+  font: 400 14px/1.5 var(--font); color: var(--text);
+}
+.fig-step b, .fig-steps-now b { font-weight: 700; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* "Describe" and "Show the data": native disclosures, so they work by keyboard
+   and with no script of their own. Side by side while shut; an open one takes
+   the whole width for what it holds. */
+.fig-more { display: flex; flex-wrap: wrap; column-gap: 20px; }
+.fig-more details[open] { flex-basis: 100%; }
+.fig-more summary {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 2px;
+  list-style: none; cursor: pointer; border-radius: var(--r-1);
+  font: 600 13px/18px var(--font); color: var(--primary);
+}
+.fig-more summary::-webkit-details-marker { display: none; }
+.fig-more summary::before {
+  content: ''; width: 6px; height: 6px; margin: 0 2px 2px 1px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg); transition: transform 0.15s var(--ease);
+}
+.fig-more details[open] > summary::before { transform: rotate(45deg); margin-bottom: 4px; }
+.fig-more summary:hover { text-decoration: underline; text-underline-offset: 3px; }
+.fig-more details > p { margin: 0 0 10px; max-width: 70ch; font: 400 14px/1.55 var(--font); color: var(--text-2); overflow-wrap: anywhere; }
+
+.fig-table { overflow-x: auto; margin: 0 0 10px; border-radius: var(--r-1); }
+.fig-table table { border-collapse: collapse; font: 400 13px/1.45 var(--font); color: var(--text); }
+.fig-table caption { text-align: left; padding-bottom: 6px; font-weight: 600; color: var(--text-2); }
+.fig-table th, .fig-table td { padding: 6px 14px 6px 0; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.fig-table th { font: 600 12px/1.4 var(--font); color: var(--text-2); white-space: nowrap; }
+.fig-table td { font-variant-numeric: tabular-nums; }
+.fig-table tbody tr:last-child td { border-bottom: 0; }
+
+/* Stepped (hub lessons). */
+.fig-steps-bar { display: flex; align-items: center; gap: 12px; }
+.fig-dots { display: inline-flex; gap: 6px; margin-right: auto; }
+.fig-dots i { width: 8px; height: 8px; border-radius: var(--r-full); background: var(--line-2); }
+.fig-dots i[data-on] { background: var(--primary); }
+
+/* On the phone, inside a question's fold: the figure is not capped like a
+   long passage, but a tall one is kept to most of the screen. */
+.ln-stim-body.ln-stim-fig { max-height: none; padding: 10px 10px 4px; }
+.ln-stim-fig .fig-card { padding: 4px; }
+.ln-stim-fig .fig-card svg { width: auto; max-height: 60vh; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fig-more summary::before { transition: none; }
+}

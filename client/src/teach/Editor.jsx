@@ -28,6 +28,9 @@ import { StimulusEditor, seedStimulus, stimulusFor } from './Media.jsx';
 
 const KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
+/** The save's refusals about the stimulus: a figure the engines would not draw, a slide picture not yet described. */
+const STIM_REFUSAL = /^(The figure was not saved|Describe this picture from the slides)/;
+
 /** As long as a topic may be (MAX_TOPIC_CHARS in server/src/routes/bank.js). */
 const MAX_TOPIC = 160;
 
@@ -153,7 +156,8 @@ function seed(stored) {
     gridCols: kind === 'grid' ? arr(q.columns).map(String) : [],
     gridRows: kind === 'grid' ? arr(q.rows).map(String) : [],
     gridAnswers: kind === 'grid' ? arr(q.answers).map((r) => arr(r).map((v) => v === true)) : [],
-    stim: seedStimulus(q.stimulus),
+    // A figure's drawing comes with the bank read (`question.figure`, batch 8).
+    stim: seedStimulus(q.stimulus, q.figure ?? null),
   };
 }
 
@@ -986,7 +990,8 @@ export default function Editor({
       const info = await fn();
       await onDone(info ?? {});
     } catch (err) {
-      setRefused({ text: err.message, at });
+      // A refused figure or slide picture is said beside it (batch 8).
+      setRefused({ text: err.message, at: STIM_REFUSAL.test(err.message ?? '') ? 'stim' : at });
     } finally {
       setBusy('');
     }
@@ -1235,9 +1240,10 @@ export default function Editor({
 
         <section className="tc-ed-sec" aria-labelledby="ed-stim">
           <div className="stack stack-1">
-            <h4 className="tc-ed-h" id="ed-stim">Passage or image</h4>
+            <h4 className="tc-ed-h" id="ed-stim">Passage, image or figure</h4>
             <p className="hint">Optional. What the question is about, shown above it.</p>
           </div>
+          {refused?.at === 'stim' && <Refusal text={refused.text} />}
           <StimulusEditor
             value={draft.stim}
             onChange={(fn) => { setRefused(null); setDraft((d) => ({ ...d, stim: fn(d.stim) })); }}

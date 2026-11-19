@@ -61,17 +61,20 @@ export const hub = {
 
   // Practice and review sets. `topicIds` (an array) for a set across topics.
   nextPractice: ({ topicId, topicIds, mode } = {}) => http.get(`/hub/practice/next${query({ topicId, topicIds, mode })}`),
-  /** { attemptId, questionId, topicId, response, mode, timeTakenMs?, shown? } */
-  attempt: (body) => sendKept('/hub/practice/attempts', body),
+  /**
+   * { attemptId, questionId, topicId, response, mode, serveToken, timeTakenMs?, shown? }. `serveToken` is the
+   * next-question reply's (batch 8); `to` is the screen that opens the question again, kept with the answer.
+   */
+  attempt: (body, { to } = {}) => sendKept('/hub/practice/attempts', body, { to }),
   hintsOpened: ({ attemptId, questionId, topicId }) => http.get(`/hub/practice/hints${query({ attemptId, questionId, topicId })}`),
   /** { attemptId, questionId, topicId, mode, step } */
   hint: (body) => http.post('/hub/practice/hints', body),
 
   // Lessons
   lesson: (topicId) => http.get(`/hub/topics/${enc(topicId)}/lesson`),
-  /** { attemptId, response, shown?, timeMs? } */
-  lessonAttempt: (lessonId, questionId, body) =>
-    sendKept(`/hub/lessons/${enc(lessonId)}/questions/${enc(questionId)}/attempts`, body),
+  /** { attemptId, response, serveToken, shown?, timeMs? }: `serveToken` is the lesson question's (batch 8) */
+  lessonAttempt: (lessonId, questionId, body, { to } = {}) =>
+    sendKept(`/hub/lessons/${enc(lessonId)}/questions/${enc(questionId)}/attempts`, body, { to }),
   lessonHintsOpened: (lessonId, questionId, attemptId) =>
     http.get(`/hub/lessons/${enc(lessonId)}/questions/${enc(questionId)}/hints${query({ attemptId })}`),
   /** { attemptId, step } */
@@ -95,6 +98,8 @@ export const hub = {
   readyCheck: (checkId) => http.get(`/hub/getready/${enc(checkId)}`),
   /** { attemptId, questionId, response, timeTakenMs?, shown? } */
   readyAnswer: (checkId, body) => sendKept(`/hub/getready/${enc(checkId)}/answers`, body),
+  /** Batch 8: end it early. The check as it ended ({ changed, check, prerequisites, sentence, path }); again is a 200. */
+  readyEnd: (checkId) => http.post(`/hub/getready/${enc(checkId)}/end`, {}),
 
   // Self-tests
   /** { clientRunId, topicIds, levels?, count?, timeLimitMinutes? } */
@@ -165,6 +170,12 @@ export const staffHub = {
   discardLesson: (lessonId) => http.post(`/hub/lessons/${enc(lessonId)}/discard`, {}),
   /** As a student would see it, in en, hi or mr. */
   previewLesson: (topicId, lang) => http.get(`/hub/topics/${enc(topicId)}/lesson${query({ lang })}`),
+  /**
+   * Batch 8 (B2): a figure added to a lesson, as a NEW draft version.
+   * { spec, text?, after? (-1 for the start; the end when left out) } ->
+   * 201 { lesson, message }; 400 'The figure was not added: ...'; HOD 403.
+   */
+  addLessonFigure: (lessonId, body) => http.post(`/hub/lessons/${enc(lessonId)}/figures`, body),
 
   // Translations
   translations: (contentId, { language } = {}) => http.get(`/hub/chapters/${enc(contentId)}/translations${query({ language })}`),

@@ -55,6 +55,12 @@ const AREAS = {
   phone7: { title: 'Offline phone: packs and late answers', line: 'Questions packed for a lost connection, answers kept, refused or saved but not counted.' },
   sync: { title: 'Console outbox', line: 'Teacher records kept on the laptop until the server has them, and a record someone changed meanwhile.' },
   imports: { title: 'Imported rooms and laptop mode', line: 'Rooms run on a laptop and imported later, and the console running on the laptop itself.' },
+  figures: { title: 'Figures', line: 'Server-drawn figures with their description and data, stepped figures, and where each screen shows them. Batch 8.' },
+  figedit: { title: 'Figure builder and slide pictures', line: 'A figure built from a spec with a live preview, steps, slide pictures and regions drawn on an image. Staff only. Batch 8.' },
+  moves: { title: 'Teaching moves and the wheel', line: 'An AI suggestion from the class’s counts (your call), activity prompts, the wheel’s question + student mode and the verbal ask. Staff only. Batch 8.' },
+  levels: { title: 'Levels over time', line: 'Per-level lines with the room’s goal, the support band against the room before, and a class’s change since its previous room. Batch 8.' },
+  material8: { title: 'Material and the shared bank', line: 'Where each topic came from, which levels it supports, the writer switch, last used and rooms-only questions. Staff only. Batch 8.' },
+  hub8: { title: 'Learning Hub: concept panel and Get Ready', line: 'A lesson’s introduction, facts, steps, code and common mistakes; ending a check early and why the path is what it is. Batch 8.' },
   auth: { title: 'Auth', line: 'Sign in, sign up and the profile.' },
 };
 

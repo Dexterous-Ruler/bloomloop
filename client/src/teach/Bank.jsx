@@ -21,8 +21,10 @@ import { toast } from '../ui/toast.jsx';
 import { LevelSpread } from '../ui/viz.jsx';
 import AnswerKey from './AnswerKey.jsx';
 import Editor, { Replaces, removedLabels } from './Editor.jsx';
+import { FigureProblem, FigureTag } from './FigureBuilder.jsx';
 import { ItemDetail, ItemFigures, StatsView, useBankStats } from './ItemStats.jsx';
 import Planner, { mmss, startTotal } from './Planner.jsx';
+import RoomsOnly, { RoomsOnlyChip } from './RoomsOnly.jsx';
 
 // Everything a teacher might search a question by, including its answer key.
 const haystack = (q) => [
@@ -242,6 +244,8 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
   const [askAll, setAskAll] = useState(false);
   // A run the server held back for being large, waiting on a yes.
   const [held, setHeld] = useState(null);
+  // Batch 8: the chapter's printable page of figure questions, while it is fetched.
+  const [printing, setPrinting] = useState(false);
   const [draft, setDraft] = useState(() => ({
     total: startTotal(selected.length),
     preset: 'balanced',
@@ -317,20 +321,23 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
     setRunId(id);
     const started = Date.now();
     try {
-      const res = await api.generate(content.contentId, topics, spec, { ...opts, runId: id });
+      // Batch 8 (M3): the planner's "Write with AI" switch; off asks for the templates.
+      const res = await api.generate(content.contentId, topics, spec, { ...opts, runId: id, writer: draft.writer });
       setWarnings(res.warnings ?? []);
       setTookSecs(Math.round((Date.now() - started) / 1000));
       setPlanning(false);
       await refresh();
       const flagged = res.flagged ?? 0;
+      // The server's sentence on which writer ran, when it sends one.
+      const wrote = res.writer?.sentence ? ` ${res.writer.sentence}` : '';
       setSaid({
         tone: 'ok',
-        text: `${many(res.generated ?? 0, 'draft')} written${flagged > 0 ? `, ${flagged} flagged by a rule check` : ''}. Review them before they reach a room: nothing here is served until you approve it.`,
+        text: `${many(res.generated ?? 0, 'draft')} written${flagged > 0 ? `, ${flagged} flagged by a rule check` : ''}.${wrote} Review them before they reach a room: nothing here is served until you approve it.`,
       });
       setPlanFor(null);
       show('drafts');
       // The planner closes as the run lands: say so where it is seen.
-      toast(`${many(res.generated ?? 0, 'draft')} added. Review them before they reach a room.`);
+      toast(`${many(res.generated ?? 0, 'draft')} added.${wrote || ' Review them before they reach a room.'}`);
     } catch (err) {
       // 409 is either a large run waiting on a yes, or a replacing run while a
       // room on this chapter is running. Only the first can be confirmed.
@@ -660,6 +667,22 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
           <div className="cluster">
             <Button variant="accent" onClick={onNext}>Set up the room<Icon name="forward" /></Button>
             <Button icon="plan" onClick={() => { setPlanFor(null); setPlanning(true); }}>Plan another run</Button>
+            {/* Batch 8: only a chapter with an approved figure question has a page to print. */}
+            {approved.some((q) => q.stimulus?.kind === 'figure') && (
+              <Button
+                variant="ghost"
+                icon="print"
+                busy={printing}
+                onClick={() => {
+                  setPrinting(true);
+                  api.printFigures(content.contentId)
+                    .catch((err) => setError(err.message || 'The page of figures did not open.'))
+                    .finally(() => setPrinting(false));
+                }}
+              >
+                Print figures
+              </Button>
+            )}
           </div>
         </Panel>
       </div>
@@ -851,6 +874,8 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
                       <span className="tc-ref">{refOf.get(q._id)}</span>
                       <i className="dot" aria-hidden="true" />
                       <span>{KIND_LABEL[kind] ?? kind}</span>
+                      {/* Batch 8: a figure question says what it draws; the drawing is in the opened key. */}
+                      <FigureTag q={q} />
                       {slides && <span className="tc-q-slides">{slides}</span>}
                       {q.provenance?.label ? (
                         <>
@@ -863,9 +888,11 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
                           ? <Chip className="chip-line">{isRejectedDraft(q) ? 'Rejected draft' : 'Set aside'}</Chip>
                           : source && <Chip className="chip-line" title={q.model ?? SOURCE_TITLE[source]}>{source}</Chip>}
                       {aiLabels > 0 && <Chip className="chip-line" title="A misconception label the generator proposed: it reads as a draft until you confirm or rewrite it.">{aiLabels === 1 ? '1 AI draft label' : `${aiLabels} AI draft labels`}</Chip>}
+                      <RoomsOnlyChip q={q} />
                       {failed.length > 0 && <Chip tone="warn" icon="alert">{failed.length === 1 ? '1 flag' : `${failed.length} flags`}</Chip>}
                     </span>
                     <span className="tc-q-text">{q.text}</span>
+                    <FigureProblem q={q} />
                     {q.replacesId && (isDraft || isRejectedDraft(q)) && <Replaces old={byId.get(q.replacesId)} name={refOf.get(q.replacesId)} />}
                     {!isDraft && <ItemFigures item={stats.byId.get(q._id)} />}
                     {failed.length > 0 && (isDraft || isOpen) && (
@@ -917,6 +944,8 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
                   {isOpen && (
                     <div className="tc-q-key">
                       <QuestionFacts q={q} />
+                      {/* Batch 8: kept for rooms, or shared with the Learning Hub (not for a set-aside question). */}
+                      {!off && <RoomsOnly q={q} onChanged={refresh} />}
                       <AnswerKey q={q} />
                       {(stats.byId.get(q._id)?.attempts ?? 0) > 0 && (
                         <ItemDetail item={stats.byId.get(q._id)} thresholds={stats.data?.thresholds} onCheckKey={(id) => setEditing(id)} />

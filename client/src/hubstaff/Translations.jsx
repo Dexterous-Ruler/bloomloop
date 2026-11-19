@@ -42,7 +42,13 @@ export function fieldName(key) {
   if (key === 'explanation') return 'Explanation';
   if (key === 'hint') return 'Hint';
   if (key === 'feedback') return 'Feedback';
-  const m = /^steps\.(\d+)\.(text|problem|steps|answer)$/.exec(key);
+  // Batch 8: a lesson's concept panel (an explanation step's term and the code stay in English).
+  if (key === 'sections.intro') return 'Introduction';
+  if (key === 'sections.facts') return 'Facts';
+  if (key === 'sections.steps') return 'Explanation steps';
+  if (key === 'sections.example.caption') return 'Code example: caption';
+  if (key === 'sections.mistakes') return 'Common mistakes';
+  const m =/^steps\.(\d+)\.(text|problem|steps|answer)$/.exec(key);
   if (m) {
     const n = Number(m[1]) + 1;
     return { text: `Step ${n}`, problem: `Step ${n}: the example`, steps: `Step ${n}: the working`, answer: `Step ${n}: the answer` }[m[2]];
@@ -133,7 +139,10 @@ function FieldsEditor({ english, initial, lang, langName, saveLabel, onSave, onC
           {Array.isArray(en) ? en.map((e, i) => (
             <div key={i} className="hq-tr-edit-pair">
               <label htmlFor={`${id}-${key}-${i}`} className="hq-tr-edit-en">{i + 1}. {e}</label>
-              <input id={`${id}-${key}-${i}`} className="input" lang={lang} value={fields[key][i]} onChange={(ev) => set(key, ev.target.value, i)} />
+              {/* A sentence in a list (a fact, a step, a mistake) gets room to wrap; an option stays one line. */}
+              {String(e).length > 80
+                ? <textarea id={`${id}-${key}-${i}`} className="textarea" rows={Math.min(5, Math.ceil(String(e).length / 70))} lang={lang} value={fields[key][i]} onChange={(ev) => set(key, ev.target.value, i)} />
+                : <input id={`${id}-${key}-${i}`} className="input" lang={lang} value={fields[key][i]} onChange={(ev) => set(key, ev.target.value, i)} />}
             </div>
           )) : (
             <div className="hq-tr-edit-pair">

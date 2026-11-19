@@ -170,6 +170,10 @@ export const api = {
       // Sent up front so the console can poll progress while this call is still
       // open. A run that takes ninety seconds and reports nothing looks hung.
       runId: opts.runId,
+      // Batch 8 (B5): 'templates' asks for the built-in writer on purpose;
+      // left out, the server uses the AI model when it has one. The reply's
+      // `writer` says which ran.
+      ...(opts.writer ? { writer: opts.writer } : {}),
     }),
   generateRun: (runId) => req(`/generate/run/${encodeURIComponent(runId)}`),
   getBank: (contentId) => req(`/bank/${contentId}`),
@@ -425,6 +429,25 @@ export const api = {
   updateActivity: (code, activityId, patch) =>
     json('PATCH')(`/session/${encodeURIComponent(code)}/activities/${encodeURIComponent(activityId)}`, patch),
 
+  // -- Batch 8, B3: teaching moves and the wheel's question draw (teach/Moves.jsx,
+  //    teach/Activities.jsx, teach/Wheel.jsx) ---------------------------------
+  // Staff only. { room, label, modelReady, offline?, kinds, suggestions: [moveView], note };
+  // a 404 on a server without batch 8 (the card then hides).
+  teachingMoves: (code) => req(`/session/${encodeURIComponent(code)}/teaching-moves`),
+  // body {} for a move (L1), { kind, topic? } for an activity's prompt (C2).
+  // 202 { state: 'running', requestId, purpose, kind, topic, basis, label, note } |
+  // 200 { state: 'offline', suggestion: null, message, label }; 409 with a sentence;
+  // 403 for an HOD. The outcome also arrives as `teacher:teaching-move`.
+  askTeachingMove: (code, body = {}) => json('POST')(`/session/${encodeURIComponent(code)}/teaching-moves`, body),
+  // { id, state: running|done|failed, suggestionId, message, suggestion, label }; 404 after a restart.
+  teachingMoveRequest: (code, requestId) =>
+    req(`/session/${encodeURIComponent(code)}/teaching-moves/requests/${encodeURIComponent(requestId)}`),
+  // "Another": the server draws the pick's next question. { pick, draw: { order, poolSize, note }, privacy };
+  // 409 with the sentence when none is left, the pick is not a bank ask, or the room is closed.
+  wheelNextQuestion: (code, pickId) =>
+    json('POST')(`/session/${encodeURIComponent(code)}/wheel/picks/${encodeURIComponent(pickId)}/next-question`),
+  // -- end of Batch 8, B3 ------------------------------------------------------
+
   // Live insights. `teacher:insights` pushes the same body over the socket.
   insights: (code) => req(`/session/${encodeURIComponent(code)}/insights`),
   insightActions: (code) => req(`/session/${encodeURIComponent(code)}/insights/actions`),
@@ -562,6 +585,60 @@ export const api = {
       throw err;
     }
   },
+
+  // -- Batch 8, B1a: figures (teach/Bank.jsx "Print figures") -------------------
+  // Staff who may read the chapter (owner; an HOD reads; the same 404 for not
+  // yours or not there). A printable page of the chapter's approved questions
+  // that carry a figure: text, the same drawing, description and data, no
+  // answers. Opened like openReport, from a blob url in a tab opened first, with
+  // this browser's credentials in headers: a plain link would carry no token,
+  // and the key never goes in a url. The server sends the page's
+  // Content-Security-Policy as a header, which a blob does not keep, so the same
+  // policy is written into the page before it opens.
+  printFigures: async (contentId) => {
+    const tab = window.open('', '_blank');
+    if (tab) tab.opener = null;
+    try {
+      const res = await send(`/figures/content/${encodeURIComponent(contentId)}/print`);
+      const csp = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'">';
+      const html = (await res.text()).replace(/<head>/i, (head) => `${head}${csp}`);
+      const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
+      if (tab) tab.location.href = url; else window.location.assign(url);
+      setTimeout(() => URL.revokeObjectURL(url), 120_000);
+    } catch (err) {
+      if (tab) tab.close();
+      throw err;
+    }
+  },
+  // -- end of Batch 8, B1a -------------------------------------------------------
+
+  // -- Batch 8, B2: the figure builder and slide pictures (teach/FigureBuilder.jsx,
+  //    teach/SlidePictures.jsx, teach/Media.jsx) --------------------------------
+  // Staff (teacher key or a professor's or HOD's sign-in). What the engines
+  // accept: { types, stepped, families, charts, diagram { layouts, shapes, lines,
+  // arrows }, optics, pattern { shapes, fills, colours }, limits, note }. A 404
+  // on a server without batch 8 (the figure controls then hide).
+  figureKinds: () => req('/figures/kinds'),
+  // Draws without saving: { spec (normalised), figure { kind, type, title, svg,
+  // description, table, ok, parts, stepCount, steps, formula? }, atStep? }, or a
+  // 400 whose `error` is one sentence. `step` 1..n shows that step lit up.
+  previewFigure: (spec, step) => json('POST')('/figures/preview', { spec, ...(step ? { step } : {}) }),
+  // The pictures kept from the chapter's slides: { pictures [{ id, url, slide,
+  // mime, bytes, alt }], kept, summary, note }. The alt is a placeholder until a
+  // professor describes the picture on a question. Owner; an HOD reads.
+  slidePictures: (contentId) => req(`/figures/content/${encodeURIComponent(contentId)}/slide-pictures`),
+  // -- end of Batch 8, B2 ---------------------------------------------------------
+
+  // -- Batch 8, B5: the shared bank (teach/RoomsOnly.jsx) -------------------------
+  // The chapter owner only (an HOD 403; another professor's question the same 404
+  // as not there). body { roomsOnly: true | false } -> { question, changed,
+  // roomsOnly, message }. A question kept for rooms is never offered by the
+  // Learning Hub; rooms serve it either way. A 404 on a server before Batch 8.
+  setRoomsOnly: (id, roomsOnly) =>
+    json('PUT')(`/bank/question/${encodeURIComponent(id)}/rooms-only`, { roomsOnly }),
+  // (Also B5: `writer` on generate above, and topicSources, levelSupport and
+  // lastUsed on getContent / listContents, read where they are drawn.)
+  // -- end of Batch 8, B5 ---------------------------------------------------------
 
   // -- Phase 7: laptop mode and imported rooms (teach/laptop.jsx, teach/imported.jsx,
   //    account/ImportRooms.jsx) ------------------------------------------------

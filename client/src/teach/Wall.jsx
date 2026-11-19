@@ -20,7 +20,8 @@
  *
  * What a wall may carry is decided on the server (its whitelist), and this
  * screen draws only those fields: the question and its options, its key once
- * revealed, a diagram or passage, counts for the class, and the wheel's pick
+ * revealed, a diagram, passage or figure (Batch 8: at the professor's step),
+ * counts for the class, and the wheel's pick
  * as a roll number and first name. Never a score, a band, a student's level,
  * attendance, a note, the tally's hands or any other name.
  *
@@ -35,6 +36,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import '../styles/wall.css';
 
+import Figure from '../learn/Figure.jsx';
 import { KIND_LABEL } from '../lib/kinds.js';
 import { connect, stillTrying } from '../lib/socket.js';
 import { Flow, Icon, Mark, Num } from '../ui/index.jsx';
@@ -181,11 +183,18 @@ function JoinTag({ code }) {
   );
 }
 
-/** A picture or a passage, as the wall may show it. */
+/**
+ * A picture, a passage or a figure, as the wall may show it. A figure (Batch
+ * 8) is the server's drawing at the step the professor chose, on its own light
+ * card, with "Step n of m" and the step's caption once past the figure itself
+ * (learn/Figure.jsx). Nobody clicks a wall, so its Describe and data toggles
+ * are not shown here: the description is in the drawing's own <desc>.
+ */
 function Stimulus({ stimulus, big = false }) {
   const [broken, setBroken] = useState(false);
   useEffect(() => setBroken(false), [stimulus?.url]);
   if (!stimulus) return null;
+  if (stimulus.kind === 'figure') return <Figure figure={stimulus} className={big ? 'wl-figure wl-figure-big' : 'wl-figure'} />;
   if (stimulus.kind === 'image') {
     return (
       <figure className="wl-fig" data-big={big || undefined}>
@@ -464,8 +473,8 @@ function ClassQuestion({ q }) {
 function Diagram({ diagram }) {
   const s = diagram.stimulus;
   return (
-    <section className="wl-diagram" aria-label={s.kind === 'image' ? 'Diagram' : 'Passage'}>
-      <span className="wl-label">{s.kind === 'image' ? 'Look at this together' : 'Read this together'}</span>
+    <section className="wl-diagram" aria-label={s.kind === 'image' ? 'Diagram' : s.kind === 'figure' ? 'Figure' : 'Passage'}>
+      <span className="wl-label">{s.kind === 'passage' ? 'Read this together' : 'Look at this together'}</span>
       <Stimulus stimulus={s} big />
     </section>
   );

@@ -12,19 +12,31 @@
  * The lesson's steps arrive as a flat list (a chunk with its cited slide, a
  * worked example, a set of retrieval questions, the next chunk). Here each
  * chunk opens a step, "Step N of M", and the example and questions after it
- * belong to that step. The four tabs from the design map onto it:
- *   Introduction  the lesson's label and outline, and the prerequisites
- *   Explanation   the lesson itself, one step at a time
- *   Visual        a later server batch: said plainly, nothing drawn
+ * belong to that step. A figure step (batch 8, H9c) opens one too: its text,
+ * then the figure stepped through (ui/FigureSteps.jsx; every drawing is in
+ * the reply, so it works offline). The four tabs from the design map onto it:
+ *   Introduction  the concept panel's introduction and three fact cards
+ *                 (batch 8), the lesson's label and outline, the prerequisites
+ *   Explanation   the lesson itself, one step at a time, then the concept
+ *                 panel's key ideas, code example and common mistakes
+ *   Visual        the lesson's figures, when it has any
  *   Practice      the way into practice and the short check
+ * The concept panel (`lesson.sections`, batch 8): each piece with its cite,
+ * translated text with `lang` (terms and code stay English), and the server's
+ * `note` when the lesson has none. Without the field nothing is drawn.
  * Never an AI-draft label, a model, a warning or a draft lesson: the server
  * sends none, and the screen invents none.
+ *
+ * Batch 8: each lesson question's serveToken goes back with its answer; an
+ * answer refused for it is kept with the sentence, and its question can be
+ * opened again (the lesson is read again for a fresh token).
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 
 import { slideTo, useEnter } from '../lib/motion.js';
+import FigureSteps from '../ui/FigureSteps.jsx';
 import { Button, Empty, Icon, Note, Panel } from '../ui/index.jsx';
 import HubPage from './HubPage.jsx';
 import { hub } from './hubApi.js';
@@ -110,29 +122,18 @@ export function HubTrouble({ error, what = 'This page', onRetry, busy, crumb }) 
   );
 }
 
-/** What is coming in a later server batch: a dashed outline, never a faked figure. */
-function Later({ icon = 'clock', title, children }) {
-  return (
-    <div className="hub-topic-later">
-      <span className="hub-topic-later-ic" aria-hidden="true"><Icon name={icon} size={16} /></span>
-      <div>
-        <b>{title}</b>
-        <p>{children}</p>
-      </div>
-    </div>
-  );
-}
-
 /**
- * The lesson's flat list as steps: each chunk opens one, and the example and
- * questions after it belong to it (anything before the first chunk opens one).
+ * The lesson's flat list as steps: each chunk (or figure, batch 8) opens one,
+ * and the example and questions after it belong to it (anything before the
+ * first chunk opens one). A figure step's text is drawn like a chunk's.
  */
 export function lessonSteps(steps = []) {
   const out = [];
   for (const s of steps) {
-    if (s.type === 'chunk' || !out.length) out.push({ cite: s.cite ?? null, chunk: null, examples: [], questions: [] });
+    const opens = s.type === 'chunk' || s.type === 'figure';
+    if (opens || !out.length) out.push({ cite: s.cite ?? null, chunk: null, figure: null, examples: [], questions: [] });
     const g = out[out.length - 1];
-    if (s.type === 'chunk') g.chunk = s;
+    if (opens) { g.chunk = s; g.figure = s.type === 'figure' ? s.figure ?? null : null; }
     else if (s.type === 'example') g.examples.push(s);
     else if (s.type === 'questions') g.questions.push(...(s.questions ?? []));
     if (!g.cite && s.cite) g.cite = s.cite;
@@ -223,6 +224,112 @@ function Example({ ex, lang }) {
   );
 }
 
+/* ------------------------------------------------- the concept panel (batch 8) */
+
+/** The server's sentence when the lesson has no concept sections; nothing when the reply has no `sections`. */
+function SectionsNote({ sections }) {
+  if (!sections || sections.available || !sections.note) return null;
+  return <p className="hub-concept-none"><Icon name="info" size={14} />{sections.note}</p>;
+}
+
+/**
+ * The Introduction's part of the concept panel: the lead paragraph and the fact
+ * cards ("Why it matters", "Where it is used", "Connects to"), each with its
+ * cite. Who wrote the lesson is already said by `lesson.label` in the brief.
+ */
+export function ConceptIntro({ sections, lang }) {
+  if (!sections?.available) return <SectionsNote sections={sections} />;
+  const { intro, facts = [] } = sections;
+  if (!intro && !facts.length) return null;
+  return (
+    <section className="hub-concept" aria-label="About this topic">
+      {intro && (
+        <div className="hub-concept-intro">
+          <RichText className="hub-concept-lead" html={intro.html} text={intro.text} lang={lang} />
+          <Cite cite={intro.cite} />
+        </div>
+      )}
+      {facts.length > 0 && (
+        <ul className="hub-concept-facts">
+          {facts.map((f) => (
+            <li key={f.kind ?? f.label}>
+              <span className="hub-topic-eyebrow">{f.label}</span>
+              <RichText className="hub-concept-fact" html={f.html} text={f.text} lang={lang} />
+              <Cite cite={f.cite} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/**
+ * The Explanation's part of the concept panel: the key ideas as numbered steps
+ * (the term in bold, in English), the code example as the server highlighted
+ * it with its caption, then the common mistakes. Each piece with its cite.
+ */
+export function ConceptExplain({ sections, lang }) {
+  if (!sections?.available) return <SectionsNote sections={sections} />;
+  const { steps = [], example = null, mistakes = [] } = sections;
+  if (!steps.length && !example && !mistakes.length) return null;
+  return (
+    <section className="hub-concept hub-concept-explain" aria-label="The topic explained">
+      {steps.length > 0 && (
+        <div className="hub-concept-part">
+          <div className="sec"><h2>Key ideas</h2></div>
+          <ol className="hub-concept-steps">
+            {steps.map((s, i) => (
+              // eslint-disable-next-line react/no-array-index-key
+              <li key={i}>
+                <span className="hub-topic-num" aria-hidden="true">{i + 1}</span>
+                <div className="hub-concept-steptext">
+                  <p>
+                    <b className="hub-concept-term">{s.term}</b>{' '}
+                    <RichText as="span" html={s.html} text={s.text} lang={lang} />
+                  </p>
+                  {s.cite && <span className="hub-topic-src">{s.cite}</span>}
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+      {example && (
+        <figure className="hub-concept-part hub-concept-code">
+          <div className="sec"><h2>Code example</h2></div>
+          {example.html
+            ? <RichText className="hub-concept-pre" html={example.html} />
+            : <pre className="shiki hub-concept-pre"><code>{example.body}</code></pre>}
+          {(example.caption || example.cite) && (
+            <figcaption>
+              {example.caption && <RichText as="span" html={example.captionHtml} text={example.caption} lang={lang} />}
+              <Cite cite={example.cite} />
+            </figcaption>
+          )}
+        </figure>
+      )}
+      {mistakes.length > 0 && (
+        <div className="hub-concept-part hub-concept-mistakes">
+          <div className="sec"><h2>Common mistakes</h2></div>
+          <ul>
+            {mistakes.map((m, i) => (
+              // eslint-disable-next-line react/no-array-index-key
+              <li key={i}>
+                <Icon name="alert" size={15} />
+                <div>
+                  <RichText html={m.html} text={m.text} lang={lang} />
+                  {m.cite && <span className="hub-topic-src">{m.cite}</span>}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
 /* ------------------------------------------------------------------- view */
 
 /**
@@ -234,10 +341,11 @@ function Example({ ex, lang }) {
  * @param lessonError  the lesson's refusal, or null
  * @param progress  hub.progress's `topics` (this topic's state is read from it), null while loading
  * @param tab, onTab, step, onStep   the open tab and lesson step, kept in the address
- * @param lessonOps (lessonId) => { send, askHint, opened } for the question cards
+ * @param lessonOps (lessonId, topicId) => { send, askHint, opened } for the question cards
+ * @param onReopenLesson  reads the lesson again (fresh serve tokens) when a question is opened again
  */
 export function TopicView({
-  data, lesson: reply = null, lessonError = null, onRetryLesson, progress = null,
+  data, lesson: reply = null, lessonError = null, onRetryLesson, onReopenLesson, progress = null,
   tab, onTab, step: wanted = 0, onStep, lessonOps, onResult,
 }) {
   const { topic, prerequisites = [], leadsTo = [], note } = data;
@@ -245,10 +353,14 @@ export function TopicView({
   const lesson = reply?.lesson ?? null;
   const lang = langAttr(lesson?.language?.language);
   const steps = useMemo(() => lessonSteps(lesson?.steps), [lesson]);
+  const figures = steps.filter((s) => s.figure);
   const M = steps.length;
   const step = Math.max(0, Math.min(wanted, M - 1));
   const questionCount = steps.reduce((n, s) => n + s.questions.length, 0);
-  const ops = useMemo(() => (lesson && lessonOps ? lessonOps(lesson.id) : null), [lesson, lessonOps]);
+  const ops = useMemo(() => (lesson && lessonOps ? lessonOps(lesson.id, topic.id) : null), [lesson, lessonOps, topic.id]);
+  // A question opened again after its answer was refused for its serve token: its card starts afresh.
+  const [rounds, setRounds] = useState({});
+  const reopen = (q) => { setRounds((r) => ({ ...r, [qid(q)]: (r[qid(q)] ?? 0) + 1 })); onReopenLesson?.(); };
   const heads = useRef([]);
   const want = useRef(null);
   const live = useRef(null);
@@ -335,6 +447,7 @@ export function TopicView({
                   {noLesson}
                   {lesson && (
                     <>
+                      <ConceptIntro sections={lesson.sections} lang={lang} />
                       <div className="sec">
                         <h2>In this lesson</h2>
                         <p>{lesson.label}</p>
@@ -349,7 +462,7 @@ export function TopicView({
                               <span className="grow">
                                 <b>{s.cite ?? `Step ${i + 1}`}</b>
                                 <small>
-                                  {[s.examples.length ? 'a worked example' : '', s.questions.length ? plural(s.questions.length, 'question', 'questions') : '']
+                                  {[s.figure ? 'a figure' : '', s.examples.length ? 'a worked example' : '', s.questions.length ? plural(s.questions.length, 'question', 'questions') : '']
                                     .filter(Boolean).join(', ').replace(/^./, (c) => c.toUpperCase()) || 'Reading'}
                                 </small>
                               </span>
@@ -367,9 +480,6 @@ export function TopicView({
                     </div>
                     <Prereqs topic={topic} prerequisites={prerequisites} leadsTo={leadsTo} note={note} states={progress} />
                   </section>
-                  <Later title="An introduction and the key facts">
-                    Why this topic matters and the facts to hold on to come later, written from your professor&apos;s material and shown once they approve them.
-                  </Later>
                 </>
               )}
 
@@ -396,7 +506,8 @@ export function TopicView({
                         </span>
                         <Cite cite={s.cite} />
                       </h3>
-                      {s.chunk && <RichText className="hub-topic-text" html={s.chunk.html} text={s.chunk.text} lang={lang} />}
+                      {s.chunk && (s.chunk.html || s.chunk.text) && <RichText className="hub-topic-text" html={s.chunk.html} text={s.chunk.text} lang={lang} />}
+                      {s.figure && <FigureSteps figure={s.figure} />}
                       {s.examples.map((ex, k) => <Example key={`ex${k}`} ex={ex} lang={lang} />)}
                       {s.questions.length > 0 && (
                         <section className="hub-topic-check" aria-label={`Check yourself, step ${i + 1}`}>
@@ -410,7 +521,7 @@ export function TopicView({
                           )}
                           {s.questions.map((q, j) => (
                             <QuestionCard
-                              key={qid(q)}
+                              key={`${qid(q)}:${rounds[qid(q)] ?? 0}`}
                               question={q}
                               slot={`lesson:${lesson.id}:${qid(q)}`}
                               label={`Question ${j + 1} of ${s.questions.length}`}
@@ -422,6 +533,8 @@ export function TopicView({
                               askHint={ops ? (attemptId, n) => ops.askHint(q, attemptId, n) : undefined}
                               opened={ops ? (attemptId) => ops.opened(q, attemptId) : undefined}
                               onResult={onResult}
+                              onReopen={onReopenLesson ? () => reopen(q) : undefined}
+                              reopened={(rounds[qid(q)] ?? 0) > 0}
                             />
                           ))}
                         </section>
@@ -437,17 +550,28 @@ export function TopicView({
                         : <Link className="btn btn-primary" to={practice}>Practise this topic <Icon name="forward" /></Link>}
                     </nav>
                   )}
-                  <Later title="A code example and common mistakes">
-                    These come later, from your professor&apos;s material, once they approve them.
-                  </Later>
+                  {lesson && <ConceptExplain sections={lesson.sections} lang={lang} />}
                 </>
               )}
 
-              {t.id === 'visual' && (
+              {t.id === 'visual' && (figures.length ? (
+                // Batch 8 (H9c): the lesson's figures, each with its text and cite; the same as in their steps.
+                figures.map((s, i) => (
+                  // eslint-disable-next-line react/no-array-index-key
+                  <article key={i} className="hub-topic-step" aria-label={`Figure ${i + 1} of ${figures.length}`}>
+                    <div className="hub-topic-stephead">
+                      <span className="hub-topic-count">Figure {i + 1} of {figures.length}</span>
+                      <Cite cite={s.cite} />
+                    </div>
+                    {(s.chunk?.html || s.chunk?.text) && <RichText className="hub-topic-text" html={s.chunk.html} text={s.chunk.text} lang={lang} />}
+                    <FigureSteps figure={s.figure} />
+                  </article>
+                ))
+              ) : (
                 <Empty icon="eye" title="The visual comes later">
                   A step-by-step picture of this topic is planned. It appears here once it is drawn from your professor&apos;s material and approved. Nothing is shown until then.
                 </Empty>
-              )}
+              ))}
 
               {t.id === 'practice' && (
                 <div className="hub-topic-go">
@@ -512,13 +636,15 @@ export function TopicLoading() {
 /* ------------------------------------------------------------------ route */
 
 /** The calls a lesson's question cards make, for one lesson. */
-export const lessonCalls = (lessonId) => ({
+export const lessonCalls = (lessonId, topicId) => ({
   send: (q, attemptId, response, timeMs) => hub.lessonAttempt(lessonId, qid(q), {
     attemptId,
     response,
     timeMs,
     shown: { language: q.language?.language ?? 'en', translationId: q.language?.translationId ?? null },
-  }),
+    // Batch 8: the lesson's proof that it served this question to this student.
+    ...(q.serveToken ? { serveToken: q.serveToken } : {}),
+  }, { to: topicId ? `/hub/t/${topicId}?tab=explanation` : null }),
   askHint: (q, attemptId, step) => hub.lessonHint(lessonId, qid(q), { attemptId, step }),
   opened: (q, attemptId) => hub.lessonHintsOpened(lessonId, qid(q), attemptId),
 });
@@ -591,6 +717,7 @@ export default function Topic() {
       lesson={lesson && same(lesson.topic?.id, topicId) ? lesson : (lessonError ? { lesson: null } : null)}
       lessonError={lessonError}
       onRetryLesson={() => setLessonReading((n) => n + 1)}
+      onReopenLesson={() => setLessonReading((n) => n + 1)}
       progress={progress}
       tab={tab}
       onTab={onTab}

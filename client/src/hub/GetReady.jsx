@@ -14,6 +14,11 @@
  * The start's clientRunId is kept for the tab until the server has it; each
  * answer has its own attemptId, kept on the device until the server has it.
  * Never a hint button, and nobody else's results.
+ *
+ * Batch 8: "End this check" while it is open (hub.readyEnd, after a short
+ * confirm), then the check as it came back, with check.note when it ended
+ * early; a 404 there (a server without the route) hides the control. Under
+ * "Why this path", path.why.sentence and path.why.source.label.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -235,8 +240,40 @@ function ReadyStartRoute({ topicId }) {
 
 /* ================================================================ asking */
 
+/**
+ * Batch 8: ending an open check early, after a confirm that says what happens.
+ * Focus moves into the confirm and back, so a keyboard never lands on nothing.
+ */
+function EndCheck({ onEnd, busy = false, error = null, disabled = false }) {
+  const [asking, setAsking] = useState(false);
+  const yes = useRef(null);
+  const open = useRef(null);
+  const was = useRef(false);
+  useEffect(() => {
+    if (asking) yes.current?.focus();
+    else if (was.current) open.current?.focus();
+    was.current = asking;
+  }, [asking]);
+  return (
+    <div className="hub-test-end">
+      {asking ? (
+        <div role="group" aria-label="End this check">
+          <p>End the check now? The topics it has not decided become Not sure yet, and you see the path so far.</p>
+          <div className="cluster">
+            <Button ref={yes} size="sm" variant="accent" busy={busy} onClick={onEnd}>End the check</Button>
+            <Button size="sm" disabled={busy} onClick={() => setAsking(false)}>Keep going</Button>
+          </div>
+        </div>
+      ) : (
+        <Button ref={open} size="sm" icon="stop" disabled={disabled} onClick={() => setAsking(true)}>End this check</Button>
+      )}
+      {error && <p className="hub-test-end-err" role="alert">{error}</p>}
+    </div>
+  );
+}
+
 /** How far the check has gone: questions asked of at most its limit, and each prerequisite. */
-function CheckSide({ data }) {
+function CheckSide({ data, end = null }) {
   const c = data.check;
   return (
     <Panel as="aside" className="hub-test-side" aria-label="Where the check stands">
@@ -252,6 +289,7 @@ function CheckSide({ data }) {
         <summary>How the check decides</summary>
         <p>{c.rule}</p>
       </details>
+      {end && c.status === 'open' && <EndCheck {...end} />}
     </Panel>
   );
 }
@@ -259,9 +297,10 @@ function CheckSide({ data }) {
 /**
  * The question the check asks now, and after the answer its feedback. Pure:
  * `reply` is the answer's reply (feedback, then `check`), `error` a refusal.
+ * `end` is { onEnd, busy, error, disabled } for "End this check" (batch 8), or null.
  */
 export function ReadyAsk({
-  data, value, onChoose, onSubmit, busy = false, sent = null, reply = null, error = null, onNext, onRetry,
+  data, value, onChoose, onSubmit, busy = false, sent = null, reply = null, error = null, onNext, onRetry, end = null,
 }) {
   const item = data.question;
   const q = item.question;
@@ -333,13 +372,13 @@ export function ReadyAsk({
           )}
         </TestQuestion>
       </div>
-      <CheckSide data={after ?? data} />
+      <CheckSide data={after ?? data} end={end} />
     </div>
   );
 }
 
 /** No question for now: the server's sentence, and a way to look again. */
-export function ReadyWaiting({ data, onRetry }) {
+export function ReadyWaiting({ data, onRetry, end = null }) {
   return (
     <div className="hub-test-take" data-ready="true">
       <div className="hub-test-main">
@@ -349,7 +388,7 @@ export function ReadyWaiting({ data, onRetry }) {
           </Empty>
         </div>
       </div>
-      <CheckSide data={data} />
+      <CheckSide data={data} end={end} />
     </div>
   );
 }
@@ -375,6 +414,7 @@ export function ReadyResults({ data }) {
         <div className="hub-test-brief-main">
           <span className="tag-mint">{LABEL} · result</span>
           <p className="hub-test-lead" ref={lead} tabIndex={-1}>{data.sentence}</p>
+          {data.check?.endedEarly && data.check.note && <p className="hub-test-brief-note hub-test-ended">{data.check.note}</p>}
           <p className="hub-test-brief-note">Checked {when(data.check?.endedAt ?? data.check?.startedAt)}, {plural(data.check?.asked ?? 0, 'question')} asked.</p>
           <div className="cluster">
             {nextStep
@@ -404,6 +444,13 @@ export function ReadyResults({ data }) {
               <p>{steps.length ? `${path.done} of ${plural(path.total ?? steps.length, 'step')} done.` : 'Nothing needs review first.'}</p>
             </div>
           </div>
+          {path?.why?.sentence && (
+            <div className="hub-test-pathwhy">
+              <span className="hub-test-pathwhy-l">Why this path</span>
+              <p>{path.why.sentence}</p>
+              {path.why.source?.label && <p className="hub-test-pathwhy-src"><Icon name="history" size={13} />{path.why.source.label}</p>}
+            </div>
+          )}
           <ol className="hub-test-path">
             {steps.map((s, i) => {
               const [icon, word] = STEP[s.status] ?? ['dot', s.status];
@@ -502,6 +549,31 @@ function ReadyCheckRoute({ checkId }) {
     load.retry();
   };
 
+  // Batch 8: end the check early; the reply is the check as it ended.
+  const [ending, setEnding] = useState(false);
+  const [endError, setEndError] = useState(null);
+  const [canEnd, setCanEnd] = useState(true);
+  const endCheck = async () => {
+    if (ending) return;
+    setEnding(true);
+    setEndError(null);
+    try {
+      const r = await hub.readyEnd(checkId);
+      setReply(null);
+      setSent(null);
+      setValue(null);
+      setError(null);
+      load.set(r);
+      toTop();
+    } catch (e) {
+      // A server without the route: the control goes, quietly.
+      if (e.status === 404) setCanEnd(false); else setEndError(e.message);
+    } finally {
+      setEnding(false);
+    }
+  };
+  const end = canEnd ? { onEnd: endCheck, busy: ending, error: endError, disabled: busy } : null;
+
   const complete = data?.check?.status === 'complete';
   const target = data?.target?.name;
   return (
@@ -529,9 +601,10 @@ function ReadyCheckRoute({ checkId }) {
               error={error}
               onNext={next}
               onRetry={retryKept}
+              end={end}
             />
           )
-          : <ReadyWaiting data={data} onRetry={load.retry} />)}
+          : <ReadyWaiting data={data} onRetry={load.retry} end={end} />)}
     </HubPage>
   );
 }

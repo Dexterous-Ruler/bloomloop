@@ -106,6 +106,8 @@ export default function TeachApp() {
       code: (params.get('session') ?? '').trim().toUpperCase(),
       contentId: (params.get('content') ?? '').trim(),
       view: (params.get('view') ?? '').trim(),
+      // A question to open in the bank (Batch 8, A3: a class's hardest list).
+      question: (params.get('question') ?? '').trim(),
     };
   });
   const [restoring, setRestoring] = useState(() => Boolean(openedWith.code || openedWith.contentId || openedWith.view));
@@ -195,7 +197,9 @@ export default function TeachApp() {
       };
       const wanted = STEP_IDS.includes(openedWith.view) ? openedWith.view : null;
       const fallback = reopened ? 'live' : loaded ? 'bank' : 'content';
-      setView(wanted && reachable[wanted] ? wanted : fallback);
+      const landing = wanted && reachable[wanted] ? wanted : fallback;
+      setView(landing);
+      if (landing === 'bank' && openedWith.question) setBankFocus(`edit:${openedWith.question}`);
 
       setLost(gone);
       setRestoring(false);
@@ -212,6 +216,7 @@ export default function TeachApp() {
     put('session', lost ? '' : session?.code ?? '');
     put('content', content?.contentId ?? '');
     put('view', view === 'content' ? '' : view);
+    next.delete('question');
     const search = next.toString();
     if (search === window.location.search.replace(/^\?/, '')) return;
     navigate({ search: search ? `?${search}` : '' }, { replace: true });

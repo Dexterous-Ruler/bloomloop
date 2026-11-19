@@ -25,6 +25,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 
+import Figure from '../learn/Figure.jsx';
 import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
 import { KIND_LABEL } from '../lib/kinds.js';
@@ -298,6 +299,8 @@ function Answers({ cq }) {
       {q.stimulus?.kind === 'image' && q.stimulus.url && (
         <figure className="cq-stim cq-stim-img"><img src={q.stimulus.url} alt={q.stimulus.alt || ''} /></figure>
       )}
+      {/* Batch 8: a figure the server drew, with its description and data. */}
+      {q.stimulus?.kind === 'figure' && <Figure figure={q.stimulus} className="cq-fig" />}
 
       <ol className="cq-opts">
         {list(q.options).map((o) => {
