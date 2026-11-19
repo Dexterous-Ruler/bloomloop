@@ -49,6 +49,7 @@ import {
   MAX_GENERATE_QUESTIONS, draftExplanations, explanationText, staffExplanationView,
 } from '../services/hubExplanations.js';
 import { failRun, finishRun, getRun, startRun, updateRun } from '../services/runs.js';
+import { labelHtml, richText } from '../services/richText.js';
 
 const router = express.Router();
 
@@ -219,13 +220,16 @@ router.get('/chapters/:contentId/explanations', async (req, res, next) => {
     for (const q of questions) {
       const e = held.get(String(q._id)) ?? null;
       counts[e ? e.status : 'none'] += 1;
+      // The stem as HTML beside its text, as a student is shown it: a formula in
+      // it is what the explanation explains, and as plain text it reads as TeX.
       out.push({
-        questionId: String(q._id), text: q.text, topic: q.topic ?? '', bloom: q.bloom, kind: q.kind ?? 'mcq', status: q.status,
+        questionId: String(q._id), text: q.text, textHtml: (await richText(String(q.text ?? ''))).html,
+        topic: q.topic ?? '', topicHtml: labelHtml(q.topic ?? ''), bloom: q.bloom, kind: q.kind ?? 'mcq', status: q.status,
         explanation: await staffExplanationView(e),
       });
     }
     res.json({
-      chapter: { id: String(ctx.content._id), title: ctx.content.title ?? '' },
+      chapter: { id: String(ctx.content._id), title: ctx.content.title ?? '', titleHtml: labelHtml(ctx.content.title ?? '') },
       canEdit: ctx.canEdit,
       questions: out,
       counts,

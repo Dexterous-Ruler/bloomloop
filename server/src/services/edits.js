@@ -43,6 +43,16 @@ const levelsOffering = (kind) => LEVELS.filter((l) => kindSuitsLevel(kind, l));
 const trimmed = (v) => (typeof v === 'string' ? collapse(v) : v);
 
 /**
+ * A question's text keeps its lines. A fenced block of code is lines (the
+ * renderer finds the fence only at the start of one), and so is a worked layout
+ * or a passage set out in paragraphs: run onto one line, the code comes back as
+ * raw backticks on every screen. Only what no reader sees goes: Windows line
+ * ends, spaces left at the end of a line, and blank lines before and after.
+ * Spaces inside a line stay, since code is indented with them.
+ */
+const multiline = (v) => String(v).replace(/\r\n?/g, '\n').replace(/[ \t\f\v]+$/gm, '').replace(/^\n+|\n+$/g, '');
+
+/**
  * Collapse the whitespace in every string a question carries, without ever
  * removing one. A blank row the teacher left behind stays a blank row, so the
  * validator can name it ("mcq has an empty option") and the complaint lands
@@ -51,7 +61,7 @@ const trimmed = (v) => (typeof v === 'string' ? collapse(v) : v);
  */
 function tidied(q) {
   const out = { ...q };
-  if (typeof out.text === 'string') out.text = collapse(out.text);
+  if (typeof out.text === 'string') out.text = multiline(out.text);
   // tokens, columns and a grid's row labels are read by position, which is one
   // more reason nothing here ever drops an entry: a hot text's answer is a list
   // of token indices, and losing one token would move every index after it.
@@ -384,10 +394,14 @@ export function splitQuestion(q) {
   }
 
   // Two rows with identical wording read as a duplicate in the bank and on the
-  // phone, so where the halves share a stem they are numbered.
+  // phone, so where the halves share a stem they are numbered. A stem of
+  // several lines gets the number on a line of its own: on the end of a code
+  // block's closing fence it would stop the fence closing. mergeQuestions
+  // strips it either way.
   if (parts[0].text === parts[1].text) {
-    parts[0].text = `${text} (part 1)`;
-    parts[1].text = `${text} (part 2)`;
+    const gap = String(text).includes('\n') ? '\n\n' : ' ';
+    parts[0].text = `${text}${gap}(part 1)`;
+    parts[1].text = `${text}${gap}(part 2)`;
   }
 
   for (const part of parts) {

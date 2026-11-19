@@ -1393,6 +1393,47 @@ listed as open.
 any screen; two server processes. The full list is under "Not covered", "Phase 7,
 offline-first".
 
+## The client session's server asks (19 November 2026)
+
+Eight small server changes (`docs/CHANGELOG.md`, the entry of that name), each pinned by
+a unit test; no new end-to-end script, and no existing check changed. 18 new tests in
+4 new suites:
+
+| File | New tests | Pins |
+|---|---|---|
+| `test/edits.test.js` | 4 | A hand-written question keeps its line breaks and indentation through an edit and when written from scratch (only line ends, trailing spaces and blank lines around it tidied; other fields still collapse), and its fenced code renders as one code block with no backticks left; a text of blank lines is still "missing text"; a split of a stem of several lines numbers each half on its own line, the fence still closes, and a merge takes the number off |
+| `test/hubTutor.test.js` | 1 | The staff tutor view's `textHtml`, `topicHtml` and each option's and feedback's `optionHtml` render a formula, including feedback whose option is gone |
+| `test/hubLessons.test.js` | 2 | A staff lesson view's questions carry `textHtml`; `fieldsHtml` renders texts and lists key for key, and `translationView` carries `fieldsHtml` |
+| `test/hubSeams.test.js` | 3 | A lesson's `lastAnswer`: null before an answer (no key anywhere) and in a staff preview; the latest lesson answer after two, with its key, explanation and feedback, a later practice answer not counted; the key in the positions shown, from the answer's snapshot; held back, with `heldNote`, while a room is asking the question |
+| `test/hubPractice.test.js` | 3 | The error log's prerequisites say `onYourClasses` (true on the student's class, false for an earlier chapter) and a staff read has none; the Bloom levels counted by hand now and a month ago, `change` and every sentence, typed-roll, kept, class-vote and poll answers left out; the same over the store, another student's attempts and an unverified room answer left out |
+| `test/hubPaths.test.js` | 0 (3 asserts in the home test) | The hub home carries `bloomLevels` |
+| `test/evidence.test.js` | 1 | A kept, not-counted answer reaches the staff analytics list with its `detail`, `final: false` and null mark; a student's own read has no `detail`, `auto` or snapshot |
+| `test/bankQuestion.test.js` (new) | 4 | `GET /api/bank/question/:id` over HTTP on the in-process store: the owner (and `canEdit`), a draft, the HOD (read only, its department answered in-process), and the same 404 word for word for another professor, the shared key, a malformed id, a missing id and "stats" |
+
+Run twice through the offline runner (`verify-p6.sh`) on the working tree over
+`eb397c5`. The first run passed every suite but `offline.mjs`, which stopped at
+"timeout waiting for server:result" in its grace-window section (the socket answer
+path, which none of these changes touches, under a moved clock); the second run passed
+every suite, `offline.mjs` included, every exit code 0, and every script that answers
+the Auth calls itself said no request left the machine. The second run's figures:
+
+| Suite | Result |
+|---|---|
+| Unit (`npm test`) | 1057 / 1057, 246 suites (1039 and 242 in the last run before these changes: the 18 new tests and 4 new suites) |
+| Migrations | 1457 / 1457 |
+| `liveloop`, `security`, `review`, `evidence` | 41, 13, 83, 37: all passed |
+| Resume, integrity | 7 and 6 mandated steps, 0 failures |
+| Question kinds round trip | 16 kinds, 64 checks, 0 failures |
+| `bank`, `kinds`, `media`, `items` | 73, 43, 67, 49: all passed |
+| `roster`, `records`, `modes`, `insights` | 80, 97, 101, 66: all passed |
+| `outcomes`, `attainment`, `acceptance4`, `decisions` | 87, 73, 76, 79: all passed |
+| `classquestion`, `misconceptions`, `honesty`, `keysafety` | 76, 54, 66, 43: all passed |
+| `hub`, `practice`, `paths`, `lessons`, `tutor` | 78, 78, 88, 100, 84: all passed, unchanged |
+| `offline`, `laptop`, `recordsync` | 94, 79, 38: all passed |
+
+**Not run:** anything against Supabase, Mongo or a model; a real sign-in; any screen.
+`scripts/smoke.mjs` was not run.
+
 ## Checked by hand in the browser
 
 These were checked on a local server with `--env-file` holding a generated teacher key,

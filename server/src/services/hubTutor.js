@@ -80,7 +80,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { config, hasGemini } from '../config.js';
 import { LABEL as KIND_LABEL, toOriginalResponse } from '../questionTypes.js';
 import { holdsContact } from './roster.js';
-import { richText } from './richText.js';
+import { labelHtml, richText } from './richText.js';
 import { slidesOfTopic } from './hubTopics.js';
 import { attemptOrder, itemKeyOf } from './hubElo.js';
 import { LABELLED_KINDS, optionTexts, textKey, wrongIdxs } from './misconceptions.js';
@@ -860,10 +860,12 @@ export async function staffHintView(row, question, { opened = 0 } = {}) {
 export async function staffFeedbackView(row, question, { opened = 0 } = {}) {
   const place = feedbackPlace(row, question);
   const leak = answerLeak(question, row.text);
+  const option = place ? place.option : row.option;
   return {
     id: String(row._id),
     optionIdx: place ? place.optionIdx : null,
-    option: place ? place.option : row.option,
+    option,
+    optionHtml: (await richText(String(option ?? ''))).html,
     text: row.text,
     textHtml: (await richText(row.text)).html,
     provenance: row.provenance,
@@ -892,16 +894,22 @@ export async function staffQuestionTutor(question, { hints = [], feedback = [], 
     .map((h) => staffHintView(h, question, { opened: openedOf(h._id) })));
   const fviews = await Promise.all(feedback.map((f) => staffFeedbackView(f, question, { opened: openedOf(f._id) })));
   const kind = question.kind ?? 'mcq';
-  const options = feedbackOptions(question).map((o) => ({
+  // Each option and the stem as HTML too, as a student is shown them: a formula
+  // in either is what the professor is writing feedback about, and as plain
+  // text it reads as its TeX source.
+  const options = await Promise.all(feedbackOptions(question).map(async (o) => ({
     optionIdx: o.optionIdx,
     option: o.option,
+    optionHtml: (await richText(String(o.option ?? ''))).html,
     feedback: fviews.find((f) => f.applies && f.optionIdx === o.optionIdx) ?? null,
-  }));
+  })));
   const servedSteps = servableLadder(question, hints).map((h) => h.step);
   return {
     questionId: String(question._id),
     text: question.text,
+    textHtml: (await richText(String(question.text ?? ''))).html,
     topic: question.topic ?? '',
+    topicHtml: labelHtml(question.topic ?? ''),
     bloom: question.bloom,
     kind,
     kindLabel: KIND_LABEL[kind] ?? kind,

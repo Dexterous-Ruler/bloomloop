@@ -30,7 +30,8 @@ import {
   NO_QUESTION, chooseNext, cleanAttemptId, feedbackFor, nextQuestion, onceServable, practisable, recordAttempt, studentScope,
 } from '../src/services/hubPractice.js';
 import {
-  activityOf, classProgress, dueList, errorLogFor, rosterAccounts, studentProgress, studentProgressForStaff,
+  LEVELS_MONTH_DAYS, activityOf, bloomLevelsFor, classProgress, dueList, errorLogFor, levelFigures, rosterAccounts, studentProgress,
+  studentProgressForStaff,
 } from '../src/services/hubProgress.js';
 import {
   BATCH, MAX_MODEL_EXPLANATION, OFFLINE_NOTE, buildExplanationPrompt, draftExplanations, explanationForStudent, explanationInput,
@@ -505,6 +506,100 @@ describe('progress, the due list and the error log, for the student and for staf
     assert.equal(one.errors.entries[0].questionId, String(by['F apply?']._id));
     assert.match(one.errors.entries[0].sentence, /when they get/);
     assert.deepEqual(activityOf([], at(0)).byMode, { practice: 0, exam: 0, getready: 0, review: 0, lesson: 0 });
+  });
+});
+
+// The client session's asks of 19 Nov 2026: the error log's prerequisites say
+// which are on the student's classes, as the topic view does; and the home's
+// "Your Bloom levels", now and a month ago, from the student's own answers only.
+describe('the error log\'s prerequisites, and the Bloom levels now and a month ago', () => {
+  test('each prerequisite says whether its chapter is on the student\'s classes; a staff read says nothing of it', async () => {
+    const { repo, cls, framing, routing, by } = await fixture();
+    // An earlier semester's chapter of the same professor, on none of Asha's classes.
+    const earlier = await repo.createContent({ title: 'Signals', kind: 'syllabus', rawText: 'Bits are signals.', topics: ['Bits'], ownerId: PROF });
+    await syncTopics(repo, earlier);
+    const [bits] = await repo.listChapterTopics(earlier._id);
+    await repo.addTopicLink({ ownerId: PROF, prerequisiteId: routing._id, topicId: framing._id, provenance: 'professor', state: 'confirmed' });
+    await repo.addTopicLink({ ownerId: PROF, prerequisiteId: bits._id, topicId: framing._id, provenance: 'professor', state: 'confirmed' });
+    await recordAttempt(repo, asha, { attemptId: 'prereq-0001', questionId: String(by['F apply?']._id), topicId: String(framing._id), response: 1 }, { now: at(0) });
+    const [entry] = (await errorLogFor(repo, asha)).entries;
+    const said = entry.prerequisites.map((p) => [p.name, p.depth, p.onYourClasses]).sort();
+    assert.deepEqual(said, [['Bits', 1, false], ['Routing', 1, true]]);
+    const listStudents = async () => [asha];
+    const [person] = await rosterAccounts(repo, cls, { listStudents });
+    const staff = await studentProgressForStaff(repo, cls, person.roster, { listStudents, now: at(1) });
+    assert.ok(staff.errors.entries[0].prerequisites.length > 0);
+    assert.ok(staff.errors.entries[0].prerequisites.every((p) => !('onYourClasses' in p)));
+  });
+
+  const hub = (bloom, correct, minutes, over = {}) => ({ _id: `h${minutes}${bloom}`, mode: 'practice', bloom, correct, createdAt: iso(minutes), ...over });
+  const room = (bloom, correct, minutes, over = {}) => ({
+    _id: `r${minutes}${bloom}`, bloom, correct, final: true, accountVerified: true, classQuestionId: null, answeredAt: iso(minutes), ...over,
+  });
+  const DAY = 24 * 60;
+
+  test('per level, right of asked now and a month ago, each cumulative to its moment, counted by hand', () => {
+    const now = at(40 * DAY);
+    const out = levelFigures({
+      now,
+      hubAttempts: [
+        // Apply: 3 of 4 a month ago, then 3 right more: 6 of 7 now.
+        hub('apply', true, 0), hub('apply', true, 1), hub('apply', false, 2), hub('apply', true, 3),
+        hub('apply', true, 35 * DAY), hub('apply', true, 36 * DAY), hub('apply', true, 37 * DAY),
+        // Remember: two answers only, both lately.
+        hub('remember', true, 38 * DAY), hub('remember', false, 39 * DAY),
+        // Not counted: no level, a poll.
+        hub('unknown', true, 5), hub('remember', true, 6, { ungraded: true, correct: null }),
+      ],
+      roomAnswers: [
+        // Analyse: 1 of 3 a month ago (room), 1 of 4 now.
+        room('analyse', true, 10), room('analyse', false, 11), room('analyse', false, 12), room('analyse', false, 38 * DAY),
+        // Never counted: typed without signing in, kept and not counted, a class vote, a poll.
+        room('analyse', true, 13, { accountVerified: false }), room('analyse', true, 14, { final: false }),
+        room('analyse', true, 15, { classQuestionId: 'cq1' }), room('analyse', true, 16, { ungraded: true, correct: null }),
+      ],
+    });
+    assert.equal(out.monthAgo, new Date(now.getTime() - LEVELS_MONTH_DAYS * 86400000).toISOString());
+    assert.deepEqual(out.levels.map((l) => l.level), ['remember', 'understand', 'apply', 'analyse', 'evaluate', 'create']);
+    const by = Object.fromEntries(out.levels.map((l) => [l.level, l]));
+    assert.deepEqual([by.apply.now.right, by.apply.now.answers, by.apply.monthAgo.right, by.apply.monthAgo.answers], [6, 7, 3, 4]);
+    // 86% now against 75%: up 11 points.
+    assert.equal(by.apply.change, 11);
+    assert.equal(by.apply.sentence, '6 of 7 right at Apply (86%), up 11 percentage points from 3 of 4 (75%) a month ago.');
+    assert.deepEqual([by.analyse.now.right, by.analyse.now.answers, by.analyse.monthAgo.right, by.analyse.monthAgo.answers], [1, 4, 1, 3]);
+    assert.equal(by.analyse.change, -8);
+    assert.match(by.analyse.sentence, /^1 of 4 right at Analyse \(25%\), down 8 percentage points from 1 of 3 \(33%\) a month ago\.$/);
+    assert.deepEqual([by.remember.now.answers, by.remember.monthAgo.answers, by.remember.change, by.remember.provisional], [2, 0, null, true]);
+    assert.equal(by.remember.sentence, '1 of 2 right at Remember so far: too few answers to say much yet.');
+    assert.deepEqual([by.create.now.answers, by.create.now.accuracy, by.create.change], [0, null, null]);
+    assert.equal(by.create.sentence, 'No answers at Create yet.');
+    assert.match(out.note, /own answers a month ago only/);
+    // Own data only: no class figure, no rank, no band.
+    assert.deepEqual(Object.keys(out.levels[0]).sort(), ['change', 'label', 'level', 'monthAgo', 'now', 'provisional', 'sentence']);
+    assert.doesNotMatch(JSON.stringify(out), /\brank|average|streak|Needs support|Excelling|Developing/i);
+  });
+
+  test('over the store: hub attempts and the student\'s signed-in room answers, nobody else\'s', async () => {
+    const { repo, cls, content, framing, by } = await fixture();
+    const t = String(framing._id);
+    await recordAttempt(repo, asha, { attemptId: 'level-0001', questionId: String(by['F apply?']._id), topicId: t, response: 0 }, { now: at(0) });
+    await recordAttempt(repo, asha, { attemptId: 'level-0002', questionId: String(by['F apply?']._id), topicId: t, response: 1 }, { now: at(5) });
+    await recordAttempt(repo, bilal, { attemptId: 'level-0003', questionId: String(by['F apply?']._id), topicId: t, response: 0 }, { now: at(5) });
+    const roomRow = await repo.createSession({ code: 'LEVELS', contentId: content._id, classId: cls._id, ownerId: PROF });
+    const q = by['F evaluate?'];
+    const row = (key, over) => repo.recordAnswer({
+      sessionId: roomRow._id, answerKey: key, rollNo: '21CS01', accountId: asha.id, questionId: String(q._id), contentId: String(content._id),
+      topic: 'Framing', bloom: 'evaluate', kind: 'mcq', questionSnapshot: { id: String(q._id), text: q.text, kind: 'mcq', options: q.options, answerIdx: 0 },
+      response: 0, correct: true, score: 1, final: true, answeredAt: iso(6), ...over,
+    });
+    await row('k-signed-in', { accountVerified: true });
+    await row('k-typed', { accountVerified: false });
+    const out = await bloomLevelsFor(repo, asha, { now: at(10) });
+    const level = (l) => out.levels.find((x) => x.level === l);
+    assert.deepEqual([level('apply').now.right, level('apply').now.answers], [1, 2]);
+    assert.deepEqual([level('evaluate').now.right, level('evaluate').now.answers], [1, 1]);
+    // A month before at(10) there was nothing yet.
+    assert.ok(out.levels.every((l) => l.monthAgo.answers === 0));
   });
 });
 

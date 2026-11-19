@@ -15,6 +15,9 @@
 //   - each goal's progress;
 //   - the refresher paths from their Get Ready checks (services/hubGetReady.js);
 //   - their weeks: days practised and rested, no streak (services/hubReview.js);
+//   - their right answers of those asked at each Bloom level, now and a month
+//     ago, from the hub and their signed-in room answers (hubProgress.js
+//     levelFigures);
 //   - the sentence that their professor can see their progress (H17).
 // Never a class average, a rank, coins or a streak, and no band name.
 //
@@ -27,7 +30,7 @@ import { labelHtml } from './richText.js';
 import { studentClasses, notFound } from './hubAccess.js';
 import { OTHER_CHAPTERS, classHead } from './hubViews.js';
 import { stateFrom, studentScope, topicModels, topicRef } from './hubPractice.js';
-import { BASIS_NOTE, STUDENT_NOTICE, classScope, consistencyFor } from './hubProgress.js';
+import { BASIS_NOTE, LEVELS_BASIS, LEVELS_NOTE, STUDENT_NOTICE, bloomLevelsFor, classScope, consistencyFor } from './hubProgress.js';
 import { activePaths } from './hubGetReady.js';
 import { isRecordId } from '../ids.js';
 
@@ -289,6 +292,7 @@ export async function hubHome(repo, account, { now = new Date() } = {}) {
     goals: await part('goals', () => goalsFor(repo, account, { now, states }), { goals: [], note: GOALS_NOTE, max: MAX_GOALS }),
     paths: await part('refresher paths', async () => ({ paths: await activePaths(repo, account) }), { paths: [] }),
     weeks: await consistencyFor(repo, account, { now, weeks: HOME_WEEKS }),
+    bloomLevels: await part('Bloom levels', () => bloomLevelsFor(repo, account, { now }), { levels: [], basis: LEVELS_BASIS, note: LEVELS_NOTE }),
     ...(classes.length ? {} : { empty: 'None of your classes is on the hub yet. Your professor adds you to a class by your roll number.' }),
   };
 }

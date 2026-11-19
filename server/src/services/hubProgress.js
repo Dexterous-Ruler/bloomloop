@@ -36,14 +36,14 @@
 // Everything is worked out per request from the stored evidence, as attainment
 // is, and nothing is written.
 
-import { LABEL as LEVEL_LABEL } from '../bloom.js';
+import { LEVELS, LABEL as LEVEL_LABEL } from '../bloom.js';
 import { forStudent, score } from '../questionTypes.js';
 import { ownerOf } from '../ownership.js';
 import { rollKey } from './accounts.js';
 import { allAnswers, shownQuestion } from './evidence.js';
 import { labelHtml, phoneRich } from './richText.js';
 import { prerequisiteChain } from './hubGraph.js';
-import { STATES, STATE_LABEL } from './hubElo.js';
+import { MIN_ANSWERS_FOR_ESTIMATE, STATES, STATE_LABEL } from './hubElo.js';
 import {
   CONSISTENCY_NOTE, RATING_RULE, REVIEW_SET_SIZE, UPCOMING_DAYS, indiaDay, weeklyConsistency,
 } from './hubReview.js';
@@ -110,6 +110,101 @@ export async function consistencyFor(repo, account, { now = new Date(), weeks = 
   return { weeks: weeklyConsistency(attempts, { now, weeks }), note: CONSISTENCY_NOTE };
 }
 
+/* ---------------------------------------------------------- Bloom levels -- */
+
+/** How far back the home's level figures compare with: "a month ago". */
+export const LEVELS_MONTH_DAYS = 30;
+export const LEVELS_BASIS = 'From your answers in the hub and the ones you gave in class rooms while signed in on your phone.';
+export const LEVELS_NOTE = 'Compared with your own answers a month ago only. Nobody else is in these figures.';
+
+const pct = (x) => `${Math.round(x * 100)}%`;
+const ofRight = (c) => `${c.right} of ${c.answers}`;
+
+/** One level's sentence, from its counts now and a month ago. */
+function levelSentence(label, now, then, change) {
+  if (!now.answers) return `No answers at ${label} yet.`;
+  const head = `${ofRight(now)} right at ${label}`;
+  if (now.answers < MIN_ANSWERS_FOR_ESTIMATE) return `${head} so far: too few answers to say much yet.`;
+  const said = `${head} (${pct(now.accuracy)})`;
+  if (!then.answers) return `${said}. You had no answers at this level a month ago.`;
+  if (change === null) return `${said}. A month ago you had too few answers at this level to compare with.`;
+  if (change === 0) return `${said}, the same as a month ago.`;
+  return `${said}, ${change > 0 ? 'up' : 'down'} ${Math.abs(change)} percentage point${Math.abs(change) === 1 ? '' : 's'} `
+    + `from ${ofRight(then)} (${pct(then.accuracy)}) a month ago.`;
+}
+
+/**
+ * Per Bloom level, the student's own right answers of those asked as they
+ * stand now and as they stood a month ago (the home's "Your Bloom levels",
+ * with a tick where each level was). Pure.
+ *
+ * Counted: their hub attempts that count (`hubAttempts`, through
+ * countedAttempts; `hubAttemptsThen` the same as they counted a month ago, so a
+ * self-test still open then adds nothing then) and their room answers a phone
+ * signed in as them sent, final, marked and not a class vote (decision 7: a
+ * roll number typed without signing in proves nothing about who answered).
+ * Each figure is cumulative to its moment, so the tick is where the bar stood.
+ * `change` is in percentage points, and only when both moments rest on enough
+ * answers to say anything (MIN_ANSWERS_FOR_ESTIMATE, the hub's own floor for a
+ * first estimate). Own data only: no class figure, no rank, no band.
+ */
+export function levelFigures({ hubAttempts = [], hubAttemptsThen = hubAttempts, roomAnswers = [], now = new Date(), monthAgo = null } = {}) {
+  const cut = monthAgo ?? new Date(now.getTime() - LEVELS_MONTH_DAYS * 86400000);
+  const until = cut.getTime();
+  const hubGraded = (a) => LEVELS.includes(a?.bloom) && a.ungraded !== true && typeof a.correct === 'boolean';
+  const roomGraded = (a) => LEVELS.includes(a?.bloom) && a.accountVerified === true && a.final !== false
+    && a.ungraded !== true && !a.classQuestionId && typeof a.correct === 'boolean';
+  const by = (rows) => {
+    const cells = Object.fromEntries(LEVELS.map((l) => [l, { answers: 0, right: 0 }]));
+    for (const a of rows) {
+      cells[a.bloom].answers += 1;
+      if (a.correct) cells[a.bloom].right += 1;
+    }
+    for (const c of Object.values(cells)) c.accuracy = c.answers ? c.right / c.answers : null;
+    return cells;
+  };
+  const room = roomAnswers.filter(roomGraded);
+  const nowCells = by([...hubAttempts.filter(hubGraded), ...room]);
+  const thenCells = by([
+    ...hubAttemptsThen.filter((a) => hubGraded(a) && Date.parse(a.createdAt ?? '') <= until),
+    ...room.filter((a) => Date.parse(a.answeredAt ?? '') <= until),
+  ]);
+  return {
+    levels: LEVELS.map((level) => {
+      const n = nowCells[level];
+      const t = thenCells[level];
+      const enough = n.answers >= MIN_ANSWERS_FOR_ESTIMATE && t.answers >= MIN_ANSWERS_FOR_ESTIMATE;
+      const change = enough ? Math.round(n.accuracy * 100) - Math.round(t.accuracy * 100) : null;
+      return {
+        level,
+        label: LEVEL_LABEL[level],
+        now: n,
+        monthAgo: t,
+        change,
+        provisional: n.answers < MIN_ANSWERS_FOR_ESTIMATE,
+        sentence: levelSentence(LEVEL_LABEL[level], n, t, change),
+      };
+    }),
+    monthAgo: cut.toISOString(),
+    basis: LEVELS_BASIS,
+    note: LEVELS_NOTE,
+  };
+}
+
+/** The student's own level figures (levelFigures), read from the store. */
+export async function bloomLevelsFor(repo, account, { now = new Date() } = {}) {
+  const monthAgo = new Date(now.getTime() - LEVELS_MONTH_DAYS * 86400000);
+  const [all, roomAnswers] = await Promise.all([
+    repo.listHubAttempts({ accountId: String(account.id) }),
+    verifiedRoomAnswers(repo, account.id),
+  ]);
+  const [hubAttempts, hubAttemptsThen] = await Promise.all([
+    countedAttempts(repo, all, now),
+    countedAttempts(repo, all.filter((a) => Date.parse(a.createdAt ?? '') <= monthAgo.getTime()), monthAgo),
+  ]);
+  return levelFigures({ hubAttempts, hubAttemptsThen, roomAnswers, now, monthAgo });
+}
+
 /* ------------------------------------------------------------- error log -- */
 
 /**
@@ -128,8 +223,15 @@ function roomAnswersInScope(rows, scope) {
   return out;
 }
 
-/** Each topic's confirmed prerequisites, nearest first, live ones only, read once per professor. */
-function prerequisiteReader(repo) {
+/**
+ * Each topic's confirmed prerequisites, nearest first, live ones only, read once
+ * per professor. With `reachable` (a student's placed chapter ids, lower case),
+ * each says whether its chapter is on one of their classes, as the topic view
+ * does (hubViews.js topicView): a prerequisite from an earlier semester's
+ * chapter is still named, and a screen must not offer to open a topic that
+ * answers 404.
+ */
+function prerequisiteReader(repo, { reachable = null } = {}) {
   const links = new Map();
   const done = new Map();
   return async (entry) => {
@@ -142,7 +244,10 @@ function prerequisiteReader(repo) {
     const out = chain
       .map((c) => ({ c, t: records.get(c.topicId) }))
       .filter(({ t }) => t && !t.retiredAt)
-      .map(({ c, t }) => ({ id: String(t._id), name: t.name, nameHtml: labelHtml(t.name), depth: c.depth }));
+      .map(({ c, t }) => ({
+        id: String(t._id), name: t.name, nameHtml: labelHtml(t.name), depth: c.depth,
+        ...(reachable ? { onYourClasses: reachable.has(lower(t.contentId)) } : {}),
+      }));
     done.set(key, out);
     return out;
   };
@@ -229,7 +334,9 @@ async function errorLogOver(repo, { scope, hubAttempts, roomRows, audience = 'st
   const wanted = entries
     .filter((e) => (!status || e.status === status) && (!topicId || lower(e.topicId) === lower(topicId)))
     .reverse();
-  const prerequisites = prerequisiteReader(repo);
+  // Only a student's own log says which prerequisites are on their classes: a
+  // staff read is scoped to one class, which says nothing of the student's others.
+  const prerequisites = prerequisiteReader(repo, { reachable: audience === 'student' ? new Set(scope.chapters.keys()) : null });
   const keyHeld = audience === 'student' ? await keyHeldReader(repo, scope, wanted) : async () => null;
   const explained = new Map();
   const views = [];

@@ -50,6 +50,7 @@ import { cleanRunId, failRun, finishRun, getRun, startRun, updateRun } from '../
 import { NO_QUESTION, PRACTICE_MODES, STUDENT_ONLY, stateFrom, studentScope, topicEntries, topicModels } from '../services/hubPractice.js';
 import { lessonQuestion, withLock } from '../services/hubLessons.js';
 import { closedQuestions } from '../services/hubClosed.js';
+import { labelHtml } from '../services/richText.js';
 import {
   DRAFT_NOTE, FEEDBACK_KINDS, HINT_MODES, MAX_GENERATE_QUESTIONS, NO_HINTS_HERE, OFFLINE_NOTE, STEP_KINDS,
   answerLeak, cannotDraft, defaultSlides, feedbackOptions, feedbackPlace, serveHint, shownHints, slidesFrom, slidesRef,
@@ -245,7 +246,7 @@ router.get('/chapters/:contentId/hints', async (req, res, next) => {
     })));
     const sum = (f) => out.reduce((n, q) => n + f(q), 0);
     res.json({
-      chapter: { id: String(ctx.content._id), title: ctx.content.title ?? '' },
+      chapter: { id: String(ctx.content._id), title: ctx.content.title ?? '', titleHtml: labelHtml(ctx.content.title ?? '') },
       canEdit: ctx.canEdit,
       questions: out,
       counts: {

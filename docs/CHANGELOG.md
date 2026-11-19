@@ -11,6 +11,44 @@ indicators and the review fixes) are committed as `2f4fd2b`, the Phase 5 follow-
 `0032`), is committed as `46bf6f9`** on top of the Phase 6 docs, and its docs in the
 commit after it.
 
+## Unreleased: the client session's server asks (19 November 2026)
+
+Eight small server changes the UI session asked for while building the hub screens
+(`docs/UI_REBUILD.md`, "Wanted from the server"). Server and docs only, no migration;
+every reply change is additive. Shapes: `docs/API.md`, in each route's own section. Not
+run against Supabase, Mongo or a model.
+
+- **A question keeps its line breaks.** `services/edits.js` no longer runs a
+  hand-written question's `text` onto one line (write your own, every edit, split,
+  merge): a fenced code block now renders as code instead of raw backticks. Only line
+  ends, spaces at the end of a line and blank lines around the text are tidied; other
+  fields are collapsed as before. A split of a stem of several lines numbers each half
+  on a line of its own, so a closing fence still closes.
+- **HTML on the staff review queues.** Explanations, hints and feedback, lessons and
+  translations now send `textHtml`, `topicHtml`, `optionHtml`, a chapter's `titleHtml`,
+  and a translation's `englishHtml` and `fieldsHtml` beside the plain text, from the same
+  renderer as the student views.
+- **Your Bloom levels on the hub home.** `GET /api/hub/home` gains `bloomLevels`: per
+  level, the student's own right answers of those asked now and a month ago, with N, a
+  change in percentage points and a sentence, from their counted hub attempts and their
+  signed-in room answers. Own data only.
+- **A lesson remembers its answers.** Each question of a student's lesson carries
+  `lastAnswer`: their latest lesson answer to it, with the key, the explanation and the
+  feedback the reply showed, held back while the question is closed to them; `null`
+  until they answer it.
+- **`onYourClasses` on the error log's prerequisites**, as on the topic view.
+- **One bank question by id.** `GET /api/bank/question/:id`, by the bank's rule: the
+  owner reads and may edit, the HOD reads, everyone else the same 404.
+- **`detail` on the staff analytics answer list** was already sent (the teacher's
+  answer item has carried it since Phase 1); now pinned by a test and said in the docs,
+  so kept-and-not-counted answers can be marked there. A student's own read never has it.
+- **Docs:** `optionFeedback[].option` is the option's words, not an index (the code was
+  right); its `language` is an object, a hint's a string.
+
+Tests: `server/test/bankQuestion.test.js` (new), and new tests in `edits.test.js`,
+`hubTutor.test.js`, `hubLessons.test.js`, `hubSeams.test.js`, `hubPractice.test.js`,
+`hubPaths.test.js` and `evidence.test.js` (`docs/TESTING.md`).
+
 ## Unreleased: Phase 7, offline-first (19 November 2026)
 
 Server and database only: `0030` to `0032`, four new socket events and new fields on five

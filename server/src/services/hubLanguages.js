@@ -56,7 +56,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { config, hasGemini } from '../config.js';
 import { isRecordId } from '../ids.js';
 import { BLANK_MARK } from '../questionTypes.js';
-import { readPieces } from './richText.js';
+import { readPieces, richText } from './richText.js';
 import { holdsContact } from './roster.js';
 import { languageSplit } from './honesty.js';
 
@@ -603,8 +603,24 @@ const PROVENANCE_LABEL = {
   professor: 'Written or edited by the professor',
 };
 
+/**
+ * A translation's or an item's fields as HTML, key for key: a text as one HTML
+ * string, a list (a question's options, an example's steps) item for item,
+ * anything else null. The professor checks a translation against the English
+ * side by side, and a formula or a code block shown as its source on either
+ * side is not what a student reads.
+ */
+export async function fieldsHtml(fields) {
+  const one = async (v) => (typeof v === 'string' ? (await richText(v)).html : null);
+  const out = {};
+  for (const [key, value] of Object.entries(fields && typeof fields === 'object' ? fields : {})) {
+    out[key] = Array.isArray(value) ? await Promise.all(value.map(one)) : await one(value);
+  }
+  return out;
+}
+
 /** A translation as a staff screen gets it, beside the English it is checked against now. */
-export function translationView(t, english = null) {
+export async function translationView(t, english = null) {
   const stale = english ? !isCurrent(t, english) : false;
   const check = english && !stale ? checkTranslation(english, t.fields) : null;
   const findings = check ? check.findings : (Array.isArray(t.checks) ? t.checks : []);
@@ -620,6 +636,7 @@ export function translationView(t, english = null) {
     provenanceLabel: t.provenance === 'ai' && t.status === 'draft' ? 'AI draft' : PROVENANCE_LABEL[t.provenance],
     model: t.model ?? null,
     fields: t.fields,
+    fieldsHtml: await fieldsHtml(t.fields),
     madeFrom: t.sourceFields,
     stale,
     ...(stale ? { staleNote: STALE_NOTE } : {}),

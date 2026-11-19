@@ -8,7 +8,8 @@
 // lessons; an HOD reads the department's and changes nothing (403); anyone else
 // gets the same 404 as for something that does not exist, word for word.
 //
-//   GET    /topics/:topicId/lesson               the approved lesson as a student reads it, in their language
+//   GET    /topics/:topicId/lesson               the approved lesson as a student reads it, in their language,
+//                                                with their latest answer to each question it asks
 //                                                (staff: a preview, ?lang=hi|mr|en)
 //   GET    /topics/:topicId/lessons              staff: every version, the one serving first
 //   POST   /topics/:topicId/lessons/generate     owner: write a new version as a draft, in the background (202)
@@ -38,7 +39,7 @@ import { READ_ONLY, assertStaff, hubChapter, hubTopic } from '../services/hubAcc
 import { labelHtml } from '../services/richText.js';
 import { cleanRunId, failRun, finishRun, getRun, startRun, updateRun } from '../services/runs.js';
 import {
-  NO_LESSON, NOTHING_TO_TEACH, lessonQuestion, lessonSource, staffLessonView, studentLessonView, withLock, writeLessonDraft,
+  NO_LESSON, NOTHING_TO_TEACH, attemptSolution, lessonQuestion, lessonSource, staffLessonView, studentLessonView, withLock, writeLessonDraft,
 } from '../services/hubLessons.js';
 import { ORIGINAL, attemptLanguage, isLanguage, languageChoice } from '../services/hubLanguages.js';
 import { attemptStoreConnected, recordHubAttempt } from '../services/hubAttemptBridge.js';
@@ -349,14 +350,9 @@ export const ID_TAKEN = 'That attempt id was used for another answer. Send this 
 async function lessonReply(repo, viewer, attempt, { duplicate, questionId }) {
   const sameQuestion = String(attempt.questionId ?? '').toLowerCase() === String(questionId ?? '').toLowerCase();
   if (duplicate && (attempt.mode !== 'lesson' || !sameQuestion)) throw fail(ID_TAKEN, 409);
-  const qid = String(attempt.questionId ?? attempt.questionSnapshot?.id ?? '');
-  const snap = attempt.questionSnapshot && typeof attempt.questionSnapshot === 'object' ? attempt.questionSnapshot : {};
-  let solution = null;
-  try {
-    solution = score({ ...snap, _id: qid, kind: attempt.kind ?? snap.kind ?? 'mcq' }, attempt.response, hubSeed(viewer.id, qid)).solution ?? null;
-  } catch {
-    solution = null;
-  }
+  // The lesson's reload shows its earlier answers through the same helper, so
+  // the key it shows is the one this reply showed.
+  const solution = attemptSolution(attempt, viewer.id);
   return {
     attemptId: attempt.clientAttemptId ?? attempt.attemptId,
     duplicate,

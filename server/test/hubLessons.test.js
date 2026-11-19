@@ -25,9 +25,9 @@ import {
   topicSection, writeLessonDraft,
 } from '../src/services/hubLessons.js';
 import {
-  ITEM_KINDS, OPTION_KINDS, attemptLanguage, buildTranslationPrompt, checkTranslation, fieldsOf, isCurrent, languageItemStats,
+  ITEM_KINDS, OPTION_KINDS, attemptLanguage, buildTranslationPrompt, checkTranslation, fieldsHtml, fieldsOf, isCurrent, languageItemStats,
   languageShown, localiseQuestion, numbersIn, parseTranslationReply, registerTranslatable, servableTranslations, shownLanguage,
-  sourceHash, translateItems,
+  sourceHash, translateItems, translationView,
 } from '../src/services/hubLanguages.js';
 import {
   PRACTICE_STORE, attemptStoreConnected, connectAttemptStore, listHubAttempts, recordHubAttempt,
@@ -361,6 +361,22 @@ describe('approval gating, and regenerating keeps the approved lesson serving (H
     assert.match(staff.questions.note, /wait for your approval in the bank/);
   });
 
+  // The client session's ask of 19 Nov 2026: a lesson's questions reached the
+  // staff queue as plain text only, so a formula showed as its TeX source.
+  test('the staff view gives each of a lesson\'s questions as HTML too, beside its text', async () => {
+    const { repo, content, sets, bank } = await fixture();
+    await repo.updateQuestion(bank[0]._id, { text: 'Which of these is $\\{1, 2\\}$?' });
+    const lesson = await repo.createTopicLesson({
+      topicId: sets._id, contentId: content._id, ownerId: PROF, version: 1, source: 'slides', model: null,
+      steps: [{ type: 'questions', slides: null, questionIds: [bank[0]._id, bank[1]._id] }], basis: { from: 'chapter-text' }, warnings: [],
+    });
+    const [first, second] = (await staffLessonView(repo, lesson)).steps[0].questions;
+    assert.equal(first.text, 'Which of these is $\\{1, 2\\}$?');
+    assert.match(first.textHtml, /<math/);
+    assert.doesNotMatch(first.textHtml, /\$/);
+    assert.equal(second.textHtml, 'Pick the empty set');
+  });
+
   test('approving or discarding anything but a draft is a 409, and nothing changes', async () => {
     const { repo, content, sets } = await fixture();
     const { lesson } = await writeLessonDraft(repo, { content, topic: sets, viewer: prof });
@@ -400,6 +416,27 @@ describe('the translation check (H12)', () => {
   test('a faithful translation passes', () => {
     const check = checkTranslation(english, good);
     assert.equal(check.ok, true, JSON.stringify(check.findings));
+  });
+
+  // The client session's ask of 19 Nov 2026: the translation queue showed both
+  // sides as plain text only, so a formula read as its TeX source on each.
+  test('staff read a translation and its English as HTML too, field for field', async () => {
+    const englishHtml = await fieldsHtml(english);
+    assert.deepEqual(Object.keys(englishHtml), ['text', 'options']);
+    assert.match(englishHtml.text, /<math/);
+    assert.deepEqual(englishHtml.options, ['2', '3', 'None', 'All 3']);
+    const listed = await fieldsHtml({ 'steps.0.steps': ['$a$', 'b < c'], hint: 7 });
+    assert.match(listed['steps.0.steps'][0], /<math/);
+    assert.equal(listed['steps.0.steps'][1], 'b &lt; c');
+    assert.equal(listed.hint, null);
+    const view = await translationView({
+      _id: 't1', itemKind: 'question', itemId: 'q1', language: 'hi', status: 'draft', provenance: 'professor',
+      fields: good, sourceFields: english, sourceHash: sourceHash(english), checks: [],
+    }, english);
+    assert.deepEqual(view.fields, good);
+    assert.match(view.fieldsHtml.text, /<math/);
+    assert.doesNotMatch(view.fieldsHtml.text, /\$/);
+    assert.equal(view.fieldsHtml.options[2], 'कोई नहीं');
   });
 
   test('a changed number is flagged, naming both', () => {

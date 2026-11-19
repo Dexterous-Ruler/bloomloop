@@ -30,9 +30,10 @@ import { cleanRunId, failRun, finishRun, getRun, startRun, updateRun } from '../
 import { TRANSLATION_NOTE } from '../services/honesty.js';
 import {
   ITEM_KINDS, LANGUAGES, MAX_RUN_ITEMS, MAX_TRANSLATED_FIELD, OFFLINE_NOTE, ORIGINAL, STALE_NOTE, TERMS_NOTE, TRANSLATED_LANGUAGES,
-  checkTranslation, fieldsOf, isCurrent, isLanguage, languageChoice, languageChoices, languageItemStats, sourceHash, translatable,
+  checkTranslation, fieldsHtml, fieldsOf, isCurrent, isLanguage, languageChoice, languageChoices, languageItemStats, sourceHash, translatable,
   translateItems, translationView,
 } from '../services/hubLanguages.js';
+import { labelHtml } from '../services/richText.js';
 import { withLock } from '../services/hubLessons.js';
 import { tutorTranslationItems } from '../services/hubTutor.js';
 import { attemptStoreConnected, listHubAttempts } from '../services/hubAttemptBridge.js';
@@ -147,7 +148,7 @@ function fieldsFrom(raw, english) {
 }
 
 /** Each item with its English and, per language, its translations as staff read them. */
-function itemView(kind, item, rows) {
+async function itemView(kind, item, rows) {
   const english = fieldsOf(kind, item);
   const per = {};
   for (const lang of TRANSLATED_LANGUAGES) {
@@ -155,8 +156,8 @@ function itemView(kind, item, rows) {
     const serving = mine.find((t) => t.status === 'approved') ?? null;
     const drafts = mine.filter((t) => t.status === 'draft');
     per[lang] = {
-      serving: serving ? translationView(serving, english) : null,
-      drafts: drafts.map((t) => translationView(t, english)),
+      serving: serving ? await translationView(serving, english) : null,
+      drafts: await Promise.all(drafts.map((t) => translationView(t, english))),
       shown: serving && isCurrent(serving, english) ? lang : ORIGINAL,
     };
   }
@@ -165,6 +166,7 @@ function itemView(kind, item, rows) {
     id: String(item._id),
     ...(kind === 'lesson' ? { topicId: String(item.topicId), version: item.version, status: item.status } : { status: item.status }),
     english,
+    englishHtml: await fieldsHtml(english),
     note: translatable(kind).note?.(item) ?? null,
     translations: per,
   };
@@ -210,7 +212,7 @@ router.get('/chapters/:contentId/translations', async (req, res, next) => {
       chapterItems(repo, ctx.content),
       repo.listItemTranslations({ contentId: ctx.content._id }),
     ]);
-    const views = items.map(({ kind, item }) => itemView(kind, item, rows.filter((t) => t.itemKind === kind && sameId(t.itemId, item._id))));
+    const views = await Promise.all(items.map(({ kind, item }) => itemView(kind, item, rows.filter((t) => t.itemKind === kind && sameId(t.itemId, item._id)))));
     const counts = Object.fromEntries(TRANSLATED_LANGUAGES.map((lang) => [lang, {
       items: views.length,
       shown: views.filter((v) => v.translations[lang].shown === lang).length,
@@ -219,7 +221,7 @@ router.get('/chapters/:contentId/translations', async (req, res, next) => {
     }]));
     if (only) for (const v of views) for (const lang of TRANSLATED_LANGUAGES) if (lang !== only) delete v.translations[lang];
     res.json({
-      chapter: { id: String(ctx.content._id), title: ctx.content.title ?? '' },
+      chapter: { id: String(ctx.content._id), title: ctx.content.title ?? '', titleHtml: labelHtml(ctx.content.title ?? '') },
       canEdit: ctx.canEdit,
       languages: Object.values(LANGUAGES),
       items: views,
@@ -393,7 +395,7 @@ router.post('/translations', async (req, res, next) => {
       checks: check.findings,
       createdBy: req.viewer.id ?? null,
     });
-    res.status(201).json({ translation: translationView(made, english), ...checkMessage(check) });
+    res.status(201).json({ translation: await translationView(made, english), ...checkMessage(check) });
   } catch (err) {
     next(err);
   }
@@ -431,7 +433,7 @@ router.patch('/translations/:translationId', async (req, res, next) => {
       editedBy: req.viewer.id ?? null,
     }));
     if (!edited) throw fail(TRANSLATION_NOT_FOUND, 404);
-    res.json({ translation: translationView(edited, english), ...checkMessage(check) });
+    res.json({ translation: await translationView(edited, english), ...checkMessage(check) });
   } catch (err) {
     next(err);
   }
@@ -460,7 +462,7 @@ router.post('/translations/:translationId/approve', async (req, res, next) => {
     const approved = await withLock(`translation:${t.itemKind}:${t.itemId}`, () => repo.approveItemTranslation(t._id, { by: req.viewer.id ?? null }));
     if (!approved) throw fail(TRANSLATION_NOT_FOUND, 404);
     res.json({
-      translation: translationView(approved, english),
+      translation: await translationView(approved, english),
       message: `Approved. Students who chose ${LANGUAGES[t.language].name} now see it${before ? ', in place of the one approved before' : ''}.`,
     });
   } catch (err) {
@@ -477,7 +479,7 @@ router.post('/translations/:translationId/discard', async (req, res, next) => {
     const discarded = await withLock(`translation:${t.itemKind}:${t.itemId}`, () => repo.discardItemTranslation(t._id, { by: req.viewer.id ?? null }));
     if (!discarded) throw fail(TRANSLATION_NOT_FOUND, 404);
     res.json({
-      translation: translationView(discarded, ctx.item ? fieldsOf(t.itemKind, ctx.item) : null),
+      translation: await translationView(discarded, ctx.item ? fieldsOf(t.itemKind, ctx.item) : null),
       message: 'Discarded. Students never saw it.',
     });
   } catch (err) {

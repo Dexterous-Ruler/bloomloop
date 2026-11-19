@@ -9,7 +9,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { applyEdit, patchFor, splitQuestion, mergeQuestions } from '../src/services/edits.js';
+import { applyEdit, authorQuestion, patchFor, splitQuestion, mergeQuestions } from '../src/services/edits.js';
+import { richText } from '../src/services/richText.js';
 import { invalidReason } from '../src/questionTypes.js';
 
 const base = { _id: 'q1', contentId: 'c1', topic: 'Photosynthesis', status: 'active', source: 'llm' };
@@ -297,5 +298,54 @@ describe('mergeQuestions', () => {
     const { question, reason } = mergeQuestions(order(), { ...order(), _id: 'q2' });
     assert.equal(question, undefined);
     assert.match(reason, /sits inside the other/);
+  });
+});
+
+// The client session's ask of 19 Nov 2026: a hand-written question's text used to
+// be run onto one line here, so a fenced code block arrived as one line of
+// backticks, `rich` came back {} and every screen showed the raw fence.
+describe('a hand-written question keeps its lines', () => {
+  const CODE = 'What does this print?\n```python\nfor i in range(2):\n    print(i)\n```';
+
+  test('an edit keeps line breaks and indentation, tidying only line ends, trailing spaces and blank lines around it', async () => {
+    const sent = '\r\n  \nWhat does this print?  \r\n```python\t\r\nfor i in range(2):\r\n    print(i)   \r\n```\r\n\r\n';
+    const { question, reason } = applyEdit(mcq(), { text: sent });
+    assert.equal(reason, undefined);
+    assert.equal(question.text, CODE);
+    assert.equal(patchFor(question).text, CODE);
+    // What every screen renders it with: one code block, and no backticks left as text.
+    const shown = await richText(question.text);
+    assert.equal(shown.code, 1);
+    assert.match(shown.html, /<pre/);
+    assert.doesNotMatch(shown.html, /```/);
+  });
+
+  test('a question written from scratch keeps them too; the other fields still collapse', () => {
+    const { question, reason } = authorQuestion({
+      bloom: 'remember', kind: 'mcq', text: `${CODE}\n\n`, options: ['0 then 1  ', ' 1 then  2', '2', 'nothing'], answerIdx: 0,
+    });
+    assert.equal(reason, undefined);
+    assert.equal(question.text, CODE);
+    assert.deepEqual(question.options, ['0 then 1', '1 then 2', '2', 'nothing']);
+  });
+
+  test('a text of blank lines and spaces is still no text', () => {
+    assert.equal(applyEdit(mcq(), { text: ' \r\n \t\n ' }).reason, 'missing text');
+  });
+
+  test('a split of a stem of several lines numbers each half on a line of its own, and a merge takes it off again', async () => {
+    const stem = 'Which of these hold?\n```text\nstep = 1\n```';
+    const { parts, reason } = splitQuestion({ ...multi({ answerIdxs: [0, 1, 4, 5] }), text: stem });
+    assert.equal(reason, undefined);
+    assert.equal(parts[0].text, `${stem}\n\n(part 1)`);
+    assert.equal(parts[1].text, `${stem}\n\n(part 2)`);
+    // The fence still closes, so the code is still code.
+    const shown = await richText(parts[0].text);
+    assert.equal(shown.code, 1);
+    assert.doesNotMatch(shown.html, /```/);
+    const [left, right] = parts.map((p, i) => ({ ...p, _id: `part${i}` }));
+    assert.equal(mergeQuestions(left, right).question.text, stem);
+    // A stem of one line keeps its number on that line, as before.
+    assert.equal(splitQuestion(order()).parts[0].text, `${order().text} (part 1)`);
   });
 });

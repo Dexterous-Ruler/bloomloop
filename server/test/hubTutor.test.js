@@ -371,6 +371,32 @@ describe('serving hints: approval gating, one at a time, recorded, never the ans
     assert.equal(staff.counts.shownToStudents, 2);
   });
 
+  // The client session's ask of 19 Nov 2026: the staff queue sent the stem and the
+  // options as plain text only, so a formula showed as its TeX source there.
+  test('staff read the stem, its topic, each wrong option and its feedback as HTML too, beside the plain text', async () => {
+    const { repo, q } = await fixture();
+    await repo.updateQuestion(q._id, {
+      text: 'Which of these is the set $\\{1, 2\\}$?', topic: 'Sets of $n$ elements', options: ['$\\{1, 2\\}$', '$\\{1, 1\\}$', '(1, 2)', '[1, 2]'], answerIdx: 0,
+    });
+    const changed = await repo.getQuestion(q._id);
+    await repo.addOptionFeedback({ questionId: String(q._id), option: '$\\{1, 1\\}$', optionKey: '$\\{1, 1\\}$', text: 'Count each element of $\\{1, 1\\}$ once.',
+      provenance: 'professor', status: 'approved', approvedAt: iso(0) });
+    await repo.addOptionFeedback({ questionId: String(q._id), option: '$x$', optionKey: '$x$', text: 'An option that is gone.', provenance: 'professor', status: 'approved' });
+    const staff = await staffQuestionTutor(changed, { feedback: await repo.listOptionFeedback([String(q._id)]) });
+    assert.equal(staff.text, changed.text);
+    assert.match(staff.textHtml, /<math/);
+    assert.doesNotMatch(staff.textHtml, /\$/);
+    assert.match(staff.topicHtml, /<math/);
+    assert.deepEqual(staff.options.map((o) => o.option), ['$\\{1, 1\\}$', '(1, 2)', '[1, 2]']);
+    assert.match(staff.options[0].optionHtml, /<math/);
+    assert.equal(staff.options[1].optionHtml, '(1, 2)');
+    assert.match(staff.options[0].feedback.optionHtml, /<math/);
+    assert.match(staff.options[0].feedback.textHtml, /<math/);
+    // Feedback whose option is gone still says which option it was written on.
+    assert.equal(staff.noLongerShown.length, 1);
+    assert.match(staff.noLongerShown[0].optionHtml, /<math/);
+  });
+
   test('feedback on the option chosen: after the attempt; and first, in place of the nudge, when the question comes back', async () => {
     const { repo, sets, q, ladder } = await fixture();
     await ladder(q);

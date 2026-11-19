@@ -370,6 +370,25 @@ describe('listStudentAnswers on the in-process store', () => {
     assert.deepEqual(ids(await listStudentAnswers(repo, { rooms, student: { accountId: null, rollNo: 'S-1' } })), []);
   });
 
+  // The client session's ask of 19 Nov 2026: an answer kept and not counted
+  // (Phase 7) must be markable on the staff analytics answer list, which reads
+  // this function. `detail` is what says so; a student's own read never has it.
+  test('an answer kept and not counted reaches the professor\'s list with its detail; a student\'s own read has no detail', async () => {
+    const { repo, rooms } = await fixture();
+    const KEPT = 'Arrived after the room closed: kept, not counted.';
+    const kept = (await repo.recordAnswer({
+      ...answerRow(question('mcq'), 2, { rollNo: 'S-1' }), _id: undefined, sessionId: rooms[1]._id, answerKey: 'k-kept', accountId: 'acct-1',
+      accountVerified: true, topic: 'T2', bloom: 'understand', final: false, correct: null, score: null, detail: KEPT,
+      autoCorrect: true, autoScore: 1, autoDetail: '', answeredAt: '2026-11-08T09:00:00.000Z',
+    })).answer;
+    const full = await listStudentAnswers(repo, { rooms, student, view: teacher });
+    const item = full.items.find((i) => i.answerId === String(kept._id));
+    assert.deepEqual([item.final, item.correct, item.score, item.detail, item.auto.correct], [false, null, null, KEPT, true]);
+    const own = await listStudentAnswers(repo, { rooms, student });
+    assert.ok(own.items.some((i) => i.answerId === String(kept._id)), 'the student still sees their own answer');
+    assert.ok(own.items.every((i) => !('detail' in i) && !('auto' in i) && !('snapshot' in i)));
+  });
+
   test('redacted unless the caller asks for the teacher\'s view', async () => {
     const { repo, rooms } = await fixture();
     const plain = await listStudentAnswers(repo, { rooms, student });

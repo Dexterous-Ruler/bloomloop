@@ -532,6 +532,10 @@ describe('goals and the hub home (H16, H17)', () => {
     assert.match(home.goals.goals[0].sentence, /0 of 2 topics mastered/);
     assert.equal(home.weeks.weeks.length, 4);
     assert.deepEqual(home.paths.paths, []);
+    // Her Bloom levels, now and a month ago (hubProgress.js levelFigures): the one answer, and none a month before.
+    assert.equal(home.bloomLevels.levels.length, 6);
+    assert.equal(home.bloomLevels.levels.reduce((n, l) => n + l.now.answers, 0), 1);
+    assert.ok(home.bloomLevels.levels.every((l) => l.monthAgo.answers === 0 && typeof l.sentence === 'string'));
     assert.doesNotMatch(JSON.stringify(home), /rank|average|streak|leaderboard|coin|slow learner|Needs support|Excelling|Developing/i);
     const nobody = await hubHome(repo, omar, { now: at(1) });
     assert.equal(nobody.classes.length, 0);

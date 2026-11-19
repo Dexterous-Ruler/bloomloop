@@ -214,6 +214,34 @@ router.get('/:contentId', async (req, res, next) => {
 });
 
 /**
+ * One question of a bank, as the bank lists it, so a screen elsewhere (an error
+ * log entry, an item report, a lesson's question) can link to it on its own.
+ * Any status: a link may point at a draft or a discarded question.
+ *
+ * The bank's own rule, because it carries the same answer key: the owner
+ * reads, an HOD reads (`canEdit` false), and a missing question and another
+ * teacher's are the same 404, word for word. Registered before
+ * /:contentId/stats, which would otherwise take /question/stats for the
+ * statistics of a chapter whose id is "question".
+ */
+router.get('/question/:id', async (req, res, next) => {
+  try {
+    const repo = getRepo();
+    const question = await repo.getQuestion(req.params.id).catch(() => null);
+    if (!question) throw fail('That question was not found.', 404);
+    const content = await repo.getContent(question.contentId).catch(() => null);
+    await assertCanRead(req.viewer, content, 'That question');
+    res.json({
+      question: staffQuestion(question),
+      content: { _id: String(content._id), title: content.title ?? '' },
+      canEdit: await canWrite(req.viewer, content.ownerId ?? null),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * How each question of this bank has done, across every room run on it that the
  * caller may read (services/itemStats.js): attempts, proportion correct, how many
  * chose each option, mean score, a band for the class, the point-biserial and
@@ -221,7 +249,8 @@ router.get('/:contentId', async (req, res, next) => {
  *
  * A read: an HOD may look at a professor's bank. A missing bank and another
  * teacher's are the same 404, word for word. Two segments deep, so GET
- * /:contentId above never answers it, and no other GET here has two segments.
+ * /:contentId above never answers it; GET /question/:id is the one other GET
+ * with two segments, and is registered first.
  */
 router.get('/:contentId/stats', async (req, res, next) => {
   try {

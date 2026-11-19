@@ -45,7 +45,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 
 import { config, hasGemini } from '../config.js';
 import { LEVELS } from '../bloom.js';
-import { PAYLOAD_FIELDS, forStudent, isUngraded } from '../questionTypes.js';
+import { PAYLOAD_FIELDS, forStudent, isUngraded, score } from '../questionTypes.js';
 import { contextForTopic, questionTopicFor, validateItems } from './generate.js';
 import { runChecks } from './checks.js';
 import { holdsContact } from './roster.js';
@@ -56,11 +56,13 @@ import { phoneProvenance, questionProvenance } from './honesty.js';
 import {
   ORIGINAL, localiseQuestion, servableTranslations, shownLanguage,
 } from './hubLanguages.js';
-import { attemptStoreConnected } from './hubAttemptBridge.js';
+import { attemptStoreConnected, listHubAttempts } from './hubAttemptBridge.js';
 import { hubSeed, wasApproved } from './hubPractice.js';
-import { hintsOffered } from './hubHintHook.js';
+import { feedbackAfter, hintsOffered } from './hubHintHook.js';
 import { studentTopicState } from './hubTutor.js';
-import { CLOSED_SENTENCE, closedQuestions } from './hubClosed.js';
+import { CLOSED_SENTENCE, ROOM_HELD_NOTE, closedQuestions } from './hubClosed.js';
+import { attemptOrder } from './hubElo.js';
+import { explanationForStudent } from './hubExplanations.js';
 
 /** One chunk: at most this many characters, and this many slides. */
 export const MAX_CHUNK_CHARS = 900;
@@ -621,6 +623,72 @@ export function lessonQuestion(lesson, questionId, bank) {
 
 const html = async (text) => (await richText(String(text ?? ''))).html;
 
+/**
+ * The right answer to a stored lesson attempt, in the positions the student was
+ * shown: worked out from the attempt's own snapshot, with the hub's one seed,
+ * never from the question as it stands now (which may have been edited since).
+ * Null when the snapshot cannot be marked.
+ */
+export function attemptSolution(attempt, accountId) {
+  const qid = String(attempt?.questionId ?? attempt?.questionSnapshot?.id ?? '');
+  const snap = attempt?.questionSnapshot && typeof attempt.questionSnapshot === 'object' ? attempt.questionSnapshot : {};
+  try {
+    return score({ ...snap, _id: qid, kind: attempt.kind ?? snap.kind ?? 'mcq' }, attempt.response, hubSeed(accountId, qid)).solution ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Why an earlier answer keeps what was right back while its question is closed
+ * to the student (services/hubClosed.js): the reload must not show a key the
+ * hub would not show in practice now.
+ */
+export const ANSWER_HELD = Object.freeze({
+  room: ROOM_HELD_NOTE,
+  'self-test': 'This question is on a self-test you have not handed in yet, so what was right, and why, is shown here '
+    + 'once you hand it in.',
+  getready: 'Your Get Ready check is asking this question now, so what was right, and why, is shown here once you have '
+    + 'answered it there.',
+});
+
+/** Each question's latest answer by this student in a lesson, by question id in lower case. */
+async function lastLessonAnswers(repo, account, questionIds) {
+  if (!questionIds.length) return new Map();
+  const rows = await listHubAttempts(repo, { accountId: String(account.id), questionIds, mode: 'lesson' });
+  const out = new Map();
+  for (const a of [...rows].sort(attemptOrder)) out.set(String(a.questionId ?? '').toLowerCase(), a);
+  return out;
+}
+
+/**
+ * A question's earlier answer as the lesson shows it on a reload: what the
+ * student sent and its mark, with the key, the approved explanation and the
+ * feedback on the option chosen, all of which the student was shown when they
+ * answered. Kept back (`held`) while the question is closed to them.
+ */
+async function lastAnswerView(repo, { account, attempt, closedWhy, language }) {
+  const view = {
+    attemptId: attempt.clientAttemptId ?? attempt.attemptId ?? null,
+    answeredAt: attempt.createdAt ?? null,
+    response: attempt.response ?? null,
+    correct: attempt.correct,
+    score: attempt.score,
+    language: attempt.language ?? ORIGINAL,
+  };
+  if (closedWhy) return { ...view, solution: null, explanation: null, optionFeedback: [], held: true, heldNote: ANSWER_HELD[closedWhy] ?? ROOM_HELD_NOTE };
+  const explanation = await explanationForStudent(repo, attempt.questionId, language).catch((err) => {
+    console.error('[hub] an explanation could not be read:', err.message);
+    return null;
+  });
+  return {
+    ...view,
+    solution: attemptSolution(attempt, account.id),
+    explanation,
+    optionFeedback: await feedbackAfter(repo, { account, attempt }),
+  };
+}
+
 const STATUS_LABEL = {
   draft: {
     llm: 'AI draft: students do not see it until you approve it.',
@@ -663,7 +731,7 @@ export async function staffLessonView(repo, lesson, { bank = null } = {}) {
       type: 'questions',
       slides: s.slides ?? [],
       cite,
-      questions: (s.questionIds ?? []).map((id) => {
+      questions: await Promise.all((s.questionIds ?? []).map(async (id) => {
         tally.listed += 1;
         const q = byId.get(String(id).toLowerCase());
         const served = servedFor(id, questions);
@@ -677,13 +745,15 @@ export async function staffLessonView(repo, lesson, { bank = null } = {}) {
         return {
           id: String(q._id),
           text: q.text,
+          // As a student is shown it: a formula in a retrieval question reads as TeX in plain text.
+          textHtml: await html(q.text),
           kind: q.kind ?? 'mcq',
           bloom: q.bloom,
           status: q.status,
           provenance: questionProvenance(q),
           ...(served && !sameId(served._id, q._id) ? { servedAs: String(served._id), note: 'Replaced in the bank; students see its replacement.' } : {}),
         };
-      }),
+      })),
     };
   }));
   const waitingNote = tally.waiting
@@ -749,6 +819,11 @@ export async function studentLessonView(repo, { lesson, account, language = ORIG
   // their answer box and hints say why they wait, read once for the lesson.
   const closed = served.size && account?.role === 'student'
     ? await closedQuestions(repo, account, { contentIds: [String(lesson.contentId)] }) : new Map();
+  // The student's earlier answers here, so a reload does not show a question
+  // they answered as unanswered again. Answers in any version of a lesson count:
+  // the attempt store keeps the mode, not the lesson (hubAttemptBridge.js).
+  const earlier = served.size && account?.role === 'student'
+    ? await lastLessonAnswers(repo, account, [...new Set([...served.values()].map((q) => String(q._id)))]) : new Map();
 
   const steps = [];
   for (const [i, s] of (lesson.steps ?? []).entries()) {
@@ -782,6 +857,7 @@ export async function studentLessonView(repo, { lesson, account, language = ORIG
         const base = forStudent(q, hubSeed(account?.id ?? '', q._id));
         const question = localiseQuestion(q, base, t);
         const why = closed.get(String(q._id).toLowerCase()) ?? null;
+        const last = earlier.get(String(q._id).toLowerCase()) ?? null;
         questions.push({
           ...question,
           rich: await phoneRich(question),
@@ -791,6 +867,8 @@ export async function studentLessonView(repo, { lesson, account, language = ORIG
             ? await hintsOffered(repo, { account, question: q, topicId: String(lesson.topicId), mode: 'lesson', state: hintState, closed })
             : { available: 0, note: 'A student sees the hints you approved for each question here.' },
           ...(why ? { closed: { reason: why, note: CLOSED_SENTENCE[why] } } : {}),
+          // Never a key before an attempt: null until the student has answered it here.
+          lastAnswer: last ? await lastAnswerView(repo, { account, attempt: last, closedWhy: why, language }) : null,
         });
       }
       if (questions.length) steps.push({ type: 'questions', cite, questions });

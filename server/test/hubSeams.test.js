@@ -18,7 +18,8 @@ import { createMemoryRepo } from '../src/repo/memoryRepo.js';
 import { forStudent, score } from '../src/questionTypes.js';
 import { snapshotOf } from '../src/sockets/index.js';
 import { syncTopics } from '../src/services/hubTopics.js';
-import { studentLessonView } from '../src/services/hubLessons.js';
+import { ANSWER_HELD, studentLessonView } from '../src/services/hubLessons.js';
+import { ROOM_HELD_NOTE } from '../src/services/hubClosed.js';
 import { fieldsOf, sourceHash, translatable } from '../src/services/hubLanguages.js';
 import { PRACTICE_STORE, attemptStoreConnected, listHubAttempts, recordHubAttempt } from '../src/services/hubAttemptBridge.js';
 import { feedbackFor, hubSeed, nextQuestion, recordAttempt } from '../src/services/hubPractice.js';
@@ -219,5 +220,74 @@ describe('an explanation is translated like any item, and read after an attempt 
     shown = await explanationForStudent(f.repo, f.qroute._id, 'hi');
     assert.equal(shown.text, 'Routing chooses each packet\'s path.', 'a translation of the old words is never shown');
     assert.equal(shown.language.language, 'en');
+  });
+});
+
+/* ------------------------------------------------- a lesson's earlier answers -- */
+
+// The client session's ask of 19 Nov 2026: a reload of a lesson showed every
+// question unanswered again, the student's answers already stored.
+describe('a lesson shows the student\'s latest answer to each of its questions', () => {
+  const KEYS = /answerIdx|answerIdxs|"accept"|rubric|"solution"|explanation/;
+  const questionsOf = (view) => view.steps.find((s) => s.type === 'questions').questions;
+  const byId = (view, q) => questionsOf(view).find((x) => x._id === String(q._id));
+
+  test('none before an answer, and no key; after answers, the latest lesson answer with its key and explanation', async () => {
+    const f = await fixture();
+    await f.repo.addQuestionExplanation({
+      questionId: f.qmcq._id, text: 'Framing is what splits the bits into frames.', provenance: 'professor', status: 'approved',
+      approvedBy: PROF, approvedAt: iso(0), createdBy: PROF,
+    });
+    const before = await studentLessonView(f.repo, { lesson: f.lesson, account: asha });
+    assert.ok(questionsOf(before).every((q) => q.lastAnswer === null));
+    assert.doesNotMatch(JSON.stringify(before), KEYS);
+
+    await recordHubAttempt(f.repo, lessonAttempt({ ...f, q: f.qmcq, response: 2, attemptId: 'lesson-0101', minutes: 1 }));
+    await recordHubAttempt(f.repo, lessonAttempt({ ...f, q: f.qmcq, response: 0, attemptId: 'lesson-0102', minutes: 2 }));
+    // Practice on the same question is not a lesson answer, even when it is later.
+    await recordAttempt(f.repo, asha, { attemptId: 'practice-0103', questionId: String(f.qmcq._id), topicId: String(f.framing._id), response: 3 },
+      { now: new Date(iso(3)) });
+
+    const after = await studentLessonView(f.repo, { lesson: f.lesson, account: asha });
+    const last = byId(after, f.qmcq).lastAnswer;
+    assert.deepEqual([last.attemptId, last.response, last.correct, last.score, last.solution, last.answeredAt, last.language],
+      ['lesson-0102', 0, true, 1, 0, iso(2), 'en']);
+    assert.equal(last.explanation.text, 'Framing is what splits the bits into frames.');
+    assert.deepEqual(last.optionFeedback, []);
+    assert.equal(last.held, undefined);
+    assert.equal(byId(after, f.qorder).lastAnswer, null, 'a question never answered here carries no key');
+    assert.doesNotMatch(JSON.stringify(byId(after, f.qorder)), KEYS);
+    // A staff preview has no answers of its own.
+    const preview = await studentLessonView(f.repo, { lesson: f.lesson, account: { id: PROF, role: 'professor' } });
+    assert.ok(questionsOf(preview).every((q) => q.lastAnswer === null));
+  });
+
+  test('the key is shown in the positions the student saw, worked out from the answer\'s own snapshot', async () => {
+    const f = await fixture();
+    const view = await studentLessonView(f.repo, { lesson: f.lesson, account: asha });
+    const shown = byId(view, f.qorder);
+    const response = [3, 2, 1, 0].map((i) => shown.items.indexOf(f.qorder.sequence[i]));
+    await recordHubAttempt(f.repo, lessonAttempt({ ...f, q: f.qorder, response, attemptId: 'lesson-0201' }));
+    const last = byId(await studentLessonView(f.repo, { lesson: f.lesson, account: asha }), f.qorder).lastAnswer;
+    assert.equal(last.correct, false);
+    assert.deepEqual(last.response, response);
+    assert.deepEqual(last.solution, score(f.qorder, response, hubSeed(asha.id, f.qorder._id)).solution);
+  });
+
+  test('while a room is asking the question, what was right and why is kept back, and says why', async () => {
+    const f = await fixture();
+    await f.repo.addQuestionExplanation({
+      questionId: f.qmcq._id, text: 'Framing splits bits.', provenance: 'professor', status: 'approved', approvedBy: PROF, approvedAt: iso(0), createdBy: PROF,
+    });
+    await recordHubAttempt(f.repo, lessonAttempt({ ...f, q: f.qmcq, response: 1, attemptId: 'lesson-0301' }));
+    const room = await f.repo.createSession({ contentId: f.content._id, code: 'HELD01', title: 'Room', ownerId: PROF });
+    await f.repo.saveProfile({ sessionId: String(room._id), rollNo: '21CS09', name: '', served: { questionId: String(f.qmcq._id), at: iso(1), reason: '' } });
+    const q = byId(await studentLessonView(f.repo, { lesson: f.lesson, account: asha }), f.qmcq);
+    assert.equal(q.closed.reason, 'room');
+    assert.deepEqual([q.lastAnswer.response, q.lastAnswer.correct, q.lastAnswer.solution, q.lastAnswer.explanation, q.lastAnswer.held],
+      [1, false, null, null, true]);
+    assert.equal(q.lastAnswer.heldNote, ROOM_HELD_NOTE);
+    assert.equal(ANSWER_HELD.room, ROOM_HELD_NOTE);
+    assert.doesNotMatch(JSON.stringify(q), /"solution":0|Framing splits bits/);
   });
 });
