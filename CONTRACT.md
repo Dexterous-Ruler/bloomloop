@@ -51,6 +51,25 @@ Installed and available: `express`, `cors`, `socket.io`, `mongoose`, `multer`, `
 >   review), `temml@0.14.0` (formulas to MathML, with mhchem) and `shiki@4.6.0` (code
 >   highlighting). "No new npm dependencies" above is amended for these three only
 >   (decision H18). No client dependency was added.
+>
+> **Amendment 7 (19 Nov 2026, Phase 7 offline-first, decided under the owner's
+> delegation; decisions O1 to O5 in `docs/PRODUCT_DECISIONS.md`).** Additive only;
+> nothing above changes meaning, and a client that sends none of the new fields gets
+> exactly the old behaviour. Its pieces sit beside the sections they amend: section 2
+> (the repository's Phase 7 methods), section 4 (the `Idempotency-Key` header, `basedOn`,
+> the laptop and import routes, `importedFrom`) and section 5 (packs, `server:kept`,
+> `server:refused`, deliver joins, the ids on every answer reply).
+> - **The server is the source of truth for order and marking.** Answers are marked in
+>   the order they arrive; a device's clock is stored for the record and never read.
+> - **Two outbox contracts, one rule each.** The phone's: one `answerId` per answer,
+>   reused on every resend; the stored result answers a resend. The console's: one
+>   `Idempotency-Key` per queued record write, its body fixed at the first send; the kept
+>   reply answers a resend. In both, an item the server refuses for good is kept and
+>   shown, never deleted silently.
+> - **Laptop mode** (`server/src/index.js --laptop`) is the same server and the same
+>   contract on the in-process store, with every network service off. Its shapes, and
+>   the import's, are in `docs/API.md`, "Phase 7: offline-first", and are not frozen here.
+> - No new npm dependency (decision O5).
 
 ---
 
@@ -124,6 +143,14 @@ listProfiles(sessionId)                   -> profile[]       (sorted by rollNo, 
 > Their signatures are the code's (`server/src/repo/memoryRepo.js`), not frozen here. A
 > store whose database lacks one of these migrations keeps serving rooms: only the
 > routes that need it fail, and the boot log names the file.
+>
+> **Amendment 7 (19 Nov 2026, Phase 7), section 2.** Additive only. All three stores gain:
+> `addQuestionPack`, `listQuestionPacks(sessionId, rollNo)` (`0030`); `importRoom`,
+> `getRoomImportBySource`, `getRoomImport`, `listRoomImports`,
+> `listRoomImportsForSessions`, `getRoomArchiveBySession` (`0031`); `getRecordWrite`,
+> `addRecordWrite` (`0032`). `saveProfile` also writes `servedLog` and `recordAnswer`
+> `deviceAnsweredAt`. Signatures are the code's. Unlike `0031` and `0032`, **`0030` is
+> needed by every room**: a Supabase database without it is not used.
 
 ## 3. Documents
 
@@ -218,6 +245,30 @@ Mounted in `server/src/app.js`; each router is `export default router`.
 > no band and no percentage) and `next.provisional: Boolean` (the level is a starting
 > point, not yet an estimate). Nothing is removed.
 
+> **Amendment 7 (19 Nov 2026, Phase 7, decided under the owner's delegation), section 4.**
+> Additive only.
+> - **`Idempotency-Key` request header** (8 to 64 of `A-Z a-z 0-9 _ -`), optional on the
+>   13 teacher-record and attendance writes under `/api/session/:code/` (attendance,
+>   observations, the wheel's settings, draw, rounds and pick, tallies and their edit,
+>   increment and decrement, activities and their edit, insight actions). Without it,
+>   nothing changes. With it, the first success is kept under (room, writer, key); the
+>   same key with the same details is answered with the kept reply and the response
+>   header **`Idempotent-Replayed: true`**; the same key with other details is a 409; a
+>   refusal is never kept. A malformed key is a 400.
+> - **`basedOn`**, optional on six of them (attendance marks, observations, a pick's
+>   response, a tally edit, an activity edit, an insight action): what the screen showed.
+>   A write made from a record that has since moved on is a **409 `{ error, stale: true,
+>   current, … }`** and changes nothing. Stamps are compared for equality only.
+> - **New routes**: `GET /api/laptop` (staff; `{ laptop: false }` on any server not in
+>   laptop mode), `POST /api/imports/rooms` (a professor or the key; an HOD 403) and
+>   `GET /api/imports/rooms` (staff).
+> - **`importedFrom`**, present only for a room imported from laptop mode, on the staff
+>   room reads and in attainment and the register (`rooms[]`), which also take
+>   `?imported=count|leave-out`.
+> - In laptop mode only: `requireTeacher` answers **429** after 10 different wrong keys
+>   from one address within 10 minutes. `GET /api/session/:code` (the phones' read) is
+>   unchanged and still carries no `contentId`.
+
 Error style: `next(Object.assign(new Error('message'), {status: 400}))`.
 
 ## 5. Socket.io — exact event names
@@ -296,6 +347,38 @@ Client constants live in `client/src/socket.js` (`EV`). Server must match verbat
 >   attributes.
 > - In `class:question` a code block is highlighted only once the server has loaded
 >   shiki; before that it is sent escaped, uncoloured. `server:question` waits for it.
+>
+> **Amendment 7 (19 Nov 2026, Phase 7 offline-first, decided under the owner's
+> delegation; decisions O1 to O3), section 5.** Additive only; every event above keeps
+> its fields and meaning.
+> - New, student → server: **`student:pack` `{}`**, after `session:accepted`.
+> - New, server → student: **`server:pack` `{issuedAt, expiresAt, graceMinutes,
+>   timePerQuestion?, questions:[{question, reason}], note}`**, or `{questions: [],
+>   note}`. Each `question` is what `server:question` carries (through `forStudent()`,
+>   with `provenance`), **never with its key**: no `answerIdx`, rubric, solution,
+>   misconception label or level check. A packed question does not carry `rich`.
+> - New, server → student: **`server:kept` `{questionId, answerId?, counted: false,
+>   message, late?}`**: the answer is stored and will never count (after the close and
+>   not given before it, or after the grace window; past the room's cap; a second answer
+>   to a question already marked; an answer to a question put to the class). Never a
+>   mark or a solution.
+> - New, server → student: **`server:refused` `{questionId, answerId?, message}`**:
+>   refused for good and not stored (a question the room never asks, in a closed room;
+>   a student's kept answers past 100 in a room). The phone keeps it and never resends.
+> - `student:join` may carry **`deliver: true`**: the phone holds saved answers. A closed
+>   room then lets in a phone with a row of its own there, at any time while the room
+>   exists, only to send them: no question, no pack, no attendance mark; and
+>   `session:accepted` adds **`deliverOnly: true`, `deliverUntil`** (the close plus the
+>   10-minute grace window) and **`message`**. A room imported from laptop mode refuses
+>   it. In an open room it is served nothing at the join; its next `student:next`
+>   resumes its pinned question. The credential is still room code + roll number
+>   (section 6 rule 3).
+> - `student:answer` may carry **`deviceAnsweredAt`**, stored and never read. Question ids
+>   are compared without case.
+> - **`server:result`** adds **`questionId`** and **`answerId`**, and after the close
+>   `late: true` and `message`; **`server:exhausted`**, when it answers an answer, adds
+>   the same two ids. An answer after the room closed is answered, not dropped: the
+>   phone still in the room is then sent `session:closed` as before.
 
 **Server → teacher** (room `teacher:<code>`)
 - `teacher:grid` `{rows:[GridRow], code}` — broadcast on every join, answer and disconnect

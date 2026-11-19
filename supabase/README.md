@@ -44,7 +44,7 @@ Full detail: `docs/DATABASE_SCHEMA.md`.
 | `0027_lessons_and_languages.sql` | Topic lessons, Hindi and Marathi versions, a student's language | Warns: no lesson or translation can be made, approved or shown; students read English |
 | `0028_hub_paths_and_goals.sql` | Get Ready checks and self-tests (`hub_runs`, `hub_attempts.run_id`), goals | Warns: no Get Ready check, self-test or goal works; practice still saves |
 | `0029_hub_tutor.sql` | Hints, feedback on wrong options, the hints a student opened; no hints in a self-test or Get Ready | Warns: no hint or feedback is offered; answers are still saved and marked |
-| `0030_offline_packs.sql` | `question_packs` (Phase 7); `answers.device_answered_at`; `profiles.served_log` | Stops |
+| `0030_offline_packs.sql` | `question_packs` (Phase 7); `answers.device_answered_at`; `profiles.served_log` | Stops: apply it before the Phase 7 server |
 | `0031_room_imports.sql` | Rooms imported from laptop mode: where each came from (Phase 7) | Warns: importing a laptop's room file fails |
 | `0032_record_write_keys.sql` | Replay keys of teacher-record writes from an offline console (Phase 7) | Warns: a record write sent with a replay key fails; one without a key works |
 
@@ -134,6 +134,13 @@ VALID, so attempts already stored are not checked. None has run anywhere but PGl
 (`npm run migrations`, 1226 of 1226 on 19 November 2026); nothing was run against the
 hosted project.
 
+**Phase 7 (offline-first) adds three files: deploy order matters for the first.** Apply
+`0030` **before** deploying the Phase 7 server, because every room needs it; `0031` and
+`0032` are route-only and may go before or after, in number order. Re-running the whole
+set (`0000` to `0032`) is the simple way: every file is safe to re-run. None has run
+anywhere but PGlite (`npm run migrations`, 1457 of 1457 on 19 November 2026); nothing
+was run against the hosted project.
+
 **`0030` (Phase 7: question packs and the phone's own answer time) must be applied
 before the server that writes it is deployed.** It adds the `question_packs` table (the
 few questions a phone is sent for use while its connection is down, ids only, no key;
@@ -161,8 +168,9 @@ account it names being set to null when that room or account is deleted. Only th
 import writes it, so the boot probe warns rather than stops: without `0031` every room
 runs, and importing a laptop's room file fails, naming `0031`. The live loop also reads
 it when a phone asks to send saved answers to a closed room, since a room imported from
-a laptop takes none; without `0031` there is no import to find, and that works as
-before. `0031` changes no existing row. Run only on PGlite.
+a laptop takes none, and every staff view of a room reads it to say whether the room was
+imported (`importedFrom`); without `0031` there is no import to find, and both work as
+for an ordinary room. `0031` changes no existing row. Run only on PGlite.
 
 `0032` (Phase 7: replay keys for the teacher-record writes) adds one table,
 `record_writes`. When the network drops, the professor's console keeps each record she

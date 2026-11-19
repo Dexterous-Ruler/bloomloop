@@ -1,4 +1,11 @@
-# API reference: Phases 1, 2, 3, 4, 5 and 6
+# API reference: Phases 1 to 7
+
+**Phase 7** (committed as `46bf6f9`; `0030` to `0032`) is one part, "Phase 7:
+offline-first", just before "Known open issues": an index of every new and changed
+endpoint and socket event, question packs, which reply to an outbox answer means what,
+delivering to a closed room and the grace window, laptop mode, room imports, replay keys
+and `basedOn` on the console's record writes, captured examples, and what each screen
+needs. Its open issues are under "Known open issues", "Phase 7 (offline-first), open".
 
 **Phase 6** (committed as `646b4e6`; `0025` to `0029`) is one part, "Phase 6: the
 Learning Hub", just before "Known open issues": who may call the hub, every new
@@ -5724,7 +5731,701 @@ target, status, counts, outcome sentences and path progress). The HOD sees all o
 read-only (`access: 'reader'`). **Never** a ranking, sorting by score by default, a
 class average beside a name, or a student's goals.
 
+## Phase 7: offline-first
+
+Server and database only, committed as `46bf6f9` with migrations `0030` to `0032`
+(`docs/DATABASE_SCHEMA.md`), built in the directive's three stages under decisions O1
+to O5 (`docs/PRODUCT_DECISIONS.md`, Phase 7). The room contract's side is
+`CONTRACT.md` Amendment 7. How it works: `docs/ARCHITECTURE.md`, "Offline-first
+(Phase 7)". Why selection stays on the server: `docs/OFFLINE_SELECTION.md`. The
+professor's guide to laptop mode: `docs/TRAVEL_ROUTER.md`.
+
+- **First (O1)** is client work: the phone's service worker, answer outbox and "saved
+  on this phone / sent / marked" indicators, built by the UI session
+  (`docs/UI_REBUILD.md`, "Phase 7, stage First"). The server side is the idempotency it
+  already had (`answerId`), now echoed in every reply so an outbox matches replies by
+  key; and replay keys on the staff console's record writes (below).
+- **Next (O2, O3)**: question packs, outbox answers marked in the order they arrive,
+  and the grace window after a room closes.
+- **Then (O4)**: laptop mode, and importing its room files back into the cloud.
+
+**Tested, and not.** Exercised over Socket.io and HTTP on a real server (the
+production `createApp` and `attachSockets`) on the in-process store by
+`server/scripts/offline.mjs` (79 checks), `laptop.mjs` (79; the laptop is the real
+server started with `--laptop` as its own process) and `recordsync.mjs` (38), and by
+four unit files (91 tests); all passing on 19 November 2026 (`docs/TESTING.md`).
+Time-based rules (the grace window, a pack's 6 hours) were tested by moving the whole
+process's clock forward, not by waiting. **Nothing ran against Supabase or Mongo, on a
+real phone, or over a real hotspot or travel router.** The phone's handling of
+`server:kept`, `server:refused` and packs, and the console's outbox, import screen and
+laptop banner, do not exist yet.
+
+The examples are real replies, captured on 19 November 2026 from a server on the
+in-process store with the shared teacher key, every network setting blank and every
+request off the machine refused (a throwaway script, not kept). Roster names and roll
+numbers are the script's made-up ones. Profiles and long arrays are shortened with `…`;
+a laptop's folder and addresses are replaced with examples. Ids are 24-character hex; on Supabase they are uuids. A time inside a
+sentence is India's.
+
+### Every new and changed endpoint and socket event
+
+| Event or route | Who | New or changed | What |
+|---|---|---|---|
+| `student:pack` `{}` | phone to server | new | Asks for a pack. Only after `session:accepted`; never from a projector connection |
+| `server:pack` | to a phone | new | `{ issuedAt, expiresAt, graceMinutes, timePerQuestion?, questions: [{ question, reason }], note }`, or `{ questions: [], note }` |
+| `server:kept` | to a phone | new | `{ questionId, answerId?, counted: false, message, late? }`: the answer is stored and will never count. Never a mark or a solution |
+| `server:refused` | to a phone | new | `{ questionId, answerId?, message }`: refused for good and not stored |
+| `student:join` | phone to server | changed | May carry `deliver: true`: the phone holds answers it has not sent |
+| `session:accepted` | to a phone | changed | In a closed room only: `deliverOnly: true`, `deliverUntil`, `message` |
+| `student:answer` | phone to server | changed | May carry `deviceAnsweredAt` (ISO string or epoch milliseconds), kept for the record only. Question ids are compared without case |
+| `server:result` | to a phone | changed | Adds `questionId` and `answerId`; after the close also `late: true` and `message` |
+| `server:exhausted` | to a phone | changed | Adds `questionId` and `answerId` when it answers an answer (past the cap, to a question never given) |
+| `teacher:watch` | teacher screen | changed (laptop mode only) | Rejected with the lock-out sentence after too many wrong keys from that address |
+| `GET /api/laptop` | staff | new | `{ laptop: false }`, or laptop mode's status |
+| `POST /api/imports/rooms`, `GET /api/imports/rooms` | a professor or the shared key; the HOD reads | new | Import a room file laptop mode saved; list imports |
+| The 13 teacher-record and attendance writes | room owner | changed | Optional `Idempotency-Key` header; reply header `Idempotent-Replayed: true` on a replay; 409 for a key reused with other details; optional `basedOn` on six of them, and a stale 409 |
+| Every staff route (`requireTeacher`) | staff | changed (laptop mode only) | 429 after 10 different wrong keys from one address in 10 minutes |
+| `GET /api/session` rows, `/:code/grid`, `/:code/answers`, `/topics`, `/items`, `/attendance` (`room`), the review queue and `GET`/`POST /api/review/:answerId` (`item.room`) | staff | changed | `importedFrom: { importedAt, sourceCode, laptop, note }`, present only for a room imported from laptop mode |
+| `GET /api/classes/:id/attainment`, `…/attainment/students/:studentId`, `…/register` (JSON, CSV and printable) | staff | changed | `rooms[].importedFrom`; a methodology sentence naming imported rooms; `?imported=count` (the default) or `leave-out`, echoed as `window.imported`; any other value 400 "imported must be count or leave-out." |
+| Answer rows (`/answers`, the archive) | staff | changed | Three new `detail` values for answers kept and not counted, with `final` false and `correct`, `score` null (the machine's reading in `auto`); the phone's own time is stored and archived, not yet on the answer list |
+
+### Question packs (O3)
+
+A phone that has joined sends `student:pack {}` and gets `server:pack`. A pack holds up
+to 5 questions (`PACK_SIZE`): 3 at the student's working level, 1 a level below, 1 a
+level above (`PACK_SHARE`); a level with too few gives its places to the others, the
+working level first. Inside the below-40% band, Remember and Understand only,
+alternating. A room that does not adapt packs nothing above the student's level. A
+room with a cap on questions per student packs no more than the cap leaves (the cap,
+less answers given, less the question on the screen).
+
+Every packed question is approved and servable in the room, and never the question on
+the phone's screen, one the student has been marked on, or one put to the class
+(running, closed or revealed). Each goes out exactly as `server:question` carries it,
+through `forStudent()` with the same seed and supports and the phone's own
+`provenance`, with its own `reason`: no key, rubric, solution, misconception label or
+level check. **It does not carry `rich`** (Phase 6), which `server:question` does: a
+packed question with a formula or a code block shows its plain text.
+
+The pack is recorded (`question_packs`, `0030`) before it is sent. It lasts 6 hours
+(`PACK_HOURS`) or until the room closes; expiry only tells the phone to stop offering
+it, and an answer to a question of an expired pack still counts as served. Asking
+again returns the same pack, same questions and times, and writes nothing; a new
+record is written only when the pack gains a question its live record lacks (an answer
+or an expiry), at most 50 per phone per room. One request at a time per connection:
+requests arriving meanwhile are folded into one more reply. A question put to the
+class while a pack is being prepared is left out of it.
+
+```json
+server:pack
+{
+  "issuedAt": "2026-11-19T14:09:53.845Z",
+  "expiresAt": "2026-11-19T20:09:53.845Z",
+  "graceMinutes": 10,
+  "questions": [
+    {
+      "question": {
+        "_id": "072965ffc850f069267df5d2",
+        "text": "understand question 2: which option is right?",
+        "bloom": "understand", "topic": "Sets", "kind": "mcq", "source": "teacher",
+        "options": ["Option A", "Option B", "Option C", "Option D"],
+        "provenance": { "by": "professor", "checked": true, "text": "Written by your professor." }
+      },
+      "reason": "This question is at Understand, the level you are working at."
+    },
+    … two more at Understand,
+    { "question": { … "bloom": "remember" … }, "reason": "This question is at Remember, the level before the one you are working at." },
+    { "question": { … "bloom": "apply" … }, "reason": "This question is at Apply, the next level up, ready in case your answers move you on." }
+  ],
+  "note": "Questions to work on if your connection drops. Answers you give offline are saved on this phone and marked when you reconnect."
+}
+```
+
+`timePerQuestion` is added when the room set seconds per question; the phone keeps the
+time and never enforces it.
+
+| When | Reply to `student:pack` |
+|---|---|
+| Not joined | `session:rejected` "Join a session before asking for questions." |
+| The room is closed or gone | `session:closed {}` |
+| Paused / waiting | `session:paused { code }` / `server:waiting { code, title, message }` |
+| The phone's row is gone | `session:rejected` "Your row is gone - rejoin with your roll number." |
+| Nothing left to pack | `{ questions: [], note: "There are no more questions to keep on this phone for now." }` |
+| The room is being deleted, or the pack could not be recorded | `{ questions: [], note: "Questions for offline use could not be prepared just now. Your answers are still saved on this phone and sent when you reconnect." }` |
+
+### Answers from an outbox: which reply means what (O2)
+
+A packed or saved answer comes back through the ordinary `student:answer`, with its own
+`answerId` (8 to 64 of `A-Z a-z 0-9 _ -`, the same on every resend) and, if the phone
+has one, `deviceAnsweredAt`. Send only after `session:accepted` on the new connection:
+before it, the reply is "Join a session before answering.". Answers are marked one by
+one in the order the server receives them, each taking its student's place in the
+queue as it arrives; the phone's time is stored (`answers.device_answered_at`, only
+when it is a date from 2000 to 2099) and never read for order or counting.
+
+**Every answer reply** (`server:result`, `server:kept`, `server:refused`, and
+`server:exhausted` when it answers an answer) carries `questionId` (as the phone sent
+it) and `answerId` (when the phone sent a valid one). An outbox matches replies by
+`answerId`. `session:rejected`, `session:paused` and `session:closed` carry neither.
+
+| What happened | Reply | What the outbox does |
+|---|---|---|
+| Marked (live, packed, or late inside the window) | `server:result`, as before plus the ids; after the close also `late: true` and `message` | Marked. Drop the item |
+| A resend under the same `answerId` | The stored outcome: `server:result` for a marked answer, `server:kept` for a kept one | Settled |
+| Stored, never counted: after the close and not given before it, or after the window; past the room's cap; a second, different answer to a question already marked; an answer to a question put to the class | `server:kept` with the sentence (and `late: true` after the close); past the cap in an open room, then `server:exhausted`; for a class question in an open room, then the screen's question again (`server:question`) | Saved, not counted. Drop it; show the sentence, never a mark |
+| A question this room never asks, in a closed room; or past the 100 kept answers a student may have in a room | `server:refused { questionId, answerId, message }`, nothing stored | Refused for good: keep it, show it, never resend |
+| A question this room never asks, in an open room | No answer reply; the phone is sent the question on its screen again (`server:question`) | As before |
+| Past the room's cap, to a question never given to the phone, in an open room | `server:exhausted { profile, reason, questionId, answerId }`, nothing stored (as since `0018`) | Finished |
+| The room is being deleted, or the save failed | `session:rejected` "That answer did not save. Tap Next question to carry on." | Send it again later, same `answerId` |
+| Paused | `session:paused` | Hold until the room resumes |
+
+An answer to any question other than the one pinned on the screen (packed, from the
+outbox, never given) gets **one go**: it is final at its first attempt, never re-pins,
+and leaves the pinned question where it is. A packed or outbox answer's `servedAt` is
+its own question's time (the pin's, the log of serves', or the pack's). A phone still in
+the room when it closes (not one back only to deliver) is also sent `session:closed`
+after the reply, as it always was.
+
+Captured, the phone offline, rejoined with `deliver: true`, then sending a packed answer
+(the profile shortened), the same question again with another response under a new id,
+and the first id again:
+
+```json
+server:result
+{ "correct": true, "score": 1, "solution": 2, "detail": "", "kind": "mcq", "attempts": 1, "redeemed": null,
+  "workingLevel": "understand",
+  "reason": "Your next questions are at Understand. You have 1 answer there so far, and your level can change once you have 3.",
+  "levelChanged": false, "profile": { … },
+  "questionId": "072965ffc850f069267df5d2", "answerId": "out-23CS01-0001" }
+
+server:kept
+{ "questionId": "072965ffc850f069267df5d2", "answerId": "out-23CS01-0002", "counted": false,
+  "message": "You had already answered this question and been marked on it, so this answer is saved but does not count." }
+
+server:result   (the first id again: the stored outcome, nothing new stored)
+{ "correct": true, "score": 1, "ungraded": false, "solution": 2, … "questionId": "072965ffc850f069267df5d2", "answerId": "out-23CS01-0001" }
+```
+
+The sentences `server:kept` may carry:
+- "The room had closed, but you had this question before it closed, so your answer is
+  marked and counts." (on `server:result`, `late: true`)
+- "This answer reached your teacher after the room closed, and it was not a question you
+  had been given before then, so it is saved but does not count."
+- "This answer reached your teacher more than 10 minutes after the room closed, so it is
+  saved but does not count."
+- "You had already answered this question and been marked on it, so this answer is
+  saved but does not count."
+- "This question was put to the whole class, so your own answer to it is saved but does
+  not count."
+- "This room asks each student N questions, and you had answered them all before this
+  one arrived, so it is saved but does not count."
+
+`server:refused` carries "That question is not one this room asks, so the answer was
+not taken.", or the plain sentence of the kept-answer limit.
+
+**What staff see.** A kept row has `final: false`, `correct` and `score` null, the
+machine's reading in `auto`, and one of three `detail` values: "Arrived after the room
+closed: kept, not counted.", "Arrived after the student had answered every question the
+room asks: kept, not counted." or "Arrived after the student had already been marked on
+this question: kept, not counted.". Attainment and the register set these aside under
+either attempt rule, each with its own note. Captured from `GET
+/api/session/:code/answers`:
+
+```json
+{ "detail": "Arrived after the room closed: kept, not counted.", "final": false, "correct": null, "score": null,
+  "auto": { "correct": true, "score": 1, "detail": "" }, … }
+```
+
+### A closed room: delivering saved answers, and the grace window (O2)
+
+**The join.** A closed room refuses an ordinary join as it always has ("That session
+has already been closed."). A phone holding saved answers joins with
+`student:join { code, rollNo, name, deliver: true }`:
+- **in a closed room** it is let in **at any time while the room exists** if it has a
+  row of its own there, only to send what it saved: no question, no pack, no attendance
+  mark. `session:accepted` adds `deliverOnly: true`, `deliverUntil` (the close plus 10
+  minutes: until then, an answer to a question it was given counts) and `message`, and
+  `bankCount` is 0. With no row of its own, or while the room is being deleted, it gets
+  "That session has already been closed.". **A room imported from laptop mode refuses
+  every delivery**, inside the window too: "This room was run on your teacher's laptop
+  and has since been brought online from there, so it takes no more answers here.
+  Anything still saved on this phone stays here; show it to your teacher if it
+  matters."
+- **in an open room** it is accepted as any join, and served nothing at the join: its
+  saved answers go first and move the ladder, and its next `student:next` resumes the
+  question pinned on its screen.
+
+```json
+session:accepted (closed room, deliver: true; the other fields as any join)
+{ "profile": { … }, "session": { … }, "bankCount": 0,
+  "deliverOnly": true, "deliverUntil": "2026-11-19T14:19:54.644Z",
+  "message": "This room has closed. Answers saved on this phone are being sent; there are no new questions.",
+  "supports": { … }, "linked": false, "confidence": [ … ] }
+```
+
+**The grace window** is 10 minutes after the close (`GRACE_MINUTES`), the edge counted,
+judged by the server's clock at the moment the answer **arrived** (read before it waits
+for its student's lock), never the phone's. An answer to a question the server served or
+packed to that phone before the close, arriving inside the window, is marked and counts;
+"served" reads the pin, the profile's log of serves (`profiles.served_log`) and the
+packs. Every other late answer, after the window included, is stored, kept and not
+counted. Captured, after the close: a packed answer, an answer to a bank question the
+phone was never given, and one to another chapter's question:
+
+```json
+server:result   { "correct": true, "score": 1, … "late": true,
+                  "message": "The room had closed, but you had this question before it closed, so your answer is marked and counts.",
+                  "questionId": "f1c9e56cfc71184f00774ff5", "answerId": "out-23CS01-0003" }
+server:kept     { "questionId": "09e06436e4394a9f7730f201", "answerId": "out-23CS01-0004", "counted": false, "late": true,
+                  "message": "This answer reached your teacher after the room closed, and it was not a question you had been given before then, so it is saved but does not count." }
+server:refused  { "questionId": "cb27e1e9abdfca01f92ee969", "answerId": "out-23CS01-0005",
+                  "message": "That question is not one this room asks, so the answer was not taken." }
+```
+
+Class-question votes keep their existing late rules.
+
+### Laptop mode (O4)
+
+**Starting it.** From the repository root, `npm --workspace server run laptop` (or
+`node server/src/index.js --laptop`, or `BLOOMLOOP_LAPTOP=1`). Before the store is
+chosen it switches Supabase, MongoDB, Gemini and Google Classroom off, whatever
+`server/.env` says, so the store is the in-process one. It listens on every interface
+and prints a banner: the console link (the first LAN address, with the key), one join
+link per LAN address (and any address that appears later), the archive folder and its
+interval, the run tag, and what is unavailable. Settings:
+
+| Variable | Default | Rule |
+|---|---|---|
+| `TEACHER_KEY` | unset: a random key of 24 characters at every start | At least 16 characters, or the start stops with a sentence saying what to do |
+| `LAPTOP_ARCHIVE_DIR` | `server/.data/laptop-archives` (git ignores it) | The folder room files are written to |
+| `LAPTOP_ARCHIVE_SECONDS` | 60 | A whole number from 1 to 3600, or the start stops with a sentence |
+
+**Unavailable on the laptop** (`UNAVAILABLE`, printed and served): accounts and signing
+in (the console link carries the laptop's key); AI generation (offline templates and the
+professor's own questions work); Google Classroom; the Learning Hub; and anything kept
+between restarts except the room files (chapters, questions, classes and rosters live in
+memory).
+
+**Room files.** Each room is written as its room archive (the JSON a deleted room is
+kept as) plus `laptop: { run, startedAt }`, to `room-<CODE>-<room id>.json`: at once when
+a close or delete is answered, every interval for each room whose archive changed
+(running or closed, so late answers are caught), and at a normal stop. Each write is
+atomic: a temporary file in the same folder, every byte written, flushed, then renamed
+over the room's file; a write that cannot finish fails without renaming, so the last
+good file stays. Files are written readable by the laptop's user only (0600 in a 0700
+folder, where the system honours it; Windows does not), since they hold every
+question's key. A file over 1 MB is still written, with a warning: it cannot be
+imported. No archive, laptop or cloud, carries the profiles' log of serves.
+
+**`GET /api/laptop`** (staff: a professor's or HOD's token, or the key; 401 without):
+
+```json
+on any other server   200 { "laptop": false }
+
+in laptop mode        200
+{
+  "laptop": true, "run": "e5ccd514", "startedAt": "2026-11-19T14:09:54.735Z",
+  "archives": { "folder": "<project>/server/.data/laptop-archives", "intervalSeconds": 60,
+                "lastWriteAt": "2026-11-19T14:09:54.742Z", "writes": 1, "rooms": 1, "lastError": null },
+  "join": [ { "network": "Wi-Fi", "url": "http://192.168.8.10:5050/join" } ],
+  "unavailable": [
+    "Accounts and signing in: use the console link printed here, which carries the laptop's own teacher key.",
+    "Generating questions with AI: the offline templates and questions you write yourself work.",
+    "Google Classroom.",
+    "The student Learning Hub, which needs student accounts.",
+    "Anything kept between restarts except the room archives: chapters, questions, classes and rosters made on the laptop are held in its memory and are gone when the server stops."
+  ]
+}
+```
+
+`lastWriteAt`, `writes`, `rooms` and `lastError` come once the writer has started.
+
+**Wrong keys (laptop mode only).** 10 different wrong keys from one address within 10
+minutes shut that address out of the key for 10 minutes, the right key included; the
+same wrong key sent again counts once (a console tab holding an earlier start's key).
+Every staff route answers 429, and `teacher:watch` is rejected with the same sentence:
+
+```json
+429 { "error": "Too many wrong teacher keys were tried from this device. Wait ten minutes, then open the console with the link the laptop printed." }
+```
+
+No other server counts wrong keys: the deployed one sets no `trust proxy`, so it sees
+one address for everyone.
+
+**Origins (laptop mode only).** The API's CORS and the socket's handshake accept a page
+from the same origin, from loopback or `localhost` on the server's port, or from one of
+the laptop's own network addresses on its port; a page another device on the hotspot
+serves is refused, even on the same port. Every other server keeps its CORS list and the
+socket's `origin: '*'`. Packs, the grace window and replay keys work as on any server.
+
+### Room imports (O4)
+
+**`POST /api/imports/rooms`**, a professor or the shared key; an HOD gets 403 ("An HOD
+can read the department's imported rooms but not import one: the professor who ran the
+class imports it."), no credentials 401. Body `{ archive, contentId?, classId? }`:
+`archive` is the file's parsed JSON. The room becomes a **closed room the caller
+owns** (unowned under the shared key), on the chosen chapter and class. Its students,
+answers (inserted, never updated; a late or kept answer as the laptop kept it, with the
+phone's time), reviews, attendance (matched to the class's roster by roll number) and
+class questions with their votes are written as rows; the laptop's teacher records, and
+attendance marks for roll numbers the roster does not hold, stay in the stored file
+only. An answer's `question_id` is kept only when it names a question of the chosen
+chapter (a laptop's never does); the snapshot keeps the laptop's id. Decision 8 holds:
+no integrity signal is kept for a student the roster marks under 18.
+
+The checks, in order: the file's shape and every row; its owner; then, one import of a
+room at a time, whether it was imported before; whether its room id is already here from
+another source; whether its code is taken (then a fresh code is drawn); the chapter; the
+class. Every refusal is a sentence and writes nothing:
+
+| Status | When | Error |
+|---|---|---|
+| 400 | No `archive` | "Choose the room file laptop mode saved, to import it. Nothing was imported." |
+| 400 | Not JSON, not an archive, a bad row (names the first problem) | "This file is not a room archive BloomLoop can import: … Nothing was imported." |
+| 400 | No laptop mark (a cloud archive download) | "This file does not carry the mark laptop mode puts on the rooms it saves, so it is not one to import here. The mark says where a file came from, not that it is unchanged, so every imported room is shown as imported. Nothing was imported." |
+| 400 | No chapter chosen (none sent, and the file's own is not the caller's) | "Choose the chapter in your account that this room's questions belong to: the chapter on the laptop is not in your account, and each answer is filed under the chosen chapter's topics. Nothing was imported." |
+| 400 | The room took attendance (or is Teacher-led) and no class chosen | "This room took attendance against a class on the laptop. Choose the class in your account it belongs to, so its attendance and answers count in that class's reports. Nothing was imported." |
+| 403 | The file names another teacher as the room's owner | "This archive records a room another teacher owns, so only they may import it. Nothing was imported." |
+| 404 | A chapter or class not the caller's, or not there | "That chapter was not found." / "That class was not found." |
+| 409 | The room id is already here (a live room, a deleted room's archive, or an import the caller may not read) | "A room with this archive's id or code is already in BloomLoop from somewhere else, so this file was not imported: an import never replaces or joins evidence that is already here. Nothing was imported." |
+| 413 | The archive is over 1 MB / the body over the parser's 2 MB | "This archive is N MB, over the 1 MB a room archive may be. Nothing was imported." / "This file is over the 1 MB a room archive may be. Nothing was imported." |
+
+**The reply carries `error` only.** The import sets `needs: 'chapter'` or
+`needs: 'class'` on its two 400s, but the app's error handler sends `{ error }` alone,
+so `needs` never reaches the console (the builder's report said it did; the code and
+the captured replies say not). Tell the two apart by what was sent: without
+`contentId`, it is the chapter; with one, the class.
+
+**Idempotent by the laptop's room id.** The same room again is 200 with
+`alreadyImported: true` and changes nothing; `same: false` when the file differs (a
+later save), with a sentence saying it was not used. A later save of an imported room
+is never merged. A room **code** taken here does not refuse the import: the room gets a
+fresh code, the import keeps the laptop's as `sourceCode`, and the message says so.
+Captured (201, then the same file, then a later copy):
+
+```json
+201
+{
+  "imported": true, "alreadyImported": false,
+  "room": { "code": "Q5B36K", "sessionId": "44283a93c475fad18918b228", "title": "Sets", "status": "closed",
+            "contentId": "65069546fbd0a7e0b8a7f4af", "classId": "b0e660a83c8a238b0645e952",
+            "startedAt": "2026-11-19T14:09:53.803Z", "closedAt": "2026-11-19T14:09:54.644Z" },
+  "import": {
+    "id": "2693ad6564fb0c22530e40fe", "room": { "code": "Q5B36K", "sessionId": "44283a93c475fad18918b228" },
+    "sourceRoomId": "3aea7553cd0f917fe6ff8831", "laptop": { "run": "e5ccd514", "startedAt": "2026-11-19T14:09:54.735Z" },
+    "archivedAt": "2026-11-19T14:09:54.736Z", "importedAt": "2026-11-19T14:09:54.804Z", "importedBy": null, "bytes": 3937,
+    "summary": { "students": 1, "answers": 4, "reviews": 0, "classQuestions": 0,
+                 "attendance": { "imported": 2, "notOnRoster": [] }, "records": { "tallies": 1 },
+                 "roomWasRunning": false, "questionSetKept": true,
+                 "sentences": [ "The teacher records made on the laptop (observations, the wheel, hands up, activities) are kept in the imported archive, not added to this room's records." ] }
+  },
+  "importedFrom": { "importedAt": "2026-11-19T14:09:54.804Z", "sourceCode": "Q5B36K",
+                    "laptop": { "run": "e5ccd514", "startedAt": "2026-11-19T14:09:54.735Z" },
+                    "note": "Imported from a file saved by laptop mode. BloomLoop checked that the file is a room it can read, not that it is unchanged since the laptop saved it: its answers, marks and attendance are as the file gives them." },
+  "message": "Room Q5B36K was imported as a closed room: 4 answers from 1 student, 2 attendance marks. It is shown as imported wherever it appears: BloomLoop checked that the file is a room it can read, not that it is unchanged since the laptop saved it."
+}
+
+200 (the same file)   { "imported": false, "alreadyImported": true, "same": true, "import": { … },
+                        "message": "Room Q5B36K was imported on 2026-11-19, so nothing was changed." }
+200 (a later copy)    { …, "same": false, …, "message": "Room Q5B36K was imported on 2026-11-19, so nothing was changed. This file is not the one imported then (it may have been saved later): an imported room is never overwritten or added to, so nothing in it was used." }
+```
+
+A room saved while it was still running is imported closed as of the moment it was
+saved, and `summary.sentences` says so.
+
+**`GET /api/imports/rooms`** (staff): `{ imports: [import view, newest first], limitBytes:
+1048576 }`, filtered to what the caller may read (the owner, their HOD, the key for
+unowned imports). Never the file itself.
+
+**Every staff view says a room was imported.** The file is checked for its shape, not
+its authenticity: anyone can write the laptop mark. So `importedFrom { importedAt,
+sourceCode, laptop, note }` is added, only for an imported room, to `GET /api/session`
+rows (the HOD's list too), `/:code/grid`, `room` on `/:code/answers`, `/topics`, `/items`
+and `/attendance`, `item.room` in the review queue and on `GET`/`POST
+/api/review/:answerId`, and `rooms[]` in attainment, a student's report and the
+register. Those three also name imported rooms in their methodology (and so in their
+CSV and printable files), and take `?imported=leave-out` to leave them out:
+
+```json
+rooms[0].importedFrom   { "importedAt": "…", "sourceCode": "Q5B36K", "laptop": { "run": "e5ccd514", "startedAt": "…" }, "note": "Imported from a file saved by laptop mode. …" }
+methodology (counted)   "One room counted here (Q5B36K) was imported from a file saved by laptop mode. BloomLoop checked that each such file is a room it can read, not that it is unchanged since the laptop saved it; a report can leave these rooms out."
+?imported=leave-out     window: { "from": null, "to": null, "rooms": null, "imported": "leave-out" }; "Rooms imported from files saved by laptop mode are left out of this report."
+?imported=maybe         400 { "error": "imported must be count or leave-out." }
+```
+
+### Teacher records sent again: `Idempotency-Key`, `basedOn` and stale 409s (O1, staff side)
+
+The console keeps the records a professor makes while the network is down in an outbox
+and sends them again, in order, once it reconnects. Thirteen writes take an optional
+**`Idempotency-Key`** header: 8 to 64 of `A-Z a-z 0-9 _ -` (a UUID fits).
+
+| Route | `route` name kept with the key | `basedOn` |
+|---|---|---|
+| `POST /api/session/:code/attendance` | `attendance` | per mark: `marks[i].basedOn`, the `markedAt` shown, or null for unmarked |
+| `POST /:code/observations` | `observation` | `basedOn`: the `observedAt` of the mark in force shown, or null for none |
+| `PATCH /:code/wheel/picks/:pickId` | `wheel-pick` | `basedOn: { ask?, questionId?, status? }` as shown |
+| `PATCH /:code/tallies/:tallyId` | `tally-edit` | `basedOn: { text?, labels?, counts?, revealed?, correct? }` as shown |
+| `PATCH /:code/activities/:activityId` | `activity-edit` | `basedOn: { outcome?, groups?, tallyId? }` as shown |
+| `POST /:code/insights/actions` | `insight-action` | `basedOn`: the `actedAt` of the card's last action shown, or null |
+| `POST /:code/tallies/:tallyId/increment`, `/decrement` | `tally-increment`, `tally-decrement` | none: a step, never stale; steps from two devices add up |
+| `POST /:code/tallies`, `/activities`, `PATCH /:code/wheel`, `POST /:code/wheel/draw`, `/wheel/rounds` | `tally`, `activity`, `wheel-settings`, `wheel-draw`, `wheel-round` | none: the key makes each happen once; settings stay last write wins |
+
+**Without the header** a write is done exactly as before. **With it**, the write's own
+checks come first (the room's one 404 for "not there" and "not yours", 403 for an HOD,
+401 and 403 as for the write), then, one key at a time:
+- a key met before **with the same details** (the route, the record the path names and
+  the body, in a canonical form) is answered with the **whole first reply**, status
+  included, and header `Idempotent-Replayed: true`; nothing changes, nothing is pushed.
+  The kept reply shows the room as that write left it, not as it is now: read the room
+  again once the outbox has drained;
+- a key met before **with other details** (another body, route or record) is 409
+  "This change was already sent once with different details, so it was not done again.
+  Nothing was changed: send it as a new change.";
+- otherwise the write runs; a success (2xx) is kept under the key before the reply goes
+  out. **A refusal (any 4xx, a stale 409 included) is never kept**, so the same write
+  sent again is checked again against the room as it is then.
+
+A key is the writer's own (the account, or the shared key) in that room
+(`record_writes`, `0032`), and goes with the room. A malformed key is 400 "The replay key
+must be 8 to 64 letters, digits, hyphens or underscores, such as a UUID.". There is no
+batch route: the outbox sends one write at a time.
+
+**`basedOn`, the stale-write rule.** A write that replaces a mark may say what it was
+made from: the record as the screen showed it. If that record has moved on, nothing is
+changed and the reply is **409** `{ error, stale: true, current, … }`: a sentence naming
+what is newer (its time in India's clock, no route or field named) and the record as it
+stands. Stamps are the server's own, compared only for equality, never for order:
+device clocks are never compared. Per kind:
+- **attendance**: refused, all or nothing, only when a professor's mark with a different
+  status was made since; a phone's join never stands in the way. The 409 adds `newer:
+  [{ studentId, status, markedAt, markedBy }]`, and `current` is the whole register;
+- **observation**: refused when the mark in force is not the one shown; the same mark
+  again is never refused. Adds `student`, `day`, `history`, `privacy`;
+- **pick, tally edit, activity edit**: field by field; a field already holding the value
+  sent is not a conflict. Adds `privacy`;
+- **insight action**: refused when another action on the card was recorded since, unless
+  it is this same action. Adds `privacy`.
+
+`basedOn` must use these field names. **An object holding none of them is no check at
+all**: the tally view's `options[]` sent as `basedOn` was taken as "nothing shown" and the
+write went through (captured). Build a tally's `basedOn` as `{ counts:
+options.map(o => o.count) }` (and `labels`, `correct`, `revealed`, `text` as needed).
+
+Captured: a hand count step sent twice under one key; the key reused on another route;
+a tally edit made from counts another screen had changed; an attendance chain where
+another screen marked the student in between.
+
+```json
+POST …/tallies/:id/increment   Idempotency-Key: step-0001-a   { "option": 0 }
+200  { "tally": { "id": "…", "seq": 1, "text": "Is the empty set a subset of every set?",
+                  "options": [ { "key": "A", "label": "Yes", "count": 1, "correct": null }, … ], "total": 1, … },
+       "clamped": false, "privacy": "Teacher records are for staff only: …" }
+the same again                  200, Idempotent-Replayed: true, the same body; the count stays 1
+the key on …/decrement          409 { "error": "This change was already sent once with different details, so it was not done again. Nothing was changed: send it as a new change." }
+Idempotency-Key: x              400 { "error": "The replay key must be 8 to 64 letters, digits, hyphens or underscores, such as a UUID." }
+
+PATCH …/tallies/:id   Idempotency-Key: tally-edit-0001   { "counts": [6, 2, 0, 0], "basedOn": { "counts": [1, 0, 0, 0] } }
+409
+{ "error": "This question's tally was changed at 19:40, newer than what this change was made from. Nothing was changed.",
+  "stale": true,
+  "privacy": "Teacher records are for staff only: never shown on a phone or the projector, and they never move a Bloom level.",
+  "current": { "id": "…", "options": [ { "key": "A", "label": "Yes", "count": 4, … }, { "key": "B", "label": "No", "count": 1, … }, … ],
+               "total": 5, "summary": "5 responded, more than the 1 marked present", "updatedAt": "2026-11-19T14:10:25.742Z", … } }
+the same again       409 again (a refusal is not kept)
+
+POST …/attendance   Idempotency-Key: att-0002-dev
+{ "marks": [ { "studentId": "15756d7535d6201cf0b4f1ed", "status": "late", "basedOn": "2026-11-19T14:09:54.621Z" } ] }
+409
+{ "error": "23CS02 (Dev Patil) was marked absent at 19:39, newer than what this change was made from. Nothing was changed.",
+  "stale": true,
+  "newer": [ { "studentId": "15756d7535d6201cf0b4f1ed", "status": "absent", "markedAt": "2026-11-19T14:09:54.634Z", "markedBy": null } ],
+  "current": { "room": { "code": "Q5B36K", … }, "class": { … },
+               "students": [ …, { "studentId": "15756d7535d6201cf0b4f1ed", "rollNo": "23CS02", "name": "Dev Patil",
+                                  "status": "absent", "source": "teacher", "markedAt": "2026-11-19T14:09:54.634Z", … }, … ],
+               "counts": { … }, "summary": "1 / 3 present", "caveat": "…" } }
+```
+
+A pick marked Absent with `markAttendance` true still writes attendance without the
+attendance stale check; an outbox can send `markAttendance: false` and a separate
+attendance mark with its own `basedOn`.
+
+**One gap, said plainly** (`routes/recordSync.js`): a write that succeeds but whose reply
+then cannot be built (the store failing on the read after the write) answers 500 and
+keeps no key, so a retry does the write again; for a tally step that is a hand counted
+twice.
+
+### What the review fixes changed (19 November 2026)
+
+Reviewed after the merge. Which checks were shown to fail before their fix:
+`docs/TESTING.md`, "Phase 7".
+- **A second answer to a question already marked is stored**, kept and not counted
+  (`server:kept`); the same response again is still told its mark.
+- **The served log** (`profiles.served_log`): a question the pin moved off is still one
+  the phone was given, so its late answer counts inside the window.
+- **Past the window**, a deliver join is accepted and every answer stored, kept and not
+  counted (it used to be refused at the door).
+- **Packs**: one request in flight per connection, no room-wide lock, records reused,
+  at most 50 per phone.
+- **Laptop mode**: a TEACHER_KEY of at least 16 characters (24 random when unset), the
+  wrong-key lock-out, origins limited to the laptop's own addresses, files 0600 in a 0700
+  folder.
+- **Imports**: shown as imported on every staff view, `?imported=leave-out`; a taken code
+  gets a fresh code; the delivery check reads one room id, after the roll number and the
+  row are checked.
+- **Question ids are case-free** everywhere in the answer path, so no question is marked
+  twice under another mix of capitals.
+- **The grace verdict uses the arrival time**, read before the student's lock, so an
+  answer that arrived in time counts even when it is marked later.
+- **Kept answers are capped** at 100 per student per room (`KEPT_LIMIT`); past that,
+  `server:refused` and nothing stored.
+- **Laptop files are written whole or not at all**: the write loops until every byte is
+  written, and otherwise fails without renaming over the last good file.
+
+### What the screens need
+
+None of these screens exists except the phone's stage-First outbox, service worker and
+indicators. Show every sentence the server sends as it is.
+
+**Phone: packs.** After `session:accepted`, send `student:pack` and keep the questions in
+IndexedDB with `issuedAt` and `expiresAt`. Ask again after every reconnect, after each
+`class:question` or `class:closed` (a question put to the class leaves every pack, and
+the phone is not told which of its packed questions it was), and after live answers in a
+room with a cap on questions per student. An empty `questions` means keep nothing; show
+the `note`. Offline: the question on the screen first, then the packed ones in the order
+sent, skipping and reordering none, until the pack is used up or `expiresAt`. One go
+each; the label is "saved, will be marked when you reconnect". Show each question's
+`reason` and `provenance.text`; keep `timePerQuestion`, never enforce it. While online,
+let the service worker cache each packed question's image (`/api/media/<id>` serves a
+phone only while the room runs). Render packed questions from the plain fields (they
+carry no `rich`). **Never** a mark, a key, a solution or "right"/"wrong" for an answer
+made offline.
+
+**Phone: replies.** Match every reply by `answerId` (and `questionId`), not by order.
+`server:result`: marked (with `late` and `message` after the close). `server:kept`:
+saved, does not count; show its `message` and drop it from the outbox, **never** with a
+mark. `server:refused`: refused for good; keep the item, show it with its message, never
+resend. `session:rejected` "That answer did not save…": resend later with the same
+`answerId`. `session:paused`: hold. `server:exhausted` after a `server:kept`: the student
+has finished.
+
+**Phone: delivering to a closed room.** With items in the outbox, join with `deliver:
+true` (and when an ordinary join gets "That session has already been closed.", retry
+with `deliver: true`). With `deliverOnly`, send the outbox only, show `message` and say
+that answers to questions it was given count until `deliverUntil`, and later ones are
+kept but do not count; expect no question. In an open room, send the outbox, then
+`student:next` to get the screen's question back. A refusal for an imported room means
+keep the items, show the sentence, and stop retrying. Where the service worker is
+unavailable (plain `http` on a laptop's LAN), guard `navigator.serviceWorker` and show a
+one-line hint not to reload while the Wi-Fi is down. **Never** a new question in a
+closed room.
+
+**Console: the record outbox.** Queue every teacher-record and attendance write in
+IndexedDB, append-only, and send them in order, one at a time, after reconnecting. Give
+each item a fresh UUID when queued and send it as `Idempotency-Key` on every retry. Fill
+in its path and body, `basedOn` included, just before its first send, then never change
+it: a changed body under the same key is a 409. Chain `basedOn` from the stamp the
+server last gave this console for that record (the last read, or the reply to the
+previous outbox item on the same record: `students[i].markedAt`, `current.observedAt`,
+the action's `actedAt`, the pick's, tally's or activity's fields), in the write's own
+field names; null means "there was none"; leaving it out skips the check. Replies: any
+2xx, `Idempotent-Replayed` or not, means done (drop it; read the room again once the
+outbox drains); a network error or 5xx means retry the same item with the same key and
+body; any 4xx means refused (keep it and show it, never delete it silently).
+
+**Console: the sync pill and stale 409s.** A Synced / Offline · N waiting / Syncing pill;
+a "Sync status" list of waiting items (Queued / Sending); "Saved on this device · will
+sync" on each queued write; "All records synced" when the outbox drains. A 409 with
+`stale: true`: show `error` beside `current` (and `newer` for attendance) and let the
+professor resend it as a **new** item with a new key, or discard it. **Never** resend a
+stale write under its old key, and never show a device's clock as the record's time.
+
+**Console: imports.** Choose one or more room files (`.json`), parse each in the browser
+and send `{ archive, contentId, classId }` one at a time, offering the professor's
+chapters and, when the room had a class, her classes. On the chapter or class 400, ask
+for that choice and send again (`needs` is not in the reply: see above). Show `message`
+and `import.summary.sentences`. A 200 with `alreadyImported` is not an error: say
+nothing changed, and show the extra sentence when `same` is false. Rooms list: mark
+imported rooms (`importedFrom`, or match `GET /api/imports/rooms` by
+`room.sessionId`) with "Imported from a laptop", the date and `laptop.run`. Wherever a
+room is shown (rooms list, grid, answers, attendance, topics, item statistics, review
+queue and detail, attainment, register), show `importedFrom.note`, and offer "leave
+out imported rooms" on attainment and the register (`imported=leave-out`). Item
+statistics list an imported room's questions as no longer in the bank: say "asked on
+the laptop, not in this chapter's bank" instead. **Never** present an imported room as
+one this server ran.
+
+**Console: 429.** Show the lock-out sentence as it is, and do not retry the key
+automatically while it stands.
+
+**Console: laptop mode.** Call `GET /api/laptop` once on load. When `laptop` is true,
+show a small banner: running on this laptop, rooms saved to `archives.folder` every
+`intervalSeconds` and at each close, with `lastWriteAt` and any `lastError`, and the
+`unavailable` list. Hide or disable sign-in, AI generation, Google Classroom and the hub.
+When the console is opened at `localhost`, warn that the projector's QR code then gives
+phones an address they cannot reach (open the printed LAN link). **Never** show the
+teacher key on the projector, and never offer to open the console from another device.
+
 ## Known open issues
+
+Phase 7 (offline-first), open. None is a failing test; each is a gap, a limit or an
+owner's call (`docs/PRODUCT_DECISIONS.md`, Phase 7):
+
+- **Nothing ran against Supabase or Mongo.** `0030` to `0032` ran on PGlite only; the
+  new Supabase methods (packs, imports, replay keys, `served_log`) only against a stubbed
+  PostgREST, the Mongo ones only through the parity test. The hosted stores' case-blind
+  id lookups were simulated in-process.
+- **No real phone, hotspot or travel router.** The phone's outbox and service worker
+  were checked in headless Chrome by the UI session; packs, `server:kept` and
+  `server:refused` were tested with scripted Socket.io phones only. Real firewall
+  prompts, how many phones a hotspot holds, a normal stop with Ctrl+C on Windows, an
+  address appearing after the start, and the built client served in laptop mode were not
+  run.
+- **A packed question carries no `rich`** (found while writing these docs, traced in
+  `packPayload` and seen in the captured pack): a formula or a code block in a packed
+  question reaches the phone as plain text, while the same question served live is
+  rendered.
+- **The import's `needs` never reaches the console** (found while writing these docs):
+  the app's error handler sends `{ error }` only. Tell the chapter and class 400s apart
+  by what was sent.
+- **A `basedOn` holding none of its kind's field names is no check**: the write goes
+  through as if nothing had been shown (captured with a tally view's `options`).
+- **`student:next` puts a fresh question on the screen each time**, so a phone can read
+  questions at its working level one at a time without answering (before Phase 7 too).
+  Packs no longer add records on top of it.
+- **No general rate limit per socket.** Only pack requests are folded; answers, joins and
+  `student:next` can still be sent without limit (kept answers are capped at 100 per
+  student per room).
+- **The shared key over plain HTTP in laptop mode.** Anyone with the class Wi-Fi password
+  can read traffic on it, the key included, if the console is opened from another
+  device. The guide says to open it on the laptop only; refusing the key from any other
+  address would stop a tablet console. The owner's call.
+- **The wrong-key counter is laptop mode only.** The deployed server sets no `trust
+  proxy`, sees one address for everyone, and would shut every professor out at once.
+- **An imported room is shape-checked, not authenticated.** A hand-made file with the
+  laptop mark imports as ordinary evidence; every staff view says it was imported and
+  reports can leave it out. Its times come from the laptop's clock.
+- **The laptop keeps only rooms across a restart.** Chapters, questions, classes and
+  rosters are in memory. The laptop's question ids are never the cloud's, so an imported
+  answer's `question_id` is empty: item statistics call those questions deleted and not
+  in use, and the room's `bankCount` is the cloud chapter's. A running room is lost from
+  memory at a crash (its file keeps up to the last save).
+- **A record write done but not answered** (the store failing on the read after the
+  write) keeps no key: a retry does it again; for a tally step, a hand counted twice.
+- **A pick marked Absent with `markAttendance` true** writes attendance without the
+  attendance stale check.
+- **An answer past the room's cap to a question never given**, in an open room, is still
+  not stored (`0018`'s rule); answers to served or packed questions past the cap are.
+- **No fresh pack is pushed** when a class question starts: until the phone asks again,
+  an answer to that question from an old pack is kept with the class question.
+- **The phone's own time is not on the staff answer list** (`answerItem`); it is in the
+  store and the archive.
+- **The grace window is a constant** (`GRACE_MINUTES`, 10); O2 says a room setting later.
+- **Replay keys keep the whole first reply** (the register or the wheel for some writes:
+  tens of kilobytes at most per key), for as long as the room; not archived.
+- **On Mongo every room is unowned** (the `Session` model declares no `ownerId`), an
+  imported one included; before Phase 7 too.
+- **The UI session's server asks still open**: `/sw.js` is served `immutable`, and
+  `session:rejected` carries no `answerId`.
 
 Phase 6 (the Learning Hub), open. None is a failing test; each is a gap, a limit or
 an owner's call (`docs/PRODUCT_DECISIONS.md`, Phase 6):

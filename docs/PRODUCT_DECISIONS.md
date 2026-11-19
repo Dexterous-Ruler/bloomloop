@@ -32,6 +32,12 @@ contract; three new dependencies; the repository's Phase 6 methods (section 2);
 `Content.slideTexts` (section 3); the phone's additive `question.rich` (section 5); and
 how the hub applies section 6's rules 1 to 3.
 
+The Phase 7 decisions (offline-first, O1 to O5) were taken under the same delegation
+that day, and are recorded from "Phase 7 in brief" on, with the defaults chosen and the
+items left for the owner. Phase 7 made Amendment 7 (dated): the new socket events and
+fields (packs, `server:kept`, `server:refused`, deliver joins) and the
+`Idempotency-Key` header.
+
 | # | Decision | Status |
 |---|---|---|
 | 1 | Generated teaching content in the Hub | **Decided under the owner's delegation, 19 Nov 2026**: as recommended; contract amended; Phase 6's lessons, explanations, hints and translations are built under it |
@@ -1775,3 +1781,163 @@ From the review fixes and the verification findings. Nothing is built that settl
     on `onYourClasses`.
 11. **Left out of the hub for now** (H5): image questions, and the fewer-choices
     support.
+
+### Phase 7 in brief: offline-first, what to read first, and what is open
+
+Phase 7 makes a class work when the network does not: the phone keeps answers it could
+not send and takes a few questions ahead, and the server marks them when they arrive; a
+professor's console keeps its records the same way; and a laptop can be the whole server
+in a room with no internet. The owner said "continue with phase 7"; O1 to O5 below were
+**decided under the owner's delegation, 19 Nov 2026**, in the directive's three stages
+(First, Next, Then). Server and database: `0030` to `0032`, committed as `46bf6f9`. The
+phone's stage-First pieces are the UI session's (`docs/UI_REBUILD.md`). `CONTRACT.md`
+Amendment 7 records the contract side. Rules that hold throughout:
+
+- **The server is the source of truth for order and marking.** Answers are marked in the
+  order they arrive; a device's clock is stored for the record and never read.
+- **Keys never go to a device.** A pack holds questions without their keys; an answer
+  made offline is "saved, will be marked when you reconnect".
+- **Nothing that reaches the server is dropped silently.** An answer is stored and
+  counted, stored and not counted (and the phone is told), or refused for good (told,
+  and kept on the phone).
+- **No paid service** (O5).
+
+**Read these first:**
+1. **The owner's items** ("Phase 7: items for the owner"): the shared key over plain
+   HTTP on a LAN, no general rate limit per socket, `student:next` browsing, and the
+   deployed server's `trust proxy`.
+2. **Imported rooms are labelled, not authenticated** (O4, below).
+3. **Answers after the grace window are stored, not refused** (O2, below).
+
+**Not tested.** Nothing in Phase 7 ran against a real Supabase, PostgREST, Postgres or
+MongoDB (PGlite for the SQL, stubs for the Supabase requests, the parity test for Mongo).
+No real phone, hotspot or travel router was used; time-based rules were tested by moving
+the process clock. The phone's outbox and service worker were checked by the UI session
+in headless Chrome only; the console's outbox, the import screen and the laptop banner do
+not exist yet.
+
+### Phase 7: O1 to O5, as built
+
+**O1. Stage "First": the phone keeps working offline.** Decided under the owner's
+delegation, 19 Nov 2026. A service worker with app-shell caching for `/join`; an
+IndexedDB append-only outbox of answers and votes; reconnection with retry and backoff;
+"saved on this phone / sent / marked" indicators. The outbox replays in order and never
+drops an item; one the server refuses for good is kept and shown.
+
+*What was built.* The phone's pieces, by the UI session (`fdac198`; `docs/UI_REBUILD.md`,
+"Phase 7, stage First"). On the server, every answer reply now names the phone's
+`questionId` and `answerId`, so the outbox matches replies by key (the UI session's ask),
+and two new replies settle an item, `server:kept` and `server:refused`. **On the staff
+side** (the console's records, gap F1), O1 applies too: every teacher-record and
+attendance write takes an optional `Idempotency-Key`; a write sent again is done once and
+answered with the kept reply; a key reused with other details is refused. A write made
+from a record that has since moved on (`basedOn`) is refused with the record as it
+stands, and the professor decides. Tally steps from two devices add up and are never
+stale. Device clocks are never compared, only the server's own stamps, for equality. No
+batch route: the outbox sends one write at a time, through the same code as a live
+write.
+
+**O2. Conflicts and late answers.** Decided under the owner's delegation, 19 Nov 2026.
+Evidence is append-only, so the only conflicts are duplicates (the idempotency key) and
+late arrivals. The server decides order and marking.
+
+*What was built, and the defaults.*
+- **The grace window is 10 minutes** after the close (`GRACE_MINUTES`, the edge
+  included), judged by the server's clock when the answer arrived. An answer to a
+  question served or packed to that phone before the close, arriving in it, counts.
+- **Every other late answer is stored, marked as arriving after the close, and not
+  counted**, one arriving long after the window included (a phone may deliver to a
+  closed room at any time while the room exists). Its row carries **no mark** (the
+  machine's reading beside it for staff), so a phone's own answer list never becomes a
+  key oracle after the close; the phone is told it is saved and does not count.
+- **Past the room's cap**, an answer to a question served or packed to the phone is
+  stored, not counted; one to a question never given is not taken (`0018`'s rule).
+- **A second answer to a question already marked** is stored, not counted; the same
+  answer again (a double-tap) is told its mark.
+- **An answer to a question this room never asks is refused for good** and not stored,
+  so another chapter's question never enters the room's record.
+- **At most 100 kept answers per student per room** (`KEPT_LIMIT`); past that,
+  `server:refused` and nothing stored.
+- **The phone's own time is stored**, never read for order or counting.
+
+**O3. Stage "Next": question packs.** Decided under the owner's delegation, 19 Nov 2026.
+After joining, a phone may take a small pack of keyless, approved questions; offline it
+works through them by a tiny fixed rule, and the server marks them when they arrive.
+
+*What was built, and the defaults.* **A pack holds 5 questions** (`PACK_SIZE`): 3 at the
+working level, 1 below, 1 above (`PACK_SHARE`); inside the below-40% band, Remember and
+Understand only. **It lasts 6 hours** (`PACK_HOURS`) or until the room closes; an answer
+to a question of an expired pack still counts as served. It is recorded before it is
+sent, at most 50 records per phone per room. **One go per packed question**, and per any
+answer not to the question on the screen: there is no screen to retry on, and retries
+would let a phone probe a key. Client-side selection was evaluated and not built
+(`docs/OFFLINE_SELECTION.md`: selection needs marks, marks need keys, and keys never go
+to a device; the integrity trade-offs accepted are listed there).
+
+**O4. Stage "Then": the laptop as the server, and imports back.** Decided under the
+owner's delegation, 19 Nov 2026.
+
+*What was built, and the defaults.*
+- **Laptop mode** (`npm --workspace server run laptop`) turns every network service off,
+  whatever `.env` says, and runs on the in-process store.
+- **The teacher key is at least 16 characters**; unset, the laptop draws a random key of
+  24 characters at every start. A shorter one stops the start with a sentence.
+- **10 different wrong keys from one address within 10 minutes** shut that address out
+  of the key for 10 minutes (laptop mode only).
+- **Pages are accepted only from the laptop's own addresses** on its port.
+- **Rooms are saved to disk every 60 seconds** (`LAPTOP_ARCHIVE_SECONDS`, 1 to 3600)
+  while they change, at once when closed or deleted, and at a normal stop. Each write is
+  atomic, confined to the folder, and readable by the laptop's user only.
+- **Imports accept only files laptop mode saved** (the laptop mark), idempotent by the
+  laptop's room id. The professor chooses the cloud chapter and class; the laptop's own
+  ids are used only if they name hers. A room saved while running is imported closed as
+  of when it was saved. Attendance marks for roll numbers not on the roster, and the
+  laptop's teacher records, stay in the stored file. A later save of an imported room is
+  never merged. An HOD reads the import list and imports nothing.
+- **Imported rooms are labelled, not authenticated.** Anyone can write the laptop mark,
+  so every staff view and report says a room was imported, with a note that the file was
+  checked for its shape, not that it is unchanged; attainment and the register can leave
+  imported rooms out (`?imported=leave-out`).
+- **A room code already taken online gets a fresh code** at import; only a clash of room
+  id refuses.
+- **A room imported from laptop mode takes no deliveries from phones**, inside the grace
+  window too: its phones answered on the laptop, and its file is its whole record. An
+  imported answer keeps the phone's own time for the record.
+- **The travel-router guide** is `docs/TRAVEL_ROUTER.md` (router, power, address,
+  steps). Its phone counts and battery life are typical figures, not measured.
+
+**O5. No paid service.** Decided under the owner's delegation, 19 Nov 2026. Workbox is
+not added: the service worker is hand-written. Phase 7 adds no server dependency; any
+library the client adds must be MIT-class and named.
+
+### Phase 7: items for the owner
+
+Nothing is built that settles these.
+
+1. **The shared key over plain HTTP on a LAN.** In laptop mode the key travels in clear
+   on a Wi-Fi the whole class has joined; anyone with the Wi-Fi password can read it if
+   the console is opened from another device. The guide says to open the console on the
+   laptop only. One option would close it: accept the key in laptop mode only from the
+   laptop's own addresses, which would stop a tablet console. HTTPS would need a
+   certificate on every phone, or a public name with a certificate.
+2. **No general rate limit per socket.** Only pack requests are folded (one in flight per
+   connection). Answers, joins and `student:next` can be sent without limit; kept answers
+   are capped at 100 per student per room.
+3. **`student:next` browsing.** Each `student:next` puts a fresh question on the screen
+   (before Phase 7 too), so a phone can read questions at its working level one at a time
+   without answering, keys withheld.
+4. **The deployed server's `trust proxy`.** It sets none, so it sees one address for
+   everyone, and the wrong-key counter runs in laptop mode only. Setting it to match the
+   host's proxy would let the counter run online too.
+
+Also open, lower: an answer past the room's cap to a question never given is still not
+stored (the owner may want it stored as kept); the grace window is a constant, a room
+setting later (O2 says so); no fresh pack is pushed when a class question starts; the
+laptop loses chapters, questions, classes and rosters at a restart (a "take a chapter and
+class to the laptop" export and import, keeping cloud ids, would also let imported
+answers keep their question ids).
+
+### Phase 7: adaptive paper cards (deferred)
+
+The directive says to consider adaptive paper cards last. They are not built and not
+designed; nothing in Phase 7 depends on them.

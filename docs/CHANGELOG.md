@@ -7,7 +7,71 @@ and Phase 4, its review fixes and `0019` to `0021` included, as `eedfd5e`. The
 owner's decisions of 19 November (`0022`) and Phase 5 (`0023`, `0024`, the honest
 indicators and the review fixes) are committed as `2f4fd2b`, the Phase 5 follow-ups as
 `4c1df09`. **Phase 6, the Learning Hub's server (`0025` to `0029`), is committed as
-`646b4e6`**, and its docs in the commit after it.
+`646b4e6`**, and its docs in the commit after it. **Phase 7, offline-first (`0030` to
+`0032`), is committed as `46bf6f9`** on top of the Phase 6 docs, and its docs in the
+commit after it.
+
+## Unreleased: Phase 7, offline-first (19 November 2026)
+
+Server and database only: `0030` to `0032`, four new socket events and new fields on five
+others for phones, laptop mode, room imports, and replay keys on the console's record
+writes.
+Built under the owner's delegation (decisions O1 to O5, `docs/PRODUCT_DECISIONS.md`) in
+the directive's three stages, by three builders whose branches were merged, wired,
+reviewed and fixed. Endpoints and events: `docs/API.md`, "Phase 7: offline-first".
+Nothing was run against Supabase or Mongo, on a real phone, or over a real hotspot.
+
+- **First (O1).** The phone's service worker, outbox and indicators are the UI session's
+  (`fdac198`), not tested on a real phone. On the server, every answer reply now carries
+  the phone's `questionId` and `answerId`, so an outbox matches replies by key.
+- **Question packs (O3, `0030`).** `student:pack` / `server:pack`: up to 5 keyless,
+  approved questions (3 at the working level, 1 either side; the band: Remember and
+  Understand), recorded before they are sent (`question_packs`), for 6 hours; the same
+  pack when asked again; one request in flight per connection.
+- **Outbox answers (O2).** Marked in the order they arrive, each taking its student's
+  lock on arrival; the phone's own time stored (`answers.device_answered_at`) and never
+  read; one go for any answer not to the question on the screen, which stays pinned.
+- **Late answers (O2).** A deliver join (`deliver: true`) lets a phone send what it saved
+  to a closed room at any time while the room exists. Inside the 10-minute grace window,
+  an answer to a question served or packed before the close counts; every other late
+  answer is stored, kept and not counted, with no mark (`server:kept`). An answer to a
+  question the room never asks is refused for good (`server:refused`). Each profile logs
+  every question put on its screen (`profiles.served_log`), so "served before the close"
+  survives the pin moving on.
+- **Laptop mode (O4).** `npm --workspace server run laptop`: every network service off,
+  a teacher key of at least 16 characters (24 random when unset), wrong keys locking an
+  address out, origins limited to the laptop's own addresses, and every room saved to
+  disk at each close, every 60 seconds while it changes, and at a normal stop. The
+  professor's guide: `docs/TRAVEL_ROUTER.md`.
+- **Room imports (O4, `0031`).** `POST /api/imports/rooms` makes a laptop's room file a
+  closed room the professor owns, idempotent by the laptop's room id, never merged; a
+  taken code gets a fresh one. Every staff view and report says a room was imported
+  (`importedFrom`), and attainment and the register can leave such rooms out
+  (`?imported=leave-out`). An imported room takes no deliveries from phones.
+- **Replay-safe records (O1 on the staff side, `0032`).** An `Idempotency-Key` on any of
+  13 teacher-record and attendance writes is answered from the kept reply when sent
+  again (`Idempotent-Replayed: true`); `basedOn` refuses a write made from a record that
+  has since moved on (409 with the record as it stands).
+- **Fixes from the review.** A second answer to a question already marked is stored, not
+  counted; the log of serves; deliveries after the window accepted and stored; pack
+  requests no longer hold the room's lock, and reuse their record; the laptop's key rules
+  and origins; files 0600 in a 0700 folder; imports labelled everywhere and a fresh code
+  on a clash; the delivery check reads one room id. Landing in the commit after these
+  docs: question ids compared without case throughout the answer path; the grace
+  verdict on the arrival time; at most 100 kept answers per student per room; laptop
+  file writes that finish every byte or fail without renaming.
+- **Also changed.** `answeredAloneOf` matches a class question by its snapshot's id when
+  the bank id is gone, so a room whose question was deleted later (or an imported room)
+  counts students who answered it alone instead of reading 0. Every room archive leaves
+  out the log of serves, and keeps the phone's own time.
+- **Docs.** `docs/API.md`, `ARCHITECTURE.md`, `DATABASE_SCHEMA.md`,
+  `IMPLEMENTATION_STATUS.md`, `PRODUCT_DECISIONS.md`, `TESTING.md`, `OFFLINE_SELECTION.md`
+  and `TRAVEL_ROUTER.md` (claims checked against the code and corrected: the teacher-key
+  step, what a room file holds, a taken code, the window), `supabase/README.md`, and
+  `CONTRACT.md` Amendment 7.
+- Every suite through the offline runner: unit 1031/1031, migrations 1457/1457,
+  `offline.mjs` 79, `laptop.mjs` 79, `recordsync.mjs` 38, and every older script at its
+  figure (`docs/TESTING.md`, "Full rerun after Phase 7").
 
 ## Unreleased: Phase 6, the Learning Hub (19 November 2026)
 

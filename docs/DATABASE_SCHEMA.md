@@ -9,14 +9,34 @@ Every table has row level security **on with no policies**. Only the server's
 service role key, which bypasses RLS, can read or write; the anon key sees nothing.
 The server is the only place authorization is decided.
 
-Last revised 19 November 2026, after Phase 6, the student Learning Hub: the hub's
-backbone (`0025`), practice and explanations (`0026`), lessons and languages
-(`0027`), Get Ready checks, self-tests and goals (`0028`) and the tutor (`0029`).
-Before them came the owner's decisions (`0022`), class questions (`0023`) and
-misconception labels (`0024`), which left 752 migration checks. The full rerun after
-Phase 6 gave 1226 of 1226 on PGlite, run offline with every network setting blank, on
-Node 24.22.3. Nothing has been run against the hosted Supabase project. The next free
-number is `0030`.
+Last revised 19 November 2026, after Phase 7, offline-first: question packs, the
+phone's own answer time and the log of serves (`0030`), rooms imported from laptop mode
+(`0031`) and replay keys for the console's record writes (`0032`). Before them came
+Phase 6, the student Learning Hub (`0025` to `0029`, 1226 migration checks). The run
+for the Phase 7 docs gave 1457 of 1457 on PGlite, offline with every network setting
+blank, on Node 24.22.3. Nothing has been run against the hosted Supabase project. The
+next free number is `0033`.
+
+**Applying everything: `0000` to `0032`, in number order.** The numbering has no gap.
+
+**Applying Phase 7: `0030` before the server is deployed; then `0031` and `0032`.**
+- **`0030` is one rooms need: apply it before deploying the Phase 7 server.** The
+  repo writes `answers.device_answered_at` with every answer, `profiles.served_log`
+  with every profile save, and `question_packs` with every pack, and reads the packs
+  for any answer not to the question on a phone's screen. So the boot probe checks
+  all three in `ROOM_SCHEMA`: without `0030` the server does not use Supabase at all
+  (it falls back to the in-process store, which saves nothing) and its boot log names
+  `0030`. `0030` rewrites no row (a nullable column and a column with a constant
+  default `'[]'`, which Postgres adds without touching rows).
+- **`0031` and `0032` are route-only** (`ROUTE_SCHEMA`): without `0031` every room runs
+  and importing a laptop's room file fails, naming `0031` (staff views then show no room
+  as imported, and a closed room's deliveries work as for any room); without `0032` a
+  record write sent with an `Idempotency-Key` fails, naming `0032`, and every write
+  without a key works. Safe before or after the server, in number order.
+
+None of the three rewrites a row, narrows a check or drops anything; each re-runs over
+data unchanged; RLS is on with no policies on the three new tables. Run on PGlite only
+(`npm run migrations`).
 
 **Applying Phase 6: `0025` to `0029`, in order.** Every Phase 6 piece is route-only.
 The boot probe checks each new table, and the two columns added to tables that
@@ -91,11 +111,11 @@ rewrites no row; every existing question reads as having no labels. Run on PGlit
 (`npm run migrations`, 752 of 752 on 19 November 2026).
 
 **The boot probe, since 19 November 2026**, checks the tables and columns the server
-writes from `0000` to `0029`, each named with its file (not the columns of `0003` to
+writes from `0000` to `0032`, each named with its file (not the columns of `0003` to
 `0007`, nor `0011`'s index or `0012`'s triggers, which it does not look for;
 `supabase/README.md` lists which file it checks). What rooms need (`0000` to
-`0018`, and `0022` to `0024`) stops Supabase being used when missing; what only some routes
-need (`0019`, `0020`, `0021`'s `attendance.roll_no`, and `0025` to `0029`) is logged at boot, one line
+`0018`, `0022` to `0024`, and `0030`) stops Supabase being used when missing; what only some routes
+need (`0019`, `0020`, `0021`'s `attendance.roll_no`, `0025` to `0029`, `0031` and `0032`) is logged at boot, one line
 per missing piece, naming the file to apply and what fails until it is, and Supabase
 is still used (`ROOM_SCHEMA`, `ROUTE_SCHEMA` in `server/src/repo/supabaseRepo.js`).
 Before this, `0019` to `0021` were not checked at all.
@@ -154,8 +174,28 @@ printable pages read what these tables and the Phase 1 to 3 tables already hold.
 | `0027_lessons_and_languages.sql` | Phase 6, lessons and languages: `topic_lessons` (a topic's lesson, one row per version; trigger `topic_lessons_guard`; function `approve_topic_lesson`), `item_translations` (Hindi and Marathi versions; trigger `item_translations_guard`; function `approve_item_translation`) and `student_language_choices`. Changes no row | new (Phase 6) |
 | `0028_hub_paths_and_goals.sql` | Phase 6, Get Ready checks, self-tests and goals: `hub_runs` (written once, then ended once; trigger `hub_runs_written_once`), `hub_attempts.run_id` (nullable uuid, references `hub_runs(id)`, no delete action, partial index; trigger `hub_attempts_in_own_run`) and `hub_goals`. Changes no row: every attempt before it has no run | new (Phase 6) |
 | `0029_hub_tutor.sql` | Phase 6, the tutor: `question_hints` (up to three steps per question), `option_feedback` (per wrong option, keyed by its words), `hub_hint_views` (each hint a student opened, append-only by trigger `hub_hint_views_append_only`) and `hub_attempts_hints_mode_check` (no hints in a self-test or Get Ready), added NOT VALID. Changes no row; an attempt written before it is not checked | new (Phase 6) |
+| `0030_offline_packs.sql` | Phase 7, offline answers: `question_packs` (a pack of keyless questions sent to one phone; written once, gone only with its room, trigger `question_packs_written_once`), `answers.device_answered_at` (nullable; the phone's own time, for the record) and `profiles.served_log` (jsonb, not null, default `[]`; every question put on the phone's screen). **Rooms need it: apply before the server.** Changes no row | new (Phase 7) |
+| `0031_room_imports.sql` | Phase 7, laptop mode: `room_imports` (one row per room file imported; unique laptop room id and room; written once, trigger `room_imports_written_once`, function `room_imports_keep_record`). Route-only. Changes no row | new (Phase 7) |
+| `0032_record_write_keys.sql` | Phase 7, the console's outbox: `record_writes` (the first reply of each teacher-record write sent with a key; append-only through `0017`'s `teacher_records_guard`, trigger `record_writes_append_only`; gone with its room). Route-only. Changes no row | new (Phase 7) |
 
 The SQL of every moved file is unchanged; only header comments were updated.
+
+What the migration test holds `0030` to `0032` to (Phase 7; 1457 checks in all, 1226
+before them). Each builds on a fresh database and again unchanged; each re-runs over a
+database holding its own rows, and its guards still refuse after the re-run; each is
+applied over existing data (`0030` over rooms, profiles and answers; `0031` over rooms,
+answers and archives; `0032` over attendance and teacher records) and changes no row.
+`0030`: a phone's time written once, a kept-after-close answer as the live loop writes
+it, a pack of five read back in order, an empty pack, one of 21, one holding a null, a
+non-flat one and one expiring when sent refused, no change and no delete but with its
+room, `served_log` read back in order and refused when not a list or over 1000 entries.
+`0031`: an import read back, the same laptop room twice and two imports of one room
+refused, the file's size, hash, room id and code checked, the record never edited (the
+file, the times, the room by hand), the room's and the account's deletion setting their
+columns to null, the record deletable. `0032`: a key read back with its whole reply, the
+same key twice from one writer refused and from another taken, the key, route, hash,
+status (2xx only) and reply shapes checked, no edit, no delete but with its room. The
+numbering check is strict: `0000` to `0032`, no gap. Run on PGlite only.
 
 What the migration test holds `0025` to `0029` to (Phase 6; 1226 checks in all, 752
 before them). Each builds on a fresh database as part of the set and builds again
@@ -488,7 +528,7 @@ chapter?), and the cascade from deleting a chapter. Partial index
 analytics also `listSessionsForClass` (a class's rooms, newest first,
 `GET /api/classes/:id/analytics`). No column was added for it.
 
-### profiles (0000, 0005, 0007)
+### profiles (0000, 0005, 0007, 0022, 0030)
 
 One student in one room, keyed by roll number.
 
@@ -509,6 +549,7 @@ One student in one room, keyed by roll number.
 | `account_id` | uuid | null; references `accounts(id)` on delete set null |
 | `updated_at` | timestamptz | not null, default now() |
 | `account_verified` | boolean | not null, default false (`0022`). True only when `account_id` was linked because the phone presented that signed-in student's token at join (decision 7). Every link made before `0022`, from a typed roll number, reads false: kept, unverified, never read into the student's own history |
+| `served_log` | jsonb | not null, default `[]` (`0030`); `profiles_served_log_check`: an array of at most 1000 entries. Every question the server put on this phone's screen, the first time each: `[{ questionId, at }]`, in the order served. The server keeps at most 500 (`SERVED_LOG_LIMIT`). Written with the pin, in the same profile save (`logServed` in `services/offline.js`). Read only to decide whether an answer arriving after the room's close was to a question the phone was given (`servedAtFor`). Left out of the room archive. A profile before `0030` reads as having logged nothing |
 
 Written by: repo `saveProfile` (upsert on `session_id, roll_no`) from
 `sockets/index.js`: join (including, since `0022`, the verified link a signed-in
@@ -520,7 +561,7 @@ which sets the reviewed mark on the matching `history` entry (marked `review`:
 in-process per-student lock first (`lockProfile` in `sockets/index.js`), because
 each reads the whole row and writes it back.
 
-### answers (0008)
+### answers (0008, 0012, 0022, 0023, 0030)
 
 One row per submitted attempt; append-only evidence.
 
@@ -557,6 +598,20 @@ One row per submitted attempt; append-only evidence.
 | `account_verified` | boolean | not null, default false (`0022`). True only when the phone that sent the answer was signed in as the account in `account_id` (decision 7). A student's own history reads only these rows. Written once: `0012`'s guard allows no change to it |
 | `class_question_id` | uuid | null (`0023`); the class question a vote was given in. No foreign key: a room's class questions and answers are deleted together (both cascade from `sessions`), and an `on delete set null` would trip `0012`'s guard. Written once |
 | `round` | smallint | null (`0023`); 1, or 2 for the re-vote after discussion. Set with `class_question_id` or not at all (`answers_round_check`). Written once |
+| `device_answered_at` | timestamptz | null (`0030`); no default. When the phone says the student answered, sent with an answer that waited on the phone (`deviceAnsweredAt`; kept only when it is a date from 2000 to 2099). For the record only: the order answers are marked in, and whether one counts, are read from `answered_at`, when the server received it. Written once: `0012`'s guard refuses a change to every column it does not list as changeable, this one included. In the room archive; not yet on the staff answer list |
+
+**Kept, not counted (Phase 7, no new column).** An answer the live loop stores and never
+counts has `final` false, `correct` and `score` null (the machine's reading in
+`auto_*`), and one of three `detail` values (`services/offline.js`): "Arrived after the
+room closed: kept, not counted." (`AFTER_CLOSE_DETAIL`: after the close, and not given to
+that phone before it, or after the 10-minute window), "Arrived after the student had
+answered every question the room asks: kept, not counted." (`OVER_CAP_DETAIL`: past the
+room's cap, to a question served or packed to the phone) and "Arrived after the student
+had already been marked on this question: kept, not counted." (`ANSWERED_AGAIN_DETAIL`).
+No profile, level or report counts them (`keptNotCounted`); attainment sets them aside
+with a note of their own. The server stores at most 100 kept answers per student per
+room, these and a student's own answers to a question put to the class together
+(`KEPT_LIMIT`; a server rule, not a database check).
 
 Indexes: unique `(session_id, answer_key)`; `session_id`; `(session_id, roll_no)`;
 `account_id`; `question_id`; partial on `class_question_id` where not null (`0023`);
@@ -1667,6 +1722,97 @@ a duplicate) from `services/hubTutor.js` (`POST /api/hub/practice/hints` and `PO
 account, attempt id, questions) from `services/hubTutor.js` (a reload's hints, and
 `hints_used`, above) and `routes/hubTutor.js` (staff: how often each hint was opened).
 
+### question_packs (0030)
+
+One row each time the server hands a phone a pack of the questions it would be served
+next, for use while its connection is down (decision O3). Ids only: the questions as
+shown are the bank's, sent without their keys. **Written once**; a new pack is a new
+row. In `ROOM_SCHEMA`: rooms need it.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `session_id` | uuid | not null; references `sessions(id)` on delete cascade |
+| `roll_no` | text | not null; the phone's roll number as the room keeps it |
+| `question_ids` | uuid[] | not null; `question_packs_questions_check`: one dimension, 1 to 20 ids (the server sends at most 5), no null. In the order the phone works through them |
+| `issued_at` | timestamptz | not null, default now(). When the pack was recorded, just before it was sent; an answer to one of its questions is taken as served from then |
+| `expires_at` | timestamptz | not null; after `issued_at` (`question_packs_expiry_check`). Six hours after it (`PACK_HOURS`); the room's close ends it sooner. Expiry only tells the phone to stop offering it |
+
+Index `question_packs_room_roll_idx` on `(session_id, roll_no, issued_at)`. Trigger
+`question_packs_written_once` (function of the same name), `before update or delete`:
+refuses every UPDATE, and every DELETE except inside a foreign key's own action
+(`pg_trigger_depth() > 1`, the cascade from the room). RLS on, no policies.
+
+Written by repo `addQuestionPack` from `packOnce` (`sockets/index.js`), at most 50 per
+phone per room (`PACK_RECORD_LIMIT`; a row is written only when the pack gains a
+question the live one lacks). Read by `listQuestionPacks(sessionId, rollNo)`, oldest
+first: by `packOnce` (the live pack) and by `handleAnswer` for an answer not to the
+pinned question (when, if ever, it was given). Not in the room archive.
+
+### room_imports (0031)
+
+One row per room file imported from laptop mode (decision O4,
+`services/roomImport.js`). The room itself is written to `sessions`, `profiles`,
+`answers`, `answer_reviews`, `attendance` and `class_questions` like any room; this row
+says where it came from. **Written once.** In `ROUTE_SCHEMA`: without it, imports fail
+naming `0031`, staff views show no room as imported, and the live loop treats every room
+as not imported.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `source_room_id` | text | not null, unique (`room_imports_source_room_id_key`); the room's id on the laptop, `^[A-Za-z0-9-]{1,64}$`. The import is idempotent by it |
+| `source_code` | text | not null; the room's code on the laptop, `^[A-Z0-9]{4,16}$`. The imported room keeps it unless that code is taken here, when it gets a fresh one (the column's comment in `0031` predates that rule) |
+| `source` | jsonb | not null, default `{}`, an object: `{ run, startedAt }`, which run of the laptop server saved the file (a random tag, never the machine's name) |
+| `session_id` | uuid | null, unique (`room_imports_session_id_key`); references `sessions(id)` on delete set null. The room it became |
+| `owner_id`, `imported_by` | uuid | null; reference `accounts(id)` on delete set null. Null under the shared key |
+| `imported_at` | timestamptz | not null, default now() |
+| `archived_at` | timestamptz | null; when the laptop saved the file |
+| `bytes` | integer | not null; 1 to 1048576 (`room_imports_bytes_check`) |
+| `sha256` | text | not null; 64 lower-case hex (`room_imports_sha256_check`); a later file for the same room is recognised as different |
+| `summary` | jsonb | not null, default `{}`, an object: what the import made, in counts and sentences |
+| `data` | jsonb | not null, an object: the archive as uploaded (with no integrity signal for a student the roster marks under 18). Teacher-only, like `room_archives.data`: it holds answer keys, names and roll numbers, and what was not made into rows (the laptop's teacher records, marks the roster could not take) |
+
+`room_imports_source_check` holds the id, code and object shapes above. Index
+`room_imports_owner_idx` on `(owner_id, imported_at desc)`. Trigger
+`room_imports_written_once` (function `room_imports_keep_record`), `before update`:
+refuses every UPDATE except a foreign key's ON DELETE SET NULL on `session_id`,
+`owner_id` or `imported_by`. A delete is allowed (erasure, decision 8). RLS on, no
+policies.
+
+Written by repo `importRoom` (with the room's rows, in one call; on Supabase table by
+table, deleting the session on a failure after it). Read by `getRoomImportBySource` (the
+idempotency check), `listRoomImports` (`GET /api/imports/rooms`; on Supabase the newest
+1000, without `data`) and `listRoomImportsForSessions` (by room id: `importedFrom` on
+staff views, and the live loop's refusal of deliveries to an imported room).
+
+### record_writes (0032)
+
+One row per teacher-record or attendance write first made with an `Idempotency-Key` in a
+room (`routes/recordSync.js`): the reply of that first write, given back unchanged to
+every replay. Receipts, not records. In `ROUTE_SCHEMA`: without it, a write sent with a
+key fails naming `0032`; one without a key works.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `session_id` | uuid | not null; references `sessions(id)` on delete cascade |
+| `writer` | text | not null, 1 to 64 characters: the account id, or `shared-key` for the v1 teacher key |
+| `write_key` | text | not null; `^[A-Za-z0-9_-]{8,64}$`. Unique with `(session_id, writer)` (`record_writes_session_writer_key_key`, also the index a replay reads by) |
+| `route` | text | not null; `^[a-z][a-z-]{0,39}$`: `attendance`, `observation`, `wheel-settings`, `wheel-draw`, `wheel-round`, `wheel-pick`, `tally`, `tally-edit`, `tally-increment`, `tally-decrement`, `activity`, `activity-edit`, `insight-action` |
+| `target` | text | not null, default `''`, at most 64: the record the path names (a pick's, tally's or activity's id, lower case), `''` for none |
+| `body_hash` | text | not null; 64 hex: SHA-256 of the route, the target and the body in a canonical form. The same key with another hash is a 409 |
+| `status` | integer | not null; 200 to 299 only: a refusal is never kept |
+| `reply` | jsonb | not null, default `{}`, an object: the whole first reply (one record for most writes; the class register for attendance, the wheel for a wheel write; tens of kilobytes at most) |
+| `created_at` | timestamptz | not null, default now() |
+
+Trigger `record_writes_append_only`, `before update or delete`, runs `0017`'s
+`teacher_records_guard()` with no changeable column: never edited, deleted only in the
+cascade from its room. RLS on, no policies. **Retention**: as long as the room; not in
+its archive; nothing prunes rows sooner. Written by repo `addRecordWrite` (a 23505 on the
+unique key means it is held already), read by `getRecordWrite({ sessionId, writer, key
+})`.
+
 ### accounts (0001, 0003, 0006)
 
 One per Supabase Auth user.
@@ -1782,6 +1928,17 @@ is plpgsql and security invoker.
   **`hub_hint_views_append_only`**, `before update or delete on hub_hint_views`
   (`0029`): as `hub_attempts_append_only`, for `question_id`, `topic_id` and
   `content_id`.
+
+Phase 7 (`0030` to `0032`); each table's section above has the detail. Every function is
+plpgsql, `search_path = ''`.
+- **`public.question_packs_written_once()`** with trigger of the same name, `before
+  update or delete on question_packs` (`0030`): no update; a delete only inside the
+  room's cascade (`restrict_violation`).
+- **`public.room_imports_keep_record()`** with trigger **`room_imports_written_once`**,
+  `before update on room_imports` (`0031`): only a foreign key's set-null on
+  `session_id`, `owner_id` or `imported_by` (`restrict_violation`).
+- **`record_writes_append_only`**, `before update or delete on record_writes` (`0032`),
+  runs `0017`'s `teacher_records_guard()` with no changeable column.
 
 ## Reconstructed from code
 

@@ -49,6 +49,10 @@ and is sent `projector:*` events only.
 | Get Ready, self-tests, goals and the hub home (Phase 6) | `routes/hubPaths.js`, `services/hubRuns.js`, `hubGetReady.js`, `hubExam.js`, `hubHeld.js`, `hubGoals.js`; `0028` | Get Ready checks and refresher paths (`hubGetReady.js`), self-tests (`hubExam.js`) with the hold-back rule (`hubHeld.js`), and a student's goals and hub home (`hubGoals.js`). A check or a self-test is a run (`hub_runs`); its answers are hub attempts carrying its id |
 | Tutor (Phase 6, H13) | `routes/hubTutor.js`, `services/hubTutor.js`, `hubHintHook.js`; `0029` | Approved hint ladders and feedback on wrong options, written by the professor or drafted on their button. No live model call. Hints open in practice, review sets and lessons only, and each one opened is a `hub_hint_views` row |
 | Closed questions (Phase 6) | `services/hubClosed.js` | Which questions are closed to a student for now: being asked in a room, on one of their open self-tests, or the one an open Get Ready check of theirs is asking. Read by practice, lessons, the tutor, Get Ready, the self-test result and the error log. Nothing stored |
+| Offline answers and packs (Phase 7) | `services/offline.js` (pure), `handlePack` / `packOnce`, `handleAnswer` and `handleJoin` in `sockets/index.js`; `0030` | A phone's question pack (up to 5 keyless questions, recorded before it is sent), answers marked in the order they arrive (each takes its student's lock the moment it arrives), the profile's log of serves, the grace window after a close, the deliver join, and the three kinds of kept-not-counted answer. See "Offline-first (Phase 7)" below |
+| Laptop mode (Phase 7) | `laptop.js`, `services/laptopArchive.js`, the `--laptop` wiring in `index.js`, the wrong-key counter in `teacherAuth.js`, `saveRoomsOnClose` and `GET /api/laptop` in `routes/laptop.js` | The same server on a professor's laptop with no internet: every network service off, LAN origins, a long teacher key with a lock-out for wrong ones, and every room written to the laptop's disk as its archive |
+| Room imports (Phase 7) | `services/roomImport.js`, `POST`/`GET /api/imports/rooms` in `routes/laptop.js`, `repo.importRoom`; `0031` | A room file laptop mode saved, checked for its shape and made into a closed room the importer owns, idempotent by the laptop's room id; `importedRooms` marks it on every staff view |
+| Replay-safe teacher records (Phase 7) | `routes/recordSync.js` (mounted ahead of the session routers), `services/recordSync.js`, the `basedOn` checks in `routes/records.js` and the attendance route; `0032` | An `Idempotency-Key` on any of 13 record and attendance writes is answered from its kept reply when met again; `basedOn` refuses a write made from a record that has since moved on |
 | Item statistics | `services/itemStats.js` | How each question did: attempts, proportion correct, how many chose each option (mapped back through each student's shuffle with `toOriginalResponse` in `questionTypes.js`), mean score, a band for the class, the point-biserial and its negative flag. From final, graded answer rows; `GET /api/session/:code/items` for a room, `GET /api/bank/:contentId/stats` across a bank's rooms. Since Phase 5 each option also carries its misconception label, or null |
 | Reports | `services/dashboard.js`, `analytics.js`, `csv.js`, `routes/export.js`, `routes/classroom.js` | Dashboards, analytics, the CSV export, and Google Classroom posting |
 | Storage | `repo/memoryRepo.js`, `mongoRepo.js`, `supabaseRepo.js` | Three implementations with the same methods. The rest of the server never asks which one it got |
@@ -157,6 +161,22 @@ and is sent `projector:*` events only.
   worked out per request from the hub attempts (the error log also from the student's
   own verified room answers). None is stored. A self-test's answers count only once it
   has ended (`services/hubHeld.js`).
+- **Answers that waited on a phone (Phase 7).** An outbox answer is an ordinary
+  `answers` row, marked by the same code, `served_at` its own question's time. It may
+  carry the phone's own time (`device_answered_at`, `0030`), kept for the record and
+  never read. An answer that arrived after the close and does not count, one past the
+  room's cap, or a second answer to a question already marked is stored with `final`
+  false, a `detail` saying which, and `correct` and `score` empty (the machine's reading
+  in `auto_*`): no profile, level or report counts it (`keptNotCounted` in
+  `services/offline.js`). Pack rows (`question_packs`, `0030`) and the profile's log of
+  serves decide only whether a late answer was to a question given before the close;
+  neither is in a room's archive.
+- **Imported rooms (Phase 7).** A room imported from laptop mode is written to the
+  ordinary tables like any room, under every guard; `room_imports` (`0031`) records where
+  it came from and keeps the file as uploaded, with what was not made into rows.
+- **Replay keys (Phase 7).** `record_writes` (`0032`) holds the first reply of every
+  teacher-record write sent with a key; receipts, not records, gone with the room and not
+  archived.
 - **Reference.** Every Phase 1 to Phase 4 endpoint and socket field, with request
   and response shapes: `docs/API.md`.
 
@@ -213,7 +233,7 @@ is staff-only never leaves the teacher's channel or the teacher's routes:
 
 | Audience | Channel | Joined by | Gets |
 |---|---|---|---|
-| Phones | `session:<code>` | `student:join` (a typed roll number; optionally a signed-in student's token, which links the room to their account, decision 7) | Since Phase 5 also a class question (`class:question`, `class:vote`, `class:closed`): the question through `forStudent()`, its own vote back, never right or wrong, and the key only once the professor reveals it. Its own question, result and row: since 19 Nov 2026 a `PhoneRow` (`phoneRow` in `routes/session.js`, a student subset of the teacher's row with a neutral `next`), and sentences of its own that never name a band (decision (a)); the room's status, `server:waiting`, `session:teacher-led`. Since Phase 5's honest indicators its question carries `provenance` in a student's words, and its row `masteryBasis` and `next.provisional`. Since Phase 6 its question (`server:question`) and a class question's (`class:question`) also carry `rich`: HTML for each field of the question as shown that holds a formula or a code block, `{}` otherwise, with every other field as before (`phoneRich` and `phoneRichSync` in `services/richText.js`, H15). A phone holds no account token, so it reaches no `/api/hub` route. Never `slowLearner`, a signal, a roster name, attendance, a teacher record, an insight, a misconception label (Phase 5), a level check, a level move, a translation warning or anything for the projector |
+| Phones | `session:<code>` | `student:join` (a typed roll number; optionally a signed-in student's token, which links the room to their account, decision 7) | Since Phase 5 also a class question (`class:question`, `class:vote`, `class:closed`): the question through `forStudent()`, its own vote back, never right or wrong, and the key only once the professor reveals it. Its own question, result and row: since 19 Nov 2026 a `PhoneRow` (`phoneRow` in `routes/session.js`, a student subset of the teacher's row with a neutral `next`), and sentences of its own that never name a band (decision (a)); the room's status, `server:waiting`, `session:teacher-led`. Since Phase 5's honest indicators its question carries `provenance` in a student's words, and its row `masteryBasis` and `next.provisional`. Since Phase 6 its question (`server:question`) and a class question's (`class:question`) also carry `rich`: HTML for each field of the question as shown that holds a formula or a code block, `{}` otherwise, with every other field as before (`phoneRich` and `phoneRichSync` in `services/richText.js`, H15). A phone holds no account token, so it reaches no `/api/hub` route. Since Phase 7 also `server:pack` (keyless questions for use offline), `server:kept` (saved, never counted, never a mark) and `server:refused` (refused for good), and every answer reply names its `questionId` and `answerId`. Never `slowLearner`, a signal, a roster name, attendance, a teacher record, an insight, a misconception label (Phase 5), a level check, a level move, a translation warning or anything for the projector |
 | Teacher screens | `teacher:<code>` | `teacher:watch` with a teacher's credential, under the read rule | `teacher:grid` (with `rosterName`, `attendance`, `waiting` and `feed` added after `buildGridRow`, in `classGrid` and `roomFeed`), `teacher:status`, `teacher:insights`, and since Phase 5 `teacher:class-question` (counts, never a name) |
 | Projectors | `projector:<code>` | `projector:watch` with a link's token (no account) | `projector:state`, `projector:closed`, `projector:refused`, every one through the `toProjector()` whitelist |
 
@@ -901,6 +921,172 @@ test calls a real model.
   drafts and its lesson leaves ordinary drafts the professor can reject.
 - **Estimates** replay every hub attempt on the topics involved, by every student, on
   each request; this was not measured at a semester's scale (`docs/TESTING.md`).
+
+## Offline-first (Phase 7)
+
+Built in the directive's three stages under decisions O1 to O5
+(`docs/PRODUCT_DECISIONS.md`, Phase 7): the phone's outbox, service worker and
+indicators (First, client work); question packs and the grace window (Next); laptop mode
+and room imports (Then). The rule under all of it: **the server is the source of truth
+for order and marking**, keys never go to a device, and a device's clock is stored for
+the record and never read. Payloads: `docs/API.md`, "Phase 7: offline-first". The
+evaluation behind keeping selection on the server: `docs/OFFLINE_SELECTION.md`.
+
+```
+phone (outbox, IndexedDB) ──student:answer {answerId}──> handleAnswer ─ lock on arrival ─ mark ─ answers row
+        │   └─ student:pack ──> packOnce ─ question_packs row ─ server:pack (keyless)
+        └─ student:join {deliver} ──> closed room: deliver only, no question
+console (record outbox) ──Idempotency-Key, basedOn──> recordSync router ─ kept reply? ─ records/session routers
+laptop (--laptop) ── in-process store ── laptopArchive writer ──> room-<CODE>-<id>.json
+                                                                        │ (copied, back online)
+                                                                        └──> POST /api/imports/rooms ── roomImport ── closed room
+```
+
+### The outbox contract
+
+**The phone.** Every answer and vote is written to the phone's append-only outbox
+first, under its `answerId`, and sent; resent with the same id until a reply settles it.
+The server's idempotency is the answer row's key (`answers.answer_key`, unique per room):
+a resend is answered from the stored row and never stored twice. Since Phase 7 every
+answer reply names its `questionId` and `answerId`, so the outbox matches replies by key,
+not by order. Three replies settle an item: `server:result` (marked), `server:kept`
+(stored, never counted) and `server:refused` (refused for good, kept on the phone and
+shown, never resent). `session:rejected` "did not save" and a network error mean send
+again, same id. Nothing is dropped silently (O1).
+
+**The console.** A teacher-record or attendance write made offline goes into the
+console's outbox with a fresh key, its body (with `basedOn`) fixed at its first send,
+and is sent in order, one at a time, as the `Idempotency-Key` header
+(`routes/recordSync.js`). A 2xx (a replay included) settles it; a 4xx is a refusal kept
+and shown; a 5xx or a network error means send again, same key, same body.
+
+### Arrival order
+
+`handleAnswer` takes the student's lock (`lockProfile`) synchronously, before its first
+await, the moment an answer arrives, and reads the arrival time then. So an outbox
+sending a morning's answers in one burst is marked one by one in the order the server
+received them, and the ladder moves in that order. `deviceAnsweredAt` is stored on the
+row (`device_answered_at`) and read by nothing that marks, orders or counts. Ids are
+compared without case throughout the answer path, as the hosted stores find them.
+
+An answer to the question pinned on the screen is the live case: retries as the room
+allows, and the pin is spent. An answer to any other question (packed, from the outbox,
+never given) gets one go, never re-pins, and leaves the pin where it is. A deliver join
+in an open room serves nothing at the join (`resumePending`): the saved answers go
+first, and the phone's next `student:next` resumes its pin.
+
+### The served log
+
+The pin (`served_*`) says what is on the screen now and moves on without its question
+being answered (a failed save then "Next question", a pin no longer servable at a
+rejoin). So `dispatchNext` also appends every question it puts on a screen, the first
+time each, to the profile's log (`profiles.served_log`, `0030`; at most 500, `logServed`),
+in the same profile save as the pin, logging the pin it replaces too. `servedAtFor`
+reads the pin, the log and the phone's packs to say when, if ever, a question was given
+to that phone; with the room's close as the limit it decides the grace window. The log
+is left out of every room archive: no answer can reach an archived room.
+
+### The grace window
+
+When an answer reaches a closed room (`lateVerdict`, `GRACE_MINUTES` = 10): if the
+question was served or packed to that phone before the close, and the answer arrived
+within 10 minutes of the close (the edge included, by the server's clock at arrival), it
+is marked and counts. Otherwise it is stored as `AFTER_CLOSE_DETAIL`, `final` false, no
+mark, and the phone is told which (`server:kept`, `late: true`). A closed room takes a
+`deliver: true` join from a phone with a row of its own there, at any time while the
+room exists: no question, no pack, no attendance mark (`deliverOnly`). An answer to a
+question the room never asks is refused (`server:refused`) and not stored, so another
+chapter's question never enters the room's record. A closed room's bank is read afresh,
+never cached. Each student may have at most 100 kept-not-counted answers in a room
+(`KEPT_LIMIT`); past that, `server:refused` and nothing stored.
+
+### Packs
+
+`packOnce` builds a pack from the live loop's own bank (servable, nothing asked to the
+class), the student's profile and their live pack: `choosePack` keeps the questions the
+phone still holds, then fills 3 / 1 / 1 at the working level, below and above (the band:
+Remember and Understand, alternating), in a stable order per roll number (a hash of the
+roll number and the question id). The pack is sized to what the room's cap leaves.
+`packRecordNeed` decides whether a new `question_packs` row is needed: only when the
+pack gains a question the live record lacks, and never past 50 rows per phone. The row
+is written **before** the pack is sent, so every answer to it is recognised as served;
+the room's class questions are read again after it, and anything asked to the class
+meanwhile is not sent. `packPayload` sends each question through `forStudent()` with the
+phone's seed and supports and its own provenance and reason: no key. A pack request
+takes only its student's lock, never the room's `CLASS_LOCK`, and each connection has at
+most one in flight (`handlePack` folds the rest into one more reply).
+
+### Laptop mode
+
+`index.js` asks `laptopRequested()` (`--laptop` or `BLOOMLOOP_LAPTOP=1`) before anything
+else; `enterLaptopMode()` then blanks Supabase, Mongo, Gemini and Classroom settings, so
+`initStore` chooses the in-process store, and checks the teacher key (at least 16
+characters, or 24 random ones drawn when unset) and `LAPTOP_ARCHIVE_SECONDS` (1 to 3600).
+The socket server gets `laptopSocketOptions()`, the API's CORS asks `laptopOrigin()`:
+a page from the same origin, from loopback, or from one of the laptop's own adapters'
+addresses on its port; never another device's page on the hotspot. `laptopBanner`
+prints the links; `watchAddresses` prints an address that appears later.
+
+`createArchiveWriter` (`services/laptopArchive.js`) writes each room's archive
+(`buildRoomArchive`, the same JSON a deleted room is kept as, plus `laptop: { run,
+startedAt }`) to `room-<CODE>-<id>.json` in the archive folder: at once when a close or
+delete is answered (`saveRoomsOnClose`, on the response's `finish`), every interval for
+each room whose content hash changed, a deleted room's own archive once, and at a normal
+stop. Each write is atomic (`writeAtomic`: an exclusive temporary file in the same
+folder, every byte written, flushed, renamed; a short write fails without renaming) and
+confined to the folder (one file-name pattern, resolved inside the real path). Files are
+0600 in a 0700 folder where the system honours it, since they hold every question's key.
+
+The wrong-key counter (`checkTeacherKey` in `teacherAuth.js`) runs in laptop mode only:
+10 different wrong keys from one address in 10 minutes shut that address out of the key
+for 10 minutes, for HTTP (`requireTeacher`, 429) and the socket (`teacher:watch`, by the
+handshake address). It is in memory and counts addresses; the deployed server sets no
+`trust proxy` and sees one address for everyone, so it counts nothing there.
+
+### Room imports
+
+`importRoomArchive` (`services/roomImport.js`) checks the file's shape and every row
+(`checkArchive`, `decodeRoomArchive`, `checkRows`), the owner, then under an in-process
+lock per laptop room id: already imported (200, never merged), the room id here from
+another source (409), the code taken (a fresh one, `allocateCode`), the chapter and the
+class. `repo.importRoom` writes the session (closed), profiles, answers, reviews,
+attendance and class questions with the import record in one call; on Supabase, which
+has no transaction through PostgREST, a failure after the session row deletes the
+session and its rows go by cascade. **Trust is shown, not enforced**: anyone can write
+the laptop mark, so `importedRooms` adds `importedFrom` (with `IMPORTED_NOTE`) to every
+staff view of an imported room, attainment and the register name such rooms in their
+methodology and take `?imported=leave-out`, and the live loop refuses deliveries to an
+imported room (`isImportedRoom`, one indexed read by room id, after the roll number and
+the row are checked).
+
+### Record replay
+
+`routes/recordSync.js` is mounted at `/api/session` ahead of the session and records
+routers. A request without `Idempotency-Key` passes straight through (`next('route')`).
+With one: the write's own checks (`requireTeacher`, `assertCanWrite`), then a lock for
+that key (`lockProfile` under a name no roll number can have), then the kept row
+(`getRecordWrite`). Kept with the same details hash (`bodyHash`: the route, the target
+record and the canonical body): the kept reply and `Idempotent-Replayed: true`. Kept
+with other details: 409. Not kept: `res.json` is wrapped so a 2xx is stored
+(`addRecordWrite`) before it is sent; anything else is sent unkept. The whole first reply
+is kept, not re-read: a fresh read could hand the console another device's newer stamp
+to chain its next `basedOn` from, and that change would be overwritten unseen.
+
+`basedOn` is checked inside each write, under the room's own lock, by the rule for its
+kind (`services/recordSync.js`): attendance by each mark's `markedAt` (a professor's
+mark with another status since refuses, all or nothing; a join never does);
+observations and insight actions (append-only, the latest in force) by the stamp of the
+one in force; a pick's response, a tally edit and an activity edit field by field, a
+field already holding the sent value never a conflict. Stamps are compared for equality
+only. Tally steps, creates, the draw, rounds and wheel settings take no `basedOn`. There
+is no batch route: a batch would need a second way into every write.
+
+### In-process only
+
+The kept-key locks, the import lock, the wrong-key counter, the pack request flags and
+`resumePending` live in one process's memory, like every room lock. Across processes the
+database's unique keys are the guard (`record_writes` per room, writer and key;
+`room_imports.source_room_id`).
 
 ## Client (`client/src`)
 

@@ -93,9 +93,16 @@ Do this once, with internet, at your desk.
    The build is what phones open. Without it the laptop prints a note saying the
    pages are not built, and phones have nothing to load.
 
-2. **Fix the teacher key.** In `server/.env`, set `TEACHER_KEY` to a word only you
-   know. The console link then stays the same every class. Without it, the laptop
-   makes a new key at every start.
+2. **The teacher key.** The key is the only thing guarding your console, on a Wi-Fi
+   every student has joined, so it must not be a word. Either:
+   - leave `TEACHER_KEY` out of `server/.env`: the laptop makes a new random key of
+     24 characters at every start, and prints the console link with it (the safer
+     choice); or
+   - set `TEACHER_KEY` to **16 or more random characters** (from a password manager,
+     not a word or a name), if you want the console link to stay the same every class.
+
+   Laptop mode refuses to start with a `TEACHER_KEY` shorter than 16 characters, and
+   says why.
 
 3. **Set up the router** (skip for a hotspot):
    - Give its Wi-Fi a name and a **password**. The password keeps people who are
@@ -139,7 +146,10 @@ Do this once, with internet, at your desk.
 
 4. The laptop prints a box that starts `BloomLoop - LAPTOP MODE`. It shows:
    - **Teacher console**: the link to open on this laptop. It contains your
-     teacher key. Do not project this window, and do not share the link.
+     teacher key. Do not project this window, and do not share the link. **Open the
+     console on the laptop itself**, not on a tablet or a second device: the laptop
+     serves plain `http://`, and anyone who knows the Wi-Fi password can read what
+     travels over it, the key included. The Wi-Fi password does not protect the key.
    - **Students join**: one link for each network the laptop is on. The phones'
      one is the address on the router's or the hotspot's network. If you turn
      the hotspot on after starting, the new address is printed when it appears.
@@ -166,20 +176,40 @@ Do this once, with internet, at your desk.
 - A very long room can pass 1 MB, the most a room file may hold. If it does, the
   laptop prints a warning. The file is still saved, but it cannot be imported.
   Close that room and open a new one for the rest of the class.
+- **Wrong keys.** If one device tries 10 different wrong teacher keys within 10
+  minutes, that device is shut out of the console for 10 minutes, even with the right
+  key. A console tab still holding the key of an earlier start does not count: it sends
+  the same old key each time. If it happens to you, wait ten minutes and open the link
+  the laptop printed.
+- Only pages served by the laptop itself, at its own addresses and port, may use it.
+  A page another device on the Wi-Fi serves is refused, even on the same port.
 
 ---
 
 ## 7. After class
 
 1. **Close the room** in the console. That saves it at once.
-2. **Stop the laptop server** with `Ctrl+C` in its window. It saves every room once
+2. **Keep the laptop and its Wi-Fi on for up to 10 minutes more.** A phone that lost
+   the connection during class sends the answers it saved when it reconnects. An
+   answer to a question the phone was given before the close counts if it reaches the
+   laptop within 10 minutes of the close; anything later is kept and marked as not
+   counted. These answers go into the room's file at the next save (every minute by
+   default) and when you stop the server.
+3. **Stop the laptop server** with `Ctrl+C` in its window. It saves every room once
    more before it stops.
-3. Find the files. By default they are in `server/.data/laptop-archives/` inside
+4. Find the files. By default they are in `server/.data/laptop-archives/` inside
    the project folder. To use another folder, set `LAPTOP_ARCHIVE_DIR` before
    starting. Each room is one file named after its code, for example
    `room-K7PQ2M-<a long id>.json`.
-4. Copy the files somewhere safe, such as a USB drive or your own cloud storage.
-   They contain your students' names, roll numbers and answers.
+5. Copy the files somewhere safe that only you can open, such as your own USB drive
+   or your own cloud storage. They contain your students' names, roll numbers and
+   answers, **and every question's answer key**: keep them away from students, or the
+   keys are out for every later class on that chapter. On Linux and macOS the laptop
+   writes them readable by your user only; Windows does not apply that setting.
+
+Copy and import the files only after stopping the server. An imported room is never
+added to: a copy taken straight after the close misses the answers phones sent in the
+minutes after it, and a later copy of the same room is not merged in.
 
 **Once you have internet**, sign in to BloomLoop as usual and import each file.
 For each room you choose:
@@ -192,6 +222,15 @@ attendance, its class questions and its votes in your reports, attainment and th
 marks register, like any room. The import records which laptop session it came
 from and when.
 
+BloomLoop keeps an imported room marked as imported. Everything it sends about the room
+to staff (the rooms list, the room's pages, the review queue, attainment and the
+register) carries a note: BloomLoop checked that the file is a room it can read, not
+that it is unchanged since the laptop saved it. Attainment and the register name such
+rooms in their method, and can leave imported rooms out. (The console screens that show
+this note are still being built.) A phone that
+still holds saved answers for an imported room is told the room has been brought
+online and takes no more answers.
+
 Safe to repeat:
 - **Importing the same file twice changes nothing.** BloomLoop says the room was
   imported already.
@@ -201,8 +240,8 @@ Safe to repeat:
 Two limits to know:
 - The room's questions were made on the laptop, so they are not in your account's
   question bank. Each answer keeps the question exactly as the student saw it, and
-  the reports read it from there. The question-bank screens show these questions
-  as not in your bank.
+  the reports read it from there. The item statistics list these questions as no
+  longer in the bank, since they never were in it.
 - An attendance mark for a roll number not on your class's roster in your account
   cannot become a mark. The import lists it, and keeps it in the stored file.
 
@@ -216,6 +255,11 @@ signals kept, as in every room.
 The phone page keeps each answer on the phone until the laptop has it, and sends
 it again after a dropout. The phone shows whether an answer is *saved on this
 phone*, *sent* or *marked*.
+
+Phones can also take a small **question pack** from the laptop while the Wi-Fi is up:
+up to 5 more questions at the student's level and one either side, with no answer
+keys. During a dropout the student works through them; the answers are kept on the
+phone and marked when it reconnects. Nothing is marked on the phone itself.
 
 One part works differently on a laptop. Browsers only allow a page to keep a copy
 of itself for offline use on a secure (https) page, or on the device's own
@@ -261,6 +305,16 @@ practical in a classroom, so this guide does not use them.
 - Open the console with the link the laptop printed, which carries the key. If you
   set `TEACHER_KEY`, the link is the same every time.
 
+**"Too many wrong teacher keys were tried from this device"**
+- Ten different wrong keys came from this device within ten minutes. Wait ten
+  minutes, then open the link the laptop printed. If you did not try them, someone
+  else on the Wi-Fi may have: restart laptop mode without `TEACHER_KEY` to get a new
+  random key.
+
+**Laptop mode will not start: "TEACHER_KEY is ... characters"**
+- Remove `TEACHER_KEY` from `server/.env`, or set it to 16 or more random characters
+  (section 4).
+
 **Some phones cannot connect when many join**
 - The hotspot is full (Windows' limit is 8 devices). Use a travel router.
 
@@ -270,10 +324,12 @@ practical in a classroom, so this guide does not use them.
 
 **The import says a room with this id or code is already in BloomLoop from
 somewhere else**
-- Another room in BloomLoop already has that code, or the room came from someone
-  else's account. Nothing was imported or changed. Rarely, a laptop room's code
-  matches a room already online. That file cannot be imported then, and is kept on
-  your disk.
+- A room with the same id is already in BloomLoop (a room online, a deleted room's
+  archive, or an import from another account). Nothing was imported or changed, and
+  the file stays on your disk.
+- A room **code** that is already taken online does not stop an import: the room is
+  imported under a new code, and the message says so. The import keeps the laptop's
+  code as well.
 
 **The import asks for a chapter or a class**
 - Choose the chapter, and the class if it asks, in your account, then import again.

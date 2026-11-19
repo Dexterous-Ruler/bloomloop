@@ -17,8 +17,10 @@ confidence tap and class questions (`0023`), misconception labels on wrong optio
 end: "Phase 5: distinctive classroom features"); `4c1df09` holds the Phase 5
 follow-ups. **Commit `646b4e6` holds Phase 6, the Learning Hub, on the server only**
 (`0025` to `0029`; checklist at the end: "Phase 6: the Learning Hub"); its docs are the
-commit after it. Every suite passes through the offline runner after Phase 6 (the test
-table below). Phase 4, as committed:
+commit after it. **Commit `46bf6f9` holds Phase 7, offline-first, on the server only**
+(`0030` to `0032`, on top of the Phase 6 docs; checklist at the end: "Phase 7:
+offline-first"); its docs are the commit after it. Every suite passes through the
+offline runner after Phase 7 (the test table below). Phase 4, as committed:
 - course outcomes, their mappings and coverage, and the roster from CSV (`0019`);
 - configurable attainment and the marks register (`0020`);
 - CSV exports, printable reports and the acceptance run (no migration);
@@ -211,7 +213,14 @@ or resume and does not hear the events.
   lessons, English, Hindi and Marathi, and the hint tutor (checklist at the end).
   Absent: every hub screen, a live chat tutor (an owner option, not built), and the
   shared-bank changes decided for batch 8 (`docs/PRODUCT_DECISIONS.md`).
-- **Phase 7:** offline outbox, service worker, laptop-server mode.
+- **Phase 7:** offline-first. **Server done** (`46bf6f9`, `0030` to `0032`): question
+  packs, outbox answers marked in arrival order, the grace window and deliveries to a
+  closed room, laptop mode, room imports, and replay keys with `basedOn` on the
+  console's record writes (checklist at the end). The phone's service worker, outbox and
+  indicators are built by the UI session (`fdac198`) but **not tested on a real phone**.
+  Absent: the phone's handling of packs, `server:kept` and `server:refused`; the
+  console's record outbox, sync pill, stale-write screens, import screen and laptop
+  banner; adaptive paper cards (deferred).
 
 ## Dependencies between features
 
@@ -222,6 +231,10 @@ or resume and does not hear the events.
   so no tag is stored on a question or an answer).
 - The Hub needs a lasting student identity: `profiles.account_id` written on join (defect 9) or the decision in `PRODUCT_DECISIONS.md` §7.
 - The offline outbox needs idempotency keys and a light student bundle (defects 5 and 8).
+  Both exist since Phase 1 and the UI session's bundle work; Phase 7 added the ids on
+  every answer reply and the console's replay keys (`0032`).
+- Importing a laptop's room (Phase 7) needs `0031` and the room archive format
+  (decision 9); delivering to a closed room needs `0030`'s packs and log of serves.
 
 ## Tests: existing and missing
 
@@ -232,13 +245,24 @@ Missing before this pass: room settings in the live loop, poll handling, ownersh
 `teacher:watch`, idempotent answer submission, migrations building a fresh database,
 the client (no client tests exist).
 
-Results after Phase 6. Every suite was run through the offline runner
-(`docs/TESTING.md`) on 19 November 2026, on commit `646b4e6`, which first blanks these
+Results after Phase 7. Every suite was run through the offline runner
+(`docs/TESTING.md`) on 19 November 2026, on commit `46bf6f9`, which first blanks these
 in the environment: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`,
 `MONGO_URI`, `GEMINI_API_KEY`. Node 24.22.3, the in-process store and PGlite; no
-network service. Each figure below is what that run printed (the Phase 6 docs pass's
+network service. Each figure below is what that run printed (the Phase 7 docs pass's
 own run); every exit code was 0, and every script that answers the Auth calls itself
-ended with no request off the machine.
+ended with no request off the machine (`laptop.mjs`: `refusedOffMachine` 0).
+
+How Phase 7 grew, as each piece and the merge reported it through the offline runner
+(the three builders worked from `d84fd12`, before Phase 6, so their unit figures are not
+this run's); the last row is this run:
+
+| Piece | New script | Unit tests added |
+|---|---|---|
+| Packs, late answers and the grace window (`0030`) | `offline.mjs` | `offline.test.js` |
+| Laptop mode and imports (`0031`) | `laptop.mjs` | `laptop.test.js`, `roomImport.test.js` |
+| Replay-safe teacher records (`0032`) | `recordsync.mjs` 38 | `recordSync.test.js` |
+| The merge, its seams and the review fixes, landed on the Phase 6 docs (this run, `46bf6f9`) | `offline.mjs` 79, `laptop.mjs` 79, `recordsync.mjs` 38 | 91 in the four files (`offline` 37, `laptop` 18, `recordSync` 18, `roomImport` 18); unit 940 to 1031, migrations 1226 to 1457 |
 
 Earlier phases ended at:
 
@@ -250,6 +274,7 @@ Earlier phases ended at:
 | 3 | 475 | | 451 |
 | 4 | 598 | 13 | 573 |
 | 5 (after its follow-ups) | 721 | 13 | 752 |
+| 6 | 940 | 13 | 1226 |
 
 How Phase 6 grew, as each piece reported it through the offline runner. The builders
 worked from an earlier snapshot (unit 710, migrations 752), so their figures do not
@@ -278,10 +303,10 @@ How Phase 5 grew, each through the offline runner as each piece reported it:
 
 | Suite | Command | Result |
 |---|---|---|
-| Unit: mastery, selector, edits, integrity, accounts, archive, reviews, evidence reads, the three repos (144 methods each); since Phase 2 also `checks`, `approval`, `kindmix`, `newkinds`, `media`, `itemstats`; since Phase 3 also `roster`, `wheel`, `records`, `modes`, `insights`; since Phase 4 also `outcomes`, `attainment`, `exports`; since 19 Nov 2026 also `decisions`, `classQuestions`, `misconceptions`, `honesty`; since Phase 6 also `hubBackbone` (34), `richText` (19), `hubPractice` (39), `hubLessons` (39), `hubSeams` (6), `hubPaths` (24), `hubTutor` (36), `hubPathsTutor` (4), `hubFixes` (18) | `cd server && npm test` | **940 / 940** (219 suites) |
+| Unit: mastery, selector, edits, integrity, accounts, archive, reviews, evidence reads, the three repos (154 methods each); since Phase 2 also `checks`, `approval`, `kindmix`, `newkinds`, `media`, `itemstats`; since Phase 3 also `roster`, `wheel`, `records`, `modes`, `insights`; since Phase 4 also `outcomes`, `attainment`, `exports`; since 19 Nov 2026 also `decisions`, `classQuestions`, `misconceptions`, `honesty`; since Phase 6 also `hubBackbone` (34), `richText` (19), `hubPractice` (39), `hubLessons` (39), `hubSeams` (6), `hubPaths` (24), `hubTutor` (36), `hubPathsTutor` (4), `hubFixes` (18); since Phase 7 also `offline` (37), `laptop` (18), `recordSync` (18), `roomImport` (18) | `cd server && npm test` | **1031 / 1031** (242 suites) |
 | Live loop: ownership, evidence, idempotency, polls, retries, redemption, status, room archive | `node server/scripts/liveloop.mjs` | 41 / 41 |
 | Security harness, including a phone answering another room's question | `node server/scripts/security.mjs` | 13 / 13 |
-| Migrations on PGlite: fresh build, re-run, upgrade, constraints, `0010` to `0029` | `cd server && npm run migrations` | **1226 / 1226** |
+| Migrations on PGlite: fresh build, re-run, upgrade, constraints, `0010` to `0032` | `cd server && npm run migrations` | **1457 / 1457** |
 | Review queue, end to end with the shared key | `node server/scripts/review.mjs` | 83 / 83 |
 | Evidence reads, end to end with the shared key | `node server/scripts/evidence.mjs` | 37 / 37 |
 | Resume, integrity (both read `server/.env`; the runner blanks the network settings first) | `node server/scripts/resume.mjs`, `integrity.mjs` | pass: 7 and 6 mandated steps, 0 failures, 0 supporting failures, 0 known holes |
@@ -307,10 +332,14 @@ How Phase 5 grew, each through the offline runner as each piece reported it:
 | Get Ready, refresher paths, self-tests, goals, the hub home (Phase 6), signed-in callers | `node server/scripts/paths.mjs` | **88 / 88** |
 | Lessons and languages (Phase 6), signed-in callers | `node server/scripts/lessons.mjs` | **100 / 100** |
 | The hint tutor (Phase 6), signed-in callers | `node server/scripts/tutor.mjs` | **84 / 84** |
+| Packs, outbox answers in arrival order, the grace window, deliveries to a closed room, the review fixes (Phase 7), signed-in callers, a moved clock | `node server/scripts/offline.mjs` | **79 / 79** |
+| Laptop mode as its own process, the import back to the cloud, the Phase 7 seams (Phase 7) | `node server/scripts/laptop.mjs` | **79 / 79** |
+| The console's records sent again: keys, replays, `basedOn` (Phase 7), signed-in callers | `node server/scripts/recordsync.mjs` | **38 / 38** |
 
 The older scripts' figures above (`insights.mjs` 66, `decisions.mjs` 79,
 `classquestion.mjs` 76, `honesty.mjs` 66, `keysafety.mjs` 43) are what they printed
-after the Phase 5 follow-ups (`4c1df09`); Phase 6 changed none of them.
+after the Phase 5 follow-ups (`4c1df09`); neither Phase 6 nor Phase 7 changed any of
+them, nor any Phase 6 script's figure.
 
 "Signed-in callers" means the script answers the server's three Supabase Auth calls
 itself, for a host that cannot resolve, and refuses and counts any other request off
@@ -480,16 +509,40 @@ From Phase 6 (the Learning Hub):
   public DNS on 18 November 2026). Every account feature is untestable locally and
   broken on the deployed site until the project is restored. **The whole Learning Hub
   is an account feature**: nothing of it has run against Supabase or with a real Auth
-  token, and it answers 503 on any server without Supabase.
+  token, and it answers 503 on any server without Supabase. Phase 7's Supabase methods
+  (packs, imports, replay keys, the log of serves) ran only against a stubbed
+  PostgREST.
 - **Committed, not deployed.** Phases 0 to 5 are committed on branch
   `roadmap-phase0-evidence` (`b4585a0`, `05daf56`, `27559ca`, `d162cc8`, `eedfd5e`,
   `2f4fd2b`, `4c1df09`). Phase 6 (`646b4e6` and its docs) is on a branch of its own,
-  built on that one and not yet merged into it. Nothing of Phase 6 is deployed or
-  pushed.
+  built on that one and not yet merged into it. Phase 7 (`46bf6f9` and its docs) is
+  built on the Phase 6 docs. Nothing of Phase 6 or Phase 7 is deployed or pushed.
 - **Phase 6 migrations.** `0025` to `0029` are route-only: a server deployed without
   them keeps Supabase and every room, logs the file and what fails, and only the hub's
   routes fail. Apply them in number order, before or after the server. None has run
   anywhere but PGlite.
+- **Phase 7 migrations: `0030` before the server.** Every answer writes
+  `answers.device_answered_at`, every profile save `profiles.served_log`, and every pack
+  `question_packs`, so the boot probe treats `0030` as one rooms need: a Phase 7 server
+  deployed on a database without it does not use Supabase at all and falls back to the
+  in-process store, which saves nothing. `0031` and `0032` are route-only. Apply order:
+  `0000` to `0032`. None has run anywhere but PGlite.
+- **Laptop mode's shared key on a class Wi-Fi** (Phase 7 review, partly fixed). The key
+  is now at least 16 characters (24 random when unset) and wrong keys lock an address
+  out, but it still travels in clear over plain HTTP; anyone with the Wi-Fi password can
+  read it if the console is opened from another device. The guide says to open it on the
+  laptop only. Owner's call (`docs/PRODUCT_DECISIONS.md`, Phase 7).
+- **Imported rooms are trusted as the professor's upload.** The laptop mark proves
+  nothing; a hand-made file imports as ordinary evidence. Every staff view and report
+  says the room was imported, and reports can leave it out; nothing authenticates it.
+- **The laptop's own store is memory.** Chapters, questions, classes and rosters on the
+  laptop are lost at a restart, and a crash loses a running room's last save interval
+  (60 seconds by default). Only the room files survive.
+- **Phone events have no general rate limit** (Phase 7 review, open). Pack requests are
+  folded and kept answers capped at 100 per student per room; answers, joins and
+  `student:next` are not limited per socket.
+- **A packed question carries no `rich`** (found in the Phase 7 docs pass): a formula or
+  code block in a packed question reaches the phone as plain text.
 - **The shared question bank** (Phase 6 review, owner's call decided for batch 8).
   Practice shows the key of every approved question after one try, so a student can
   collect the keys of questions a graded room will ask later. Only questions a room is
@@ -2112,3 +2165,155 @@ Across the phase
 
 **Client work** (the UI session's; nothing in `client/` was touched): `docs/API.md`,
 "Phase 6: the Learning Hub", "What the screens need".
+
+### Phase 7: offline-first: server done, the phone's stage First built, every other screen unticked
+
+The directive's three stages, decided under the owner's delegation of 19 Nov 2026 as O1
+to O5 (`docs/PRODUCT_DECISIONS.md`, Phase 7): First (the phone keeps working offline),
+Next (question packs and the grace window), Then (the laptop as the server, and
+imports). Adaptive paper cards are deferred, as the directive says.
+
+Committed as `46bf6f9`, server and database only: `0030` (packs, the phone's own time,
+the log of serves), `0031` (room imports) and `0032` (replay keys). Endpoints and events:
+`docs/API.md`, "Phase 7: offline-first". How it works: `docs/ARCHITECTURE.md`,
+"Offline-first (Phase 7)".
+
+A box is ticked only when the feature works **end to end with a test** on this tree: over
+Socket.io and HTTP on a real server (the production `createApp` and `attachSockets`; in
+laptop mode, the real server started with `--laptop` as its own process), on the
+in-process store, plus unit tests and PGlite for the migrations. **Nothing was tested on a
+real phone, over a real hotspot or travel router, or against Supabase or Mongo.**
+
+The Phase 7 docs pass's run through the offline runner (19 November 2026):
+
+| Suite | Result |
+|---|---|
+| Unit | 1031 / 1031 (242 suites); the four Phase 7 files: `offline` 37, `laptop` 18, `recordSync` 18, `roomImport` 18 |
+| Migrations | 1457 / 1457 |
+| `offline.mjs` | 79 / 79 |
+| `laptop.mjs` | 79 / 79 (`refusedOffMachine` 0) |
+| `recordsync.mjs` | 38 / 38 |
+| Every Phase 0 to 6 suite | its figure after Phase 6 |
+
+**Deploying.** Apply `0030` before the Phase 7 server: rooms need it, and without it the
+server does not use Supabase. `0031` and `0032` are route-only. Order: `0000` to `0032`.
+
+Stage First (O1): the phone keeps working offline
+
+The phone's pieces are built by the UI session (`fdac198`; `docs/UI_REBUILD.md`, "Phase 7,
+stage First") and were checked by it in headless Chrome against a production build.
+**None was tested on a real phone**, so none is ticked:
+- [ ] **Service worker** with app-shell caching for `/join` (hand-written, no Workbox).
+  Built; not tested on a real phone
+- [ ] **Append-only IndexedDB outbox** of answers and class votes, replayed in order,
+  never dropping an item. Built; not tested on a real phone. It still matches replies by
+  order and knows only `server:result`: matching by `answerId` and settling on
+  `server:kept` and `server:refused` is client work
+- [ ] **Reconnection** with jittered backoff and an immediate try when the browser is
+  back online. Built; not tested on a real phone
+- [ ] **"Saved on this phone / sent / marked" indicators**. Built; not tested on a real
+  phone
+- [ ] Hub attempts in the outbox: the hub has no screens yet
+
+The server's side of First:
+- [x] **A resend under the same `answerId` is answered from the stored row**, never
+  stored twice (`liveloop.mjs`, `offline.mjs`)
+- [x] **Every answer reply names `questionId` and `answerId`**; `server:kept` and
+  `server:refused` settle an item that will never count or never be taken
+  (`offline.mjs`, `test/offline.test.js`)
+- [x] **The console's record writes take an `Idempotency-Key`**: the outbox sent again in
+  order, in reverse and all at once gives the kept replies, each record and count as
+  after the first pass; a key with other details 409; no key as before; another
+  professor 404, an HOD 403; the room's deletion takes its keys
+  (`recordsync.mjs`, `test/recordSync.test.js`)
+- [x] **`basedOn`**: a write made from a record changed since on another screen is
+  refused (409) with a sentence and the record as it stands, changes nothing, and is
+  refused again when resent; the console's own chained writes never refuse each other;
+  a tally step is never stale (`recordsync.mjs`)
+- [ ] The console's record outbox, sync pill, "Sync status" list and stale-write screen.
+  **Not built**
+
+Stage Next (O2, O3): question packs and the grace window
+
+- [x] **Packs**: five questions, 3 at the working level and 1 either side (the band:
+  Remember and Understand), approved, of the room, never the one on the screen, keyless
+  at any depth; recorded before they are sent; the same pack when asked again; a
+  question put to the class leaves every pack; sized to the room's cap
+  (`offline.mjs`, `test/offline.test.js`)
+- [x] **Outbox answers marked in arrival order**, the ladder moving as that order says,
+  the phone's own (out of order) times stored and never read; a wrong packed answer
+  final at once; the question on the screen left pinned (`offline.mjs`)
+- [x] **The grace window**: an answer to a question served or packed before the close,
+  inside the window, counted; one never given, and one past the window, kept and not
+  counted with no mark; one to a question the room never asks refused and not stored;
+  never a new question after the close (`offline.mjs`)
+- [x] **Deliver joins**: in an open room nothing served until `student:next` resumes the
+  pin; in a closed room, let in only to send, at any time while the room exists
+  (`offline.mjs`)
+- [x] **Long interruptions**: the same pin and pack after 5 hours, the same pin and a
+  fresh pack after 7, an answer from the expired pack still served (`offline.mjs`, a
+  moved clock)
+- [x] **The review fixes**: an upper-case question id never marked twice; a second answer
+  to a marked question stored and not counted; a question the pin moved off still one
+  the phone was given; one phone's pack flood holding up no other phone or class
+  question; no new pack record without an answer (`offline.mjs`; the fixing pass reports
+  each check failing before its fix, not repeated here)
+- [x] **Selection stays on the server**: the evaluation and the integrity trade-offs
+  (`docs/OFFLINE_SELECTION.md`; a document, not code)
+- [ ] The phone keeping packs, working through them offline, and caching their images.
+  **Not built**
+- [ ] A packed question's `rich` (formulas and code): **absent**; packed questions go
+  as plain text
+
+Fixed in the commit after these docs (its own checks; not part of this run):
+- Question ids are compared without case everywhere in the answer path.
+- The grace verdict uses the time the answer arrived, read before the student's lock.
+- Kept answers are capped at 100 per student per room; past that, `server:refused` and
+  nothing stored.
+- Laptop mode's file writes loop until every byte is written, or fail without renaming.
+
+Stage Then (O4): the laptop as the server, and imports
+
+- [x] **Laptop mode** as its own process: the banner (join address, folder, what is
+  unavailable), the in-process store with no model, Supabase or Mongo, `GET
+  /api/laptop` for staff only (`laptop.mjs`, `test/laptop.test.js`)
+- [x] **The teacher key**: under 16 characters stops the start with a sentence; 10 wrong
+  keys from one address shut it out, the right key included, over HTTP and the socket
+  (`laptop.mjs`, `test/laptop.test.js`)
+- [x] **Origins**: the laptop's own address on its port let in, another device's or
+  another site's refused, for CORS and the socket (`laptop.mjs`)
+- [x] **Room files**: written at once on a close, on the interval for a running room,
+  named after the room, the room's archive with the laptop's run; whole after the
+  process is killed, with no temporary file left (`laptop.mjs`, `test/laptop.test.js`)
+- [x] **Import**: a closed room the professor owns on her chapter and class; every report
+  read back exactly as on the laptop; the same file again changes nothing; refusals with
+  sentences and nothing written; another professor 409; a crashed room's file imported
+  closed as of its save; a taken code given a fresh one (`laptop.mjs`,
+  `test/roomImport.test.js`)
+- [x] **Imported rooms shown as imported** on the grid, answers, attendance, topics, item
+  statistics, attainment, the register and the rooms list; `?imported=leave-out`
+  (`laptop.mjs`)
+- [x] **Packs, the grace window and replay keys in laptop mode**, and the laptop saving a
+  closed room again with its late answers; an imported room refusing deliveries
+  (`laptop.mjs`)
+- [x] **The travel-router guide** (`docs/TRAVEL_ROUTER.md`; a document)
+- [ ] A real hotspot or travel router, real phones, the operating system's firewall
+  prompt, a normal stop with Ctrl+C on Windows, an address appearing after the start,
+  and the built client served in laptop mode. **Not tested**
+- [ ] The console's import screen, rooms marked as imported, the laptop banner and the
+  localhost warning. **Not built**
+- [ ] Adaptive paper cards. **Deferred** (the directive's "last")
+
+Across the phase
+
+- [x] **The three repos expose the same 154 methods** (the parity unit test). `0030` to
+  `0032` are additive and idempotent, re-run over data, RLS on and no policies, and
+  change no existing row (`npm run migrations`, PGlite only)
+- [x] **No request leaves the machine** in any Phase 7 script (each counts and refuses
+  them: 0)
+- [ ] **Not tested:** `0030` to `0032` and every new repo method against a real Supabase
+  or Mongo; the hosted stores' case-blind id lookups (simulated); a real phone, hotspot or
+  router; many phones sending outboxes at once after a close; two server processes
+
+**Client work** (the UI session's; nothing in `client/` was touched): `docs/API.md`,
+"Phase 7: offline-first", "What the screens need".
