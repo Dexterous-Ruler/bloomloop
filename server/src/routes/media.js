@@ -203,7 +203,10 @@ router.get('/:id', async (req, res, next) => {
       // a phone may keep it. `private`: not a shared cache, which would go on
       // serving it after the room closes. The ETag is the bytes' own hash, so a
       // revalidation is a 304 with nothing sent.
-      'Cache-Control': 'private, max-age=31536000, immutable',
+      // A student's drawing (Batch 9) is personal and staff-only: never kept by
+      // a browser at all, so a shared staff-room or lab machine cannot show it
+      // again to whoever uses that browser next, with nobody asked who they are.
+      'Cache-Control': drawing ? 'no-store, private' : 'private, max-age=31536000, immutable',
       ETag: `"${full.sha256}"`,
       // Opened on its own rather than in an <img>, it runs nothing.
       'Content-Security-Policy': "default-src 'none'; sandbox",

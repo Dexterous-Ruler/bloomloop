@@ -37,7 +37,7 @@
 // with the same (accountId, attemptId) is the first one back, unchanged, with
 // duplicate true. What list() takes: { accountId?, contentId?, questionIds?, mode? }.
 
-import { isUngraded } from '../questionTypes.js';
+import { awaitsReview, isUngraded } from '../questionTypes.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -56,6 +56,10 @@ export const PRACTICE_STORE = Object.freeze({
     // hub_attempts refuses a poll: it assesses nothing. A lesson never lists one
     // (retrievalPool), so this is a question changed in the bank since.
     if (isUngraded(kind)) throw fail('This question is a poll now, so there is nothing to mark. Your answer was not taken.', 409);
+    // Nor a drawing (Batch 9): nobody marks one in the hub, and a row with a
+    // mark of false would count as wrong (0037's check refuses it outright on
+    // Supabase). The lesson route refuses one before this; this is the floor.
+    if (awaitsReview({ kind })) throw fail('This question is answered with a drawing now, which a lesson cannot take. Your answer was not taken.', 409);
     return repo.addHubAttempt({
       accountId: String(a.accountId),
       clientAttemptId: a.attemptId,

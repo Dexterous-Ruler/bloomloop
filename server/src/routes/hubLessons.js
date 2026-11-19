@@ -32,7 +32,7 @@ import express from 'express';
 import { getRepo } from '../repo/index.js';
 import { isRecordId } from '../ids.js';
 import { hasGemini } from '../config.js';
-import { FIGURES_NOT_READY, readyToMark, score } from '../questionTypes.js';
+import { FIGURES_NOT_READY, awaitsReview, readyToMark, responseProblem, score } from '../questionTypes.js';
 import { snapshotOf } from '../sockets/index.js';
 import { hubGate } from './hub.js';
 import { READ_ONLY, assertStaff, hubChapter, hubTopic } from '../services/hubAccess.js';
@@ -254,6 +254,10 @@ router.post('/lessons/:lessonId/discard', async (req, res, next) => {
 
 // ----------------------------------------------------------- answering --
 
+/** Said for an answer to a question that became a drawing after the lesson listed it. */
+export const DRAWING_IN_LESSON = 'This question is answered with a drawing now, which a lesson cannot take, so your answer '
+  + 'was not saved. It is still on your device.';
+
 /** A client attempt id, the idempotency key: 8 to 64 letters, digits, - or _. */
 const cleanAttemptId = (value) => (/^[A-Za-z0-9_-]{8,64}$/.test(String(value ?? '')) ? String(value) : '');
 
@@ -303,6 +307,13 @@ router.post('/lessons/:lessonId/questions/:questionId/attempts', async (req, res
     // check). Refused before anything is stored; the device keeps it.
     const why = (await closedQuestions(repo, req.viewer, { contentIds: [String(lesson.contentId)] })).get(String(q._id).toLowerCase());
     if (why) throw closedError(why);
+
+    // Batch 9: a drawing is not taken in a lesson (lessonQuestion says why),
+    // and a written answer is held to its length's limit, as in practice.
+    // Refused before anything is stored; the device keeps the answer.
+    if (awaitsReview(q)) throw fail(DRAWING_IN_LESSON, 409);
+    const problem = responseProblem(q, body.response);
+    if (problem) throw fail(problem, 400);
 
     // Marked here, from the stored question, with the shuffle the student was
     // shown: the hub's one seed, so practice's error log redraws it the same way.

@@ -84,6 +84,10 @@ import { figureForStudent, specHash, normaliseSpec } from '../figures/index.js';
 export const DRAWINGS_NOTE = 'The answers that are drawings keep the id of their picture and the student\'s words. '
   + 'The pictures themselves are not in this archive (each one is up to 400 KB, and the archive holds at most 1 MiB), '
   + 'and they were deleted with the room.';
+/** The same, in a copy of a room that still exists (laptop mode's files): its pictures were not deleted. */
+export const DRAWINGS_KEPT_NOTE = 'The answers that are drawings keep the id of their picture and the student\'s words. '
+  + 'The pictures themselves are not in this file (each one is up to 400 KB, and the file holds at most 1 MiB); they '
+  + 'stay with the server that ran the room.';
 
 /**
  * The figures in a room's question snapshots, drawn as a phone was shown them,
@@ -248,7 +252,7 @@ async function allAnswers(repo, sessionId) {
  * @returns {{ doc, json, bytes }} doc is what the repository stores (metadata
  *   plus `data`, the archive object); json is `data` as it will be served.
  */
-export async function buildRoomArchive(repo, session, { archivedBy = null, now = new Date() } = {}) {
+export async function buildRoomArchive(repo, session, { archivedBy = null, now = new Date(), deleting = true } = {}) {
   const sessionId = session._id;
   const [profiles, answers, reviews, marks, roster, classQuestions, ...recordLists] = await Promise.all([
     repo.listProfiles(sessionId),
@@ -438,7 +442,9 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
   // Batch 9: the room's drawing answers keep { mediaId, text } and no bytes; the
   // archive says so, and how many there are.
   const drawingAnswers = answers.filter((a) => a?.kind === 'drawing' && typeof a?.response?.mediaId === 'string').length;
-  if (drawingAnswers) data.drawings = { answers: drawingAnswers, picturesKept: false, note: DRAWINGS_NOTE };
+  // The note says what happened to the pictures: deleted with the room, or, in
+  // a copy of a room that still runs (laptop mode), still where the room is.
+  if (drawingAnswers) data.drawings = { answers: drawingAnswers, picturesKept: false, note: deleting ? DRAWINGS_NOTE : DRAWINGS_KEPT_NOTE };
 
   // Batch 8: each figure the room's questions showed, drawn once as the phones
   // saw it, keyed by its spec's hash (the snapshot keeps the spec itself). Only

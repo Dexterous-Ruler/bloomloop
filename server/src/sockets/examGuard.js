@@ -13,8 +13,14 @@
 //                     and nothing more.
 //   student:snapshot  { jpeg } one low-resolution picture of the shared screen,
 //                     at most one per interval (services/examGuard.js).
+//   student:exam-consent  {} the phone has shown the consent notice (E5) after
+//                     exam mode was turned on while it was already in the room.
+//                     Until then nothing about it is recorded as an exam signal:
+//                     a phone that joined an exam room showed the notice before
+//                     joining, one already in the room when it was turned on had
+//                     not.
 //
-// Both take an optional acknowledgement: { ok, reason?, message? }. Signals stay
+// All three take an optional acknowledgement: { ok, reason?, message? }. Signals stay
 // silent as they always were (integrity.js: telling a phone which reports land
 // tells it what to suppress); a picture is acknowledged so a phone can shrink one
 // that was too big, and learns nothing about any signal.
@@ -27,6 +33,7 @@
 // (a picture moves `snapshotAt` alone). Never a picture's bytes, never to a
 // phone or the projector.
 
+import { config } from '../config.js';
 import { getRepo } from '../repo/index.js';
 import { hydrate } from '../services/mastery.js';
 import { HONESTY, noteScreen, noteSnapshotMissing, summarise } from '../services/integrity.js';
@@ -34,6 +41,7 @@ import { minorRolls, signalsOff } from '../services/roster.js';
 import {
   EXAM_PRIVACY,
   SCREEN_NEEDED,
+  SEB_BEK_HEADER,
   SEB_HEADER,
   SEB_REFUSED,
   WHOLE_SCREEN,
@@ -75,20 +83,37 @@ function logError(event, err) {
 /* ------------------------------------------------------------------ join -- */
 
 /**
- * Null when this phone may join, or the sentence that turns it away: a room that
- * requires Safe Exam Browser, joined from anything else.
+ * The Safe Exam Browser values a join carried (SEB's JavaScript API), kept on the
+ * phone's state so the check can be made again when the owner turns SEB on
+ * later. Only the fields the check reads, each a short string.
  */
-export function examJoinRefusal(session, socket, payload) {
+export function sebEvidence(payload) {
+  const seb = payload?.seb;
+  if (!seb || typeof seb !== 'object') return null;
+  const str = (v, max) => (typeof v === 'string' && v.length <= max ? v : null);
+  return { url: str(seb.url, 2048), configKeyHash: str(seb.configKeyHash, 128), browserExamKeyHash: str(seb.browserExamKeyHash, 128) };
+}
+
+/**
+ * Null when this phone may join, or the sentence that turns it away: a room that
+ * requires Safe Exam Browser, joined from anything else. `seb` is what the join
+ * carried (sebEvidence). The request's own address is the server's public one
+ * when PUBLIC_ORIGIN is set, and a proxy's forwarded headers are believed only
+ * with TRUST_PROXY=1 (services/examGuard.js handshakeUrl).
+ */
+export function examJoinRefusal(session, socket, seb) {
   const m = examModeOf(session);
   if (!m.on || !m.seb.required) return null;
   const hs = socket.handshake ?? {};
   const headers = hs.headers ?? {};
-  const sent = headers[SEB_HEADER];
+  const one = (v) => (Array.isArray(v) ? v[0] : v ?? null);
   const { ok } = sebCheck(m, {
-    headerHash: Array.isArray(sent) ? sent[0] : sent ?? null,
-    requestUrl: handshakeUrl(hs),
+    headerHash: one(headers[SEB_HEADER]),
+    bekHeaderHash: one(headers[SEB_BEK_HEADER]),
+    requestUrl: handshakeUrl(hs, { publicOrigin: config.publicOrigin, trustProxy: config.trustProxy }),
     origin: typeof headers.origin === 'string' ? headers.origin : null,
-    api: payload?.seb ?? null,
+    api: seb ?? null,
+    code: session.code,
   });
   return ok ? null : SEB_REFUSED;
 }
@@ -97,9 +122,12 @@ export function examJoinRefusal(session, socket, payload) {
  * This phone's exam state for its socket, or null in a room without exam mode.
  * Who is under 18 is read fresh here (signalsOff: a failed read counts as under
  * 18, so nothing is asked of, or recorded about, a student it cannot rule out).
- * `before` keeps a share already started when the owner changes the setting.
+ * `before` keeps a share already started when the owner changes the setting,
+ * and whether the phone has shown the consent notice: a phone joining an exam
+ * room has (`consented`, the join), one in the room when exam mode is turned on
+ * has not, until it says so (handleConsent).
  */
-export async function examStateFor(repo, session, rollNo, before = null) {
+export async function examStateFor(repo, session, rollNo, before = null, { consented = false } = {}) {
   if (!examModeOf(session).on) return null;
   const minor = await signalsOff(repo, session, rollNo);
   return {
@@ -110,8 +138,16 @@ export async function examStateFor(repo, session, rollNo, before = null) {
     ref: Date.now(),
     missingNoted: false,
     declinedNoted: before?.declinedNoted ?? false,
+    consented: consented || before?.consented === true,
   };
 }
+
+/**
+ * Are this phone's signals recorded as an exam room's? Only once it has shown
+ * the consent notice. Until then the room records what any room records (the
+ * older kinds, too-fast, second-socket), as before exam mode was turned on.
+ */
+export const examSignalsOn = (ctx) => Boolean(ctx?.exam?.consented);
 
 /** session:accepted's additions: what to enforce, only in an exam room. */
 export function examAccepted(session, exam) {
@@ -123,10 +159,22 @@ export function examAccepted(session, exam) {
  * that has not shared its whole screen (or stopped), unless the roster marks the
  * student under 18. The answer is not taken; the phone keeps it and is told why
  * (exam:screen-needed), as a paused room tells it.
+ *
+ * The under-18 mark is the one read at the join, read again here before an
+ * answer is held back: a professor who marks a student under 18 during the room
+ * must not leave them asked to share their screen, which decision 8 never asks
+ * of them. When the mark has changed, the phone is told what it is asked for now
+ * (exam:mode).
  */
-export function examScreenBlocks(session, ctx) {
+export async function examScreenBlocks(session, socket) {
+  const ctx = socket?.data?.student;
   const m = examModeOf(session);
-  return Boolean(m.on && m.screenShare && ctx?.exam && !ctx.exam.minor && ctx.exam.screen !== 'started');
+  if (!(m.on && m.screenShare && ctx?.exam && !ctx.exam.minor && ctx.exam.screen !== 'started')) return false;
+  if (!(await signalsOff(getRepo(), session, ctx.rollNo))) return true;
+  ctx.exam.minor = true;
+  snapshots.forget(ctx.sessionId, ctx.rollNo);
+  socket.emit('exam:mode', { examMode: phoneExamMode(session, { minor: true }) });
+  return false;
 }
 
 /** May this student send one more signal now? Exam rooms only (services/examGuard.js SIGNAL_LIMIT). */
@@ -230,6 +278,9 @@ export async function handleScreen(io, socket, payload, ack) {
     reply({ ok: true });
     const session = await deps.loadSession(ctx.code);
     if (!session || session.status === 'closed' || !examModeOf(session).screenShare) return undefined;
+    // The share's state above is kept from the start; what it records waits
+    // for the consent notice (examSignalsOn).
+    if (!examSignalsOn(ctx)) return undefined;
     if (state === 'stopped') {
       if (was !== 'started' || !signalAllowed(ctx, 'screenshare_stopped')) return undefined;
       await recordSignal(io, ctx, (p) => noteScreen(p, 'screenshare_stopped'));
@@ -269,8 +320,9 @@ export async function handleSnapshot(io, socket, payload, ack) {
   try {
     const ctx = socket.data.student;
     // A phone not asked for pictures may not send any: no exam mode, under 18,
-    // a room without pictures, or back only to deliver answers to a closed room.
-    if (!ctx?.exam || ctx.exam.minor || ctx.deliverOnly) return reply({ ok: false, reason: 'not-asked' });
+    // a room without pictures, back only to deliver answers to a closed room, or
+    // one that has not shown the consent notice yet.
+    if (!ctx?.exam || ctx.exam.minor || ctx.deliverOnly || !examSignalsOn(ctx)) return reply({ ok: false, reason: 'not-asked' });
     const session = await deps.loadSession(ctx.code);
     if (!session || session.status === 'closed') return reply({ ok: false, reason: 'not-asked' });
     const m = examModeOf(session);
@@ -285,8 +337,12 @@ export async function handleSnapshot(io, socket, payload, ack) {
       snapshots.forget(ctx.sessionId, ctx.rollNo);
       return reply({ ok: false, reason: 'not-asked' });
     }
-    snapshots.put(ctx.sessionId, ctx.rollNo, shot.jpeg, now);
+    // Noted as arrived either way; kept when the memory caps allow
+    // (services/examGuard.js createSnapshotStore). One not kept is acknowledged
+    // as 'full', so the laptop carries on sending at its interval.
+    const kept = snapshots.put(ctx.sessionId, ctx.rollNo, shot.jpeg, now);
     ctx.exam.missingNoted = false;
+    if (!kept) return reply({ ok: false, reason: 'full' });
     reply({ ok: true });
     io.to(`teacher:${session.code}`).emit('teacher:integrity', {
       code: session.code, full: false, students: [{ rollNo: ctx.rollNo, snapshotAt: iso(now) }],
@@ -296,6 +352,20 @@ export async function handleSnapshot(io, socket, payload, ack) {
     reply({ ok: false, reason: 'error' });
   }
   return undefined;
+}
+
+/* --------------------------------------------------------------- consent -- */
+
+/**
+ * student:exam-consent: the phone has shown the consent notice it was sent with
+ * exam:mode. From now its exam signals are recorded. Acknowledged { ok }; false
+ * outside an exam room.
+ */
+export function handleConsent(socket, ack) {
+  const ctx = socket.data.student;
+  const ok = Boolean(ctx?.exam);
+  if (ok) ctx.exam.consented = true;
+  if (typeof ack === 'function') ack({ ok });
 }
 
 /* ------------------------------------------------------------ the ticker -- */
@@ -326,8 +396,10 @@ export async function examTick(io, now = Date.now()) {
     }
     for (const ctx of list) {
       const e = ctx.exam;
-      if (e.minor || e.screen !== 'started' || e.missingNoted) continue;
-      const last = snapshots.latest(ctx.sessionId, ctx.rollNo)?.at ?? 0;
+      if (e.minor || e.screen !== 'started' || e.missingNoted || !examSignalsOn(ctx)) continue;
+      // When the last picture arrived, kept or not: a picture the store had no
+      // room for, or that a memory cap pushed out, was still sent on time.
+      const last = snapshots.lastAt(ctx.sessionId, ctx.rollNo) ?? 0;
       const since = Math.max(e.ref ?? 0, e.screenAt ?? 0, last);
       if (!snapshotOverdue({ everySeconds: m.snapshotSeconds, since, now })) continue;
       e.missingNoted = true;
@@ -350,7 +422,15 @@ export function sweepSnapshots(now = Date.now()) {
 /**
  * The owner changed a room's exam mode (routes/examGuard.js): every phone in it
  * is told what it must enforce now (exam:mode { examMode }, null when it was
- * turned off), its own under-18 mark read again.
+ * turned off), its own under-18 mark read again. A phone that joined with exam
+ * mode off has not shown the consent notice: nothing about it is recorded as an
+ * exam signal until it says it has (handleConsent).
+ *
+ * When the room now requires Safe Exam Browser, each phone in it is checked as
+ * a join is (with the values its join carried), and one that would be turned
+ * away at the door is turned away now: told why (session:rejected) and
+ * disconnected. Otherwise a phone that joined in an ordinary browser kept
+ * answering until it happened to reconnect.
  */
 export async function pushExamMode(io, session) {
   if (!io) return;
@@ -369,6 +449,37 @@ export async function pushExamMode(io, session) {
     if (!ctx || ctx.code !== session.code || ctx.deliverOnly) continue;
     try {
       ctx.exam = await examStateFor(repo, session, ctx.rollNo, ctx.exam);
+      socket.emit('exam:mode', { examMode: ctx.exam ? phoneExamMode(session, { minor: ctx.exam.minor }) : null });
+      const refusal = examJoinRefusal(session, socket, ctx.seb ?? null);
+      if (refusal) {
+        socket.emit('session:rejected', { reason: refusal });
+        socket.disconnect(true);
+      }
+    } catch (err) {
+      logError('exam:mode', err);
+    }
+  }
+}
+
+/**
+ * The roster's under-18 mark on a student changed (routes/classes.js): every
+ * phone of that roll number in a running exam room of that class is told at once
+ * what it is asked for now (exam:mode), its exam state read again. Marked under
+ * 18, nothing that watches is asked of the student any more, and their newest
+ * picture goes. The room's under-18 list is read fresh for pictures too.
+ */
+export async function pushUnder18(io, classId, rollNo) {
+  if (!io || !classId) return;
+  const repo = getRepo();
+  for (const socket of io.sockets.sockets.values()) {
+    const ctx = socket.data?.student;
+    if (!ctx?.exam || ctx.deliverOnly || String(ctx.rollNo) !== String(rollNo)) continue;
+    try {
+      const session = await deps.loadSession(ctx.code);
+      if (!session || String(session.classId ?? '') !== String(classId)) continue;
+      minorCache.delete(String(session._id));
+      ctx.exam = await examStateFor(repo, session, ctx.rollNo, ctx.exam);
+      if (ctx.exam?.minor) snapshots.forget(ctx.sessionId, ctx.rollNo);
       socket.emit('exam:mode', { examMode: ctx.exam ? phoneExamMode(session, { minor: ctx.exam.minor }) : null });
     } catch (err) {
       logError('exam:mode', err);

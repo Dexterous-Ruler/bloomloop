@@ -50,7 +50,8 @@ import {
 const KEY_A = 'a'.repeat(64);
 const KEY_B = '0123456789abcdef'.repeat(4);
 const EXAM = { on: true, fullscreen: true, screenShare: true, snapshotSeconds: 30, seb: { required: true, configKeyHashes: [KEY_A] } };
-const room = (examMode) => ({ _id: 'r1', code: 'EXAM01', examMode });
+// A room opened for a class: without one, nothing that watches runs (examModeProblem).
+const room = (examMode) => ({ _id: 'r1', code: 'EXAM01', classId: 'c1', examMode });
 
 /* ------------------------------------------------------------ the setting -- */
 
@@ -122,7 +123,7 @@ test('the help is honest about what a web page cannot do', () => {
   assert.match(EXAM_HELP.honesty, /truly lock/);
   assert.match(EXAM_HELP.screenshots, /cannot be seen at all/);
   assert.match(EXAM_HELP.snapshots, /never goes into the archive, the CSV or any report/);
-  assert.deepEqual(examSummary(room(EXAM)).seb, { required: true, keys: 1 });
+  assert.deepEqual(examSummary(room(EXAM)).seb, { required: true, keys: 1, browserKeys: 0 });
   assert.ok(!JSON.stringify(examSummary(room(EXAM))).includes(KEY_A));
 });
 
@@ -151,27 +152,34 @@ test('SEB: a room that requires it takes a matching header or a matching API val
   assert.equal(sebCheck(m, { headerHash: sebConfigKeyHash(requestUrl, KEY_B), requestUrl }).ok, false, 'another configuration');
   assert.equal(sebCheck(m, { headerHash: good, requestUrl: `${requestUrl}&t=1` }).ok, false, 'a value for another URL');
   assert.equal(sebCheck(m, { headerHash: 'not-hex', requestUrl }).ok, false);
+  // The API's value is for the room's own join page, on the server's own origin.
+  const server = 'https://bloomloop.example/socket.io/?EIO=4&transport=polling';
   const page = 'https://bloomloop.example/join?code=EXAM01';
   const api = { url: `${page}#q`, configKeyHash: sebConfigKeyHash(page, KEY_A) };
-  assert.deepEqual(sebCheck(m, { api }), { ok: true, via: 'api' });
-  assert.deepEqual(sebCheck(m, { api, origin: 'https://bloomloop.example' }), { ok: true, via: 'api' });
-  assert.equal(sebCheck(m, { api, origin: 'https://elsewhere.example' }).ok, false, 'a page on another origin');
-  assert.equal(sebCheck(m, { api: { url: 'javascript:alert(1)', configKeyHash: sebConfigKeyHash('javascript:alert(1)', KEY_A) } }).ok, false);
+  assert.deepEqual(sebCheck(m, { api, requestUrl: server, code: 'EXAM01' }), { ok: true, via: 'api' });
+  assert.deepEqual(sebCheck(m, { api, requestUrl: server, code: 'exam01', origin: 'https://bloomloop.example' }), { ok: true, via: 'api' });
+  assert.equal(sebCheck(m, { api, requestUrl: server, code: 'EXAM01', origin: 'https://elsewhere.example' }).ok, false, 'a page on another origin');
+  assert.equal(sebCheck(m, { api, code: 'EXAM01' }).ok, false, 'no request to say what the server\'s own origin is');
+  assert.equal(sebCheck(m, { api: { url: 'javascript:alert(1)', configKeyHash: sebConfigKeyHash('javascript:alert(1)', KEY_A) }, requestUrl: server, code: 'EXAM01' }).ok, false);
   // Not required, or exam mode off: always let in.
   assert.deepEqual(sebCheck(examModeFrom({ on: true }), {}), { ok: true, via: 'off' });
   assert.deepEqual(sebCheck(examModeOf({}), {}), { ok: true, via: 'off' });
 });
 
-test('SEB: the request URL is rebuilt as the browser asked for it, behind a proxy too', () => {
+test('SEB: the request URL is rebuilt as the browser asked for it; a proxy\'s headers only when it is trusted', () => {
+  const proxied = { headers: { host: 'internal:8000', 'x-forwarded-proto': 'https, http', 'x-forwarded-host': 'bloomloop.example' }, url: '/socket.io/?EIO=4' };
   assert.equal(handshakeUrl({ headers: { host: '127.0.0.1:5050' }, url: '/socket.io/?EIO=4' }), 'http://127.0.0.1:5050/socket.io/?EIO=4');
-  assert.equal(handshakeUrl({ headers: { host: 'internal:8000', 'x-forwarded-proto': 'https, http', 'x-forwarded-host': 'bloomloop.example' }, url: '/socket.io/?EIO=4' }),
-    'https://bloomloop.example/socket.io/?EIO=4');
+  assert.equal(handshakeUrl(proxied, { trustProxy: true }), 'https://bloomloop.example/socket.io/?EIO=4');
+  assert.equal(handshakeUrl(proxied), 'http://internal:8000/socket.io/?EIO=4', 'forwarded headers any client can send are not believed by default');
+  assert.equal(handshakeUrl(proxied, { publicOrigin: 'https://bloomloop.example/', trustProxy: true }), 'https://bloomloop.example/socket.io/?EIO=4',
+    'the configured public address wins over anything the request says');
+  assert.equal(handshakeUrl({ headers: { host: 'evil.example' }, url: '/x' }, { publicOrigin: 'https://bloomloop.example' }), 'https://bloomloop.example/x');
   assert.equal(handshakeUrl({ headers: {}, url: '/x' }), null);
 });
 
 /* ------------------------------------------------------------------- rate -- */
 
-test('rate: one of each kind a second, thirty a minute, and a fresh minute starts again', () => {
+test('rate: one of each kind a second, thirty in any minute, and room again as the oldest leave the minute', () => {
   const state = {};
   const t0 = 1_000_000;
   assert.equal(allowSignal(state, 'copy_attempt', t0), true);
@@ -182,7 +190,7 @@ test('rate: one of each kind a second, thirty a minute, and a fresh minute start
   for (let i = 0; i < 100; i += 1) if (allowSignal(state, `k${i}`, t0 + 2000 + i)) allowed += 1;
   assert.equal(allowed, SIGNAL_LIMIT.perMinute);
   assert.equal(allowSignal(state, 'focus_lost', t0 + 59_000), false, 'the minute is spent');
-  assert.equal(allowSignal(state, 'focus_lost', t0 + 60_000), true, 'a new minute');
+  assert.equal(allowSignal(state, 'focus_lost', t0 + 60_000), true, 'the first signal has left the minute');
 });
 
 /* -------------------------------------------------------- screen pictures -- */
@@ -249,14 +257,22 @@ test('pictures: one per interval (less two seconds of slack), the newest kept, a
   assert.deepEqual(store.room('r2'), []);
 });
 
-test('pictures: past the memory cap the oldest go first, never the one just kept', () => {
-  const store = createSnapshotStore({ capBytes: 10 });
-  store.put('r1', 'A', Buffer.alloc(4), 1);
-  store.put('r1', 'B', Buffer.alloc(4), 2);
-  store.put('r2', 'C', Buffer.alloc(4), 3);
-  assert.equal(store.latest('r1', 'A'), null);
-  assert.ok(store.latest('r2', 'C'));
+test('pictures: past a memory cap a new picture is not kept, and nothing kept is pushed out (review, Batch 9)', () => {
+  const store = createSnapshotStore({ capBytes: 10, roomCapBytes: 100 });
+  assert.equal(store.put('r1', 'A', Buffer.alloc(4), 1), true);
+  assert.equal(store.put('r1', 'B', Buffer.alloc(4), 2), true);
+  assert.equal(store.put('r2', 'C', Buffer.alloc(4), 3), false, 'over the store\'s cap: not kept');
+  assert.ok(store.latest('r1', 'A'), 'another room\'s picture is never dropped to make room');
+  assert.equal(store.latest('r2', 'C'), null);
+  assert.equal(store.lastAt('r2', 'C'), 3, 'but it arrived, and that is what the overdue rule reads');
+  assert.equal(store.put('r1', 'A', Buffer.alloc(3), 4), true, 'a student\'s own newer picture, no bigger, replaces theirs');
+  assert.equal(store.put('r1', 'A', Buffer.alloc(9), 5), false, 'a bigger one past the cap is not kept');
+  assert.equal(store.latest('r1', 'A').at, 4, 'their last kept picture stays');
   assert.ok(store.bytes <= 10);
+  const rooms = createSnapshotStore({ capBytes: 100, roomCapBytes: 6 });
+  rooms.put('r1', 'A', Buffer.alloc(4), 1);
+  assert.equal(rooms.put('r1', 'B', Buffer.alloc(4), 2), false, 'one room cannot pass its own cap');
+  assert.equal(rooms.put('r2', 'C', Buffer.alloc(4), 3), true, 'and another room still has its own');
 });
 
 test('the purge: two hours after the close, at once for a deleted room, and never for one still running', async () => {
@@ -281,12 +297,32 @@ test('the purge: two hours after the close, at once for a deleted room, and neve
   assert.equal(await store.sweep(t + 60_000, roomOf), 1, 'only the deleted room, a minute after the close');
   assert.equal(store.latest('gone', 'C'), null);
   assert.ok(store.latest('closed', 'B'));
+  assert.equal(await store.sweep(t + 30 * 60_000, roomOf), 0, 'nothing else half an hour on');
+  store.put('open', 'A', Buffer.alloc(2), t + 60 * 60_000);
+  store.put('unreadable', 'D', Buffer.alloc(2), t + 60 * 60_000);
   assert.equal(await store.sweep(t + SNAPSHOT_KEEP_MS, roomOf), 1, 'the closed room, two hours on');
   assert.equal(store.latest('closed', 'B'), null);
-  assert.ok(store.latest('open', 'A'), 'a running room keeps its pictures');
-  assert.ok(store.latest('unreadable', 'D'), 'a failed read keeps them for the next sweep');
+  assert.ok(store.latest('open', 'A'), 'a running room keeps a picture younger than two hours');
+  assert.ok(store.latest('unreadable', 'D'), 'a failed read keeps a young one for the next sweep');
   assert.equal(store.purgeRoom('open'), 1);
   assert.equal(store.size, 1);
+});
+
+test('the purge: a picture two hours old goes, whatever its room, so a room left open holds none for ever (review, Batch 9)', async () => {
+  const t = Date.parse('2026-11-20T10:00:00.000Z');
+  const store = createSnapshotStore();
+  store.put('open', 'A', Buffer.alloc(2), t);
+  store.put('open', 'B', Buffer.alloc(2), t + 90 * 60_000);
+  store.put('paused', 'C', Buffer.alloc(2), t);
+  const rooms = { open: { status: 'open' }, paused: { status: 'paused' } };
+  assert.equal(await store.sweep(t + SNAPSHOT_KEEP_MS - 1, async (id) => rooms[id]), 0);
+  assert.equal(await store.sweep(t + SNAPSHOT_KEEP_MS, async (id) => rooms[id]), 2, 'the two that are two hours old');
+  assert.equal(store.latest('open', 'A'), null);
+  assert.equal(store.latest('paused', 'C'), null);
+  assert.ok(store.latest('open', 'B'), 'a laptop still sending keeps its newest');
+  assert.equal(store.lastAt('open', 'A'), null, 'its arrival time goes with it');
+  assert.equal(await store.sweep(t + 10 * SNAPSHOT_KEEP_MS, async () => { throw new Error('store down'); }), 1,
+    'the age rule does not need the room');
 });
 
 test('snapshot_missing: due after two whole intervals and ten seconds, not one', () => {

@@ -191,7 +191,8 @@ export function createArchiveWriter({
     let count = 0;
     for (const session of await repo.listSessions()) {
       try {
-        const { doc } = await buildRoomArchive(repo, session, { now: now() });
+        // A copy of a room that still exists: its drawings' note says so (archive.js).
+        const { doc } = await buildRoomArchive(repo, session, { now: now(), deleting: false });
         if (save(doc.data)) count += 1;
       } catch (err) {
         state.lastError = `${session.code}: ${err.message}`;

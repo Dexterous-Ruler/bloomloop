@@ -9,7 +9,8 @@
 //   GET    /:code/exam/snapshots/:roll    read rule   the newest screen picture of
 //                                                     one student, as a JPEG
 //   GET    /:code/exam/collusion          read rule   pairs of matching wrong
-//                                                     answers: signals, not proof
+//                                                     answers: signals, not proof;
+//                                                     an exam room only (409)
 //
 // requireTeacher on every route, so a phone (no credentials: 401) or a student
 // account (403) never reaches one. A room the caller may not read is the same 404
@@ -35,6 +36,7 @@ import {
   collusionPairs,
   examModeFrom,
   examModeOf,
+  examModeProblem,
   snapshots,
 } from '../services/examGuard.js';
 import { integrityFull, pushExamMode } from '../sockets/examGuard.js';
@@ -89,6 +91,8 @@ router.patch('/:code/exam', requireTeacher, async (req, res, next) => {
     if (examMode.on && sessionSettings(found).mode === 'teacher-led') {
       throw fail('Exam mode needs phones, and no phone joins a Teacher-led room.', 400);
     }
+    const problem = examModeProblem(examMode, { classId: found.classId ?? null });
+    if (problem) throw fail(problem, 400);
     const repo = getRepo();
     const updated = (await repo.setSessionExamMode(found._id, examMode)) ?? { ...found, examMode };
     // The live loop's cached copy goes, so the next join and answer read the new setting.
@@ -128,12 +132,18 @@ router.get('/:code/exam/snapshots/:roll', requireTeacher, async (req, res, next)
 /**
  * The collusion check: pairs of students whose wrong answers match, by the rule
  * in services/examGuard.js (COLLUSION), in roll order and never ranked. Students
- * the class roster marks under 18 are left out, pairs and all. Any room, exam
- * mode or not: it reads answers already given.
+ * the class roster marks under 18 are left out, pairs and all. An exam room
+ * only (decision E5 makes it part of exam mode): its students were shown the
+ * consent notice. A room in exam mode now is one; any other is a 409 in a
+ * sentence, after the read rule, so it says nothing to someone who may not
+ * read the room.
  */
 router.get('/:code/exam/collusion', requireTeacher, async (req, res, next) => {
   try {
     const session = await room(req.params.code, req.viewer);
+    if (!examModeOf(session).on) {
+      throw fail('The collusion check is part of exam mode, and this room is not in exam mode, so its students were never told their answers might be compared.', 409);
+    }
     const repo = getRepo();
     const [answers, profiles, roster, marks] = await Promise.all([
       allAnswers(repo, { sessionId: session._id, final: true, classVotes: false }),

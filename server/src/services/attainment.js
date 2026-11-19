@@ -78,7 +78,7 @@ import { LEVEL_BANDS } from './classAnalytics.js';
 import {
   VIA, chapterMap, inOrder, linkViews, outcomeIndex, overrideQuestions, readOutcomeMap, resolveAnswer, topicKey,
 } from './outcomes.js';
-import { ANSWERED_AGAIN_DETAIL, OVER_CAP_DETAIL, keptNotCounted } from './offline.js';
+import { ANSWERED_AGAIN_DETAIL, OVER_CAP_DETAIL, OVER_LIMIT_DETAIL, keptNotCounted } from './offline.js';
 import { DEFAULT_PRESET, PRESETS, presetById } from './attainmentPresets.js';
 import { PRACTISED_NOTE } from './bankShare.js';
 import { awaitingMark } from './drawings.js';
@@ -1324,6 +1324,10 @@ function answerNote(a, { chosen, type, config, res, known, knewKey = new Set() }
     if (keptNotCounted(a)) {
       if (a.detail === ANSWERED_AGAIN_DETAIL) {
         return 'Not counted: the student had already been marked on this question when this answer arrived.';
+      }
+      if (a.detail === OVER_LIMIT_DETAIL) {
+        return 'Not counted: a written answer longer than the question takes, which reached the server from a phone that '
+          + 'could not send it back shorter (saved on the phone, or after the room closed).';
       }
       return a.detail === OVER_CAP_DETAIL
         ? 'Not counted: it arrived after the student had answered as many questions as the room asks each student.'

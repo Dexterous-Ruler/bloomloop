@@ -82,15 +82,30 @@ export const OVER_CAP_DETAIL = 'Arrived after the student had answered every que
  */
 export const ANSWERED_AGAIN_DETAIL = 'Arrived after the student had already been marked on this question: kept, not counted.';
 
+/**
+ * Written as `detail` on a written answer over its length's limit (Batch 9, E3:
+ * 60 words for a short answer, which is every question written before the two
+ * lengths existed, 600 for a long one, and a character cap beside each) that
+ * the phone could not send back shorter: one from its outbox or a pack, or one
+ * after the close. On the question on the phone's screen in an open room it is
+ * refused instead, and the student shortens it there. Kept like a late one:
+ * `final` false, no mark, never counted, the machine's reading beside it.
+ */
+export const OVER_LIMIT_DETAIL = 'Longer than the question takes, and sent where it could not be shortened: kept, not counted.';
+
 /** Is this answer row one that arrived after its room closed and does not count? */
 export const keptAfterClose = (a) => a?.final === false && a?.detail === AFTER_CLOSE_DETAIL;
 
 /** Is this answer row a second answer to a question already marked, kept and not counted? */
 export const keptAnsweredAgain = (a) => a?.final === false && a?.detail === ANSWERED_AGAIN_DETAIL;
 
+/** Is this answer row a written answer over its limit, kept and not counted? */
+export const keptOverLimit = (a) => a?.final === false && a?.detail === OVER_LIMIT_DETAIL;
+
 /** Is this answer row one kept and never counted for any reason above? Every report leaves it out. */
 export const keptNotCounted = (a) => a?.final === false
-  && (a?.detail === AFTER_CLOSE_DETAIL || a?.detail === OVER_CAP_DETAIL || a?.detail === ANSWERED_AGAIN_DETAIL);
+  && (a?.detail === AFTER_CLOSE_DETAIL || a?.detail === OVER_CAP_DETAIL || a?.detail === ANSWERED_AGAIN_DETAIL
+    || a?.detail === OVER_LIMIT_DETAIL);
 
 /**
  * How many answers kept and not counted one student may have in one room: the
@@ -133,6 +148,9 @@ export const LATE_NOT_SERVED_MESSAGE = 'This answer reached your teacher after t
 /** An answer that arrived after the grace window. */
 export const LATE_TOO_LATE_MESSAGE = `This answer reached your teacher more than ${GRACE_MINUTES} minutes after the room `
   + 'closed, so it is saved but does not count.';
+/** A written answer over its limit that could not be sent back to be shortened. */
+export const OVER_LIMIT_MESSAGE = 'This answer is longer than the question takes, and it reached your teacher where it could '
+  + 'not be shortened, so it is saved but does not count.';
 /** A second answer to a question the student had already been marked on. */
 export const ANSWERED_AGAIN_MESSAGE = 'You had already answered this question and been marked on it, so this answer is '
   + 'saved but does not count.';

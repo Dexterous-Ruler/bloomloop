@@ -79,6 +79,16 @@ export const config = {
   // fixed string anyone could read here. Set it once and keep it.
   serverSecret: process.env.SERVER_SECRET || '',
 
+  // Batch 9 (exam mode's Safe Exam Browser check): the address students open the
+  // app at, as an origin ("https://bloomloop.example"). SEB hashes the address
+  // it asked for, so the server must know its own; when set it is the only one
+  // believed. Without it the address is rebuilt from the request, and a proxy's
+  // X-Forwarded-* headers are believed only with TRUST_PROXY=1, because any
+  // client can send them. Behind a proxy that ends TLS, set one of the two or
+  // SEB's values never match. Nothing else reads either.
+  publicOrigin: (process.env.PUBLIC_ORIGIN || '').trim(),
+  trustProxy: String(process.env.TRUST_PROXY ?? '').trim() === '1',
+
   uploadsDir: path.join(ROOT, 'server', 'uploads'),
   clientDist: path.join(ROOT, 'client', 'dist'),
 };

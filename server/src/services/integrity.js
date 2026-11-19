@@ -125,7 +125,8 @@ export function record(profile, kind, meta = {}) {
  * arrives over a socket the student's own devtools can send on.
  * @returns {boolean} whether it was accepted
  */
-export function reportFromClient(profile, kind, meta = {}, { exam = false } = {}) {
+export function reportFromClient(profile, sent, meta = {}, { exam = false } = {}) {
+  const kind = exam ? examKind(sent) : sent;
   if (!reportable(kind, { exam })) return false;
   // Only the fields we understand, and nothing long enough to be a payload.
   const clean = {};
@@ -147,6 +148,19 @@ export const reportable = (kind, { exam = false } = {}) => REPORTED.includes(kin
   || (exam && EXAM_REPORTED.includes(kind) && kind !== 'screenshare_not_started');
 
 /**
+ * The older kinds a phone reports in every room, and the exam kind each one is
+ * the same event as. A phone in an exam room may send both for one leave (the
+ * room's own listeners, and the exam guard's), and summarise() counts `hidden`
+ * and `visibility_hidden` together as time away: so in an exam room the older
+ * kind is recorded under the exam name, and the second report of one event is
+ * then the same kind inside a second, which the rate drops (SIGNAL_LIMIT).
+ */
+export const EXAM_ALIAS = Object.freeze({ hidden: 'visibility_hidden', blurred: 'focus_lost', 'fullscreen-exit': 'fullscreen_exit' });
+
+/** The kind an exam room records for what a phone sent: the exam name for an older kind, else as sent. */
+export const examKind = (kind) => EXAM_ALIAS[kind] ?? kind;
+
+/**
  * A signal the server records about an exam room's phone from what the phone did
  * on its screen event: the share it stopped, or did not start. Reported, because
  * the phone said so; only these two kinds.
@@ -165,22 +179,32 @@ export function noteScreen(profile, kind) {
  * question, sooner than the question could be read: its text, options, pairs,
  * items and, in an exam room, the passage it hangs off, at 25 characters a
  * second (about 300 words a minute, fast for unfamiliar technical material and
- * meant to be generous), and never under 0.9 seconds. First attempts only, and
- * never for an answer kept and not counted. A figure's drawing is not counted as
- * reading, so a question about a picture is held to its words alone, which can
- * only make the rule fire less.
+ * meant to be generous), and never under 0.9 seconds. The passage counts once
+ * per student: only on the first question served to them from it
+ * (`passageRead` false). Several questions hang off one passage, and a student
+ * who read it for the first does not read it again for the next; counted every
+ * time, the rule flagged most of a class on a comprehension exam. First
+ * attempts only, and never for an answer kept and not counted. A figure's
+ * drawing is not counted as reading, so a question about a picture is held to
+ * its words alone, which can only make the rule fire less.
  */
-export function examMinPlausibleMs(question) {
-  const passage = question?.stimulus?.kind === 'passage' ? String(question.stimulus.text ?? '') : '';
+export function examMinPlausibleMs(question, { passageRead = false } = {}) {
+  const passage = passageRead ? '' : passageOf(question);
   return minPlausibleMs(question) + Math.round((passage.length / CHARS_PER_SECOND) * 1000);
 }
 
-/** checkLatency for an exam room: the same check with the passage counted, recorded as timing_anomaly. */
-export function checkTiming(profile, question, servedAt, now = Date.now()) {
+/** The passage a question hangs off, as its text, or '' for none. */
+export const passageOf = (question) => (question?.stimulus?.kind === 'passage' ? String(question.stimulus.text ?? '') : '');
+
+/**
+ * checkLatency for an exam room: the same check with the passage counted (once:
+ * examMinPlausibleMs), recorded as timing_anomaly.
+ */
+export function checkTiming(profile, question, servedAt, now = Date.now(), { passageRead = false } = {}) {
   if (!servedAt) return null;
   const took = now - new Date(servedAt).getTime();
   if (!Number.isFinite(took) || took < 0) return null;
-  const floor = examMinPlausibleMs(question);
+  const floor = examMinPlausibleMs(question, { passageRead });
   if (took >= floor) return null;
   record(profile, 'timing_anomaly', { src: 'observed', tookMs: took, expectedMs: floor, questionId: String(question._id) });
   return { tookMs: took, expectedMs: floor };

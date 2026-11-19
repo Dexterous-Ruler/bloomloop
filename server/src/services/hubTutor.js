@@ -685,13 +685,18 @@ export const LAST_HINT = 'That was the last hint for this question. Try your ans
 
 /**
  * The hints already opened for this attempt at this question, as a student
- * reads them (for a screen that reloads), and how many more there are.
+ * reads them (for a screen that reloads), and how many more there are. While
+ * the question is closed to the student (a running room holds it, E1; an open
+ * self-test; a Get Ready check), none is shown, those opened before included,
+ * and the reply says why, as opening one does (serveHint).
  */
-export async function shownHints(repo, { account, question, topicId = null, attemptId, state = null }) {
+export async function shownHints(repo, { account, question, topicId = null, attemptId, state = null, closed = null }) {
   if (!ATTEMPT_ID.test(String(attemptId ?? ''))) throw fail(NEEDS_ATTEMPT_ID, 400);
   const views = (await repo.listHintViews({ accountId: String(account.id), clientAttemptId: String(attemptId) }))
     .filter((v) => sameId(v.questionId, question._id))
     .sort((a, b) => a.position - b.position);
+  const reason = await closedReason(repo, account, question, { closed });
+  if (reason) return { hints: [], hintsUsed: views.length, remaining: 0, why: '', note: closedNote(reason), held: true };
   const plan = views.length ? views[0].plan : await planFor(repo, { account, question, topicId, state });
   const rows = await tutorRowsOf(repo, [String(question._id)]);
   const ladder = servableLadder(question, rows.hints.get(lower(question._id)) ?? []);

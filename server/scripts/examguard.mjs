@@ -29,6 +29,16 @@
 //   drawings    a whiteboard answer in an exam room (the Batch 9 merge): its
 //               picture is kept before the share, its answer waits for the
 //               share like any other, and its timing signal reaches staff live
+//   review      the fixes from the review: a room without a class runs nothing
+//               that watches; { on: false } stores nothing; an answer the server
+//               holds is answered from its row while the share is off; one
+//               leave sent both ways is one signal; a picture the store has no
+//               room for still arrived; a phone in the room when exam mode is
+//               turned on is recorded as before until it says it showed the
+//               notice; Safe Exam Browser turned on mid-room turns away the
+//               phones not in it; a student marked under 18 during a room is not
+//               held for a share; a passage counts once; collusion is exam
+//               rooms only
 //   nowhere     nothing of it reaches the projector, a phone's other events, the
 //               archive or the CSV; staff routes refuse phones and outsiders
 //
@@ -49,6 +59,9 @@ const { createApp } = await import(`${SRC}app.js`);
 const { attachSockets } = await import(`${SRC}sockets/index.js`);
 const { examTick, sweepSnapshots } = await import(`${SRC}sockets/examGuard.js`);
 const { sebConfigKeyHash, snapshots, SNAPSHOT_KEEP_MS, SNAPSHOT_MAX_BYTES } = await import(`${SRC}services/examGuard.js`);
+const { summarise } = await import(`${SRC}services/integrity.js`);
+const { snapshotFrom } = await import(`${SRC}services/examGuard.js`);
+const snapshotFromBytes = (buf) => snapshotFrom(buf).jpeg;
 const { config } = await import(`${SRC}config.js`);
 
 // The in-process store and no model, whatever .env says.
@@ -288,6 +301,18 @@ const EXAM = { on: true, fullscreen: true, screenShare: true, snapshotSeconds: 3
   const led = await post('/api/session', { contentId: content._id, classId, mode: 'teacher-led', examMode: { on: true } });
   check('exam mode in a Teacher-led room is a 400: no phone joins it', led.status === 400 && /Teacher-led/.test(led.body.error ?? ''));
 }
+{
+  const bare = await post('/api/session', { contentId: content._id, examMode: EXAM });
+  check('a room without a class cannot ask for fullscreen, screen sharing or pictures: no list can mark anyone under 18 (review)',
+    bare.status === 400 && /need a class/.test(bare.body.error ?? ''), `${bare.status} ${bare.body.error}`);
+  const guard = await post('/api/session', { contentId: content._id, examMode: { on: true } });
+  check('the copy guard alone opens without one', guard.status === 200 && guard.body.examMode?.on === true && guard.body.examMode?.screenShare === false);
+  const off = await post('/api/session', { contentId: content._id, examMode: { on: false } });
+  check('a room opened with exam mode sent as off stores none, as a room opened without it (review)',
+    off.status === 200 && off.body.examMode?.on === false && (await repo.getSession(off.body.sessionId)).examMode == null);
+  const later = await patch(`/api/session/${guard.body.code}/exam`, { examMode: EXAM });
+  check('nor can one be changed to it later', later.status === 400 && /need a class/.test(later.body.error ?? ''));
+}
 const opened = await post('/api/session', { contentId: content._id, classId, examMode: EXAM });
 const code = opened.body.code;
 const sessionId = opened.body.sessionId;
@@ -381,19 +406,37 @@ console.log('\nscreen: nothing is answered before the whole screen is shared');
     live.students[0].summary.latest?.kind === 'timing_anomaly' && live.students[0].summary.level === 'watch');
   const kinds = (await repo.getProfile(sessionId, 'A01')).integrity.map((e) => e.kind);
   check('an exam room records timing_anomaly, never also too-fast', kinds.includes('timing_anomaly') && !kinds.includes('too-fast'), kinds.join(','));
+
+  // The reply to that answer was lost and the share is off again (a rejoin
+  // starts with no share): the resend is answered from the stored row (review).
+  const sentKey = phoneLog.filter((e) => e.rollNo === 'A01' && e.event === 'server:result').at(-1)?.payload?.answerId;
+  await emitAck(asha.s, 'student:screen', { state: 'stopped' });
+  const resend = new Promise((resolve) => {
+    const on = (event) => (p) => { if (p?.answerId === sentKey) resolve({ event, payload: p }); };
+    asha.s.once('server:result', on('server:result'));
+    asha.s.once('exam:screen-needed', on('exam:screen-needed'));
+  });
+  asha.s.emit('student:answer', { questionId: asha.first.question._id, response: 3, answerId: sentKey });
+  const replay = await Promise.race([resend, settle(3000).then(() => ({ event: 'nothing' }))]);
+  check('an answer the server already holds is answered from its row while the share is off, never told it was not taken',
+    Boolean(sentKey) && replay.event === 'server:result' && (await repo.listAnswers({ sessionId })).length === 1, JSON.stringify(replay));
+  await emitAck(asha.s, 'student:screen', { state: 'started', surface: 'monitor' });
 }
 
 console.log('\nlive: reported signals, the rate, and what a phone may not claim');
 {
   for (const [kind, extra] of [['copy_attempt'], ['context_menu'], ['screenshot_attempt', { method: 'printscreen' }], ['focus_lost'],
-    ['visibility_hidden', { awayMs: 4000 }], ['fullscreen_exit'], ['hidden', { awayMs: 2000 }]]) {
+    ['visibility_hidden', { awayMs: 4000 }], ['fullscreen_exit'], ['hidden', { awayMs: 4000 }]]) {
     asha.s.emit('student:signal', { kind, ...(extra ?? {}) });
   }
-  const got = await feed.until((p) => !p.full && p.students?.[0]?.rollNo === 'A01' && p.students[0].summary?.counts?.hidden === 1);
-  const counts = got.students[0].summary.counts;
-  check('each reported signal reaches the console, counted by kind, the old kinds as before',
-    ['copy_attempt', 'context_menu', 'screenshot_attempt', 'focus_lost', 'visibility_hidden', 'fullscreen_exit', 'hidden'].every((k) => counts[k] === 1),
+  const got = await feed.until((p) => !p.full && p.students?.[0]?.rollNo === 'A01' && p.students[0].summary?.counts?.fullscreen_exit === 1);
+  await settle();
+  const counts = summarise(await repo.getProfile(sessionId, 'A01')).counts;
+  check('each reported signal reaches the console, counted by kind',
+    ['copy_attempt', 'context_menu', 'screenshot_attempt', 'focus_lost', 'visibility_hidden', 'fullscreen_exit'].every((k) => counts[k] === 1),
     JSON.stringify(counts));
+  check('one leave reported both ways (the older kind and the exam kind) is one signal, not two (review)',
+    !('hidden' in counts) && counts.visibility_hidden === 1 && summarise(await repo.getProfile(sessionId, 'A01')).away === 1, JSON.stringify(counts));
   const notes = got.students[0].summary.notes.join(' ');
   check('worded as signals: what was seen, never what it means',
     /Page left: possibly Google Lens, a screenshot tool or another app/.test(notes) && /The page sees the key, not whether a picture was taken/.test(notes)
@@ -466,6 +509,40 @@ console.log('\npictures overdue, and a second device');
   await examTick(io, Date.now() + 200_000);
   check('noted once per gap, not on every look',
     (await repo.getProfile(sessionId, 'A01')).integrity.filter((e) => e.kind === 'snapshot_missing').length === before + 1);
+
+  // The review: the store full of other rooms' pictures (one buffer, counted
+  // many times). A laptop in its own exam room sends a picture: it is not kept,
+  // nothing of the other rooms is pushed out, and it still counts as arrived,
+  // so the laptop is never noted for a picture it did send.
+  const roomF = await post('/api/session', { contentId: content._id, classId, examMode: EXAM });
+  const f = await join(roomF.body.code, 'F01');
+  await emitAck(f.s, 'student:screen', { state: 'started', surface: 'monitor' });
+  // To the brim: large pictures, then smaller ones into what is left.
+  let filled = 0;
+  let room = 0;
+  for (const size of [SNAPSHOT_MAX_BYTES, 1024, 1]) {
+    const filler = Buffer.alloc(size, 1);
+    for (let misses = 0; misses < 8;) {
+      if (snapshots.put(`flood-${room % 8}`, `F${filled}`, filler, Date.now())) filled += 1;
+      else { misses += 1; room += 1; }
+    }
+  }
+  const flooded = snapshots.latest('flood-0', 'F0');
+  const full = await emitAck(f.s, 'student:snapshot', { jpeg: PICTURE });
+  check('a picture the store has no room for is acknowledged as full, and another room\'s are not pushed out to make room (review)',
+    full.ok === false && full.reason === 'full' && snapshots.latest(roomF.body.sessionId, 'F01') === null
+    && snapshots.lastAt(roomF.body.sessionId, 'F01') !== null && snapshots.latest('flood-0', 'F0') === flooded && filled > 0,
+    JSON.stringify(full));
+  // Another picture arriving forty seconds on, still not kept: a look a minute
+  // after that finds it arrived, though the store holds none of F01's.
+  snapshots.put(roomF.body.sessionId, 'F01', snapshotFromBytes(PICTURE), Date.now() + 40_000);
+  await examTick(io, Date.now() + 100_000);
+  const missing = (await repo.getProfile(roomF.body.sessionId, 'F01')).integrity.filter((e) => e.kind === 'snapshot_missing');
+  check('and the overdue rule reads when pictures arrived, not which were kept: no snapshot_missing (review)', missing.length === 0,
+    JSON.stringify(missing));
+  for (let r = 0; r < 8; r += 1) snapshots.purgeRoom(`flood-${r}`);
+  f.s.disconnect();
+  await settle();
 
   const second = await join(code, 'A01');
   const dev = await feed.until((p) => !p.full && p.students?.[0]?.rollNo === 'A01' && p.students[0].summary?.counts?.second_device === 1);
@@ -550,6 +627,7 @@ meera.rollNo = 'M01';
 }
 
 console.log('\nSafe Exam Browser: required, other browsers turned away');
+let sebPhone = null;
 {
   const byHod = await patch(`/api/session/${code}/exam`, { examMode: { ...EXAM, seb: { required: true, configKeyHashes: [KEY] } } }, 'hod');
   const byOther = await patch(`/api/session/${code}/exam`, { examMode: { ...EXAM, seb: { required: true, configKeyHashes: [KEY] } } }, 'profB');
@@ -557,11 +635,17 @@ console.log('\nSafe Exam Browser: required, other browsers turned away');
   const noKey = await patch(`/api/session/${code}/exam`, { examMode: { ...EXAM, seb: { required: true } } });
   check('requiring it with no Config Key is a 400 that says what is missing', noKey.status === 400 && /Config Key/.test(noKey.body.error ?? ''));
   const told = next(asha.s, 'exam:mode');
+  const turnedAway = next(asha.s, 'session:rejected');
+  const gone = new Promise((resolve) => asha.s.once('disconnect', () => resolve(true)));
   const changed = await patch(`/api/session/${code}/exam`, { examMode: { ...EXAM, seb: { required: true, configKeyHashes: [KEY.toUpperCase()] } } });
   check('the owner requires it while the room runs', changed.status === 200 && changed.body.examMode?.seb?.required === true
     && changed.body.examMode?.seb?.configKeyHashes?.[0] === KEY);
   const pushed = await told;
   check('the phones in the room are told at once, without the key', pushed.examMode?.sebRequired === true && !JSON.stringify(pushed).includes(KEY));
+  const away = await turnedAway.catch(() => null);
+  check('and a phone that joined in an ordinary browser is turned away now, with the same sentence as at the door (review)',
+    /must be taken in Safe Exam Browser/.test(away?.reason ?? '') && (await Promise.race([gone, settle(2000).then(() => false)])),
+    JSON.stringify(away));
   const fresh = await feed.until((p) => p.full === true && p.examMode?.seb?.required === true);
   check('and the console starts again from the whole room, in roll order, without the key',
     JSON.stringify(fresh.students.map((s) => s.rollNo)) === '["A01","A02"]' && !JSON.stringify(fresh).includes(KEY), JSON.stringify(fresh.students?.map((s) => s.rollNo)));
@@ -577,11 +661,18 @@ console.log('\nSafe Exam Browser: required, other browsers turned away');
     JSON.stringify(viaHeader.rejected));
   const wrong = await join(code, 'A03', { opts: { extraHeaders: { 'X-SafeExamBrowser-ConfigKeyHash': sebConfigKeyHash(requestUrl, '6'.repeat(64)) } } });
   check('another configuration\'s header does not', Boolean(wrong.rejected));
+  sebPhone = viaHeader;
   const page = `${base}/join?code=${code}`;
   const viaApi = await join(code, 'A03', { extra: { seb: { url: `${page}#start`, configKeyHash: sebConfigKeyHash(page, KEY) } } });
   check('nor does the value from SEB\'s JavaScript for another page; for this page it lets the phone in', Boolean(viaApi.accepted));
   const otherPage = await join(code, 'A03', { extra: { seb: { url: page, configKeyHash: sebConfigKeyHash(`${page}&x=1`, KEY) } } });
   check('a value for another page is turned away', Boolean(otherPage.rejected));
+  const chosen = 'https://not-this-server.example/any/page';
+  const anyPage = await join(code, 'A03', { extra: { seb: { url: chosen, configKeyHash: sebConfigKeyHash(chosen, KEY) } } });
+  const otherRoom = `${base}/join/${NOWHERE}`;
+  const elsewhere = await join(code, 'A03', { extra: { seb: { url: otherRoom, configKeyHash: sebConfigKeyHash(otherRoom, KEY) } } });
+  check('a value worked out for a page the phone chose, or for another room\'s join link, is turned away (review)',
+    Boolean(anyPage.rejected) && Boolean(elsewhere.rejected));
   const room = await get(`/api/session/${code}`, null);
   check('the open room route says SEB is required, and never names a key', room.body.exam?.sebRequired === true && !JSON.stringify(room.body).includes(KEY));
 }
@@ -590,7 +681,11 @@ console.log('\ncollusion: matching wrong answers, close together, as signals');
 let collusionCode = null;
 {
   const qs = (await repo.listQuestions(content._id)).slice(0, 3).map((q) => String(q._id));
-  const roomC = await post('/api/session', { contentId: content._id, classId, questionIds: qs, questionsPerStudent: 3 });
+  const notExam = await post('/api/session', { contentId: content._id, classId, questionIds: qs });
+  const outside = await get(`/api/session/${notExam.body.code}/exam/collusion`);
+  check('the collusion check is not run on a room outside exam mode: its students were never told (review)',
+    outside.status === 409 && /not in exam mode/.test(outside.body.error ?? ''), `${outside.status} ${outside.body.error}`);
+  const roomC = await post('/api/session', { contentId: content._id, classId, questionIds: qs, questionsPerStudent: 3, examMode: { on: true } });
   collusionCode = roomC.body.code;
   const answerAll = async (roll, response) => {
     const ph = await join(collusionCode, roll);
@@ -638,7 +733,7 @@ console.log('\ndrawings: a whiteboard answer in an exam room (Batch 9, both halv
     bloom: 'create', source: 'teacher', status: 'active',
   }]);
   const roomW = await post('/api/session', {
-    contentId: drawn._id, questionIds: [String(drawQ._id)], startLevel: 'create', adapt: false, examMode: { on: true, screenShare: true },
+    contentId: drawn._id, classId, questionIds: [String(drawQ._id)], startLevel: 'create', adapt: false, examMode: { on: true, screenShare: true },
   });
   const console2 = await connect();
   const feedW = collect(console2, 'teacher:integrity');
@@ -692,6 +787,85 @@ console.log('\ndrawings: a whiteboard answer in an exam room (Batch 9, both halv
   console2.disconnect();
 }
 
+console.log('\nreview: exam mode turned on while phones are in the room, and an under-18 mark made during it');
+{
+  const roomL = await post('/api/session', { contentId: content._id, classId });
+  const ph = await join(roomL.body.code, 'A02');
+  ph.rollNo = 'A02';
+  const told = next(ph.s, 'exam:mode');
+  const on = await patch(`/api/session/${roomL.body.code}/exam`, { examMode: { on: true } });
+  const mode = await told;
+  check('the owner turns exam mode on during the room, and the phone is told, with the notice', on.status === 200 && /This room is an exam/.test(mode.examMode?.notice ?? ''));
+  ph.s.emit('student:signal', { kind: 'copy_attempt' });
+  ph.s.emit('student:signal', { kind: 'hidden', awayMs: 1000 });
+  await settle(300);
+  const before = (await repo.getProfile(roomL.body.sessionId, 'A02')).integrity.map((e) => e.kind);
+  check('until the phone says it showed the notice, nothing is recorded as an exam signal; the room records what any room does',
+    !before.includes('copy_attempt') && before.includes('hidden') && !before.includes('visibility_hidden'), before.join(','));
+  const consent = await emitAck(ph.s, 'student:exam-consent', {});
+  ph.s.emit('student:signal', { kind: 'copy_attempt' });
+  await settle(300);
+  const after = (await repo.getProfile(roomL.body.sessionId, 'A02')).integrity.map((e) => e.kind);
+  check('once it has, its exam signals are recorded', consent.ok === true && after.includes('copy_attempt'), after.join(','));
+  ph.s.disconnect();
+
+  // A student in a screen-share room, then marked under 18 by the professor.
+  const roomU = await post('/api/session', { contentId: content._id, classId, examMode: { on: true, screenShare: true } });
+  const chitra = await join(roomU.body.code, 'A03');
+  chitra.rollNo = 'A03';
+  check('Chitra is asked to share her screen', chitra.accepted?.examMode?.screenShare === true);
+  const row = (await repo.listClassStudents(classId)).find((s) => s.rollNo === 'A03');
+  const told2 = next(chitra.s, 'exam:mode');
+  const marked = await patch(`/api/classes/${classId}/students/${row._id}`, { under18: true });
+  const pushed = await told2.catch(() => null);
+  check('marked under 18 during the room, her phone is told at once that nothing that watches is asked of her (review)',
+    marked.status === 200 && pushed?.examMode?.screenShare === false && pushed?.examMode?.watched === false, JSON.stringify(pushed));
+  const result = await answer(chitra, chitra.first.question, 1);
+  check('and she is not held for a share she is never asked for: the answer is taken', result.event === 'server:result', JSON.stringify(result));
+  await patch(`/api/classes/${classId}/students/${row._id}`, { under18: false });
+  chitra.s.disconnect();
+
+  // The same student, the mark set straight in the store (no push): the answer
+  // path reads the mark again before it holds an answer back.
+  const roomU2 = await post('/api/session', { contentId: content._id, classId, examMode: { on: true, screenShare: true } });
+  const again = await join(roomU2.body.code, 'A03');
+  again.rollNo = 'A03';
+  await repo.updateClassStudent(row._id, { under18: true });
+  const told3 = next(again.s, 'exam:mode');
+  const taken = await answer(again, again.first.question, 1);
+  const pushed3 = await told3.catch(() => null);
+  check('and with no push, the answer path reads the mark again before holding an answer back, and tells the phone (review)',
+    taken.event === 'server:result' && pushed3?.examMode?.screenShare === false, JSON.stringify({ taken: taken.event, pushed3 }));
+  await repo.updateClassStudent(row._id, { under18: false });
+  again.s.disconnect();
+
+  // A passage counts once: the first question on it carries its reading time,
+  // the next does not (two questions on one long passage, answered at once).
+  const story = await repo.createContent({ title: 'Reading', kind: 'syllabus', rawText: '', topics: ['Reading'], ownerId: ID.profA });
+  const passage = { kind: 'passage', text: 'The protocol retransmits a segment when its timer expires. '.repeat(30) };
+  const pq = await repo.insertQuestions([1, 2].map((n) => ({
+    contentId: story._id, topic: 'Reading', text: `Q${n}?`, kind: 'truefalse', answer: true, bloom: 'understand', source: 'teacher', status: 'active',
+    stimulus: passage,
+  })));
+  const roomP = await post('/api/session', {
+    contentId: story._id, classId, questionIds: pq.map((q) => String(q._id)), startLevel: 'understand', adapt: false, examMode: { on: true },
+  });
+  const reader = await join(roomP.body.code, 'A01');
+  reader.rollNo = 'A01';
+  let q = reader.first.question;
+  await answer(reader, q, true);
+  const waitNext = reader.questions.until((p) => p.question._id !== q._id);
+  reader.s.emit('student:next', {});
+  q = (await waitNext).question;
+  await settle(1500);
+  await answer(reader, q, true);
+  await settle(200);
+  const timing = (await repo.getProfile(roomP.body.sessionId, 'A01')).integrity.filter((e) => e.kind === 'timing_anomaly');
+  check('the first question on a passage is held to its reading time, the second to its own words: one signal, not two (review)',
+    timing.length === 1, JSON.stringify(timing));
+  reader.s.disconnect();
+}
+
 console.log('\nnowhere else: the projector, the phones, the CSV, the archive; and the purge');
 {
   const wallText = JSON.stringify(wallLog);
@@ -712,14 +886,14 @@ console.log('\nnowhere else: the projector, the phones, the CSV, the archive; an
 
   // The purge, with the clock run forward: kept while the room runs, kept for
   // two hours after the close, and gone after.
-  await sweepSnapshots(Date.now() + 10 * SNAPSHOT_KEEP_MS);
-  check('a running room keeps its pictures, whatever the clock says', snapshots.latest(sessionId, 'A01') !== null);
+  await sweepSnapshots(Date.now() + SNAPSHOT_KEEP_MS - 120_000);
+  check('a running room keeps a picture younger than two hours', snapshots.latest(sessionId, 'A01') !== null);
   const closed = await post(`/api/session/${code}/close`, {});
   const closedAt = Date.parse(closed.body.session?.closedAt ?? '');
   await sweepSnapshots(closedAt + SNAPSHOT_KEEP_MS - 60_000);
   check('a closed room keeps them for two hours', (await get(`/api/session/${code}/exam/snapshots/A01`)).status === 200);
-  const late = await emitAck(asha.s, 'student:snapshot', { jpeg: PICTURE }).catch(() => ({ ok: false, reason: 'no reply' }));
-  check('a closed room takes no new picture', late.ok === false);
+  const late = await emitAck(sebPhone.s, 'student:snapshot', { jpeg: PICTURE }).catch(() => ({ ok: false, reason: 'no reply' }));
+  check('a closed room takes no new picture', late.ok === false && late.reason === 'not-asked', JSON.stringify(late));
   await sweepSnapshots(closedAt + SNAPSHOT_KEEP_MS);
   check('two hours after the close they are purged', snapshots.latest(sessionId, 'A01') === null
     && (await get(`/api/session/${code}/exam/snapshots/A01`)).status === 404);
@@ -728,7 +902,7 @@ console.log('\nnowhere else: the projector, the phones, the CSV, the archive; an
 
   // Delete: a second exam room with a picture, deleted; the picture goes at once,
   // and the archive holds none of it.
-  const roomD = await post('/api/session', { contentId: content._id, examMode: EXAM });
+  const roomD = await post('/api/session', { contentId: content._id, classId, examMode: EXAM });
   const ph = await join(roomD.body.code, 'D01');
   await emitAck(ph.s, 'student:screen', { state: 'started', surface: 'monitor' });
   const taken = await emitAck(ph.s, 'student:snapshot', { jpeg: PICTURE });

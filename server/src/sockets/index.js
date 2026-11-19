@@ -28,7 +28,9 @@ import { buildGridRow, phoneRow } from '../routes/session.js';
 import { isRecordId } from '../ids.js';
 import {
   score, forStudent, countsTowardMastery, shownOptionIndices, readyToMark, awaitsReview, responseProblem,
+  lengthProblem, responseTooLarge, RESPONSE_TOO_LARGE,
 } from '../questionTypes.js';
+import { laptopMode } from '../laptop.js';
 import { enginesReady } from '../figures/index.js';
 import { verifyAccountToken, verifyTeacherCredentials } from '../auth.js';
 import { canRead, ownerOf } from '../ownership.js';
@@ -42,6 +44,8 @@ import {
   checkTiming,
   noteSecondDevice,
   reportable,
+  examKind,
+  passageOf,
 } from '../services/integrity.js';
 // Batch 9 (decision E5): exam mode's half of the live loop.
 import { examModeOf } from '../services/examGuard.js';
@@ -50,11 +54,14 @@ import {
   examAccepted,
   examJoinRefusal,
   examScreenBlocks,
+  examSignalsOn,
   examStateFor,
+  handleConsent,
   handleScreen,
   handleSnapshot,
   integrityFull,
   pushIntegrity,
+  sebEvidence,
   signalAllowed,
   startExamGuard,
 } from './examGuard.js';
@@ -103,6 +110,8 @@ import {
   KEPT_LIMIT_MESSAGE,
   NOT_THIS_ROOM_MESSAGE,
   OVER_CAP_DETAIL,
+  OVER_LIMIT_DETAIL,
+  OVER_LIMIT_MESSAGE,
   PACK_EMPTY_NOTE,
   PACK_FAILED_NOTE,
   PACK_SIZE,
@@ -111,6 +120,7 @@ import {
   keptAfterClose,
   keptAnsweredAgain,
   keptNotCounted,
+  keptOverLimit,
   lateVerdict,
   livePack,
   logServed,
@@ -126,7 +136,8 @@ import { isImportedRoom } from '../services/roomImport.js';
 import { allAnswers } from '../services/evidence.js';
 // ---- Batch 9: answer kinds (whiteboard answers) ----
 import {
-  AWAITING_DETAIL, AWAITING_NOTE, DRAWING_AGAIN, DRAWING_NEEDS_ID, DRAWING_NOT_HERE, awaitingMark, drawingRefusal, keepRoomDrawing,
+  AWAITING_DETAIL, AWAITING_NOTE, DRAWING_AGAIN, DRAWING_LAPTOP, DRAWING_NEEDS_ID, DRAWING_NOT_HERE, awaitingMark, drawingAllowed,
+  drawingRefusal, keepRoomDrawing,
 } from '../services/drawings.js';
 
 const presence = new Map(); // `${code}:${rollNo}` -> socket.id
@@ -335,7 +346,12 @@ function loadBank(session) {
   const read = () => {
     const repo = getRepo();
     return Promise.all([repo.listQuestions(session.contentId), repo.listClassQuestions(session._id)])
-      .then(([questions, asked]) => withoutAsked(servableFor(session, questions), asked));
+      .then(([questions, asked]) => withoutAsked(servableFor(session, questions), asked)
+        // Batch 9: a laptop-mode room never serves a drawing question. Its
+        // picture stays on the laptop, and the room's archive (how the room
+        // reaches the cloud) carries only its reference, so the answer would
+        // arrive online with no picture to mark.
+        .filter((q) => !(laptopMode() && awaitsReview(q))));
   };
   if (session.status === 'closed') return read();
   let pending = bankCache.get(id);
@@ -578,7 +594,8 @@ async function handleJoin(io, socket, payload) {
     // browser, with one sentence, before anything is written. For every student,
     // including one marked under 18: it watches nobody, and an exemption keyed on
     // a typed roll number would let anyone type a classmate's to skip it.
-    const sebRefusal = examJoinRefusal(session, socket, payload);
+    const seb = sebEvidence(payload);
+    const sebRefusal = examJoinRefusal(session, socket, seb);
     if (sebRefusal) {
       reject(socket, sebRefusal);
       return;
@@ -683,7 +700,9 @@ async function handleJoin(io, socket, payload) {
     // Batch 9: what this phone must enforce, and whether the roster marks the
     // student under 18 (then nothing that watches is asked of them). None for a
     // phone back only to deliver answers to a closed room.
-    const exam = closed ? null : await examStateFor(repo, session, rollNo);
+    // A phone joining an exam room has been shown the consent notice before it
+    // joined (the open room route carries it), so its signals count from here.
+    const exam = closed ? null : await examStateFor(repo, session, rollNo, null, { consented: true });
 
     // A room opened for a class: a roll number on its roster marks that student
     // present, unless the professor has already marked them; one off the roster
@@ -733,6 +752,9 @@ async function handleJoin(io, socket, payload) {
       // Batch 9 (E5): this phone's exam state, or null in a room without exam
       // mode (sockets/examGuard.js examStateFor).
       exam,
+      // The Safe Exam Browser values its join carried, for a check made again
+      // when the owner turns SEB on later (pushExamMode).
+      seb,
     };
     socket.join(`session:${session.code}`);
 
@@ -965,6 +987,26 @@ const awaitingResult = (kind, profile, row, ids = {}) => ({
 const keptRow = (a) => keptNotCounted(a)
   || (a?.final === false && Boolean(a?.classQuestionId) && a?.detail === OWN_QUESTION_DETAIL);
 
+/**
+ * Was the passage this question hangs off given to this student before this
+ * question was (Batch 9)? Another question from the same passage served to them
+ * earlier (the log of serves) or answered earlier (the history), found in the
+ * room's bank. Then the exam room's reading rule leaves the passage out
+ * (services/integrity.js examMinPlausibleMs): it was read for that one.
+ */
+function passageReadBefore({ profile, bank, question, servedAt }) {
+  const passage = passageOf(question);
+  if (!passage) return false;
+  const limit = Date.parse(servedAt ?? '');
+  const earlier = [
+    ...(Array.isArray(profile.servedLog) ? profile.servedLog : []),
+    ...(profile.history ?? []).map((h) => ({ questionId: h.questionId, at: h.at })),
+  ];
+  return earlier.some((e) => !sameId(e.questionId, question._id)
+    && (!Number.isFinite(limit) || Date.parse(e.at ?? '') < limit)
+    && passageOf(bank.find((q) => sameId(q._id, e.questionId))) === passage);
+}
+
 async function handleAnswer(io, socket, payload) {
   const ctx = socket.data.student;
   // This phone's place in its student's queue, taken as the answer ARRIVES:
@@ -1014,14 +1056,6 @@ async function handleAnswer(io, socket, payload) {
       socket.emit('server:waiting', { code: session.code, title: session.title ?? '', message: WAITING_MESSAGE, ...echo });
       return;
     }
-    // Batch 9 (E5): in a screen-share room, no answer is taken until the phone
-    // shares its whole screen. Not stored, as in a paused room: the phone keeps
-    // it and is told why, and nothing else is recorded about it.
-    if (!closed && examScreenBlocks(session, ctx)) {
-      socket.emit('exam:screen-needed', { message: SCREEN_NEEDED, ...echo });
-      return;
-    }
-
     // The id as the phone sent it, echoed in every reply; and the id this
     // handler compares, in lower case. The store finds a uuid (Postgres) or an
     // ObjectId (Mongo) whatever the case of its letters, so an id compared here
@@ -1037,6 +1071,13 @@ async function handleAnswer(io, socket, payload) {
     const response = payload?.response !== undefined ? payload.response : payload?.answerIdx;
     if (!isRecordId(questionId) || response === undefined || response === null) {
       logIgnored('student:answer', `malformed payload from ${ctx.rollNo}`);
+      return;
+    }
+    // Batch 9: no answer of any kind is stored past MAX_RESPONSE_CHARS. Refused
+    // for good before the store is read; the phone keeps it and shows why.
+    if (responseTooLarge(response)) {
+      logIgnored('student:answer', `${ctx.rollNo}'s answer is too large to store`);
+      socket.emit('server:refused', { ...echo, message: RESPONSE_TOO_LARGE });
       return;
     }
 
@@ -1141,6 +1182,11 @@ async function handleAnswer(io, socket, payload) {
       closedNote();
       return;
     }
+    if (prior && keptOverLimit(prior)) {
+      kept(OVER_LIMIT_MESSAGE, closed ? { late: true } : {});
+      closedNote();
+      return;
+    }
     if (prior && keptNotCounted(prior)) {
       kept(overCapMessage(settings.questionsPerStudent ?? 0));
       closedNote();
@@ -1149,6 +1195,17 @@ async function handleAnswer(io, socket, payload) {
     if (prior) {
       await replayStored(io, socket, { session, profile, prior, settings, ids });
       closedNote();
+      return;
+    }
+
+    // Batch 9 (E5): in a screen-share room, no answer is taken until the phone
+    // shares its whole screen. Not stored, as in a paused room: the phone keeps
+    // it and is told why, and nothing else is recorded about it. Below the
+    // answers the server already holds, so a resend after a rejoin (when the
+    // phone has not yet said its share is still on) is answered from its row,
+    // never told it was not taken.
+    if (!closed && await examScreenBlocks(session, socket)) {
+      socket.emit('exam:screen-needed', { message: SCREEN_NEEDED, ...ids });
       return;
     }
 
@@ -1359,12 +1416,15 @@ async function handleAnswer(io, socket, payload) {
     }
 
     // Batch 9 (E3, E4): what the question's kind cannot take is refused before
-    // anything is marked or stored: a written answer over its word limit, a
+    // anything is marked or stored: a written answer that is not words, a
     // drawing's answer that is not { mediaId, text? }, words where the question
     // takes a drawing alone, and a drawing this phone did not store for this
     // question in this room. Refused for good (the phone's outbox keeps it and
     // shows the sentence), and the phone stays on its question to send another.
-    const problem = responseProblem(question, response)
+    // A written answer over its length's limit is refused the same way only
+    // when the phone can still shorten it (below, `tooLong`).
+    const tooLong = lengthProblem(question, response);
+    const problem = (tooLong ? null : responseProblem(question, response))
       ?? (awaitsReview(question)
         ? await drawingRefusal(repo, { mediaId: response.mediaId, sessionId: ctx.sessionId, rollNo: ctx.rollNo, questionId })
         : null);
@@ -1414,8 +1474,22 @@ async function handleAnswer(io, socket, payload) {
       closedNote();
       return;
     }
+    // A written answer over its length's limit (E3), on the question on the
+    // phone's screen in an open room: refused, and the student shortens it
+    // there. One the phone cannot send back shorter (from its outbox, a pack,
+    // or after the close: `oneGo`) is kept and not counted, with the reason,
+    // never refused: O2 keeps every answer that reaches the server, and one
+    // written before the limit existed (every question with no length is a
+    // short answer) must not be lost for it.
+    if (tooLong && !oneGo) {
+      logIgnored('student:answer', `${ctx.rollNo}'s answer to ${questionId} refused before marking: ${tooLong}`);
+      socket.emit('server:refused', { ...ids, message: tooLong });
+      return;
+    }
     // Why an answer that reached the server is kept and not counted, or null.
-    const keptAs = verdict && !verdict.counted ? AFTER_CLOSE_DETAIL : overCap ? OVER_CAP_DETAIL : null;
+    const keptAs = verdict && !verdict.counted ? AFTER_CLOSE_DETAIL
+      : tooLong ? OVER_LIMIT_DETAIL
+        : overCap ? OVER_CAP_DETAIL : null;
 
     const spent = triesSpent(profile, questionId);
     // The same answer as the attempt just refused, under a new key: that is a
@@ -1450,8 +1524,11 @@ async function handleAnswer(io, socket, payload) {
       return p;
     };
     // Batch 9 (E5): in an exam room, the timing rule is timing_anomaly, and a
-    // signal this answer recorded reaches the room's staff once it is saved.
-    const examOn = examModeOf(session).on;
+    // signal this answer recorded reaches the room's staff once it is saved. A
+    // phone that has not shown the consent notice (exam mode turned on while it
+    // was in the room) is recorded as any room records it until it has; one
+    // back only to deliver answers to a closed room joined it in exam mode.
+    const examOn = examModeOf(session).on && (ctx.exam ? examSignalsOn(ctx) : true);
     const saveWithSignals = async (p) => {
       const kept = await unlessMinor(p);
       await repo.saveProfile(kept);
@@ -1465,7 +1542,10 @@ async function handleAnswer(io, socket, payload) {
     // first answer arriving faster than that can show here. An answer that
     // will not count touches no profile, so records nothing.
     const servedAt = givenAt;
-    if (attempt === 1 && !keptAs) (examOn ? checkTiming : checkLatency)(profile, question, servedAt);
+    if (attempt === 1 && !keptAs) {
+      if (examOn) checkTiming(profile, question, servedAt, Date.now(), { passageRead: passageReadBefore({ profile, bank, question, servedAt }) });
+      else checkLatency(profile, question, servedAt);
+    }
 
     // Scored here, from the stored item, per its kind. A client-sent
     // correctness flag is never read. The SAME seed and supports forStudent()
@@ -1556,6 +1636,8 @@ async function handleAnswer(io, socket, payload) {
         await replayStored(io, socket, { session, profile, prior: stamped.answer, settings, ids });
       } else if (keptAs === AFTER_CLOSE_DETAIL) {
         kept(verdict.message, { late: true });
+      } else if (keptAs === OVER_LIMIT_DETAIL) {
+        kept(OVER_LIMIT_MESSAGE, closed ? { late: true } : {});
       } else {
         kept(overCapMessage(cap), closed ? { late: true } : {});
         if (!closed) socket.emit('server:exhausted', { profile: rowFor(profile, settings), reason: capReason(cap), ...ids });
@@ -1777,6 +1859,17 @@ async function handleDrawing(socket, payload) {
     release = await turn;
     if (!ANSWER_ID.test(sentKey)) {
       refuse(DRAWING_NEEDS_ID);
+      return;
+    }
+    // Laptop mode serves no drawing question (loadBank says why).
+    if (laptopMode()) {
+      refuse(DRAWING_LAPTOP);
+      return;
+    }
+    // At most DRAWING_RATE a minute on one connection, before anything is read
+    // or decoded: a resend later is taken (drawing:rejected, send again).
+    if (!drawingAllowed(socket.data, Date.now())) {
+      again();
       return;
     }
     const session = await loadSession(ctx.code);
@@ -2594,12 +2687,19 @@ async function handleSignal(io, socket, payload) {
     // SIGNAL_LIMIT's rate, and nothing at all from a phone whose student the
     // roster marks under 18. Checked before the student's turn and the store, so
     // a flood costs nothing. Any other room is exactly as it was.
-    const kind = String(payload?.kind ?? '');
-    const exam = Boolean(ctx.exam) && examModeOf(await loadSession(ctx.code)).on;
+    const sent = String(payload?.kind ?? '');
+    const examRoom = Boolean(ctx.exam) && examModeOf(await loadSession(ctx.code)).on;
     // A share reported stopped here pauses answering as the screen event does,
     // so the two ways a phone may say it cannot disagree; even when the rate
-    // drops the signal itself.
-    if (exam && kind === 'screenshare_stopped' && ctx.exam.screen === 'started') ctx.exam.screen = 'stopped';
+    // drops the signal itself, and before the consent notice is shown.
+    if (examRoom && sent === 'screenshare_stopped' && ctx.exam.screen === 'started') ctx.exam.screen = 'stopped';
+    // In an exam room an older kind is recorded under its exam name (examKind),
+    // so one leave a phone reports both ways is one signal: the second is the
+    // same kind inside a second, which the rate drops. Only once the phone has
+    // shown the consent notice: before that the room records what any room
+    // records, as it did before exam mode was turned on.
+    const exam = examRoom && examSignalsOn(ctx);
+    const kind = exam ? examKind(sent) : sent;
     if (exam && (ctx.exam.minor || !reportable(kind, { exam }) || !signalAllowed(ctx, kind))) return;
     release = await lockProfile(ctx.sessionId, ctx.rollNo);
     // Written into the profile, which the archive of a room being deleted has
@@ -2643,6 +2743,7 @@ export function attachSockets(io) {
     // Batch 9 (E5): an exam room's screen share and its pictures (sockets/examGuard.js).
     socket.on('student:screen', unlessProjector('student:screen', (payload, ack) => handleScreen(io, socket, payload, ack)));
     socket.on('student:snapshot', unlessProjector('student:snapshot', (payload, ack) => handleSnapshot(io, socket, payload, ack)));
+    socket.on('student:exam-consent', unlessProjector('student:exam-consent', (_payload, ack) => handleConsent(socket, ack)));
     socket.on('student:answer', unlessProjector('student:answer', (payload) => handleAnswer(io, socket, payload)));
     // ---- Batch 9: answer kinds (a whiteboard answer's drawing, before its answer) ----
     socket.on('student:drawing', unlessProjector('student:drawing', (payload) => handleDrawing(socket, payload)));

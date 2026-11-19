@@ -32,6 +32,7 @@ import {
   validateRoster,
 } from '../services/roster.js';
 import { OBSERVATION_KINDS, STAFF_ONLY, observationDays } from '../services/records.js';
+import { pushUnder18 } from '../sockets/examGuard.js';
 import { classAnalytics, windowFrom } from '../services/classAnalytics.js';
 
 const router = express.Router();
@@ -332,6 +333,11 @@ router.patch('/:id/students/:studentId', async (req, res, next) => {
 
     const updated = Object.keys(patch).length ? await getRepo().updateClassStudent(student._id, patch) : student;
     if (!updated) throw fail('That student was not found.', 404);
+    // Batch 9 (E5): a phone of this student in a running exam room learns at
+    // once what it is asked for now. Never allowed to fail the change.
+    if (patch.under18 !== undefined) {
+      await pushUnder18(req.app.get('io'), cls._id, updated.rollNo).catch((err) => console.error('[classes] exam mode push failed:', err));
+    }
     res.json({
       student: studentView(updated),
       ...(patch.removedAt ? { message: `Removed from the roster. ${KEPT}` } : {}),

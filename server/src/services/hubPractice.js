@@ -55,7 +55,7 @@ import { levelIndex } from '../bloom.js';
 import {
   FIGURES_NOT_READY, NOT_A_DRAWING, awaitsReview, drawingTextProblem, forStudent, readyToMark, responseProblem, score,
 } from '../questionTypes.js';
-import { HUB_DRAWING_NOTE, keepHubDrawing } from './drawings.js';
+import { HUB_DRAWING_NOTE, MAX_DRAWINGS_PER_QUESTION, keepHubDrawing } from './drawings.js';
 import { snapshotOf } from '../sockets/index.js';
 import { needsApproval } from './edits.js';
 import { phoneProvenance } from './honesty.js';
@@ -96,6 +96,9 @@ export const MAX_RESPONSE_CHARS = 20000;
 export const NO_QUESTION = 'That question was not found.';
 export const STUDENT_ONLY = 'Practice is for a student account. Staff see their students\' progress through the class.';
 export const NO_QUESTIONS_YET = 'Your professor has not approved any practice questions for this topic yet.';
+/** Said when the only questions left are drawings this student has drawn as often as practice keeps. */
+export const DRAWINGS_DONE = 'The questions left here are drawings you have already drawn as many times as practice keeps. '
+  + 'Show your drawings to your professor, or practise another topic.';
 export const ALL_CLOSED = 'Every question you could practise here is closed for now: part of a class that is still running, on a self-test you have '
   + 'not handed in, or the one your Get Ready check is asking. Come back once that is done.';
 export const PROVISIONAL_NOTE = 'This written answer was marked by matching its words against your professor\'s points. '
@@ -319,7 +322,11 @@ export function chooseNext(candidates = [], { skillOf, difficultyOf, mine = [], 
     return { ...fresh[0], fresh: true, lastRight: null };
   }
   const met = (c) => tried.get(String(c.q._id));
-  const again = [...pool].sort((a, b) => (Number(met(a).lastRight) - Number(met(b).lastRight))
+  // Wrong last time first, then right, then a drawing (Batch 9: never marked,
+  // so `lastRight` is null). Number(null) is 0, which ranked a drawing with the
+  // wrong answers: drawings came back first and reached their cap sooner.
+  const rank = (c) => (met(c).lastRight === false ? 0 : met(c).lastRight === true ? 1 : 2);
+  const again = [...pool].sort((a, b) => (rank(a) - rank(b))
     || attemptOrder({ createdAt: met(a).lastAt }, { createdAt: met(b).lastAt })
     || (closeness(a) - closeness(b)) || (tie(a) - tie(b)));
   return { ...again[0], fresh: false, lastRight: met(again[0]).lastRight };
@@ -336,6 +343,24 @@ export function whySentence(pick, answers) {
 }
 
 /**
+ * The drawing questions among these candidates that this student has already
+ * sent MAX_DRAWINGS_PER_QUESTION drawings for (Batch 9), by id in lower case.
+ * Practice does not serve them again: an answer to one is refused at the cap
+ * (services/drawings.js keepHubDrawing), and a refused answer is not stored, so
+ * the same question would have come back every time, refused every time. Read
+ * only when the candidates hold a drawing question.
+ */
+async function drawingsAtCap(repo, account, candidates) {
+  if (!candidates.some((c) => awaitsReview(c.q))) return new Set();
+  const counts = new Map();
+  for (const d of await repo.listDrawings({ accountId: String(account.id) })) {
+    const key = lower(d.questionId);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return new Set([...counts].filter(([, n]) => n >= MAX_DRAWINGS_PER_QUESTION).map(([key]) => key));
+}
+
+/**
  * The next question for a student on the topic(s) asked for.
  *
  * @returns {Promise<object>} `{ question: null, message }` when the topics have no approved question yet.
@@ -348,8 +373,11 @@ export async function nextQuestion(repo, account, { topicIds, mode = 'practice',
   const topics = entries.map(topicRef);
   if (!all.length) return { mode, question: null, topics, message: NO_QUESTIONS_YET };
   const closed = await closedQuestions(repo, account, { contentIds: entries.map((e) => String(e.content._id)), scope, now });
-  const candidates = all.filter((c) => !closed.has(lower(c.q._id)));
-  if (!candidates.length) return { mode, question: null, topics, message: ALL_CLOSED };
+  const open = all.filter((c) => !closed.has(lower(c.q._id)));
+  if (!open.length) return { mode, question: null, topics, message: ALL_CLOSED };
+  const full = await drawingsAtCap(repo, account, open);
+  const candidates = open.filter((c) => !full.has(lower(c.q._id)));
+  if (!candidates.length) return { mode, question: null, topics, message: DRAWINGS_DONE };
   const models = await topicModels(repo, entries);
   const who = String(account.id);
   const modelOf = (c) => models.get(lower(c.entry.topic._id));

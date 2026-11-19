@@ -41,6 +41,8 @@ import {
   NO_QUESTION, PRACTICE_MODES, STUDENT_ONLY, feedbackFor, nextQuestion, recordAttempt,
 } from '../services/hubPractice.js';
 import { hintsUsedOn } from '../services/hubHintHook.js';
+import { closedQuestions } from '../services/hubClosed.js';
+import { ANSWER_HELD } from '../services/hubLessons.js';
 import {
   classProgress, consistencyFor, dueList, errorLogFor, studentProgress, studentProgressForStaff,
 } from '../services/hubProgress.js';
@@ -115,7 +117,23 @@ router.post('/practice/attempts', async (req, res, next) => {
     if (duplicate && (!PRACTICE_MODES.includes(attempt.mode) || !sameQuestion(attempt, body.questionId))) {
       throw fail(ID_TAKEN, 409);
     }
-    res.status(duplicate ? 200 : 201).json(await feedbackFor(repo, req.viewer, attempt, { entry, duplicate }));
+    const feedback = await feedbackFor(repo, req.viewer, attempt, { entry, duplicate });
+    // A resend is answered from the stored row before the closed check a new
+    // attempt meets (recordAttempt). While its question is closed to the
+    // student now (a running room holds it, E1; an open self-test; a Get Ready
+    // check), the reply keeps back the key, the explanation and the option
+    // feedback, as a lesson's reload and the error log do; the mark it was
+    // given before stays.
+    if (duplicate) {
+      const chapter = attempt.contentId ?? (await repo.getQuestion(attempt.questionId).catch(() => null))?.contentId ?? null;
+      const why = (await closedQuestions(repo, req.viewer, { contentIds: chapter ? [String(chapter)] : [] }))
+        .get(String(attempt.questionId ?? '').toLowerCase());
+      if (why) {
+        res.status(200).json({ ...feedback, solution: null, explanation: null, optionFeedback: [], held: true, heldNote: ANSWER_HELD[why] });
+        return;
+      }
+    }
+    res.status(duplicate ? 200 : 201).json(feedback);
   } catch (err) {
     next(err);
   }

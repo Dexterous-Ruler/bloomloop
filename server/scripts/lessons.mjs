@@ -545,6 +545,26 @@ const kept = async () => repo.listHubAttempts({ accountId: ID.asha });
   check('a removed student: the lesson\'s 404, word for word', JSON.stringify((await post(path, { attemptId: 'attempt-0006', response: 2 }, 'bilal')).body) === NO_LESSON);
   check('staff do not answer: 403', (await post(path, { attemptId: 'attempt-0007', response: 2 })).status === 403);
 
+  // Batch 9 review: a question the lesson lists, changed in the bank since
+  // into a written answer, then into a drawing (written straight to the store,
+  // and put back after).
+  const setPath = `/api/hub/lessons/${lessonId}/questions/${String(QSET._id)}/attempts`;
+  const original = await repo.getQuestion(QSET._id);
+  const before = (await kept()).length;
+  await repo.updateQuestion(QSET._id, { kind: 'open', rubric: ['distinct objects', 'counted once'] });
+  const listed = await post(setPath, { attemptId: 'attempt-0008', response: ['distinct objects counted once'] }, 'asha');
+  const long = await post(setPath, { attemptId: 'attempt-0009', response: Array.from({ length: 61 }, (_, i) => `w${i}`).join(' ') }, 'asha');
+  check('a lesson holds a written answer to its limit and to words, as practice does (Batch 9 review)',
+    listed.status === 400 && /answered in words/.test(listed.body.error ?? '') && long.status === 400 && /has 61 words/.test(long.body.error ?? '')
+    && (await kept()).length === before, JSON.stringify([listed.body, long.body]));
+  await repo.updateQuestion(QSET._id, { kind: 'drawing', allowText: false });
+  const drawn = await post(setPath, { attemptId: 'attempt-0010', response: { mediaId: 'abcdef123456' } }, 'asha');
+  const read = await get(`/api/hub/topics/${T.Sets}/lesson`, 'asha');
+  check('a drawing is never asked in a lesson, and an answer to one is refused in a sentence, storing nothing (Batch 9 review)',
+    drawn.status === 409 && /answered with a drawing/.test(drawn.body.error ?? '') && (await kept()).length === before
+    && !JSON.stringify(read.body.lesson?.steps ?? []).includes(String(QSET._id)), JSON.stringify(drawn.body));
+  await repo.updateQuestion(QSET._id, { kind: original.kind, rubric: original.rubric, allowText: original.allowText });
+
   const stats = await get(`/api/hub/chapters/${deckId}/languages`);
   const row = stats.body.items?.find((i) => i.questionId === qid);
   check('statistics by language from hub attempts: each student\'s first answer, by the language shown',

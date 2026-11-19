@@ -35,6 +35,8 @@
 // Gemini, Supabase or any network service. Exits non-zero on any failure.
 
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import zlib from 'node:zlib';
 import { Server } from 'socket.io';
 import { io as ioClient } from 'socket.io-client';
@@ -52,6 +54,7 @@ const { DRAWINGS_NOTE } = await import(`${SRC}services/archive.js`);
 const { DRAWING_NO_CONFIRM } = await import(`${SRC}routes/review.js`);
 const { DRAWING_ONLY, OPEN_LENGTHS } = await import(`${SRC}questionTypes.js`);
 const { serveToken: signServed } = await import(`${SRC}services/serveTokens.js`);
+const { enterLaptopMode, leaveLaptopMode } = await import(`${SRC}laptop.js`);
 
 // The in-process store and no model, whatever .env says.
 config.supabase.url = '';
@@ -157,7 +160,9 @@ async function call(method, path, { body, as = 'profA', raw = false } = {}) {
   if (as) headers.authorization = `Bearer ${TOKENS[as]}`;
   if (body !== undefined) headers['content-type'] = 'application/json';
   const res = await fetch(base + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-  if (raw) return { status: res.status, type: res.headers.get('content-type'), bytes: Buffer.from(await res.arrayBuffer()) };
+  if (raw) {
+    return { status: res.status, type: res.headers.get('content-type'), cache: res.headers.get('cache-control'), bytes: Buffer.from(await res.arrayBuffer()) };
+  }
   const text = await res.text();
   let parsed = {};
   try { parsed = JSON.parse(text); } catch { parsed = { text }; }
@@ -265,7 +270,17 @@ const ashaRow = (await repo.listClassStudents(classId)).find((s) => s.rollNo ===
 
 console.log('\nE1: a room not yet closed closes its whole set in the hub, and opens it on close');
 {
+  // The review: Asha practised the question before any room held it.
+  const early = await post('/api/hub/practice/attempts', { attemptId: 'e1-early-0001', questionId: id(mcqA), topicId: CELLS, response: 1 }, 'asha');
+  check('before a room holds it, a practice answer shows the key', early.status === 201 && early.body.solution !== null, JSON.stringify(early.body));
   const room = await post('/api/session', { contentId, classId, questionIds: [id(mcqA)] });
+  const resent = await post('/api/hub/practice/attempts', { attemptId: 'e1-early-0001', questionId: id(mcqA), topicId: CELLS, response: 1 }, 'asha');
+  check('resent while a room holds it, the stored answer keeps back the key and the explanation, and says why (review)',
+    resent.status === 200 && resent.body.held === true && resent.body.solution === null && resent.body.explanation === null
+    && /class that is still running/.test(resent.body.heldNote ?? '') && resent.body.correct === false, JSON.stringify(resent.body));
+  const hints = await get(`/api/hub/practice/hints?attemptId=e1-early-0001&questionId=${id(mcqA)}&topicId=${CELLS}`, 'asha');
+  check('and its hints stay hidden, saying why (review)', hints.status === 200 && hints.body.held === true && hints.body.hints?.length === 0
+    && /class that is still running/.test(hints.body.note ?? ''), `${hints.status} ${JSON.stringify(hints.body)}`);
   check('a room opens on a set of one question, and no phone has joined', room.status === 201 || room.status === 200, JSON.stringify(room.body));
   const tryA = (key) => post('/api/hub/practice/attempts', { attemptId: key, questionId: id(mcqA), topicId: CELLS, response: 0 }, 'asha');
   const refused = await tryA('e1-open-0001');
@@ -368,6 +383,18 @@ for (let turn = 0; turn < 3 && current; turn += 1) {
     check(`the phone is told it is a ${long ? 'long' : 'short'} answer of at most ${limit} words`,
       current.length === (long ? 'long' : 'short') && current.maxWords === limit, JSON.stringify(current));
     const before = (await repo.listAnswers({ sessionId: SESSION })).length;
+    const listed = await ask(asha, 'student:answer', { questionId: current._id, response: [`${words(limit * 3)} support the cell keeps shape`],
+      answerId: `ak-list-${turn}-0001` }, ['server:refused', 'server:result']);
+    check('the same words sent as a list are refused, never marked: the limit cannot be stepped round (review)',
+      listed.event === 'server:refused' && /answered in words/.test(listed.payload.message), JSON.stringify(listed.payload));
+    const gaps = await ask(asha, 'student:answer', { questionId: current._id, response: words(limit + 1).replace(/ /g, '​'),
+      answerId: `ak-gaps-${turn}-0001` }, ['server:refused', 'server:result']);
+    check('words joined by an invisible space count one by one (review)', gaps.event === 'server:refused'
+      && new RegExp(`has ${limit + 1} words`).test(gaps.payload.message), JSON.stringify(gaps.payload));
+    const dotted = await ask(asha, 'student:answer', { questionId: current._id, response: words(long ? 2000 : 300).replace(/ /g, '.'),
+      answerId: `ak-dots-${turn}-0001` }, ['server:refused', 'server:result']);
+    check('words run together with punctuation meet the character cap (review)', dotted.event === 'server:refused'
+      && /characters long/.test(dotted.payload.message), JSON.stringify(dotted.payload));
     const over = await ask(asha, 'student:answer', { questionId: current._id, response: words(limit + 1), answerId: `ak-over-${turn}-0001` },
       ['server:refused', 'server:result']);
     check(`${limit + 1} words are refused with a sentence, before anything is marked or stored`,
@@ -479,6 +506,8 @@ const [byProf, byHod, byNone, byOther, byStudent] = await Promise.all([
 ]);
 check('the room\'s professor reads the picture, as the PNG kept', byProf.status === 200 && byProf.type === 'image/png'
   && byProf.bytes.equals(ONE_PIXEL), `${byProf.status} ${byProf.type}`);
+check('and no browser keeps it: a student\'s drawing is sent no-store, not for a year (review)', /no-store/.test(byProf.cache ?? '')
+  && !/immutable|max-age/.test(byProf.cache ?? ''), byProf.cache);
 check('the department\'s HOD reads it (read-only)', byHod.status === 200);
 check('a phone with no credential, another professor and a student get the same 404',
   [byNone.status, byOther.status, byStudent.status].every((s) => s === 404), JSON.stringify([byNone.status, byOther.status, byStudent.status]));
@@ -553,6 +582,45 @@ check('the room closes', (await post(`/api/session/${CODE}/close`, {})).status =
     JSON.stringify(shortOk.body));
 }
 
+// ------------------------------------------- the review: over the limit, after the close --
+
+console.log('\nreview: an answer over the limit that cannot be shortened is kept, not refused; a big record is warned of at the close');
+{
+  const roomV = await post('/api/session', { contentId, classId, questionIds: [id(openShort)], startLevel: 'create', adapt: false });
+  const phone = await connect();
+  const first = await ask(phone, 'student:join', { code: roomV.body.code, rollNo: '21CS09', name: 'Ravi' }, ['server:question', 'server:exhausted']);
+  check('a phone is given the short answer', first.payload.question?._id === id(openShort), JSON.stringify(first.payload));
+  // A long record, as a room full of long answers makes one (written straight to the store).
+  for (let i = 0; i < 300; i += 1) {
+    await repo.recordAnswer({
+      sessionId: roomV.body.sessionId, answerKey: `bulk-${i}`, rollNo: `B${String(i).padStart(3, '0')}`, questionId: id(openLong), contentId,
+      topic: 'Cells', bloom: 'create', kind: 'open', questionSnapshot: { id: id(openLong), kind: 'open', length: 'long' },
+      response: `${words(550)}.`, final: true, correct: true, score: 1, reviewStatus: 'provisional', detail: '2/2 rubric points',
+      answeredAt: new Date().toISOString(),
+    });
+  }
+  const closed = await post(`/api/session/${roomV.body.code}/close`, {});
+  check('closing a room whose record is near or over 1 MB says so, with what to do (review)', closed.status === 200
+    && /close to or over the 1 MB a deleted room can be kept in/.test(closed.body.archiveWarning ?? '') && closed.body.archiveBytes > 900 * 1024,
+    JSON.stringify({ status: closed.status, warning: closed.body.archiveWarning, bytes: closed.body.archiveBytes }));
+  await new Promise((r) => setTimeout(r, 150));
+  const back = await connect();
+  await ask(back, 'student:join', { code: roomV.body.code, rollNo: '21CS09', name: 'Ravi', deliver: true }, ['session:accepted', 'session:rejected']);
+  const late = await ask(back, 'student:answer', { questionId: id(openShort), response: words(70), answerId: 'ak-late-over-0001' },
+    ['server:kept', 'server:refused', 'server:result']);
+  const row = (await repo.listAnswers({ sessionId: roomV.body.sessionId })).find((a) => a.answerKey === 'ak-late-over-0001');
+  check('70 words to a short answer, arriving after the close, are kept and not counted, never refused: the phone cannot shorten it now',
+    late.event === 'server:kept' && late.payload.counted === false && /longer than the question takes/.test(late.payload.message)
+    && row?.final === false && /Longer than the question takes/.test(row?.detail ?? '') && row?.correct == null,
+    JSON.stringify({ late, row: row && { final: row.final, detail: row.detail } }));
+  const again = await ask(back, 'student:answer', { questionId: id(openShort), response: words(70), answerId: 'ak-late-over-0001' },
+    ['server:kept', 'server:refused', 'server:result']);
+  check('sent again, it is told the same, and stored once', again.event === 'server:kept' && /longer than the question takes/.test(again.payload.message)
+    && (await repo.listAnswers({ sessionId: roomV.body.sessionId })).filter((a) => a.answerKey === 'ak-late-over-0001').length === 1);
+  phone.disconnect();
+  back.disconnect();
+}
+
 // ------------------------------------------------------------- the archive --
 
 console.log('\nthe archive keeps the reference, never the picture');
@@ -566,6 +634,30 @@ console.log('\nthe archive keeps the reference, never the picture');
     && archive.text.includes(drawingMedia) && Buffer.byteLength(archive.text) < 1024 * 1024);
   const after = await image(`/api/media/${drawingMedia}`, 'profA');
   check('the room\'s drawing went with the room', after.status === 404 && !(await repo.getDrawing(drawingMedia)));
+}
+
+// ------------------------------------------- the review: laptop mode and drawings --
+
+console.log('\nreview: laptop mode serves no drawing question, whose picture could never reach the cloud');
+{
+  // Last, because laptop mode switches the accounts' stand-in off; put back after.
+  const saved = { ...config.supabase };
+  enterLaptopMode({ env: { TEACHER_KEY: 'K'.repeat(24), LAPTOP_ARCHIVE_DIR: path.join(os.tmpdir(), 'answerkinds-laptop') } });
+  const roomL = await repo.createSession({
+    code: 'LAPDRW', contentId, title: 'On the laptop', status: 'open', ownerId: ID.profA,
+    questionIds: [id(drawNoText), id(mcqC)], startLevel: 'evaluate', adapt: false,
+  });
+  const phone = await connect();
+  const first = await ask(phone, 'student:join', { code: roomL.code, rollNo: 'L01', name: 'Lata' }, ['server:question', 'server:exhausted']);
+  check('the drawing question, first at its level, is not served on the laptop; the other is', first.payload.question?._id === id(mcqC),
+    JSON.stringify(first.payload.question ?? first.payload));
+  const sent = await ask(phone, 'student:drawing', { questionId: id(drawNoText), image: dataUrl(ONE_PIXEL), answerId: 'ak-laptop-draw1' },
+    ['drawing:refused', 'drawing:stored', 'drawing:rejected']);
+  check('and a drawing sent anyway is refused in a sentence, nothing kept', sent.event === 'drawing:refused' && /run on a laptop/.test(sent.payload.message)
+    && (await repo.listDrawings({ sessionId: String(roomL._id) })).length === 0, JSON.stringify(sent.payload));
+  phone.disconnect();
+  leaveLaptopMode();
+  Object.assign(config.supabase, saved);
 }
 
 check('nothing left this machine', refusedOffMachine === 0, `${refusedOffMachine} requests refused`);

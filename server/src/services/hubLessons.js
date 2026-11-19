@@ -655,7 +655,11 @@ export const lessonQuestionIds = (lesson) => (Array.isArray(lesson?.steps) ? les
  */
 export function lessonQuestion(lesson, questionId, bank, { answered = false } = {}) {
   const want = String(questionId ?? '').toLowerCase();
-  const asked = (q) => answered || !isRoomsOnly(q);
+  // A drawing (Batch 9) is never one a lesson asks either: a lesson marks its
+  // answer at once, and nobody marks a drawing in the hub. A question edited
+  // into one after the lesson listed it is left out like a rooms-only one; with
+  // `answered`, it comes back so the answer route can refuse it in a sentence.
+  const asked = (q) => answered || (!isRoomsOnly(q) && !awaitsReview(q));
   for (const id of lessonQuestionIds(lesson)) {
     if (String(id).toLowerCase() === want) {
       const q = bank.find((x) => String(x._id).toLowerCase() === want) ?? null;
@@ -868,8 +872,9 @@ export async function studentLessonView(repo, { lesson, account, language = ORIG
     if (s.type !== 'questions') continue;
     for (const id of s.questionIds ?? []) {
       const q = servedFor(id, bank);
-      // Batch 8: a question kept for rooms only is never shown in a lesson.
-      if (q && !isRoomsOnly(q)) served.set(String(id), q);
+      // Batch 8: a question kept for rooms only is never shown in a lesson; nor
+      // (Batch 9) a drawing, which a lesson cannot mark (lessonQuestion).
+      if (q && !isRoomsOnly(q) && !awaitsReview(q)) served.set(String(id), q);
     }
   }
   const questionTranslations = await servableTranslations(repo, { kind: 'question', items: [...new Set(served.values())], language });

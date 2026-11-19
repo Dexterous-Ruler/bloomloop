@@ -100,6 +100,32 @@ export const MAX_DRAWINGS_PER_QUESTION = 10;
 export const DRAWING_LIMIT = `You have sent ${MAX_DRAWINGS_PER_QUESTION} drawings for this question already, so this one was not saved. `
   + 'Answer with one you have sent.';
 
+/**
+ * The most one room may keep in drawings, all its phones together: a count and
+ * a weight. Roll numbers are typed, so the per-question cap above is per roll
+ * number, and one person holding a room's code could join under roll after roll
+ * and fill the store. A class of 300 sending three drawings each at a typical
+ * phone size (under 100 KB) stays inside both. Past either, a drawing is refused for good
+ * with a sentence telling the student to show it to their professor (their
+ * phone keeps it).
+ */
+export const ROOM_DRAWINGS_MAX = 1500;
+export const ROOM_DRAWING_BYTES = 100 * 1024 * 1024;
+export const ROOM_DRAWINGS_FULL = 'This room cannot keep any more drawings, so this one was not saved. It is still on your '
+  + 'device: show it to your professor.';
+
+/**
+ * How many drawings one connection may send in a minute (student:drawing),
+ * checked before anything is read or decoded. An outbox replaying a pack after
+ * a reconnection sends a handful together; past the rate a drawing is told to
+ * be sent again later, never refused for good.
+ */
+export const DRAWING_RATE = 12;
+
+/** Said in laptop mode, which serves no drawing question (sockets/index.js loadBank). */
+export const DRAWING_LAPTOP = 'Drawings cannot be taken in a room run on a laptop, so this one was not saved. It is still on '
+  + 'your device: show it to your professor.';
+
 /** Said by bytesOf for text too long to be a drawing, before any of it is decoded. */
 const TOO_LONG = Symbol('too long');
 
@@ -142,6 +168,27 @@ export function readDrawing(image) {
 const sameText = (a, b) => lower(a) === lower(b);
 
 /**
+ * At most how many bytes this image can decode to, read without decoding it:
+ * a byte array's length, or three bytes for every four characters of base64.
+ * Null when it is neither.
+ */
+function sizeBound(image) {
+  if (Buffer.isBuffer(image) || image instanceof ArrayBuffer || ArrayBuffer.isView(image)) return image.byteLength ?? image.length;
+  return typeof image === 'string' ? Math.ceil((image.length * 3) / 4) : null;
+}
+
+/**
+ * May one more drawing come in on this connection now (DRAWING_RATE a minute)?
+ * `state` is the socket's own data, changed in place; the clock is handed in.
+ */
+export function drawingAllowed(state, now) {
+  state.drawingTimes = (state.drawingTimes ?? []).filter((t) => now - t < 60000);
+  if (state.drawingTimes.length >= DRAWING_RATE) return false;
+  state.drawingTimes.push(now);
+  return true;
+}
+
+/**
  * Keep a phone's drawing for a question in a room. Idempotent by the phone's own
  * id for it: the same id again gives back the drawing it already holds, so a
  * resend from an outbox never stores a second copy.
@@ -158,10 +205,19 @@ export async function keepRoomDrawing(repo, { session, rollNo, questionId, answe
     if (!sameText(held.questionId, questionId)) throw fail(DRAWING_KEY_TAKEN, 409);
     return { media: held, duplicate: true };
   }
+  // Every cap is checked before the picture is decoded, so a send past one
+  // costs nothing: the room's (one read of its drawings), then this roll
+  // number's for this question, from the same read.
+  const room = await repo.listDrawings({ sessionId: String(session._id) });
+  const weight = room.reduce((n, d) => n + (Number(d.bytes) || 0), 0);
+  const bound = sizeBound(image) ?? 0;
+  if (room.length >= ROOM_DRAWINGS_MAX || weight + Math.min(bound, DRAWING_MAX_BYTES) > ROOM_DRAWING_BYTES) {
+    throw fail(ROOM_DRAWINGS_FULL, 429);
+  }
+  const mine = room.filter((d) => String(d.rollNo) === String(rollNo) && sameText(d.questionId, questionId));
+  if (mine.length >= MAX_DRAWINGS_PER_QUESTION) throw fail(DRAWING_LIMIT, 429);
   const read = readDrawing(image);
   if (!read.ok) throw fail(read.message, read.status);
-  const kept = await repo.listDrawings({ sessionId: String(session._id), rollNo, questionId: String(questionId) });
-  if (kept.length >= MAX_DRAWINGS_PER_QUESTION) throw fail(DRAWING_LIMIT, 429);
   return repo.createDrawing({
     ownerId: null,
     accountId: null,
@@ -189,10 +245,13 @@ export async function keepHubDrawing(repo, { accountId, contentId, questionId, a
     if (!sameText(held.questionId, questionId)) throw fail(DRAWING_KEY_TAKEN, 409);
     return { media: held, duplicate: true };
   }
-  const read = readDrawing(image);
-  if (!read.ok) throw fail(read.message, read.status);
+  // Counted before the picture is decoded. Practice never serves a question
+  // whose cap this student has reached (services/hubPractice.js nextQuestion),
+  // so an honest device does not meet this.
   const kept = await repo.listDrawings({ accountId: String(accountId), questionId: String(questionId) });
   if (kept.length >= MAX_DRAWINGS_PER_QUESTION) throw fail(DRAWING_LIMIT, 429);
+  const read = readDrawing(image);
+  if (!read.ok) throw fail(read.message, read.status);
   return repo.createDrawing({
     // A student's drawing has no professor uploader: owner_id stays empty, and
     // account_id (0037) says whose it is, so it goes with their account.

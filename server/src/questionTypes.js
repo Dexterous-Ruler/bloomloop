@@ -295,8 +295,8 @@ export const LABEL = {
  * the rubric matcher reads the words and not the box.
  */
 export const OPEN_LENGTHS = Object.freeze({
-  short: Object.freeze({ maxWords: 60, label: 'Short answer' }),
-  long: Object.freeze({ maxWords: 600, label: 'Long answer' }),
+  short: Object.freeze({ maxWords: 60, maxChars: 60 * 15, label: 'Short answer' }),
+  long: Object.freeze({ maxWords: 600, maxChars: 600 * 15, label: 'Long answer' }),
 });
 export const DEFAULT_OPEN_LENGTH = 'short';
 
@@ -305,6 +305,28 @@ export const openLength = (q) => (q?.length === 'long' ? 'long' : DEFAULT_OPEN_L
 
 /** The most words a drawing's added text may hold: a long answer's, since words beside a drawing elaborate it. */
 export const DRAWING_TEXT_WORDS = OPEN_LENGTHS.long.maxWords;
+/** And the most characters, by the same rule as a written answer's (OPEN_LENGTHS). */
+export const DRAWING_TEXT_CHARS = OPEN_LENGTHS.long.maxChars;
+
+/**
+ * The most an answer of any kind may be, as JSON, in a room as in the hub
+ * (services/hubPractice.js has the same number). Every honest answer is far
+ * smaller: a long written answer is at most OPEN_LENGTHS.long.maxChars. It stops
+ * a phone storing a megabyte of anything as its answer.
+ */
+export const MAX_RESPONSE_CHARS = 20000;
+
+/** Said when an answer is past MAX_RESPONSE_CHARS. */
+export const RESPONSE_TOO_LARGE = 'That answer is too long to take, so nothing was saved. Shorten it and send it again.';
+
+/** Is this response, as JSON, past MAX_RESPONSE_CHARS (or not JSON at all)? */
+export function responseTooLarge(response) {
+  try {
+    return JSON.stringify(response ?? null).length > MAX_RESPONSE_CHARS;
+  } catch {
+    return true;
+  }
+}
 
 /**
  * A question's kind as a person reads it: the kind's label, and for a written
@@ -318,8 +340,34 @@ export const kindLabel = (q) => {
   return LABEL[kind] ?? kind;
 };
 
-/** Words, as a person counts them: runs of anything but white space. */
-export const wordCount = (text) => (String(text ?? '').match(/\S+/g) ?? []).length;
+/**
+ * Characters that join two words without being seen, read as a space when words
+ * are counted: the zero-width space, the word joiner, the byte-order mark and the
+ * Mongolian vowel separator. Without this, "a​b" was one word to the count
+ * and two to the rubric matcher, which finds a point's words wherever they sit
+ * in the text. The zero-width joiner and non-joiner are not here: Devanagari
+ * uses them inside a word.
+ */
+const INVISIBLE_GAP = /[​⁠﻿᠎]/g;
+
+/** Words, as a person counts them: runs of anything but white space (an invisible gap counts as one). */
+export const wordCount = (text) => (String(text ?? '').replace(INVISIBLE_GAP, ' ').match(/\S+/g) ?? []).length;
+
+/**
+ * Characters, as the limit counts them: the text as the rubric matcher reads it
+ * (trimmed, every run of white space one space), so padding with spaces costs
+ * nothing, and words run together with punctuation ("a.b.c", one word to the
+ * count) still cost their length. Fifteen characters a word: generous for long
+ * technical words, and for Hindi or Marathi.
+ */
+export const charCount = (text) => String(text ?? '').trim().replace(/\s+/g, ' ').length;
+
+/** Said when a written answer is past its character cap. */
+export const tooManyChars = (limit, got) => `Your answer is ${got} characters long, and this question takes at most ${limit}. `
+  + 'Shorten it and send it again; nothing was saved.';
+
+/** Said when a written answer is sent as anything but words. */
+export const NOT_WORDS = 'This question is answered in words. Write your answer and send it; nothing was saved.';
 
 /**
  * Kinds the machine never marks (Batch 9): every answer waits for a professor's
@@ -815,7 +863,9 @@ export const DRAWING_ONLY = 'This question asks for a drawing only, without word
  * marked or stored, or null. Only the Batch 9 kinds' limits: every other kind
  * takes whatever it is sent and marks it, as it always has.
  *
- *   open     at most the length's word limit (OPEN_LENGTHS)
+ *   open     words (a string, nothing else: the scorer reads any response as
+ *            text, so a list holding the words went round the limit), within
+ *            the length's word limit and character cap (OPEN_LENGTHS)
  *   drawing  { mediaId, text? }: a media id, and words only when the question
  *            allows them, within DRAWING_TEXT_WORDS. Whether the media id is
  *            this sender's drawing for this question needs the store, and is
@@ -824,9 +874,8 @@ export const DRAWING_ONLY = 'This question asks for a drawing only, without word
 export function responseProblem(q, response) {
   const kind = q?.kind ?? 'mcq';
   if (kind === 'open') {
-    const limit = OPEN_LENGTHS[openLength(q)].maxWords;
-    const got = wordCount(typeof response === 'string' ? response : '');
-    return got > limit ? tooManyWords(limit, got) : null;
+    if (typeof response !== 'string') return NOT_WORDS;
+    return lengthProblem(q, response);
   }
   if (kind === 'drawing') {
     if (!response || typeof response !== 'object' || Array.isArray(response)) return NOT_A_DRAWING;
@@ -848,7 +897,28 @@ export function drawingTextProblem(q, text) {
   const got = wordCount(text);
   if (!got) return null;
   if (q?.allowText !== true) return DRAWING_ONLY;
-  return got > DRAWING_TEXT_WORDS ? tooManyWords(DRAWING_TEXT_WORDS, got) : null;
+  return textOverLimit(text, DRAWING_TEXT_WORDS, DRAWING_TEXT_CHARS);
+}
+
+/** Past a word limit or a character cap: the sentence that says which, or null. */
+function textOverLimit(text, maxWords, maxChars) {
+  const words = wordCount(text);
+  if (words > maxWords) return tooManyWords(maxWords, words);
+  const chars = charCount(text);
+  return chars > maxChars ? tooManyChars(maxChars, chars) : null;
+}
+
+/**
+ * Is this written answer (a string, to an 'open' question) past its length's
+ * word limit or character cap? The sentence, or null; null for anything else.
+ * Asked on its own by a room (sockets/index.js), which keeps an over-limit answer
+ * it cannot send back to be shortened (one from a phone's outbox, or after the
+ * close) as not counted, rather than refusing it.
+ */
+export function lengthProblem(q, response) {
+  if ((q?.kind ?? 'mcq') !== 'open' || typeof response !== 'string') return null;
+  const { maxWords, maxChars } = OPEN_LENGTHS[openLength(q)];
+  return textOverLimit(response, maxWords, maxChars);
 }
 
 // ---------------------------------------------------------- reduced choices
@@ -1732,12 +1802,17 @@ export function forStudent(q, seed = '', accommodations = null) {
       // and counts words from these; the server refuses an answer over the
       // limit before marking (responseProblem). Never the rubric.
       const length = openLength(q);
-      return { ...base, hint: `${q.rubric.length} points to cover`, length, maxWords: OPEN_LENGTHS[length].maxWords };
+      const { maxWords, maxChars } = OPEN_LENGTHS[length];
+      return { ...base, hint: `${q.rubric.length} points to cover`, length, maxWords, maxChars };
     }
     case 'drawing':
       // The question, its stimulus on the base, and whether words may go with
       // the drawing. Never the reviewer's rubric.
-      return { ...base, allowText: q.allowText === true, ...(q.allowText === true ? { maxWords: DRAWING_TEXT_WORDS } : {}) };
+      return {
+        ...base,
+        allowText: q.allowText === true,
+        ...(q.allowText === true ? { maxWords: DRAWING_TEXT_WORDS, maxChars: DRAWING_TEXT_CHARS } : {}),
+      };
     case 'hotspot':
     case 'label': {
       // The figure is drawn again under this student's tokens, replacing the

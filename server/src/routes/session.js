@@ -69,7 +69,7 @@ import { forgetInsights } from '../services/insights.js';
 import { CLASS_LOCK } from '../services/classQuestions.js';
 import { roomClass as classOfRoom, roomClasses } from '../services/roomClass.js';
 // Batch 9 (E5): exam mode on a room.
-import { EXAM_HELP, examModeFrom, examModeOf, examSummary, publicExamMode, snapshots } from '../services/examGuard.js';
+import { EXAM_HELP, examModeFrom, examModeOf, examModeProblem, examSummary, publicExamMode, snapshots } from '../services/examGuard.js';
 
 const router = express.Router();
 
@@ -429,6 +429,16 @@ router.post('/', requireTeacher, async (req, res, next) => {
       );
     }
 
+    // Batch 9 (E5): exam mode, off unless sent, checked before a code is spent
+    // like everything else here. Stored only when it is on, so every other room
+    // is written exactly as before, and opens on a database without 0038
+    // whatever the screen sends ({ on: false } included).
+    const examMode = examModeFrom(req.body?.examMode);
+    {
+      const problem = examModeProblem(examMode, { classId });
+      if (problem) throw fail(problem, 400);
+    }
+
     const code = await allocateCode(repo);
     const title = String(req.body?.title ?? '').trim() || content.title;
     // Validated before the code is spent. A 400 after allocateCode() would burn
@@ -444,9 +454,6 @@ router.post('/', requireTeacher, async (req, res, next) => {
     // professor starts it (POST /:code/start). Left out, the room opens as always.
     const lobby = req.body?.lobby;
     if (lobby !== undefined && lobby !== null && typeof lobby !== 'boolean') throw fail('lobby must be true or false.', 400);
-    // Batch 9 (E5): exam mode, off unless sent. Stored only when sent, so a room
-    // without it is written exactly as before (and on a database without 0038).
-    const examMode = examModeFrom(req.body?.examMode);
     if (examMode?.on && settings.mode === 'teacher-led') {
       throw fail('Exam mode needs phones, and no phone joins a Teacher-led room. Open it for Student devices or Mixed.', 400);
     }
@@ -459,7 +466,7 @@ router.post('/', requireTeacher, async (req, res, next) => {
       ...settings,
       questionIds,
       classId,
-      ...(examMode ? { examMode } : {}),
+      ...(examMode?.on ? { examMode } : {}),
     });
 
     // Read back off the stored row rather than echoed from the request, so the
@@ -1142,6 +1149,28 @@ router.get('/:code/integrity/:rollNo', requireTeacher, async (req, res, next) =>
   }
 });
 
+/**
+ * Said when a room closes whose archive is near or past the 1 MiB a room may be
+ * kept in when it is deleted (or imported from laptop mode). Long written
+ * answers (Batch 9, E3: up to 600 words each) can take a full class's room past
+ * it; such a room is kept, closed, and can be exported as CSV, but not deleted
+ * or imported until the owner decides how the limit should change. Read once,
+ * at the close; a failed read says nothing and never stops the close.
+ */
+export const ARCHIVE_NEAR_LIMIT = (bytes) => `This room's record is ${(bytes / (1024 * 1024)).toFixed(2)} MB, close to or over `
+  + 'the 1 MB a deleted room can be kept in. If it is over, the room cannot be deleted: keep it closed, and export the '
+  + 'results as CSV if you need a copy.';
+
+async function archiveWarning(repo, session) {
+  try {
+    const { bytes } = await buildRoomArchive(repo, session);
+    return bytes > ARCHIVE_LIMIT_BYTES * 0.9 ? { archiveWarning: ARCHIVE_NEAR_LIMIT(bytes), archiveBytes: bytes } : {};
+  } catch (err) {
+    console.error('[close] the archive size could not be read:', err.message);
+    return {};
+  }
+}
+
 router.post('/:code/close', requireTeacher, async (req, res, next) => {
   try {
     // Ending someone else's live class is a write, and an HOD does not get it.
@@ -1181,7 +1210,7 @@ router.post('/:code/close', requireTeacher, async (req, res, next) => {
       return written ?? session;
     });
 
-    res.json({ session: updated });
+    res.json({ session: updated, ...(await archiveWarning(getRepo(), updated)) });
   } catch (err) {
     next(err);
   }

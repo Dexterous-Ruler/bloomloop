@@ -84,32 +84,64 @@ export function examModeFrom(raw) {
   const sebRaw = raw.seb ?? {};
   if (typeof sebRaw !== 'object' || Array.isArray(sebRaw)) throw fail('examMode.seb must be an object: { required, configKeyHashes }.', 400);
   const required = bool('seb.required', sebRaw.required);
-  const listed = sebRaw.configKeyHashes ?? [];
-  if (!Array.isArray(listed)) throw fail('examMode.seb.configKeyHashes must be a list.', 400);
-  const keys = [...new Set(listed.map((k) => (typeof k === 'string' ? k.trim().toLowerCase() : '')))];
-  if (keys.some((k) => !SEB_KEY.test(k))) {
-    throw fail('Each Safe Exam Browser key must be the 64-character Config Key its configuration tool shows.', 400);
-  }
-  if (keys.length > MAX_SEB_KEYS) throw fail(`A room may accept at most ${MAX_SEB_KEYS} Safe Exam Browser keys.`, 400);
+  const keyList = (field, what) => {
+    const listed = sebRaw[field] ?? [];
+    if (!Array.isArray(listed)) throw fail(`examMode.seb.${field} must be a list.`, 400);
+    const keys = [...new Set(listed.map((k) => (typeof k === 'string' ? k.trim().toLowerCase() : '')))];
+    if (keys.some((k) => !SEB_KEY.test(k))) throw fail(`Each Safe Exam Browser ${what} must be the 64-character key it shows.`, 400);
+    if (keys.length > MAX_SEB_KEYS) throw fail(`A room may accept at most ${MAX_SEB_KEYS} Safe Exam Browser ${what}s.`, 400);
+    return keys;
+  };
+  const keys = keyList('configKeyHashes', 'Config Key');
+  // Optional: the Browser Exam Key of the Safe Exam Browser build students use.
+  // A join must then match one of these too (sebCheck).
+  const browserKeys = keyList('browserExamKeys', 'Browser Exam Key');
   if (required && !keys.length) {
     throw fail('Requiring Safe Exam Browser needs at least one Config Key, from the configuration you will give students.', 400);
   }
-  return { on: raw.on, fullscreen, screenShare, snapshotSeconds, seb: { required, configKeyHashes: keys } };
+  return {
+    on: raw.on, fullscreen, screenShare, snapshotSeconds,
+    seb: { required, configKeyHashes: keys, ...(browserKeys.length ? { browserExamKeys: browserKeys } : {}) },
+  };
+}
+
+/**
+ * Why this room cannot run this exam mode, or null. Fullscreen, screen sharing
+ * and screen pictures need a class: only a class list can mark a student under
+ * 18 (decision 8), and nothing that watches may be asked of one. A room opened
+ * without a class has no such list, so every phone in it would be watched. The
+ * copy guard, the watermark and the signals are not monitoring of that kind, and
+ * stay open to any room (signals were recorded in a room without a class before
+ * exam mode existed). Asked at the opening and on every change.
+ */
+export function examModeProblem(examMode, { classId = null } = {}) {
+  if (!examMode?.on || classId) return null;
+  if (examMode.fullscreen || examMode.screenShare || examMode.snapshotSeconds) {
+    return 'Fullscreen, screen sharing and screen pictures need a class, so students its list marks under 18 can be left '
+      + 'out. Open the room for a class, or turn those three off.';
+  }
+  return null;
 }
 
 /**
  * A room's examMode as the server enforces it, whatever the store held: a room
  * from before 0038, or with none, reads as off. A stored value is re-read
- * through the same rules, so a hand-edited row cannot switch on half a setting.
+ * through the same rules, so a hand-edited row cannot switch on half a setting,
+ * and a room without a class never runs what watches (examModeProblem), even if
+ * its row says so.
  */
 export function examModeOf(session) {
   const raw = session?.examMode;
   if (!raw || typeof raw !== 'object') return OFF;
+  let m;
   try {
-    return examModeFrom(raw) ?? OFF;
+    m = examModeFrom(raw) ?? OFF;
   } catch {
     return OFF;
   }
+  return examModeProblem(m, { classId: session?.classId ?? null })
+    ? { ...m, fullscreen: false, screenShare: false, snapshotSeconds: 0 }
+    : m;
 }
 
 /**
@@ -121,7 +153,7 @@ export function examSummary(session) {
   const m = examModeOf(session);
   return {
     on: m.on, fullscreen: m.fullscreen, screenShare: m.screenShare, snapshotSeconds: m.snapshotSeconds,
-    seb: { required: m.seb.required, keys: m.seb.configKeyHashes.length },
+    seb: { required: m.seb.required, keys: m.seb.configKeyHashes.length, browserKeys: (m.seb.browserExamKeys ?? []).length },
   };
 }
 
@@ -137,21 +169,28 @@ export const EXAM_HELP = Object.freeze({
     + 'it, so a photo of the screen says whose it was. The student\'s own answer box and whiteboard still work, so written '
     + 'and drawn answers can be given.',
   fullscreen: 'Laptops must be in fullscreen to answer, and answering pauses until it is back. Each exit is noted. A phone '
-    + 'browser cannot be held in fullscreen.',
+    + 'browser cannot be held in fullscreen. The student\'s own browser enforces this, so a browser someone has changed '
+    + 'can skip it without leaving a signal.',
   screenShare: 'Laptops must share the whole screen to answer, and answering pauses if sharing stops; stopping is noted. '
-    + 'Phones cannot share their screen, so turn this on only when every student sits the exam on a laptop.',
+    + 'Phones cannot share their screen, so turn this on only when every student sits the exam on a laptop. The server '
+    + 'takes the laptop\'s word that the whole screen is shared, and what a picture shows: a browser someone has changed '
+    + 'can claim a share it never started and send pictures of anything.',
   snapshots: 'While a laptop shares its screen, it sends a small picture of it every 30 or 60 seconds. Only the newest per '
     + 'student is kept, only this room\'s staff can see it, and it is deleted two hours after the room closes. It never '
     + 'goes into the archive, the CSV or any report. Screen pictures are personal data: check with your college before '
     + 'you use them.',
-  seb: 'Only Safe Exam Browser, opened with one of the configurations you list, can join. Every other browser is turned '
-    + 'away with a sentence saying so.',
+  seb: 'Asks for Safe Exam Browser, opened with one of the configurations you list; an ordinary browser is turned away '
+    + 'with a sentence saying so. It is a strong deterrent, not a lock: anyone holding the configuration file you give '
+    + 'students can work out the value it sends, and a value seen once can be sent again from another browser. Use a '
+    + 'fresh configuration for each exam, and list its Browser Exam Key too for a harder check.',
   screenshots: 'A screenshot shortcut on a laptop (PrintScreen, the snipping shortcut or a Mac shortcut) is noted, and on a '
     + 'phone Google Lens or a screenshot tool makes the page lose focus, which is noted too. A phone\'s own screenshot '
     + 'buttons, any screenshot on an iPhone, a screen recording started outside the page and a photo from a second device '
     + 'cannot be seen at all: the faint roll number is the deterrent for those.',
   under18: 'Students the class list marks under 18 are not asked for fullscreen or screen sharing, send no pictures, and have '
-    + 'no signals recorded or shown. The copy guard and the faint roll number still apply to them: they record nothing.',
+    + 'no signals recorded or shown. The copy guard and the faint roll number still apply to them: they record nothing. '
+    + 'A room opened without a class has no list to mark anyone, so it cannot ask for fullscreen, screen sharing or '
+    + 'pictures.',
 });
 
 /**
@@ -233,6 +272,8 @@ export const WHOLE_SCREEN = 'Share your whole screen, not a window or a tab, to 
 
 /** The header SEB sends with each request (lower case, as Node hands headers over). */
 export const SEB_HEADER = 'x-safeexambrowser-configkeyhash';
+/** And the one it sends for its Browser Exam Key, worked out the same way. */
+export const SEB_BEK_HEADER = 'x-safeexambrowser-requesthash';
 
 /** Said to a phone turned away because it is not in Safe Exam Browser. */
 export const SEB_REFUSED = 'This exam must be taken in Safe Exam Browser, opened with the settings your professor gave you. '
@@ -264,17 +305,68 @@ function sameHex(a, b) {
 }
 
 /**
- * The absolute URL of the socket's opening request, as SEB hashed it: scheme and
- * host from the proxy's forwarded headers when there is one (the first value of
- * each), else from the connection, and the path and query the server received.
+ * The origin a configured public address names (PUBLIC_ORIGIN: "https://host"),
+ * or null when it is unset or not an http(s) origin.
  */
-export function handshakeUrl(handshake = {}) {
+export function originOf(raw) {
+  try {
+    const u = new URL(String(raw ?? '').trim());
+    return /^https?:$/.test(u.protocol) ? u.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The absolute URL of the socket's opening request, as SEB hashed it: a scheme
+ * and host, and the path and query the server received. The scheme and host
+ * come from, in order:
+ *   publicOrigin   the server's own public address, when it is configured,
+ *                  never from anything the request says
+ *   trustProxy     the proxy's forwarded headers (the first value of each), only
+ *                  when the server is told a proxy it trusts sets them: any
+ *                  client can send those headers itself
+ *   else           the connection and its Host header
+ */
+export function handshakeUrl(handshake = {}, { publicOrigin = null, trustProxy = false } = {}) {
   const h = handshake.headers ?? {};
+  const path = handshake.url ?? '/';
+  const pinned = originOf(publicOrigin);
+  if (pinned) return `${pinned}${path}`;
   const first = (v) => String(Array.isArray(v) ? v[0] : v ?? '').split(',')[0].trim();
-  const proto = first(h['x-forwarded-proto']) || (handshake.secure ? 'https' : 'http');
-  const host = first(h['x-forwarded-host']) || first(h.host);
+  const proto = (trustProxy && first(h['x-forwarded-proto'])) || (handshake.secure ? 'https' : 'http');
+  const host = (trustProxy && first(h['x-forwarded-host'])) || first(h.host);
   if (!host) return null;
-  return `${proto}://${host}${handshake.url ?? '/'}`;
+  return `${proto}://${host}${path}`;
+}
+
+/**
+ * Is this the room's own join page: /join, or /join/<this room's code>, on the
+ * server's own origin, with no other room's code in its query? The page SEB's
+ * JavaScript API hashes must be this one, so a value worked out for any page a
+ * client likes is not taken, and a value seen on one room's join link does not
+ * open another room.
+ */
+export function joinPageOk(pageUrl, { origin, code = '' } = {}) {
+  let page;
+  try {
+    page = new URL(String(pageUrl ?? ''));
+  } catch {
+    return false;
+  }
+  if (!/^https?:$/.test(page.protocol) || !origin || page.origin !== origin) return false;
+  const want = String(code ?? '').trim().toUpperCase();
+  const m = /^\/join(?:\/([^/]+))?\/?$/i.exec(page.pathname);
+  if (!m) return false;
+  let named = m[1] ?? null;
+  try {
+    named = named === null ? null : decodeURIComponent(named);
+  } catch {
+    return false;
+  }
+  if (named !== null && named.trim().toUpperCase() !== want) return false;
+  const asked = page.searchParams.get('code');
+  return asked === null || asked.trim().toUpperCase() === want;
 }
 
 /**
@@ -282,38 +374,51 @@ export function handshakeUrl(handshake = {}) {
  * configurations? Pure: the evidence is handed in.
  *
  *   header  the X-SafeExamBrowser-ConfigKeyHash header of the socket's opening
- *           request, checked against that request's own URL (handshakeUrl)
- *   api     { configKeyHash, url } a join may carry, read from SEB's JavaScript
- *           API on the page (SafeExamBrowser.security.configKey and the page's
- *           location without its fragment). The URL must be http or https and,
- *           when the opening request named its page's origin, on that origin.
+ *           request, checked against that request's own URL (handshakeUrl), and,
+ *           when the room lists Browser Exam Keys, X-SafeExamBrowser-RequestHash
+ *           against the same URL
+ *   api     { url, configKeyHash, browserExamKeyHash? } a join may carry, read
+ *           from SEB's JavaScript API on the page (its location without the
+ *           fragment, SafeExamBrowser.security.configKey and browserExamKey).
+ *           The URL must be this room's join page on the server's own origin
+ *           (joinPageOk, against the origin of the request URL), and on the
+ *           origin the opening request named, when it named one.
  *
- * Either one matching one key is enough. A room that does not require SEB is
- * always ok. What this cannot do, said plainly: a value recorded from a real SEB
- * on the same page could be replayed by another browser. SEB's own design has
- * the same limit; a fresh configuration per exam narrows it.
+ * Either way, matching one key of each list the room has is enough. A room that
+ * does not require SEB is always ok. What this cannot do, said plainly in the
+ * setting's help: SEB's values are worked out from the URL and a key alone, so
+ * anyone holding the configuration file can work one out, and a value seen once
+ * can be sent again for the same page from another browser. SEB's own design
+ * has the same limit; a fresh configuration per exam, and a Browser Exam Key,
+ * narrow it.
  *
  * @returns {{ ok: boolean, via: 'off'|'header'|'api'|null }}
  */
-export function sebCheck(examMode, { headerHash = null, requestUrl = null, origin = null, api = null } = {}) {
+export function sebCheck(examMode, {
+  headerHash = null, bekHeaderHash = null, requestUrl = null, origin = null, api = null, code = '',
+} = {}) {
   const m = examMode ?? OFF;
   if (!m.on || !m.seb?.required) return { ok: true, via: 'off' };
   const keys = m.seb.configKeyHashes ?? [];
-  const matches = (url, hash) => {
+  const browserKeys = m.seb.browserExamKeys ?? [];
+  const matches = (list, url, hash) => {
     const sent = typeof hash === 'string' ? hash.trim().toLowerCase() : '';
     if (!/^[0-9a-f]{64}$/.test(sent) || !url) return false;
-    return keys.some((key) => sameHex(sebConfigKeyHash(url, key), sent));
+    return list.some((key) => sameHex(sebConfigKeyHash(url, key), sent));
   };
-  if (requestUrl && matches(requestUrl, headerHash)) return { ok: true, via: 'header' };
+  const both = (url, configHash, bekHash) => matches(keys, url, configHash)
+    && (!browserKeys.length || matches(browserKeys, url, bekHash));
+  if (requestUrl && both(requestUrl, headerHash, bekHeaderHash)) return { ok: true, via: 'header' };
   if (api && typeof api === 'object' && typeof api.url === 'string' && api.url.length <= 2048) {
-    let page = null;
+    let pageOrigin = null;
     try {
-      page = new URL(api.url);
+      pageOrigin = requestUrl ? new URL(requestUrl).origin : null;
     } catch {
-      page = null;
+      pageOrigin = null;
     }
-    const sameOrigin = !origin || (page && page.origin === String(origin));
-    if (page && /^https?:$/.test(page.protocol) && sameOrigin && matches(withoutFragment(api.url), api.configKeyHash)) {
+    const page = withoutFragment(api.url);
+    const named = !origin || String(origin) === pageOrigin;
+    if (named && joinPageOk(page, { origin: pageOrigin, code }) && both(page, api.configKeyHash, api.browserExamKeyHash)) {
       return { ok: true, via: 'api' };
     }
   }
@@ -323,8 +428,8 @@ export function sebCheck(examMode, { headerHash = null, requestUrl = null, origi
 /* ------------------------------------------------------------------- rate -- */
 
 /**
- * What one student may send as signals in an exam room: 30 a minute in all, and
- * one of each kind a second. Past that a signal is dropped without a word, as
+ * What one student may send as signals in an exam room: 30 in any minute in all,
+ * and one of each kind a second. Past that a signal is dropped without a word, as
  * every signal is answered. A burst that reads like a pattern is the failure:
  * a stuck key or a looping script should not become sixty events on a
  * professor's screen.
@@ -334,16 +439,17 @@ export const SIGNAL_LIMIT = Object.freeze({ perMinute: 30, sameKindMs: 1000 });
 /**
  * May one more signal of this kind go through now? `state` is the student's own
  * ({} to start), changed in place. Pure apart from that: the clock is handed in.
+ *
+ * The minute slides: it is the 60 seconds before `now`, whenever `now` is. A
+ * fixed minute let 30 signals in at its end and 30 more at the start of the
+ * next, sixty inside a second.
  */
 export function allowSignal(state, kind, now, limit = SIGNAL_LIMIT) {
-  if (!state.windowStart || now - state.windowStart >= 60000) {
-    state.windowStart = now;
-    state.count = 0;
-  }
+  state.times = (state.times ?? []).filter((t) => now - t < 60000);
   state.last = state.last ?? {};
-  if (state.count >= limit.perMinute) return false;
+  if (state.times.length >= limit.perMinute) return false;
   if (state.last[kind] !== undefined && now - state.last[kind] < limit.sameKindMs) return false;
-  state.count += 1;
+  state.times.push(now);
   state.last[kind] = now;
   state.seen = now;
   return true;
@@ -373,8 +479,16 @@ export const SNAPSHOT_KEEP_MS = 2 * 60 * 60 * 1000;
  */
 export const SNAPSHOT_GRACE_MS = 10000;
 
-/** The most all pictures together may hold in memory; past it the oldest go first. */
+/**
+ * The most all pictures together may hold in memory, and the most one room's
+ * may: about 300 students' newest at SNAPSHOT_MAX_BYTES. Past either, a new
+ * picture is not kept (one replacing the student's own older one still is, when
+ * it is no bigger), and nothing kept is pushed out: one room's pictures never
+ * make room by dropping another's. A picture not kept still counts as arrived
+ * (lastAt), so nobody is noted for a picture their laptop did send.
+ */
 export const SNAPSHOT_STORE_BYTES = 64 * 1024 * 1024;
+export const SNAPSHOT_ROOM_BYTES = 24 * 1024 * 1024;
 
 const SOF = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
 
@@ -476,62 +590,88 @@ export function snapshotOverdue({ everySeconds, since, now }) {
 
 /**
  * The pictures, in memory: the newest per student per room, with the room, the
- * roll number and when it arrived. Nothing else holds them.
+ * roll number and when it arrived. Nothing else holds them. Apart from the
+ * pictures, when each student's last picture arrived (`lastAt`), whether or not
+ * it was kept: what the overdue rule reads, so a picture the store had no room
+ * for never reads as one the laptop failed to send.
  */
-export function createSnapshotStore({ capBytes = SNAPSHOT_STORE_BYTES } = {}) {
+export function createSnapshotStore({ capBytes = SNAPSHOT_STORE_BYTES, roomCapBytes = SNAPSHOT_ROOM_BYTES } = {}) {
   const shots = new Map(); // `${sessionId}|${rollNo}` -> { sessionId, rollNo, jpeg, at }
+  const arrived = new Map(); // `${sessionId}|${rollNo}` -> { sessionId, at }
+  const roomBytes = new Map(); // sessionId -> bytes held
   let bytes = 0;
   const keyOf = (sessionId, rollNo) => `${String(sessionId)}|${String(rollNo)}`;
+  const addRoom = (id, n) => {
+    const left = (roomBytes.get(id) ?? 0) + n;
+    if (left > 0) roomBytes.set(id, left); else roomBytes.delete(id);
+  };
   const drop = (k) => {
     const had = shots.get(k);
-    if (had) { bytes -= had.jpeg.length; shots.delete(k); }
+    if (had) { bytes -= had.jpeg.length; addRoom(had.sessionId, -had.jpeg.length); shots.delete(k); }
     return Boolean(had);
   };
 
   return {
     /** May this student's next picture be taken now (one per interval, less the slack)? */
     accepts(sessionId, rollNo, everySeconds, now) {
-      const had = shots.get(keyOf(sessionId, rollNo));
-      return !had || now - had.at >= everySeconds * 1000 - SNAPSHOT_SLACK_MS;
+      const last = arrived.get(keyOf(sessionId, rollNo))?.at;
+      return last === undefined || now - last >= everySeconds * 1000 - SNAPSHOT_SLACK_MS;
     },
-    /** Keep this picture as the student's newest; the one before it goes. */
+    /**
+     * A picture arrived: noted as arrived, and kept as the student's newest (the
+     * one before it goes) when the caps allow. Never pushes another picture out.
+     * @returns {boolean} whether it was kept
+     */
     put(sessionId, rollNo, jpeg, now) {
-      const k = keyOf(sessionId, rollNo);
+      const id = String(sessionId);
+      const k = keyOf(id, rollNo);
+      arrived.set(k, { sessionId: id, at: now });
+      const before = shots.get(k)?.jpeg.length ?? 0;
+      const grow = jpeg.length - before;
+      if (grow > 0 && (bytes + grow > capBytes || (roomBytes.get(id) ?? 0) + grow > roomCapBytes)) return false;
       drop(k);
-      shots.set(k, { sessionId: String(sessionId), rollNo: String(rollNo), jpeg, at: now });
+      shots.set(k, { sessionId: id, rollNo: String(rollNo), jpeg, at: now });
       bytes += jpeg.length;
-      // Past the cap, the oldest pictures go first: the newest of every live
-      // student is replaced within a minute anyway.
-      if (bytes > capBytes) {
-        for (const [old] of [...shots.entries()].sort((a, b) => a[1].at - b[1].at)) {
-          if (bytes <= capBytes || old === k) break;
-          drop(old);
-        }
-      }
+      addRoom(id, jpeg.length);
+      return true;
     },
     latest(sessionId, rollNo) {
       return shots.get(keyOf(sessionId, rollNo)) ?? null;
+    },
+    /** When this student's last picture arrived (ms), kept or not; null for none. */
+    lastAt(sessionId, rollNo) {
+      return arrived.get(keyOf(sessionId, rollNo))?.at ?? null;
     },
     /** When each student's newest picture arrived, without the pictures. */
     room(sessionId) {
       return [...shots.values()].filter((s) => s.sessionId === String(sessionId)).map((s) => ({ rollNo: s.rollNo, at: s.at }));
     },
     forget(sessionId, rollNo) {
+      arrived.delete(keyOf(sessionId, rollNo));
       return drop(keyOf(sessionId, rollNo));
     },
     /** Every picture of a room: at its delete, and by the sweep. */
     purgeRoom(sessionId) {
       let n = 0;
+      for (const [k, s] of [...arrived.entries()]) if (s.sessionId === String(sessionId)) arrived.delete(k);
       for (const [k, s] of [...shots.entries()]) if (s.sessionId === String(sessionId) && drop(k)) n += 1;
       return n;
     },
     /**
-     * Purge the pictures of every room closed two hours ago or more, or gone.
-     * `roomOf(sessionId)` reads the room as stored now (null when deleted); a
-     * read that fails keeps the pictures for the next sweep rather than guess.
+     * Purge the pictures of every room closed two hours ago or more, or gone;
+     * and, whatever its room's state, every picture that arrived two hours ago
+     * or more. Rooms never close by themselves, so a room left open, waiting or
+     * paused would otherwise hold each student's last picture until the server
+     * restarted; a laptop still sharing replaces its picture every minute, so
+     * only a picture nobody is sending any more is old. `roomOf(sessionId)`
+     * reads the room as stored now (null when deleted); a read that fails keeps
+     * the room's pictures for the next sweep rather than guess (the age rule
+     * still applies).
      */
     async sweep(now, roomOf) {
       let n = 0;
+      for (const [k, s] of [...shots.entries()]) if (now - s.at >= SNAPSHOT_KEEP_MS && drop(k)) n += 1;
+      for (const [k, s] of [...arrived.entries()]) if (now - s.at >= SNAPSHOT_KEEP_MS) arrived.delete(k);
       for (const id of new Set([...shots.values()].map((s) => s.sessionId))) {
         let room;
         try {
@@ -606,6 +746,22 @@ function sharedFormOf(answer) {
 }
 
 /**
+ * When an answer was given, for the close-timing test: the earlier of when the
+ * server received it and when the phone says it was answered (Phase 7). An
+ * outbox flushes its answers together when the network returns, so arrival
+ * alone made two students who answered twenty minutes apart look simultaneous.
+ * The phone's time can only move an answer earlier than its arrival, never
+ * later, and a phone that lies about it can only hide a pair, never make one
+ * of two others: it is the one compared, and it is a signal, not proof.
+ */
+function givenAt(answer) {
+  const arrived = Date.parse(answer.answeredAt ?? '');
+  const device = Date.parse(answer.deviceAnsweredAt ?? '');
+  if (!Number.isFinite(device)) return arrived;
+  return Number.isFinite(arrived) ? Math.min(arrived, device) : device;
+}
+
+/**
  * Pairs of students whose wrong answers match, by COLLUSION's rule, in roll
  * order (the first roll number of each pair, then the second), never ranked.
  * `answers` are the room's rows, oldest first; `exclude` the roll numbers left
@@ -631,7 +787,7 @@ export function collusionPairs({ answers = [], exclude = new Set(), names = new 
     const q = byQuestion.get(qid) ?? { wrong: 0, forms: new Map(), topic: a.topic ?? '', bloom: a.bloom };
     q.wrong += 1;
     const group = q.forms.get(form) ?? [];
-    group.push({ rollNo: String(a.rollNo), at: Date.parse(a.answeredAt ?? '') });
+    group.push({ rollNo: String(a.rollNo), at: givenAt(a) });
     q.forms.set(form, group);
     byQuestion.set(qid, q);
   }
