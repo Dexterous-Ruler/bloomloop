@@ -886,9 +886,10 @@ let madeUpRefusal; // the sentence a token that never existed is refused with
 console.log('\nevery event any projector received, against the whitelist');
 {
   // Kept here, apart from services/projector.js, so a field added there has to
-  // be added here on purpose too.
+  // be added here on purpose too. roomMode (19 Nov 2026): how the room runs, so
+  // the wall can hide the join code in a Teacher-led room.
   const ALLOWED = {
-    'projector:state': ['code', 'title', 'status', 'mode', 'question', 'diagram', 'progress', 'pick'],
+    'projector:state': ['code', 'title', 'status', 'mode', 'roomMode', 'question', 'diagram', 'progress', 'pick'],
     'projector:state.question': ['source', 'text', 'kind', 'options', 'stimulus', 'revealed', 'correct'],
     'projector:state.question.options[]': ['key', 'label'],
     'projector:state.question.stimulus': ['kind', 'url', 'alt', 'text'],

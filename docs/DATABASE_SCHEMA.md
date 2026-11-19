@@ -9,14 +9,68 @@ Every table has row level security **on with no policies**. Only the server's
 service role key, which bypasses RLS, can read or write; the anon key sees nothing.
 The server is the only place authorization is decided.
 
-Last revised 19 November 2026, after the Phase 3 review fixes (`0016` to `0018`),
-and for Phase 4: course outcomes (`0019`), attainment formulas (`0020`) and, from the
-Phase 4 review, the roll number an attendance mark was made under (`0021`). The full
-rerun after the review fixes gave 573 of 573 migration checks on PGlite.
+Last revised 19 November 2026, after the Phase 5 review fixes: the owner's decisions
+(`0022`), class questions (`0023`) and misconception labels (`0024`). The honest
+indicators and the Phase 5 review fixes added no migration. The full rerun after them
+gave 752 of 752 migration checks on PGlite. The next free number is `0025`.
 
-**Applying Phase 4: `0019`, then `0020`, then `0021`.** None of the three is checked
-by the server's boot probe, unlike `0010` to `0018`, but they differ in what a
-missing one breaks:
+**Applying the owner's decisions and Phase 5: `0022`, then `0023`, then `0024`, all
+before the server is deployed.** Unlike `0019` to `0021`, each of the three holds a
+piece every room needs: every join and answer writes `0022`'s `account_verified`
+columns and `0023`'s `class_question_id` and `round`, every room's bank reads
+`class_questions`, and every question saved writes `replaces_id` (`0022`) and
+`misconceptions` (`0024`). With any piece missing, the boot probe stops using Supabase
+and its log names the file to apply. None of the three rewrites a row, narrows a check
+or drops anything; each re-runs over data unchanged; none has run anywhere but PGlite
+(`npm run migrations`: 633 checks with `0022`, 697 with `0023`, 752 with `0024`).
+
+**19 November 2026, the owner's decisions: `0022`.** One file for everything the
+decisions of 19 Nov 2026 needed (`docs/PRODUCT_DECISIONS.md`):
+`profiles.account_verified` and `answers.account_verified` (decision 7: a link counts
+in a student's own history only when a signed-in phone made it),
+`class_students.under_18` (decision 8), `questions.replaces_id` (a regenerated draft's
+link to the active question it would replace), and `questions_source_check` widened
+to `'teacher'`. **Apply `0022` before deploying the server that writes them**: the
+repo writes `account_verified` on every join and answer, `replaces_id` on every
+question saved and `under_18` on every roster row added, so the boot probe treats
+`0022` as one rooms need, and without it the server does not use Supabase and says
+which file to apply. Run on PGlite only (`npm run migrations`, 633 of 633 on
+19 November 2026); not applied to the live project by this work.
+
+**Phase 5: `0023`, class questions.** One table, `class_questions` (a class question's
+state and the question as it was asked), and two nullable columns on `answers`,
+`class_question_id` and `round`, which every vote in a class question carries and every
+other answer leaves null. No check is widened: a confidence tap is stored in the
+spellings `0008`'s check already allows. **Apply `0023` before deploying the server
+that writes it**: the repo writes both columns with every answer and the live loop
+reads `class_questions` with every room's bank, so the boot probe treats `0023` as one
+rooms need. `0023` rewrites no row; every answer before it reads as an ordinary answer.
+Run on PGlite only (`npm run migrations`, 697 of 697 on 19 November 2026).
+
+**Phase 5: `0024`, misconception labels.** One column, `questions.misconceptions`
+(jsonb, not null, default `[]`): the labels on a question's wrong options, each with
+its option's text, the label, its provenance (`ai` or `professor`) and when it was
+added and last changed. Nothing is added to `answers`: a report matches each answer to
+the question's current label through the option's words in that answer's own snapshot.
+**Apply `0024` before deploying the server that writes it**: the repo writes the
+column with every question it saves, so the boot probe treats it as one rooms need,
+and without it the server does not use Supabase and says to apply `0024`. `0024`
+rewrites no row; every existing question reads as having no labels. Run on PGlite only
+(`npm run migrations`, 752 of 752 on 19 November 2026).
+
+**The boot probe, since 19 November 2026**, checks the tables and columns the server
+writes from `0000` to `0024`, each named with its file (not the columns of `0003` to
+`0007`, nor `0011`'s index or `0012`'s triggers, which it does not look for;
+`supabase/README.md` lists which file it checks). What rooms need (`0000` to
+`0018`, and `0022` to `0024`) stops Supabase being used when missing; what only some routes
+need (`0019`, `0020`, and `0021`'s `attendance.roll_no`) is logged at boot, one line
+per missing piece, naming the file to apply and what fails until it is, and Supabase
+is still used (`ROOM_SCHEMA`, `ROUTE_SCHEMA` in `server/src/repo/supabaseRepo.js`).
+Before this, `0019` to `0021` were not checked at all.
+
+**Applying Phase 4: `0019`, then `0020`, then `0021`.** None of the three stops the
+boot probe (since 19 November 2026 each is checked and a missing one logged, naming
+its file), but they differ in what a missing one breaks:
 - **`0019` and `0020`.** A server deployed before they are applied keeps every room
   on Supabase. Only the outcome, coverage, attainment, config and register routes
   fail, with a 500 naming the missing table. Apply both before anyone uses those
@@ -60,6 +114,9 @@ printable pages read what these tables and the Phase 1 to 3 tables already hold.
 | `0019_course_outcomes.sql` | `course_outcomes` (a class's outcomes, archived rather than deleted once evidence reaches them), `outcome_topics` (an outcome mapped to a topic of a chapter, with a weight), `question_outcome_overrides` (one question's outcomes in one class, or excluded); functions and triggers `question_outcome_overrides_in_class` and `course_outcomes_guard`. Changes no row and no existing table | new (Phase 4) |
 | `0020_attainment_configs.sql` | `attainment_configs`: a class's attainment formula, one row per saved version (append-only; the highest is in force); function and trigger `attainment_configs_guard`. Changes no row and no existing table | new (Phase 4) |
 | `0021_attendance_roll.sql` | `attendance.roll_no` (nullable text): the roll number an attendance mark was made under. No default, no check, no index, nothing backfilled; a mark from before it reads as null. Changes no row | new (Phase 4 review) |
+| `0022_owner_decisions.sql` | The owner's decisions of 19 Nov 2026: `profiles.account_verified` and `answers.account_verified` (boolean, not null, default false: a link made by a signed-in phone, decision 7), `class_students.under_18` (boolean, not null, default false, decision 8), `questions.replaces_id` (nullable uuid, references `questions(id)` on delete set null, partial index `questions_replaces_idx`), and `questions_source_check` widened to `llm`, `fallback`, `teacher`. Every link made before it reads unverified; no row is rewritten (a professor's question stored as `fallback` stays so) | new (19 Nov 2026) |
+| `0023_class_questions.sql` | Phase 5, class questions: the `class_questions` table (a class question's state, `revealed`, its times and the question as asked; one not closed per room, `class_questions_one_running`; RLS on) and `answers.class_question_id` (uuid, no foreign key) and `answers.round` (smallint, 1 or 2, set with `class_question_id` or not at all, `answers_round_check`), with a partial index on `class_question_id`. No check widened: confidence taps use `0008`'s spellings. No row rewritten | new (19 Nov 2026) |
+| `0024_misconception_labels.sql` | Phase 5, misconception labels: `questions.misconceptions` (jsonb, not null, default `[]`), the labels on a question's wrong options, each `{option, label, provenance, addedAt, changedAt, by}`, with `questions_misconceptions_check` (an array of objects, each with text `option` and `label` and a `provenance` of `ai` or `professor`). No answer column: a label is matched to answers when a report runs. No row rewritten; every existing question reads as having none | new (19 Nov 2026) |
 
 The SQL of every moved file is unchanged; only header comments were updated.
 
@@ -198,7 +255,7 @@ from `topicSlides()` in `services/extract.js`, since the deck itself is not kept
 and `seed.js`; `updateContent` (title, raw text, topics; never `topic_slides`, so a
 topic renamed after upload loses its slides).
 
-### questions (0000, 0001, 0013)
+### questions (0000, 0001, 0013, 0022, 0024)
 
 | Column | Type | Rules |
 |---|---|---|
@@ -211,7 +268,7 @@ topic renamed after upload loses its slides).
 | `answer_idx` | smallint | null; 0 to 3 when set (mcq only) |
 | `bloom` | text | not null; `remember`, `understand`, `apply`, `analyse`, `evaluate`, `create` |
 | `status` | text | not null, default `active`; `active`, `discarded` or (since `0013`) `draft` (`questions_status_check`). Only `active` is served |
-| `source` | text | not null, default `llm`; `llm` or `fallback` |
+| `source` | text | not null, default `llm`; `llm`, `fallback` or (since `0022`) `teacher`, a question a professor wrote in the bank (`questions_source_check`). A professor's question written before `0022` stays `fallback` |
 | `payload` | jsonb | not null, default `{}`. Every `PAYLOAD_FIELDS` entry (answers included): teacher-only data. `stimulus` is here too: a passage (`text`, optional `sourceRef`) or an image (`url`, `alt`, optional `sourceRef`); an uploaded image's url is `/api/media/<id>` (`media`, `0014`). Hot text, dropdown, table and grid, generated since Phase 2, keep `tokens`, `blanks`, `columns`, `rows` and `answers` here, so they needed no migration. (The Mongo fallback's schema did drop them on save; fixed in `server/src/models/index.js`, not run against a Mongo database) |
 | `created_at` | timestamptz | not null, default now() |
 | `model` | text | null. The model id that wrote it, `offline-template` for the offline generator, null for a professor's own question **and every row older than `0013`** (`0013`) |
@@ -220,6 +277,8 @@ topic renamed after upload loses its slides).
 | `created_by` | uuid | null; references `accounts(id)` on delete set null. Who made the row; null on the shared key (`0013`) |
 | `approved_by` | uuid | null; references `accounts(id)` on delete set null. Null on the shared key (`0013`) |
 | `approved_at` | timestamptz | null. Set whenever `approved_by` is (`questions_approval_pair`) (`0013`) |
+| `replaces_id` | uuid | null; references `questions(id)` on delete set null (`0022`). On a draft a plain regenerate wrote for an ACTIVE question: that question, which goes on serving until this draft is approved; the approval (any route that makes it active) sets it discarded. Partial index `questions_replaces_idx` where not null |
+| `misconceptions` | jsonb | not null, default `[]` (`0024`). The misconception labels on the question's wrong options: `[{"option": "TCP", "label": "Thinks TCP is connectionless", "provenance": "ai" \| "professor", "addedAt", "changedAt", "by"}]`, one per labelled option, keyed by the option's **text** (`True` or `False` on a true/false question), so reordering options keeps each label on its option. `questions_misconceptions_check`: an array of objects, each with text `option` and `label` and a `provenance` of `ai` (the generator proposed it; an AI draft) or `professor` (written, edited or confirmed by the professor). The server holds the rest (`services/misconceptions.js`): only on a wrong option of an `mcq`, `multi` or `truefalse` question, at most 120 characters, no contact details. Staff-only: never sent to a phone or the projector, and left out of `answers.question_snapshot`. Changes no mark |
 
 Indexes: `questions_content_idx`; partial `questions_active_idx` (`status =
 'active'`, what a room reads); partial `questions_draft_idx` (`status = 'draft'`);
@@ -236,6 +295,14 @@ reject); `deleteQuestions` from `routes/generate.js` (replace mode, which delete
 drafts too, and is refused while a room on the chapter is open or paused). Every way to `active` records an approval on model
 output nobody approved (`approvePatch`, `activatePatch` in `services/edits.js`).
 `0013` changed no row: every question already there kept its status.
+
+`misconceptions` (`0024`) is written by `insertQuestions` with every question (empty
+unless the model proposed labels, or a split or merge carried its parent's), and by
+`updateQuestion` on its own from the label route (`PATCH
+/api/bank/question/:id/misconceptions`), which changes no other column: a label edit
+leaves the status, the approval and the checks as they were. An edit or a retag that
+rewords or removes a labelled option, or makes it a right answer, writes the shorter
+list with the edit. `0024` changed no row.
 
 ### sessions (0000, 0001, 0005, 0007, 0015, 0016, 0018)
 
@@ -290,16 +357,18 @@ One student in one room, keyed by roll number.
 | `levels` | jsonb | not null, default `{}` |
 | `working_level` | text | not null, default `understand`; one of the six levels |
 | `reason` | text | not null, default `''` |
-| `history` | jsonb | not null, default `[]` |
+| `history` | jsonb | not null, default `[]`; one entry per finished question. Since Phase 5 (no migration) an entry whose answer moved the student, or held them at either end of the ladder, also carries `move`: `{ rule: 'promote'\|'demote'\|'band'\|'top'\|'floor', from, to, window, share, answers, reason }` (`moveRecord` in `services/mastery.js`). Staff-only: `reason` is the professor's sentence. Entries written before carry none |
 | `served_id`, `served_at`, `served_why` | text, timestamptz, text | null; the pinned question |
 | `served_tries` | smallint | not null, default 0 |
 | `served_last` | text | null; a hash of the last submission, never the answer |
-| `integrity` | jsonb | not null, default `[]`; append-only signals |
+| `integrity` | jsonb | not null, default `[]`; append-only signals. Nothing is appended for a student their class roster marks under 18 (`0022`, decision 8) |
 | `account_id` | uuid | null; references `accounts(id)` on delete set null |
 | `updated_at` | timestamptz | not null, default now() |
+| `account_verified` | boolean | not null, default false (`0022`). True only when `account_id` was linked because the phone presented that signed-in student's token at join (decision 7). Every link made before `0022`, from a typed roll number, reads false: kept, unverified, never read into the student's own history |
 
 Written by: repo `saveProfile` (upsert on `session_id, roll_no`) from
-`sockets/index.js`: join (including the account link from `findStudentForRoll`),
+`sockets/index.js`: join (including, since `0022`, the verified link a signed-in
+phone's token makes; a typed roll number links nothing),
 the pin, integrity signals, every answer; and from `POST /api/review/:answerId`,
 which sets the reviewed mark on the matching `history` entry (marked `review`:
 `confirmed` or `overridden`) and moves `levels` by the difference
@@ -331,7 +400,7 @@ One row per submitted attempt; append-only evidence.
 | `score` | numeric(4,3) | null |
 | `detail` | text | not null, default `''` |
 | `ungraded` | boolean | not null, default false (polls) |
-| `language` | text | not null, default `en` |
+| `language` | text | not null, default `en`. Written by the live loop as `'en'` on every answer and vote (`sockets/index.js`): no phone shows a translated question yet. Read since Phase 5 (no migration) by the item statistics' translation warning and the student card's language note (`services/honesty.js`) |
 | `question_source` | text | not null, default `llm` |
 | `served_at` | timestamptz | null |
 | `answered_at` | timestamptz | not null, default now() |
@@ -340,15 +409,29 @@ One row per submitted attempt; append-only evidence.
 | `reviewed_by` | uuid | null; references `accounts(id)` on delete set null |
 | `reviewed_at` | timestamptz | null |
 | `review_note` | text | not null, default `''` |
-| `confidence` | text | null; `sure`, `think`, `guess` (later phase) |
+| `confidence` | text | null; `sure`, `think`, `guess`. Written since Phase 5 (no migration): the phone's Sure, Think so and Guessing tap (`think_so` is stored as `think`, `guessing` as `guess`; `server/src/services/confidence.js`), null for no tap or one the server does not know. Information only: nothing that marks, moves a level or computes attainment reads it. Staff read it as counts |
+| `account_verified` | boolean | not null, default false (`0022`). True only when the phone that sent the answer was signed in as the account in `account_id` (decision 7). A student's own history reads only these rows. Written once: `0012`'s guard allows no change to it |
+| `class_question_id` | uuid | null (`0023`); the class question a vote was given in. No foreign key: a room's class questions and answers are deleted together (both cascade from `sessions`), and an `on delete set null` would trip `0012`'s guard. Written once |
+| `round` | smallint | null (`0023`); 1, or 2 for the re-vote after discussion. Set with `class_question_id` or not at all (`answers_round_check`). Written once |
 
 Indexes: unique `(session_id, answer_key)`; `session_id`; `(session_id, roll_no)`;
-`account_id`; `question_id`; partial on `review_status` where `provisional`;
+`account_id`; `question_id`; partial on `class_question_id` where not null (`0023`);
+partial on `review_status` where `provisional`;
 `answers_open_queue_idx` on `(session_id, answered_at desc)` where `kind = 'open'`
 and `final` (`0010`, for the review queue).
 
 Written by: repo `recordAnswer` from `sockets/index.js` (`handleAnswer`: final
-answers, wrong attempts before a retry, polls); a 23505 on the unique key returns
+answers, wrong attempts before a retry, polls; since Phase 5 `handleVote`: every vote
+in a class question, with its round, `final` true for the vote in force and false for
+one that came after its round closed, and, since the Phase 5 review fixes, one sent for
+a round not yet open, one sent while the room was paused, and one from a phone not
+signed in after the signed-in student's own phone voted in that round, each with a
+`detail` saying why; and `handleAnswer` again for an answer a phone sent to a class
+question as its own question afterwards, kept with the class question, `final` false).
+A vote a phone replaces in the same round is set `final` false by `updateAnswer`, the
+one change a vote takes. A vote's key sent through `student:answer` is never answered
+from the vote: the answer is filed under `<key>@<roll number>`, as for another
+student's key. A 23505 on the unique key returns
 the stored row instead of a second one. `answer_key` is the phone's key; a phone
 that sends none gets `legacy-<roll number>-<question id>-<answer hash>`, and a key
 already held by another student's row is filed as `<key>@<roll number>`, so no
@@ -362,6 +445,9 @@ key and the time are written once. `question_id` and `account_id` may still chan
 
 Read by repo `listAnswers`, whose filters are ANDed: `sessionId` / `sessionIds`,
 `rollNo`, `accountId`, `reviewStatus`, `kind`, `final`, `topic`, `bloom`,
+`classQuestionId` (one class question's votes) and `classVotes: false` (no vote at all,
+`class_question_id is null`; Phase 5: the topic report, item statistics, class
+analytics, the student card and a student's own history read this way),
 `student: { accountId, rollNo }`, which matches `account_id` = that account OR
 (`roll_no` = that roll number AND `account_id` is null), and `before: { answeredAt,
 id }`, a page cursor: rows earlier than it in `(answered_at, id)` order. A row
@@ -493,6 +579,14 @@ Read by `GET /api/session/archives` (list, no data) and
 `GET /api/session/archives/:id` (the `.json` file), both under the same ownership
 rule as rooms.
 
+Since `0022` a class room's archive keeps no integrity signal of a student the roster
+marks under 18 when the room is deleted (decision 8). Since the Phase 5 review fixes
+the file is also **served** without the signals of a student the roster marks under
+18 now (`servedArchive` in `services/archive.js`), so a mark set after the delete, or
+an archive written before `0022`, still hides them; the stored row is not rewritten.
+Since `0023` an archive carries `classQuestions` (each class question's state,
+`revealed`, times and the question as asked) and keeps every vote among its answers.
+
 ### media (0014)
 
 One image a professor uploaded to hang a question off, served at
@@ -553,9 +647,10 @@ a course name, section or term holding an email address or a mobile number
 
 ### class_students (0016)
 
-A class's roster. **A roll number and a name, and nothing else**: no phone number,
-email, date of birth or photo. `server/scripts/migrations.mjs` fails if a column is
-added here, so that adding one is a decision.
+A class's roster. **A roll number and a name, and nothing else** but the owner's
+yes-or-no under-18 mark (`0022`, decision 8): no phone number, email, date of birth
+or photo. `server/scripts/migrations.mjs` fails if a column is added here, so that
+adding one is a decision; `under_18` was one (19 Nov 2026).
 
 | Column | Type | Rules |
 |---|---|---|
@@ -565,10 +660,12 @@ added here, so that adding one is a decision.
 | `name` | text | not null; 1 to 80 characters once trimmed (`class_students_name_check`). The server also refuses a name holding an `@`, six or more digits, or a short date such as `12-5-04` (a date of birth) |
 | `added_at` | timestamptz | not null, default now() |
 | `removed_at` | timestamptz | null. Set when a student is taken off the roster. **Never deleted**: their answers live under their roll number in each room, and their attendance points here |
+| `under_18` | boolean | not null, default false (`0022`). The owner's optional mark (decision 8): integrity signals are neither recorded nor shown for a room profile tied to this student in the class's rooms. A yes or no only; no date of birth. Not a legal determination |
 
 Written by repo `addClassStudents` (`insert ... on conflict (class_id, roll_no) do
-nothing`, so only the rows added come back) and `updateClassStudent` (name, roll
-number, `removed_at`) from `routes/classes.js`. Read whole by `listClassStudents`,
+nothing`, so only the rows added come back; `under_18` as the list or the CSV says,
+else false) and `updateClassStudent` (name, roll number, `removed_at`, `under_18`)
+from `routes/classes.js`. Read whole by `listClassStudents`,
 which on Supabase asks for `.limit(5000)` in one request; PostgREST's `max-rows`
 caps a response whatever is asked (1000 by default), so a roster over that many rows,
 removed ones included, would be read short (open, `docs/API.md`; `listAttendance`
@@ -742,6 +839,39 @@ only, and read by the matching `list*` methods there, by
 `GET /api/classes/:id/students/:studentId/observations`, and by the room archive.
 Every foreign key to an account, a question, a class student and a tally has its own
 partial index.
+
+### class_questions (0023)
+
+A class question: one approved bank question the room's owner put to every phone in a
+room (Phase 5). State only: its votes are `answers` rows (`class_question_id`,
+`round`), which are the evidence. RLS on, no policies.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `session_id` | uuid | not null; references `sessions(id)` on delete cascade |
+| `seq` | integer | not null, at least 1; its place among the room's class questions; unique with `session_id` (`class_questions_session_seq_key`) |
+| `question_id` | uuid | null; references `questions(id)` on delete set null |
+| `question_snapshot` | jsonb | not null; the question as asked, answer key included (staff-only, like `answers.question_snapshot`). Every vote is marked against this, not the bank's row |
+| `state` | text | not null, default `open`; `open` (round 1), `paused` (round 1 closed, discussion), `revote` (round 2), `closed` (`class_questions_state_check`) |
+| `revealed` | boolean | not null, default false; true only once closed (`class_questions_revealed_check`) |
+| `started_at` | timestamptz | not null, default now() |
+| `started_by`, `closed_by` | uuid | null; reference `accounts(id)` on delete set null |
+| `paused_at`, `revote_at`, `closed_at` | timestamptz | null until it gets there |
+
+Indexes: `class_questions_one_running`, unique on `session_id` where `state <> 'closed'`
+(one running per room); `question_id`, `started_by` and `closed_by` where not null.
+
+Written by the repo methods `addClassQuestion` and `updateClassQuestion` (which
+changes `state`, `revealed`, `paused_at`, `revote_at`, `closed_at` and `closed_by`
+only) from `sockets/index.js` (`startClassQuestion`, `changeClassQuestion`,
+`closeClassQuestionWithRoom`), each under the room's `#class` lock. Read by
+`getClassQuestion` and `listClassQuestions`: the live loop's bank leaves out every
+question a room has asked to the class, a phone's join sends the running one, and the
+staff routes and the projector read the votes beside it. A deleted room's archive keeps
+its class questions (`classQuestions`, the question as asked by position) and every
+vote. Not guarded by a trigger: it holds where a class question stands, and the
+evidence is in `answers`, which `0012` guards.
 
 ### projector_links (0018)
 
@@ -1011,7 +1141,11 @@ it and without it no room could open. Since `0016` it also probes `classes`,
 `createSession` writes `class_id` on every room. Since `0017` it also probes the six
 teacher-record tables. Since `0018` it also probes `projector_links` and the five
 new `sessions` columns (`mode`, `adapt`, `start_level`, `questions_per_student`,
-`time_per_question`), which `createSession` writes on every room. It does not probe
-`0019`, `0020` or `0021`: the first two on purpose (no room needs them), and
-`attendance.roll_no` (`0021`) not at all, though every attendance write sends it, so
-apply `0021` before the server (top of this file).
+`time_per_question`), which `createSession` writes on every room. Since 19 November
+2026 it probes `0019`, `0020` and `0021`'s `attendance.roll_no` too, without failing:
+a missing one is a boot-log line naming its file and what fails until it is applied,
+and Supabase is still used. It probes `0022`'s four columns as pieces rooms need. It
+asks for no rows with a GET rather than a HEAD, since a missing table's 404 to a HEAD
+carries no body and the client read it as no error. Phase 5 adds `0023`'s table and
+two `answers` columns and `0024`'s `questions.misconceptions` to the pieces rooms need:
+`insertQuestions` writes `misconceptions` with every question saved.

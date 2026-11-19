@@ -1,4 +1,17 @@
-# API reference: Phases 1, 2, 3 and 4
+# API reference: Phases 1, 2, 3, 4 and 5
+
+**Phase 5** (uncommitted; `0023`, `0024`) opens with one index of every new and
+changed endpoint and socket event, "Phase 5: every new and changed endpoint and socket
+event", which also lists what the review fixes of 19 November 2026 changed. Its three
+parts follow, each with what the phone, the console and the projector need: "Phase 5:
+confidence taps and class questions" (the confidence tap, and class questions with a
+pause, a discussion and a re-vote), "Phase 5: misconception labels on wrong options",
+and "Phase 5: honest indicators". All four come just before "Known open issues".
+
+**19 November 2026.** The owner's decisions of that day changed some endpoints and
+socket fields: they are listed in one place, "The owner's decisions of 19 Nov 2026",
+just before Phase 5, and the sections below that they made untrue were corrected in
+place. `CONTRACT.md` records the contract side (Amendments 3 to 5).
 
 Phase 4 (course outcomes, their mappings and coverage, the roster from a CSV file,
 configurable attainment, the marks register, CSV exports and printable reports;
@@ -16,7 +29,8 @@ screens and the projector receive, opens the Phase 3 part). Older endpoints
 are not listed here; `docs/ARCHITECTURE.md` says where they live.
 
 Written 19 November 2026 from the code in `server/src`. Phase 1 is committed
-(`05daf56`), Phase 2 (`27559ca`) and Phase 3 (`d162cc8`) too; Phase 4 is not. The examples are real responses,
+(`05daf56`), Phase 2 (`27559ca`), Phase 3 (`d162cc8`) and Phase 4 (`eedfd5e`) too;
+the owner's decisions and Phase 5 are not. The examples are real responses,
 captured from a server running on the in-process store with offline generation, with
 long arrays and long text shortened. Ids there are 24-character hex; on Supabase they
 are uuids.
@@ -869,11 +883,12 @@ at most 160 characters), `stimulus` and the kind's fields (`options`, `answerIdx
 `questionTypes.js`, and **the level still chooses the kind**: a kind from another
 level's set is a 400 with the editor's explanation. A `poll` may sit at any level
 (its tag is positional). Created **active**, `model: null`, `sourceRef: null`,
-`createdBy` the account (null on the shared key), `source: 'fallback'` (see
+`createdBy` the account (null on the shared key), `source: 'teacher'` (since 19 Nov
+2026, `0022`; it was `'fallback'`, and questions written before then keep it; see
 `PRODUCT_DECISIONS.md`). 201:
 
 ```json
-{ "question": { "status": "active", "model": null, "sourceRef": null, "createdBy": null, "source": "fallback", "...": "..." },
+{ "question": { "status": "active", "model": null, "sourceRef": null, "createdBy": null, "source": "teacher", "...": "..." },
   "failedChecks": [ { "id": "all-none-of-the-above", "message": "option 3 (\"All of the above.\") refers to the other options. ..." } ] }
 ```
 
@@ -881,13 +896,16 @@ level's set is a 400 with the editor's explanation. A `poll` may sit at any leve
 
 Body (optional): `{ "direction": "harder" }` or `{ "direction": "easier" }`.
 
-- **No direction**: as before, a replacement at the same level, and the old question
-  is discarded (`CONTRACT.md` §4). The replacement is now a **draft**, so
-  regenerating an active question takes that slot out of rooms until the
-  replacement is approved. When it was active, the reply says so in `warnings`:
-  `["The question this replaces was in use, so it has left rooms now. Its
-  replacement is a draft, and joins them when you approve it."]`. No `warnings` key
-  otherwise.
+- **No direction**: a replacement at the same level, as a **draft**. Since 19 Nov
+  2026 (the owner's delegation), regenerating an **active** question leaves it
+  active and serving: the draft carries `replacesId` (the old question's id, `0022`),
+  and the reply adds `replaces` (the same id) and a `note` ("The question this
+  replaces stays in rooms until you approve its replacement. ..."). Approving the
+  draft by any route retires the old question (set discarded; the reply's
+  `retired`); rejecting it leaves the old one as it is. A draft or rejected question
+  being regenerated is discarded at once, as before, with no link. Before 19 Nov 2026
+  the old question was discarded at once and the reply carried `warnings` saying it
+  had left rooms; there is no `warnings` key now.
 - **`harder` / `easier`**: a new draft one level up or down, on the same topic, with
   the same `sourceRef` (looked up from the topic if the original has none). The
   original is not touched. Each level is asked through its default kind, so Create
@@ -1489,10 +1507,11 @@ room waits):
 **Never sent to a phone:** `rosterName`, the roster, attendance (a join that marks a
 student present says nothing), observations, picks, tallies, activities, insight
 actions, bands, cards, KPIs, the student card, the feed, the waiting room's "N / M
-present" and any `projector:*` event. **Still sent, an open issue:** the phone's
-`profile` is the teacher's grid row, so it carries `slowLearner` and an `integrity`
-summary, and `reason` sentences can name the below-40% band (`CONTRACT.md` sections 4
-and 5; "Known open issues" below).
+present" and any `projector:*` event. **Since 19 Nov 2026** (decision (a)) the
+phone's `profile` is no longer the teacher's grid row: it is `PhoneRow`, with no
+`slowLearner`, `integrity` or `reason`, and a neutral `next`; the `reason` of
+`server:question` and `server:result` is the phone's own sentence and never names a
+band (the captures above predate it; "The owner's decisions of 19 Nov 2026" below).
 
 ### What the projector receives
 
@@ -1692,7 +1711,7 @@ does.
 ```json
 { "student": { "id": "...", "rollNo": "21CS01", "active": false, "removedAt": "2026-11-19T..." },
   "removed": true,
-  "message": "Removed from the roster. Nothing they did is deleted: their answers in every room, their attendance and their records stay, and they can be put back on the roster (PATCH with { \"active\": true })." }
+  "message": "Removed from the roster. Nothing they did is deleted: their answers in every room, their attendance and their records stay, and they can be put back on the roster at any time." }
 ```
 
 The row stays with `removedAt` set (the first removal's date, if sent twice). Their
@@ -1746,8 +1765,10 @@ Read rule, with the same 404 as `/answers`. A room opened for no class answers 4
   were let in. A professor can add them with `POST /api/classes/:id/students`.
 - `summary`: "N / M present", where N counts present **and late** and M is the class
   size now.
-- `caveat`: decision 7's known gap, sent with the data so no screen can show "joined"
-  without it.
+- `caveat`: a typed roll number is not proof of identity, sent with the data so no
+  screen can show "joined" without it. Decision 7 (19 Nov 2026) keeps attendance this
+  way: a phone's sign-in links the room to the student's history, not to their
+  attendance.
 
 ### `POST /api/session/:code/attendance`
 
@@ -1792,9 +1813,10 @@ When a phone joins a room opened for a class (`student:join`, unchanged in shape
 roll number on the roster marks that student present with `source: "joined"`, unless
 the student already has a mark; a rejoin adds nothing. A roll number not on the
 roster joins exactly as before. The phone is told nothing of it. A failure to record
-the mark is logged and never stops the join. **Known gap (decision 7):** the roll
-number is typed, not proven, so a classmate's phone can mark someone present. Not
-solved here.
+the mark is logged and never stops the join. The roll number is typed, not proven,
+so a classmate's phone can mark someone present; decision 7 (19 Nov 2026) keeps it
+`joined`, with the caveat. A signed-in phone's token links the room profile to the
+student's account, not their attendance.
 
 ### `teacher:grid` and `GET /api/session/:code/grid` (changed for class rooms)
 
@@ -3118,7 +3140,7 @@ for 2,000 rows in one request; rows past the class's 500 are refused one by one.
   "removed": [ { "line": 3, "rollNo": "21CS02", "student": { "id": "2bea...", "rollNo": "21CS02", "name": "Bilal Khan", "active": false, "removedAt": "..." } } ],
   "ignoredColumns": ["Phone"],
   "note": "A roster keeps a roll number and a name only. Not read from the file: Phone.",
-  "restore": "Removed students are not restored by an import. To bring one back, restore them on the roster (PATCH /api/classes/:id/students/:studentId with { \"active\": true }).",
+  "restore": "Removed students are not restored by an import. To bring one back, restore them on the class's roster.",
   "message": "Nothing was changed: this is what importing the file would do.",
   "size": 1, "sizeAfter": 2,
   "class": { "...": "the class, as GET /api/classes/:id gives it" } }
@@ -3943,6 +3965,1058 @@ is on the professor's questions (`bySource`). 76 checks.
 
 ---
 
+## The owner's decisions of 19 Nov 2026: every changed endpoint and socket field
+
+Built from the decisions the owner delegated on 19 November 2026
+(`docs/PRODUCT_DECISIONS.md`), with one migration, `0022`. Exercised end to end by
+`server/scripts/decisions.mjs` (signed-in callers answered in-process, as
+`roster.mjs` does) and by `server/test/decisions.test.js`; the existing suites were
+updated where a decision changed what they assert (`bank.mjs`, `media.mjs`,
+`roster.mjs`, `modes.mjs`, `outcomes.mjs`, `acceptance4.mjs`). Not run against
+Supabase, Mongo or a real Supabase Auth token.
+
+| Where | What changed | Why |
+|---|---|---|
+| `student:join` (phone to server) | Takes an optional `token`: the signed-in student's access token. Verified as the student routes verify one; it links the room profile only for a student account of the room's owner with the roll number typed | Decision 7 |
+| `session:accepted` | `profile` is a `PhoneRow`. New `linked` (true when this phone's answers go into the signed-in student's history) and, when a token was sent but could not link, `linkNote` (one sentence, whatever the reason) | Decisions 7, (a) |
+| `server:question` | `reason` is the phone's own sentence (`reasonForPhone`): "This question is at Apply, the level you are working at.", "No questions are left for you at Apply, so this one is at Understand.", or inside the band "This question is at Remember, to build a firm base before the levels above." Never the band | (a) |
+| `server:result`, `server:exhausted` | `profile` is a `PhoneRow`; `server:result`'s `reason` is `profile.next.why` | (a) |
+| `teacher:grid`, `GET /api/session/:code/grid` | Unchanged, except a class room's row for a student marked under 18: `integrity: null`. A failed roster read gives every row `integrity: null` for that push | Decision 8 |
+| `GET /api/session/:code/integrity/:rollNo` | For a student marked under 18: `summary: null`, `events: []`, `signalsOff: true`, a `message` | Decision 8 |
+| `GET /api/session/:code/export` | The signals cell is empty for a student marked under 18 | Decision 8 |
+| `DELETE /api/session/:code` | The archive keeps no signal of a student marked under 18 (`integrity: []` on their row) | Decision 8 |
+| `GET /api/analytics/:id/answers` (a student, themself) | Only rows a phone signed in as them sent (`accountVerified`). A professor's read is unchanged | Decision 7 |
+| `GET /api/analytics`, `GET /api/analytics/:id` (a student, themself) | Only rooms whose profile a signed-in phone linked to them, and only verified answers in the topics; no `banded` in the timeline; a `note` saying only rooms joined while signed in appear. Since the Phase 5 review fixes, inside a linked room too: the level tallies, counts, accuracy, timeline and Bloom tally come from the history entries of her own verified answers only (below). A professor's read is unchanged | Decisions 7, (a) |
+| `GET /api/dashboard` (a student) | The same rule; no `banded`, top level or per room; a `note` | Decisions 7, (a) |
+| `GET /api/session/archives/:id` | A class room's archive is served without the integrity signals of a student the class's roster marks under 18 **now** (also one marked after the room was deleted, and an archive written before `0022`). The stored archive is not rewritten. A failed read of the roster is an error, never an archive that might show a minor's signals | Decision 8 (Phase 5 review) |
+| `GET /api/classes` | `canCreate` (false for an HOD) | UI ask |
+| Roster rows everywhere (`GET /api/classes/:id`, adds, the import, the student edit) | `under18` (boolean) | Decision 8 |
+| `POST /api/classes/:id/students` | A row may carry `under18` (true / false, or yes / no text); anything else refuses the row. `under18Note` when any row added is marked | Decision 8 |
+| `POST /api/classes/:id/students/import` | Reads an optional under-18 column (`Under 18`, `under18`, `minor`, `below 18`) as yes or no; `read.columns.under18` names it or is null; each `wouldAdd` row carries `under18`; `under18` (a sentence) when the file marks a student already on the roster who is not marked; `under18Note` when the file has the column; the `restore` sentence no longer names a path | Decision 8; UI ask |
+| `PATCH /api/classes/:id/students/:studentId` | Takes `under18` (boolean; 400 otherwise), owner only; `under18Note` in the reply. "Send name, rollNo, active or under18 to change." | Decision 8 |
+| `DELETE /api/classes/:id/students/:studentId` | The `message` no longer names a verb or a body | UI ask |
+| `projector:state` | `roomMode`: `devices`, `teacher-led` or `mixed` (beside `mode`, what the screen shows); on the whitelist | UI ask |
+| `GET /api/session/:code/insights` (Teacher-led) | `cardsNote` no longer names a field | UI ask |
+| `GET /api/attainment/presets` | `note` no longer names a path | UI ask |
+| `POST /api/bank/:contentId/questions` | `source: 'teacher'` | `CONTRACT.md` §6 rule 5, amended |
+| `POST /api/bank/question/:id/regenerate` | On an active question: `question.replacesId`, `replaces`, `note`; the old question stays active. No `warnings`. Since the Phase 5 review fixes, a plain regenerate of a replacement draft that was never approved (a draft, or one rejected) passes its link on: the new draft carries the same `replacesId`, `replaces` and `note`, so approving it still retires the active question | Phase 2 default settled |
+| `POST /api/bank/question/:id/approve`, `PATCH /api/bank/question/:id` (`status: active`) | `retired`: the id of the question the approved draft replaced, now discarded | Phase 2 default settled |
+| `POST /api/bank/:contentId/approve-all`, `POST /api/bank/bulk` (`restore`) | `retired`: a list of those ids (always on approve-all; on bulk only when there are any) | Phase 2 default settled |
+| The question document | `replacesId` (null unless a regenerated draft of an active question) | Phase 2 default settled |
+| `checks` on a question | `slide-only-reference` passes with a passage attached too; its message says a picture or a passage | Phase 2 default settled |
+| Attainment reports and the register | `best`: a reviewed attempt always beats a provisional machine mark at the same question; the methodology and `fields.attempts` say so. The `offlineTemplate` source's label and description say it holds professor-written questions from before 19 Nov 2026; the sheets' column is renamed to match | UI ask; teacher source |
+| Boot | The probe checks `0016` to `0022`; logs `[store] WARNING: ... apply supabase/migrations/<file> ... Until it is applied, ...` for `0019` to `0021`; stops using Supabase, naming the file, for `0022` | UI ask (deploy safety) |
+
+### `PhoneRow`
+
+What a phone is told about itself, in every `session:accepted`, `server:result` and
+`server:exhausted` (`CONTRACT.md` sections 4 and 5, Amendment 3). Captured
+(19 Nov 2026, in-process store, shared key) from a student's fourth `server:result`
+in a room, four answers, all wrong:
+
+```json
+{ "rollNo": "P1", "name": "Pia", "workingLevel": "understand",
+  "levels": { "remember": { "seen": 0, "correct": 0 }, "understand": { "seen": 4, "correct": 0 }, "...": "all six" },
+  "total": { "seen": 4, "correct": 0 }, "answered": 4, "online": true,
+  "counted": { "seen": 4, "correct": 0 }, "withdrawn": 0, "mastered": [], "masteryGoal": 0.8,
+  "next": { "levels": ["remember", "understand"],
+            "why": "From your 4 answers so far, your next questions are at Remember and Understand, to build a firm base before the levels above.",
+            "answers": 4 } }
+```
+
+`next.why` outside the band, by case: "Your first questions are at Understand."
+(`answers: 0`); "Your last 3 answers at Understand were mostly right, so your next
+questions are at Apply."; "Your last 3 answers at Analyse were mostly wrong, so your
+next questions step back to Apply."; "Your next questions are at Apply. You have 1
+answer there so far, and your level can change once you have 3."; "Your next questions
+are at Understand, from your last 4 answers there."; at the top, "Your last 4 answers
+at Create were mostly right. Create is the highest level, so your next questions stay
+there."; in a room that does not adapt, "This room keeps every student at Apply, so
+your next questions are at Apply." The teacher's `GridRow` keeps `slowLearner`,
+`integrity` and `reason` exactly as before.
+
+Since Phase 5's honest indicators (Amendment 4) the row also carries `masteryBasis`
+(per level answered at: answers, right, mastered, provisional and a sentence with no
+percentage) and `next.provisional`. For the student above: `"masteryBasis": [{ "level":
+"understand", "answers": 4, "correct": 0, "mastered": false, "provisional": false,
+"sentence": "0 of 4 right at Understand: not yet at this room's goal." }]` and
+`"provisional": false` (the band rests on all 4 answers). See "Phase 5: honest
+indicators".
+
+### `session:accepted`: `linked` and `linkNote`
+
+```json
+{ "profile": { "...": "PhoneRow" }, "session": { "...": "unchanged" }, "bankCount": 10, "supports": {},
+  "linked": false,
+  "linkNote": "This room is not linked to your account, so your answers here will not appear in your history. Check that you are signed in and typed your own roll number." }
+```
+
+`linkNote` only when the phone sent a `token` that could not link: expired or not a
+token, an account that is not a student, another student's, a student of another
+professor, or a roll number other than the account's. A phone that sends no token
+gets `linked: false` and no note; a phone whose token links gets `linked: true`. The
+join itself never fails on a token.
+
+### The under-18 mark on the roster
+
+```json
+{ "student": { "id": "...", "rollNo": "M01", "name": "Meera", "active": true, "addedAt": "...", "removedAt": null, "under18": true },
+  "under18Note": "Integrity signals are neither recorded nor shown for a student marked under 18, in any room opened for this class. The mark is a yes or no; no date of birth is kept. This is a working default, not legal advice: a lawyer must confirm it before any college signs or before 13 May 2027." }
+```
+
+Integrity signals in the class's rooms: none of the browser's reports, too-fast,
+second-socket or level-jump is recorded for the student (checked when a signal is
+about to be recorded), and none already recorded is shown (grid `integrity: null`,
+the trail's `signalsOff`, the CSV's empty cell, the archive's `integrity: []`, and
+since the Phase 5 review an archive served by `GET /api/session/archives/:id` read
+against the roster as it stands). A room opened without a class has no roster, so the
+mark does not reach it.
+
+The roster read of a class (`GET /api/classes/:id`) carries each student's `under18`
+but **not** `under18Note`: the sentence comes only in the reply to a write that sets
+the mark (an add, the import, the student edit). A screen opened fresh, or an HOD's,
+does not get it from the server yet (the UI session asked for it; not built).
+
+### A student's own history, inside a linked room (the decision 7 fix)
+
+A sign-in links a room profile, but the profile is the room's record of a roll number:
+a phone that typed it before her sign-in, or a classmate's phone after, answered into
+the same history and tallies. Since the Phase 5 review fixes, a student reading
+themself (`GET /api/dashboard`, `GET /api/analytics`, `GET /api/analytics/:id`) is
+shown, inside each linked room, only the history entries whose answer is one of her
+own verified final rows in that room (`verifiedView` and `verifiedKeys` in
+`services/evidence.js`). Level tallies, counts, accuracy, the timeline, the Bloom
+tally and the history trail are all counted from those entries; a redemption pairing
+with an entry that is not hers is left off. When any entry in the room is not hers,
+the room's working level (and `workingLevel` / `currentLevel` derived from it) is
+`null`, since other answers helped set it. A profile whose entries are all hers comes
+back unchanged. The professor's view is unchanged. The `note` now reads:
+
+> "Only rooms you joined while signed in on your phone appear here, and in them only
+> the answers that phone sent. A roll number typed without signing in is not proof
+> that it was you, so those answers, and a room level they helped set, stay with your
+> professor."
+
+Tested by `decisions.mjs` (a classmate typing her roll number after her sign-in, and a
+guest before her first sign-in) and `test/decisions.test.js`; with accounts answered
+in-process, never a real Supabase Auth token.
+
+## Phase 5: every new and changed endpoint and socket event
+
+Uncommitted, server and database only (`0023`, `0024`; the honest indicators need no
+migration). Three parts, each detailed in its own section below, and the review fixes
+of 19 November 2026, which changed some payloads and sentences (marked "review" here,
+detailed under "What the review fixes changed"). Exercised end to end on a real server
+over HTTP and Socket.io, on the in-process store, with signed-in callers answered
+in-process as `roster.mjs` does: `classquestion.mjs`, `misconceptions.mjs`,
+`honesty.mjs`, `keysafety.mjs` (the review fixes) and, for the decision 7 fix,
+`decisions.mjs`; unit-tested in `test/classQuestions.test.js`,
+`test/misconceptions.test.js`, `test/honesty.test.js` and `test/decisions.test.js`.
+Nothing was run against Supabase, Mongo, a real Auth token or a model.
+
+**New routes.** Every one is staff-only (`requireTeacher`): a phone has no
+credential and reaches none. Another professor's room, class or question gets the
+same 404 as one that does not exist, word for word; an HOD reads under the read rule
+and gets 403 on every write; no credentials, 401.
+
+| Route | Who | What | Section |
+|---|---|---|---|
+| `GET /api/session/:code/class-questions` | read rule | Every class question of the room, oldest first, each as it stands; which one is running | Class questions |
+| `POST /api/session/:code/class-questions` | the room's owner | `{ questionId }`: put one approved `mcq`, `truefalse`, `poll` or `multi` question to every phone | Class questions |
+| `GET /api/session/:code/class-questions/:id` | read rule | One class question as it stands | Class questions |
+| `POST /api/session/:code/class-questions/:id/pause` | owner | Round 1 closes; the class discusses | Class questions |
+| `POST /api/session/:code/class-questions/:id/revote` | owner | Round 2 opens | Class questions |
+| `POST /api/session/:code/class-questions/:id/close` | owner | `{ reveal? }`: it ends, its key revealed or not | Class questions |
+| `GET /api/session/:code/confidence` | read rule | The room's confidence taps, counted by tap and by right and wrong | Class questions |
+| `GET /api/bank/question/:id/misconceptions` | read rule | A question's labels, which options take one, `canEdit`, and its counts in every room on its chapter the caller may read | Misconceptions |
+| `PATCH /api/bank/question/:id/misconceptions` | the question's owner | Add, edit, confirm or clear labels, all or nothing | Misconceptions |
+| `GET /api/session/:code/misconceptions` | read rule | One room's misconception counts | Misconceptions |
+| `GET /api/classes/:id/misconceptions?from=&to=&rooms=` | read rule | One class's counts over its rooms, filtered as the attainment reports are | Misconceptions |
+
+**Changed routes.** Every change is a field added or a sentence reworded; nothing was
+removed or renamed.
+
+| Route | What changed | Section |
+|---|---|---|
+| `GET /api/session/:code/students/:roll/card` | `confidence: { counts, choices, note }`; `lastAnswers` leaves out class votes; `band.provisional`, `serving.basis`, `serving.moves`, `mastery`, `languages`, each last answer's `language` | Class questions; honest indicators |
+| `GET /api/session/:code/answers`, a teacher's `GET /api/analytics/:id/answers`, the attainment student report | Each item: `classQuestion: { id, round }` or null, and `language`. No item carries a confidence tap | Class questions; honest indicators |
+| `GET /api/session/:code/topics`, `/items`, `GET /api/bank/:contentId/stats`, class analytics' hardest questions, a student's own history | Leave every class vote out | Class questions |
+| `GET /api/session/:code/items`, `GET /api/bank/:contentId/stats` | Each item: `provenance`, `levelCheck`, `basis`, `languages`; each option: `misconception` (`label`, `provenance`, `provenanceLabel`, `confirmed`) or null; the report: `translation` | Misconceptions; honest indicators |
+| `GET /api/bank/:contentId` and every bank reply carrying a question | Each question: `misconceptions`, `provenance`, `levelCheck`; the bank: `misconceptionLabels` | Misconceptions; honest indicators |
+| `PATCH /api/bank/question/:id`, `POST /api/bank/bulk` (`bloom`) | `misconceptionsRemoved`, `misconceptionsNote` when an edit removes a label | Misconceptions |
+| `POST /api/bank/question/:id/split`, `POST /api/bank/merge` | Each new question keeps the labels of the wrong options it carries over | Misconceptions |
+| `POST /api/generate`, `POST /api/bank/question/:id/regenerate` | A model item may carry proposed labels, saved as `provenance: 'ai'` | Misconceptions |
+| `GET /api/session/:code/grid` | Each row: `levelBasis`, `masteryBasis` | Honest indicators |
+| `GET /api/session/:code/insights` | Each student: `bandBasis`, `levelBasis`; each KPI: `sentence`; each card: `basis` | Honest indicators |
+| `GET /api/classes/:id/analytics` | `sentence` beside room accuracy, levels, level bands and the histogram; hardest items as items above | Honest indicators |
+| `GET /api/dashboard`, `GET /api/analytics/:id` (staff) | Room rows' `answers`, `students`; an HOD's professor rows' `answers` | Honest indicators |
+| `GET /api/classes/:id/outcomes/coverage` | Leaves out round 2; round 1 counts as any answer | Class questions |
+| Attainment reports, the register, their CSV and HTML | A fourth evidence type, `revote`, never counted. **Review:** a round 1 vote from a student who had already answered the question on their own in that room is set aside, and their own answer counts | Class questions; review |
+| `PATCH /api/session/:code/projector`, `GET /api/session/:code/projector` | `question` may be `{ classQuestionId }`; `showCounts`; `screen.showCounts`. **Review:** the refusals reworded | Class questions; review |
+
+**Socket events.**
+
+| Event | Direction | What | Section |
+|---|---|---|---|
+| `student:answer` | phone to server | Optional `confidence`: `sure`, `think_so`, `guessing` | Class questions |
+| `student:vote` | phone to server | **New.** A vote in the running class question | Class questions |
+| `session:accepted` | to a phone | `confidence: [{ id, label }]`; the `PhoneRow` gains `masteryBasis`, `next.provisional` | Class questions; honest indicators |
+| `server:question` | to a phone | `question.provenance: { by, checked, text }`; also sent after a class question closes, to a phone whose own question was the class question | Class questions; honest indicators |
+| `server:result`, `server:exhausted` | to a phone | The `PhoneRow` gains `masteryBasis`, `next.provisional` | Honest indicators |
+| `class:question` | to a phone | **New.** The class question as it stands, with `question.provenance`. **Review:** `question._id` is the class question's id, never the bank question's | Class questions; review |
+| `class:vote` | to a phone | **New.** Its own vote back, never right or wrong. **Review:** four reasons a vote is kept and not counted, each with its own sentence | Class questions; review |
+| `class:closed` | to a phone | **New.** It ended; the key only when revealed | Class questions |
+| `session:paused` | to a phone | **Review:** also sent to a phone that votes while the room is paused | Review |
+| `teacher:class-question` | to teacher screens | **New.** The staff body of a class question. **Review:** `phones.answeredAlone`, `answeredAloneNote` | Class questions; review |
+| `teacher:grid`, `teacher:insights` | to teacher screens | As their routes above | Honest indicators |
+| `projector:state` | to the projector | `question.source: 'class'` with its counts when chosen (through the whitelist) | Class questions |
+
+No label, misconception count, level check, level move, translation warning, staff
+provenance or confidence count is sent to a phone or the projector.
+
+### What the review fixes changed (19 Nov 2026)
+
+The review of Phase 5 found that a class question's key could reach a phone before
+the reveal by four routes, that a signed-in student's vote could be displaced by a
+phone typing her roll number, and that a student's own dashboard still read a whole
+linked profile. Each fix below is checked by `keysafety.mjs` (41 checks) or
+`decisions.mjs`, and by unit tests. The examples are real: captured on 19 November
+2026 from a server on the in-process store, four phones, the shared teacher key,
+nothing off the machine (ids shortened).
+
+**1. A phone's class question is named by the class question.** `class:question`
+used to carry the bank question's id, which a phone could send back as its own answer,
+here or in another open room on the same chapter, and be marked on, key and all.
+Now `question._id` is the class question's own id, the one `student:vote` sends:
+
+```json
+{ "id": "d45ce3dc…", "seq": 1, "round": 1, "state": "open", "voting": true,
+  "question": { "_id": "d45ce3dc…", "text": "Which layer routes packets between networks?", "bloom": "understand",
+                "topic": "Layers", "kind": "mcq", "source": "llm", "options": ["Link", "Transport", "Network", "Physical"],
+                "provenance": { "by": "ai", "checked": false, "text": "Written with AI help and chosen by your professor." } },
+  "options": [{ "key": "A", "label": "Link" }, { "key": "B", "label": "Transport" }, { "key": "C", "label": "Network" }, { "key": "D", "label": "Physical" }],
+  "confidence": [{ "id": "sure", "label": "Sure" }, { "id": "think_so", "label": "Think so" }, { "id": "guessing", "label": "Guessing" }],
+  "mine": null,
+  "message": "Your professor has put this question to the whole class. Choose your answer and say how sure you are." }
+```
+
+**2. Nothing kept with a class question is ever answered back as an answer.** A vote's
+key sent again through `student:answer` is filed under `<key>@<roll number>` like
+another student's row; the answer is kept with the class question (`final` false,
+never counted), and the phone is moved on to a question of its own with no
+`server:result`. A resend of an answer a phone sent to the class question as its own
+(before the reveal, after a close without one, or kept late) likewise only moves the
+phone on: it is never told `score`, `correct`, `detail` or `solution`. Each answer is
+still stored once (never discarded). Before the fix a vote's key returned
+`{ correct: false, score: 0, solution: 2 }` and moved the ladder; a resend leaked the
+mark one option at a time.
+
+A phone that had answered the question **on its own before** it was put to the class
+was shown its answer then, as every final answer is; a later resend of that same
+question is answered from its own earlier result, as any double tap is. The professor
+is told how many such phones there are (5 below).
+
+**3. Why a vote is kept and not counted.** In this order, the first that applies:
+
+| `detail` on the stored row | When | `class:vote.message` |
+|---|---|---|
+| `Sent for a round that had not opened: kept, not counted.` | round 2 sent while round 1 is open, or after a close with no re-vote (**new**; was called late) | "That round of voting had not opened, so this vote was kept but not counted." |
+| `Arrived after this round closed: kept, not counted.` | its round has closed | "Voting had closed for that round, so this vote was kept but not counted." |
+| `Sent while the room was paused: kept, not counted.` | the professor paused the **room** (**new**) | "Your professor has paused the room, so this vote was kept but not counted. Vote again when the room carries on." |
+| `Sent from a phone not signed in as the student, after their signed-in phone voted in this round: kept, not counted.` | decision 7 (**new**, below) | "A phone signed in as this roll number's student has voted in this round, so this vote, from a phone that is not signed in, was kept but not counted." |
+
+A paused-room vote is followed by `session:paused` `{ "code": "3B8EVS" }`, as an
+answer sent then would be; the phone's earlier vote stays in force. Captured:
+
+```json
+{ "id": "d45ce3dc…", "round": 2, "counted": false, "mine": { "response": 1, "confidence": "sure" },
+  "message": "That round of voting had not opened, so this vote was kept but not counted." }
+{ "id": "d45ce3dc…", "round": 1, "counted": false, "mine": { "response": 0, "confidence": null },
+  "message": "Your professor has paused the room, so this vote was kept but not counted. Vote again when the room carries on." }
+```
+
+The last row's sentence is quoted from the code (`services/classQuestions.js`), not
+captured: it needs a signed-in phone (`keysafety.mjs` checks it).
+
+**4. A typed roll number never takes a signed-in student's vote.** Under a roll
+number whose profile a signed-in phone linked (decision 7):
+- A phone not signed in as her is sent `mine` only from votes of phones not signed in
+  (never her vote or her tap), on join, reconnect and its own votes.
+- Its vote is counted only until her own phone votes in that round; after that it is
+  kept with the sentence above. Her vote stays in force.
+- A key her phone wrote, sent by such a phone, is filed under a scoped key and never
+  answered from her row.
+- A roll number no phone signed in to votes and changes its vote as before.
+
+**5. The professor is told who saw the key first, as a count.** The staff body of a
+class question (every route, and `teacher:class-question`) gains
+`phones.answeredAlone`: how many students in the room gave a final answer of their own
+to this question before it was put to the class (each was shown its key with their
+result; a poll has none). With one or more, a sentence:
+
+```json
+"phones": { "joined": 4, "online": 4, "answeredAlone": 1 },
+"answeredAloneNote": "One phone in this room answered this question on its own before you put it to the class, and was shown its answer then. Its vote is not counted in attainment; close the question if that matters to the discussion."
+```
+
+Attainment follows it: such a student's round 1 vote is set aside (`knewKey`), under
+either attempts rule, and their own answer counts instead. Their student report says
+"Not counted: a class question vote from a student who had already answered this
+question on their own in this room, and was shown its answer then. Their own answer
+counts instead." Every methodology paragraph now says so.
+
+**6. Refusals name no field.** The sentences a professor can be shown:
+
+| Route | Before | Now |
+|---|---|---|
+| `POST …/class-questions`, no or a malformed `questionId` | "questionId must be the id of an approved question of this room." | "Choose one of this room's approved questions to put to the class." |
+| `POST …/class-questions/:id/close`, `reveal` not true or false | "reveal must be true or false." | "Say whether to show the class the answer as you close it: yes or no." |
+| `PATCH …/projector`, two things named | "question names one of a questionId, a tallyId or a classQuestionId, not more." | "Choose one thing to show: a question of the room, a question asked aloud or a class question." |
+| `PATCH …/projector`, a class question of another room | "question.classQuestionId is not a class question of this room." | "That class question was not asked in this room: choose one that was." |
+| `PATCH …/projector`, a shape it cannot read | "question must be { questionId }, { tallyId }, { classQuestionId } or null." | "Choose what the question screen shows: a question of the room, a question asked aloud, a class question, or nothing." |
+
+Two older projector refusals (Phase 3) still name a field, untouched by the review:
+"question.questionId is not a question this room serves: pick one of its approved
+questions." and "question.tallyId is not a question asked aloud in this room."
+(`services/projector.js`; open, below).
+
+**7. Outside the class question.** The decision 7 fix to a student's own history
+("A student's own history, inside a linked room", above); a deleted room's archive
+served without an under-18 student's signals; and a regenerate of a never-approved
+replacement keeping its link (both in "The owner's decisions of 19 Nov 2026").
+
+## Phase 5: confidence taps and class questions (pause, discuss, re-vote)
+
+Uncommitted, server and database only (`0023`). Every phone, console and projector
+screen is the UI session's; what each must do is listed in "What the screens need"
+below. Exercised end to end by `server/scripts/classquestion.mjs` (eight phones over
+the socket, a teacher's screen, a projector, signed-in callers answered in-process as
+`roster.mjs` does) and unit-tested by `server/test/classQuestions.test.js`; nothing
+was run against Supabase or Mongo.
+
+### Every new and changed endpoint and socket event
+
+| Route or event | Who | | What |
+|---|---|---|---|
+| `GET /api/session/:code/class-questions` | staff, read rule | **new** | Every class question of the room, oldest first, each as it stands; which one is running |
+| `POST /api/session/:code/class-questions` | the room's owner | **new** | `{ questionId }`: put one approved question to every phone |
+| `GET /api/session/:code/class-questions/:id` | staff, read rule | **new** | One class question as it stands |
+| `POST /api/session/:code/class-questions/:id/pause` | the room's owner | **new** | Round 1 closes; the class discusses |
+| `POST /api/session/:code/class-questions/:id/revote` | the room's owner | **new** | Round 2 opens: every phone votes again |
+| `POST /api/session/:code/class-questions/:id/close` | the room's owner | **new** | `{ reveal? }`: it ends, its key revealed or not |
+| `GET /api/session/:code/confidence` | staff, read rule | **new** | The room's confidence taps, counted by tap and by right and wrong |
+| `GET /api/session/:code/students/:roll/card` | staff, read rule | changed | `confidence: { counts, choices, note }`; `lastAnswers` leaves out class votes |
+| `GET /api/session/:code/answers`, `GET /api/analytics/:id/answers` (a teacher's view) | staff | changed | Each item gains `classQuestion: { id, round }` for a vote, `null` otherwise. No item carries a confidence tap |
+| `GET /api/analytics/:id/answers` (a student's own), `GET /api/analytics/:id` topics, `GET /api/session/:code/topics`, `/items`, `GET /api/bank/:contentId/stats`, class analytics' hardest questions | | changed | Leave every class vote out: a vote is not a student's own work at a level |
+| `GET /api/classes/:id/outcomes/coverage` | | changed | Leaves out round 2 (never counted); round 1 counts as any answer |
+| `PATCH /api/session/:code/projector` | the room's owner | changed | `question` may be `{ classQuestionId }`; new `showCounts` (true or false); `revealed: true` with a class question on the screen is a 400 |
+| `GET /api/session/:code/projector` | staff | changed | `screen.showCounts`; `shows.question` for a class question (below); `rule` says what the wall shows of one |
+| attainment reports, the register, their CSV and HTML | staff | changed | A fourth evidence type, `revote` (below) |
+| `student:answer` | phone to server | changed | Optional `confidence`: `sure`, `think_so` or `guessing` |
+| `student:vote` | phone to server | **new** | A vote in the running class question |
+| `session:accepted` | to a phone | changed | `confidence: [{ id, label }]`, the three taps |
+| `class:question` | to a phone | **new** | The class question as it stands |
+| `class:vote` | to a phone | **new** | The phone's own vote, back |
+| `class:closed` | to a phone | **new** | It ended; back to the phone's own question |
+| `server:question` | to a phone | changed | Also sent after a class question closes, to a phone whose own question was the class question |
+| `teacher:class-question` | to teacher screens | **new** | The staff body of a class question, after every change and (at most once a second) after votes; at `teacher:watch` for a running one |
+
+### The confidence tap
+
+Every answer a phone sends may carry `confidence`: `"sure"`, `"think_so"` or
+`"guessing"`. It is optional; anything else, or nothing, is stored as no tap and the
+answer is taken as always. It is stored on the answer row (`answers.confidence`, in the
+spellings `0008` allows: `sure`, `think`, `guess`) and **read by nothing that marks or
+moves anything**: the score, `correct`, the ladder, the bands, the insights and
+attainment are the same with or without it (unit-tested and end to end). Staff see it
+as counts only, never beside an answer.
+
+`GET /api/session/:code/confidence`: over the room's final answers to the students'
+own questions (a class question counts its own, round by round).
+
+```json
+{
+  "room": { "code": "QN4R7K", "title": "Networks", "status": "open" },
+  "choices": [{ "id": "sure", "label": "Sure" }, { "id": "think_so", "label": "Think so" }, { "id": "guessing", "label": "Guessing" }],
+  "answers": 8,
+  "tapped": 4,
+  "counts": {
+    "sure":     { "answers": 2, "correct": 2, "wrong": 0, "ungraded": 0 },
+    "think_so": { "answers": 1, "correct": 1, "wrong": 0, "ungraded": 0 },
+    "guessing": { "answers": 1, "correct": 0, "wrong": 1, "ungraded": 0 },
+    "none":     { "answers": 4, "correct": 3, "wrong": 1, "ungraded": 0 }
+  },
+  "questions": [{ "questionId": "…", "text": "Which layer is number 3?", "level": "understand", "kind": "mcq", "answers": 2, "counts": { "…": "as above" } }],
+  "note": "How sure students said they were, counted beside whether the answer was right. It is information only: …"
+}
+```
+
+`ungraded` counts polls, which have no right answer. "Sure and wrong"
+(`counts.sure.wrong`) is the misconception signal. The student card's `confidence` is
+the same `counts` for one student in the room.
+
+### A class question
+
+The room's owner puts one approved question of the room to every phone. Only in a
+room where phones answer (Student devices or Mixed), while it is open, one at a time,
+and only a question whose options every phone can vote on: `mcq`, `truefalse`, `poll`
+or `multi`. A question asked to the class is never served to a phone on its own in that
+room again, from the moment it is asked (`docs/PRODUCT_DECISIONS.md`, "Phase 5"), and
+may not be asked to the class twice in one room.
+
+```
+        start               pause                 revote               close { reveal? }
+  ───────────────> open ───────────> paused ───────────────> revote ─────────────────> closed
+  (round 1 voting)    (round 1 closed: discussion)   (round 2 voting)
+                     └──────────────── close ───────────────────────────────────────> closed
+```
+
+A professor may close from any round. A vote is taken only in the round now open; a
+phone may change it until the round closes. Every vote is an `answers` row (below),
+never overwritten. No vote touches a profile: **a class question moves no level** (it
+was not chosen for any one student's level, and round 2 follows the class's
+discussion).
+
+`POST /api/session/:code/class-questions` `{ "questionId": "…" }`: **201** with the
+class question. Refused, with a sentence a professor can read:
+- **404** `That room was not found.` for a room that does not exist and, word for word,
+  for one the caller may not read (another professor's, another department's).
+- **403** for an HOD who may read the room (`… you can read it but not change it.`).
+- **401** with no credentials (a phone has none).
+- **409**: the room is closed, waiting or paused; it is Teacher-led ("no phone answers
+  in it … Ask it aloud and count the hands instead."); another class question is
+  running ("Close it first."); the question was already asked to the class here.
+- **400**: `questionId` is missing or not an id; the question is not one this room may
+  serve (another chapter, outside the room's set, not approved); its kind has no
+  options to vote on (`… This question is "Match the pairs", so serve it to phones one
+  at a time or ask it aloud instead.`).
+
+`POST …/:id/pause` (from `open`), `…/revote` (from `paused`), `…/close` (from `open`,
+`paused` or `revote`; body `{ "reveal": true }` to reveal the key, false when left
+out): **200** with the class question. 409 with a sentence from any other state
+(`Voting on this question is already paused.`, `Pause the first vote before opening the
+re-vote, so the class can discuss it.`, `That class question is already closed.`); 400
+for `reveal` that is not true or false, and for a reveal on a poll (`A poll has no
+right answer to reveal. Close it without revealing.`); the same 404 for a class
+question of another room. When a round closes, every vote already under way is waited
+for before anyone is told, so the counts are the round's whole.
+
+Closing the **room** closes its running class question, unrevealed. A room's own pause
+leaves it as it is, and resuming the room sends it to the phones again.
+
+#### The class question as staff get it
+
+The body of every route above and of `teacher:class-question` (from the 8-phone run,
+at the close):
+
+```json
+{
+  "id": "…", "seq": 1, "questionId": "…",
+  "state": "closed", "round": 2, "voting": false, "revealed": true,
+  "startedAt": "…", "startedBy": "…", "pausedAt": "…", "revoteAt": "…", "closedAt": "…", "closedBy": "…",
+  "question": {
+    "text": "Which layer routes packets between networks?", "kind": "mcq", "kindLabel": "Choose one",
+    "level": "remember", "levelLabel": "Remember", "topic": "Layers", "source": "teacher",
+    "options": [{ "key": "A", "label": "Link" }, { "key": "B", "label": "Transport" }, { "key": "C", "label": "Network" }, { "key": "D", "label": "Physical" }],
+    "correct": ["C"], "stimulus": null
+  },
+  "phones": { "joined": 9, "online": 8, "answeredAlone": 0 },
+  "rounds": [
+    {
+      "round": 1, "open": false, "voted": 7, "changedVotes": 1, "notCounted": 1,
+      "distribution": { "options": [{ "key": "A", "label": "Link", "votes": 2 }, { "key": "B", "label": "Transport", "votes": 1 }, { "key": "C", "label": "Network", "votes": 3 }, { "key": "D", "label": "Physical", "votes": 1 }], "unreadable": 0 },
+      "right": { "students": 3, "of": 7, "share": 0.4285 },
+      "confidence": { "sure": { "answers": 3, "correct": 2, "wrong": 1, "ungraded": 0 }, "think_so": { "…": "…" }, "guessing": { "…": "…" }, "none": { "…": "…" } }
+    },
+    { "round": 2, "open": false, "voted": 7, "changedVotes": 0, "notCounted": 1, "distribution": { "…": "…" }, "right": { "students": 4, "of": 7, "share": 0.5714 }, "confidence": { "…": "…" } }
+  ],
+  "changes": {
+    "both": 6, "onlyBefore": 1, "onlyAfter": 1,
+    "wrongToRight": 2, "rightToWrong": 1, "rightToRight": 1, "wrongToSameWrong": 1, "wrongToOtherWrong": 1
+  },
+  "confidenceChoices": [{ "id": "sure", "label": "Sure" }, "…"],
+  "confidenceNote": "…",
+  "note": "Counts only: no student is named. A class question moves no student's level: …"
+}
+```
+
+- `question.correct` is the key as letters: staff always see it. `null` for a poll.
+- `rounds[]`: round 2 only once the re-vote has opened. **While a round is open,
+  `distribution`, `right` and `confidence` are `null`**: the professor sees how many
+  have voted (`voted`), not what, until the round closes. `voted` counts each
+  student's vote in force (their latest); `changedVotes` the earlier votes a phone
+  replaced; `notCounted` the votes that came after their round closed, and answers a
+  phone sent to the question as its own question afterwards (both kept, never
+  counted). `right` is `null` for a poll; `share` is rounded down to 4 decimals.
+  `distribution.options[].votes` counts a `multi` vote once on every option it ticked;
+  `unreadable` counts votes that picked nothing on the list.
+- `changes` once round 2 has closed, `null` before. Of the students who voted in both
+  rounds (`both`): wrong to right, right to wrong, right both times, wrong both times on
+  the same answer, wrong both times on a different one. For a poll, `kept` and
+  `changed` instead. `onlyBefore` and `onlyAfter` voted in one round only.
+- Counts only: no roll number or name anywhere in it.
+- `phones.answeredAlone` (since the review fixes): how many students answered this
+  question on their own in the room before it was put to the class, and so were shown
+  its key; with one or more, `answeredAloneNote` says so in a sentence ("What the
+  review fixes changed", 5). The `phones` above are from the run before the fixes;
+  the field is added, nothing else moved.
+
+`GET …/class-questions` answers `{ room, kinds, running, classQuestions: [ … ],
+confidenceChoices, note }`.
+
+#### What a phone is sent
+
+`class:question`, to every phone in the room at the start, the pause and the
+re-vote; to a phone that joins or reconnects while one runs (after its own
+`server:question`, which it parks); to every phone when the room is resumed:
+
+```json
+{
+  "id": "…", "seq": 1, "round": 1, "state": "open", "voting": true,
+  "question": { "_id": "…", "text": "Which layer routes packets between networks?", "bloom": "remember", "topic": "Layers", "kind": "mcq", "source": "teacher", "options": ["Link", "Transport", "Network", "Physical"] },
+  "options": [{ "key": "A", "label": "Link" }, { "key": "B", "label": "Transport" }, { "key": "C", "label": "Network" }, { "key": "D", "label": "Physical" }],
+  "confidence": [{ "id": "sure", "label": "Sure" }, { "id": "think_so", "label": "Think so" }, { "id": "guessing", "label": "Guessing" }],
+  "mine": null,
+  "message": "Your professor has put this question to the whole class. Choose your answer and say how sure you are."
+}
+```
+
+- `question` is built by `forStudent()`, as every phone's question is: never a key.
+  Since the review fixes `question._id` is the class question's id (the same as
+  `id`), never the bank question's. Every phone gets the same full list in the same order (the fewer-choices support is
+  not applied, so the class can discuss by letter); a true-or-false question has
+  `options` `A True` and `B False` and a response of `true` or `false`.
+- `state`: `open` (round 1, `voting` true), `paused` (`voting` false; "Talk it over with
+  the people around you."), `revote` (round 2, `voting` true).
+- `mine` is the phone's own vote in force in the current round,
+  `{ response, confidence }`, sent only when it joins or reconnects; `null` otherwise
+  (the phone keeps its own).
+
+`student:vote` (phone to server):
+
+```json
+{ "classQuestionId": "…", "round": 1, "response": 2, "confidence": "sure", "answerId": "v-7f3a9c21" }
+```
+
+`response` is what `student:answer` would send for the kind: an option's position, a
+list of positions for `multi`, `true` or `false`. `round` is the round the phone is
+voting in; `confidence` optional; `answerId` the idempotency key, as for an answer
+(a resend is answered from the stored row). A missing `response` or a malformed
+`classQuestionId` is ignored; a class question that is not this room's is ignored.
+
+`class:vote` (to the phone that voted):
+
+```json
+{ "id": "…", "round": 1, "counted": true, "mine": { "response": 2, "confidence": "sure" }, "message": "Vote saved. You can change it until your professor closes the vote." }
+```
+
+Never whether it was right. `counted: false`, with its own `message`, for a vote whose
+round has closed, one for a round not yet open, one sent while the room is paused
+(then `session:paused` follows), and one from a phone not signed in after the
+signed-in student's phone voted in that round (decision 7); the last three since the
+review fixes ("What the review fixes changed", 3). A resend of a vote the phone has
+since replaced says "You changed this vote afterwards: your latest vote is the one
+that counts."
+
+`class:closed`, to every phone, when it closes:
+
+```json
+{ "id": "…", "revealed": true, "answer": 2, "correct": ["C"], "message": "Voting is closed, and the answer is shown. Back to your own questions now." }
+```
+
+`answer` (in a response's own terms) and `correct` (letters) only when revealed; both
+`null` otherwise. The phone goes back to its own question. A phone whose own question
+was the class question (it is never served on its own in the room again) is sent a new
+`server:question` straight after.
+
+An answer a phone sends with `student:answer` to the class question as its own
+question, after it was put to the class, is kept with the class question (`final`
+false, never counted) and the phone is sent a question of its own. Since the review
+fixes it is told nothing about its mark, then or on a resend, and a vote's key sent
+through `student:answer` is never answered from the vote ("What the review fixes
+changed", 2).
+
+#### What the projector shows
+
+`PATCH /api/session/:code/projector` `{ "question": { "classQuestionId": "…" }, "showCounts": true }`
+puts a class question on the question screen. `projector:state.question` then is:
+
+```json
+{
+  "source": "class", "text": "…", "kind": "mcq",
+  "options": [{ "key": "A", "label": "Link" }, "…"], "stimulus": null,
+  "revealed": false, "correct": null,
+  "round": 1, "state": "paused", "voted": 7,
+  "counts": {
+    "minVotes": 5,
+    "before": { "voted": 7, "options": [{ "key": "A", "votes": 2 }, { "key": "B", "votes": 1 }, { "key": "C", "votes": 3 }, { "key": "D", "votes": 1 }], "correct": null, "confidence": { "sure": 3, "think_so": 1, "guessing": 2, "none": 1 } },
+    "after": null,
+    "changes": null
+  }
+}
+```
+
+- `voted`: how many have voted in the current round (a count).
+- `counts` only when `showCounts` is true (off by default, and after a restart); each
+  round's counts only once that round has closed and **5 or more** voted in it.
+  Confidence taps alone, never with right and wrong.
+- `correct` (the key), `counts.*.correct` (the share right) and `counts.changes` only
+  once the key is revealed (a poll's changes, which tell no key, once round 2 has
+  closed). `revealed: true` from the PATCH is a 400 for a class question.
+- Never a name. Every payload still goes through `toProjector()`, whose whitelist
+  gained exactly these keys.
+
+### In the evidence
+
+A vote is an `answers` row: `classQuestionId`, `round` (1, or 2 for the re-vote),
+`attempt` (the n-th vote this phone sent in that round), `final` (true for the vote in
+force; false for one the phone replaced, one that came late or early, one sent while
+the room was paused, one from a phone not signed in after the signed-in student's
+voted, and an answer sent as a phone's own question), `correct` and `score` marked
+from the question as asked (null for a poll, `ungraded` true), `reviewStatus:
+"auto"`, `confidence`, `detail` saying why a vote was not counted. Both new fields are
+null on every other answer and written once (`0012`'s guard).
+
+**Attainment.** Round 1 is a digital answer like any other: counted when its question
+is mapped to an outcome, by the formula's attempts rule (under `final`, it replaces an
+earlier answer to the same question in the same room). Round 2 is a fourth evidence
+type, `revote` ("Re-votes after discussion"): in `evidenceTypes`, in every `marks`
+breakdown (`counted: false`), in `answers.byType`, and in the CSV and HTML as its own
+columns marked not counted. No formula may count it (`evidence.revote` is a 400). A
+changed or late vote is set aside. Since the review fixes, so is a round 1 vote from a
+student who had already given a final answer of their own to that question in the
+same room (`knewKey` in `chooseAnswers`): their own answer counts, under either
+attempts rule. Every methodology paragraph now says how class questions and
+confidence are treated.
+
+**Archive.** A deleted room's archive gains `classQuestions` (each with its state,
+`revealed`, times and the question as asked) and keeps every vote among its answers,
+changed and late ones included.
+
+### What the screens need
+
+**The phone (`/join`).**
+- An optional Sure / Think so / Guessing tap on every answer (`session:accepted`
+  `confidence` gives the ids and labels), sent as `confidence` with `student:answer`.
+  It must never be shown as affecting the mark.
+- On `class:question` with `voting` true: park the question on screen (and any result
+  screen), show the class question's options lettered A, B, …, the three taps, and send
+  `student:vote`; allow changing the vote. With `voting` false (`paused`): show the
+  message and the phone's own vote; no voting. On round 2: vote again. Show `mine` on
+  reconnect.
+- On `class:vote`: show what was sent; never right or wrong. `counted: false`: show the
+  message (four reasons, each its own sentence). Vote with the class question's `id`
+  (since the review fixes it is also `question._id`); never send it as an answer.
+- On `class:closed`: show the answer only when `revealed`, then return to the parked
+  screen. A `server:question` straight after replaces the parked question.
+- On `session:resumed`, expect `class:question` again if one is running. Its `mine`
+  is `null` there (it goes to the whole room at once, not phone by phone), so a phone
+  keeps the vote it last sent and shows that. A phone that joins or reloads while the
+  room is paused is sent no class question then (the join stops at `session:paused`),
+  and on resume gets it with `mine: null`: it cannot show the vote the server holds
+  until it reconnects again. Sending each phone its own `mine` on resume was asked
+  for and is not built.
+
+**The professor's console (Live).**
+- Pick an approved `mcq`, `truefalse`, `poll` or `multi` question of the room and put it
+  to the class; show the refusal sentences.
+- While round 1 is open: votes so far of phones joined (`rounds[0].voted`,
+  `phones.joined`). Pause; then the distribution, the share right and the confidence
+  taps by right and wrong (counts, no names). Open the re-vote; close, with or without
+  revealing the key.
+- After the close: before and after side by side (distribution, share right,
+  confidence) and the changes (wrong to right, …), as counts.
+- When `answeredAloneNote` is present, show it beside the class question as soon as
+  it starts: those phones were shown the key on their own earlier.
+- Choose whether the wall shows a class question and its counts (`showCounts`).
+- Listen to `teacher:class-question`.
+- The room's confidence counts (`GET /confidence`) and the student card's
+  `confidence.counts`, as counts only. Never a "confidently wrong" label on a student.
+- Attainment screens: the fourth evidence type, `revote`, shown and marked never
+  counted.
+- An HOD sees all of it read-only (every write is a 403).
+
+**The projector.** Render `question.source: "class"`: the options, `voted`, and when
+present `counts.before` / `counts.after` per option and per tap, `correct` and
+`counts.changes` once revealed; say why a round's counts are missing when fewer than
+`minVotes` voted.
+
+## Phase 5: misconception labels on wrong options
+
+Uncommitted, server and database only (`0024`). Every console screen is the UI
+session's; what it must do is in "What the screens need" below. The phone and the
+projector change in nothing. Exercised end to end by `server/scripts/misconceptions.mjs`
+(three rooms of one class, thirteen phone sittings over the socket, a projector, a class
+question, signed-in staff answered in-process as `roster.mjs` does) and unit-tested by
+`server/test/misconceptions.test.js`; nothing was run against Supabase or Mongo, and the
+model was never called (its proposed labels are tested by parsing a fixture response).
+
+A label names the misunderstanding a student who picks one wrong option most likely
+holds: "Thinks TCP is connectionless". The reports then say "12 students chose the
+option linked to the misunderstanding ...".
+
+### Every new and changed endpoint
+
+| Route or event | Who | | What |
+|---|---|---|---|
+| `GET /api/bank/question/:id/misconceptions` | staff, read rule | **new** | The question's labels, which of its options can take one, whether this caller may edit them, and how many students chose each labelled option in every room on its chapter the caller may read |
+| `PATCH /api/bank/question/:id/misconceptions` | the question's owner | **new** | Add, edit, confirm or clear labels |
+| `GET /api/session/:code/misconceptions` | staff, read rule | **new** | One room's counts |
+| `GET /api/classes/:id/misconceptions?from=&to=&rooms=` | staff, read rule | **new** | One class's counts over its rooms, narrowed as the attainment reports are |
+| `GET /api/bank/:contentId` | staff | changed | Every question carries `misconceptions` (the stored list, below); new `misconceptionLabels: { kinds: ['mcq','multi','truefalse'], maxLength: 120, note }` |
+| `PATCH /api/bank/question/:id` | the owner | changed | An edit that rewords or removes a labelled option, or makes it a right answer, removes that label with the edit: `misconceptionsRemoved: [{ option, label, provenance }]` and `misconceptionsNote` (a sentence), present only then |
+| `POST /api/bank/bulk` with `action: 'bloom'` | the owner | changed | Likewise for a retag that changes the kind: `misconceptionsRemoved: [{ id, labels: [...] }]`, `misconceptionsNote` |
+| `POST /api/bank/question/:id/split`, `POST /api/bank/merge` | the owner | changed | Each new question keeps the labels of the wrong options it carries over, by their words |
+| `POST /api/generate`, `POST /api/bank/question/:id/regenerate` | the owner | changed | A model item may carry labels the model proposed, saved as `provenance: 'ai'`. The offline templates propose none |
+| `GET /api/session/:code/items`, `GET /api/bank/:contentId/stats` | staff | changed | Every `distribution.rows[].options[]` gains `misconception`: `{ label, provenance, provenanceLabel }` for an option of a labelled question that has one, else `null` |
+| every socket event | | unchanged | No label is sent to a phone, a teacher screen or the projector |
+
+### The stored list (`questions.misconceptions`)
+
+```js
+[{ option: 'TCP',                     // the option's TEXT ("True" or "False" on a true/false)
+   label: 'Thinks TCP is connectionless',
+   provenance: 'ai' | 'professor',    // 'ai': the generator proposed it; 'professor': written, edited or confirmed
+   addedAt: ISO, changedAt: ISO,      // first written; last reworded
+   by: accountId | null }]            // who last wrote or confirmed it; null for the generator and the shared key
+```
+
+Keyed by the option's words, not its place, so reordering options keeps every label on
+its option. Only on a wrong option of an `mcq`, `multi` or `truefalse` question, at
+most one per option. Empty for every question without labels.
+
+### `PATCH /api/bank/question/:id/misconceptions`
+
+```js
+{ misconceptions: [
+    { option: 0, label: 'Thinks TCP is connectionless' }, // add, or replace (the professor's now)
+    { option: 2, label: null },                           // clear ('' too)
+    { option: 3, confirm: true },                         // confirm the AI draft there, as it stands
+] }
+```
+
+- `option` is the option's index in the question as it stands (true/false: 0 True,
+  1 False). Options not named keep what they have.
+- A label written or confirmed by the professor is `provenance: 'professor'`. Writing
+  the same words again is a confirmation, not an edit. An edit keeps `addedAt` and moves
+  `changedAt`.
+- **All or nothing**: one refused change refuses the request, and nothing is written.
+  400, each with a sentence that names the option by its number from 1: a right
+  answer ("Option 2 ("UDP") is a right answer: ..."), a poll ("A poll has no wrong
+  answer, ..."), another kind, an option the question does not have, one named twice, a
+  change that says nothing to do, an empty, non-text or over-120-character label, a
+  label holding an email address, a web address, a handle or a phone number, or a
+  confirmation where there is no label.
+- **Who**: the question's owner. An HOD gets 403; another professor, and an id that
+  names nothing, the same 404 word for word ("That question was not found."); no
+  credentials, 401.
+- **The approval gate is untouched.** Only the labels are written: an approved question
+  stays approved, a draft stays a draft, the rule checks are not re-run. Approving a
+  question does not confirm its labels.
+
+**Response** (and `GET`'s top half):
+
+```js
+{ question: { _id, text, kind, kindLabel, bloom, topic, status, options: [String] },
+  labelled: Boolean,              // whether this kind takes labels at all
+  wrongOptions: [Number],         // the indices a label may sit on
+  misconceptions: [{ optionIdx, option, label, provenance, provenanceLabel /* 'AI draft' | "Professor's label" */,
+                     addedAt, changedAt }],
+  canEdit: Boolean, maxLength: 120, note: String,
+  changed: [{ optionIdx, action: 'added' | 'edited' | 'confirmed' | 'cleared' }] }  // PATCH only
+```
+
+`GET` adds `rooms` (the chapter's rooms the caller may read) and `report`, the same
+shape as the room report below, for this question only, where a student is a roll
+number **in a room** (a chapter's rooms may be different classes, which can share a
+roll number).
+
+### The reports
+
+`GET /api/session/:code/misconceptions` lists every labelled question answered in the
+room and every labelled question of its set; a student is a roll number.
+`GET /api/classes/:id/misconceptions` lists every labelled question answered in the
+class's rooms the caller may read (`?from=&to=` as days, `?rooms=` as codes, exactly as
+the attainment reports; a code not of the class is a 400); a student is a roll number
+pooled across the rooms, so one who chose an option in two rooms is one student and two
+answers. Both add `room` or `class`, `window` and `rooms` to:
+
+```js
+{ counted: { questions, labels, aiDrafts, answers },
+  questions: [{
+    questionId, text, kind, kindLabel, bloom, topic, status,
+    answers,              // counted answers to it
+    students,             // distinct students who answered it
+    otherWording,         // of those, given to another wording of the options (or another kind)
+    otherWordingNote?,    // a sentence, when otherWording > 0
+    options: [{
+      optionIdx, option, label, provenance, provenanceLabel, addedAt, changedAt,
+      students,           // distinct students who chose this option in their counted answer
+      answers,            // counted answers that chose it
+      beforeLabel,        // of those, given before the label was added
+      beforeChange,       // given after it was added but before it was last reworded
+      sentence,           // '12 students chose the option linked to the misunderstanding "X".'
+                          // + ' (an AI draft label, not yet confirmed by the professor)' for an AI draft
+      note,               // 'Label added after these answers.' | 'Label added after 4 of these 12 answers.'
+                          // | 'Label reworded after 3 of these answers.' | null
+    }] }],
+  top: [{ questionId, text, optionIdx, option, label, provenance, students, sentence }],  // at most 5, most students first
+  method: String, privacy: String }
+```
+
+- **Counted answer**: each student's final answer to the question in a room: a retried
+  attempt is not counted, a poll never has a label, and a class question's votes are
+  left out (as the item report leaves them out).
+- **Which label**: the question's current label for the option the student chose,
+  matched by the option's words in the question as that student saw it (the answer's
+  snapshot), so an answer given before the options were reordered still lands on the
+  right option, and one given before the label existed counts under it with a note. An
+  answer to an option reworded since matches no label (`otherWording` counts it).
+- A choose-all answer counts every labelled option the student ticked.
+- Questions come in ladder order, then topic and text; options in the question's own
+  order; `top` orders misunderstandings, never students. Counts only: no student is
+  named, and no list is ever ordered by a student's score.
+
+### What the screens need
+
+**The professor's console.**
+- **Question bank, on an `mcq`, `multi` or `truefalse` question** (`misconceptionLabels`
+  on the bank says which kinds): beside each wrong option (never the key), a short
+  optional "misconception" box, at most 120 characters, saved with `PATCH
+  …/misconceptions`. Show `provenanceLabel` beside each label: an "AI draft" label gets a
+  Confirm action (`{ option, confirm: true }`) and reads as a draft until confirmed or
+  rewritten; a Clear action sends `label: null`. Show the 400's sentence beside the box.
+  Never offer it on a poll. Saving a label must not look like an edit that needs
+  re-approval: the question's status does not change. An HOD sees the labels read-only
+  (`canEdit` false).
+- **After an edit or a retag**: when the reply has `misconceptionsRemoved`, show
+  `misconceptionsNote` and list the removed labels, so the professor can add them again.
+- **Room and class reports**: a "Misconceptions" panel listing `top` and, per question,
+  each labelled option's `sentence` and `note`, with AI drafts visibly marked;
+  `otherWordingNote` where present. The class panel takes the same date and room filters
+  as attainment. Counts only, never names.
+- **Item report** (`/items`, bank `/stats`): show `misconception.label` under the option
+  it belongs to, with "AI draft" where `provenance` is `ai`.
+
+**The phone and the projector.** Nothing. Neither is ever sent a label.
+
+## Phase 5: honest indicators
+
+Uncommitted, server only. No migration: a level move is kept inside the history entry
+(`profiles.history`, jsonb since `0000`), and `answers.language` exists since `0008`.
+Every console and phone screen is the UI session's; what each must do is in "What the
+screens need" below. Exercised end to end by `server/scripts/honesty.mjs` (three phones
+over the socket, one signed in, a teacher screen, signed-in staff answered in-process as
+`roster.mjs` does, a question-set room serving one question of each kind of row, a
+second room with fixture answers in English and Hindi, and a class question) and
+unit-tested by `server/test/honesty.test.js`. Nothing was run against Supabase or Mongo.
+
+The directive's words: show AI draft labels, the reasons for mastery movements, the
+number of responses behind an estimate, uncertain classifications and
+translation-related difficulty warnings; no stigmatising label on a student's screen,
+no coins, leaderboards or streaks. The pure parts are `services/honesty.js`
+(provenance, the level check, count sentences, languages) and, beside the ladder,
+`levelEvidence`, `levelMoves` and `masteryBasis` in `services/mastery.js`.
+
+### Every changed endpoint and socket event
+
+Every change is a field added; nothing was removed or renamed.
+
+| Route or event | Who | What is added |
+|---|---|---|
+| `server:question` | phone | `question.provenance: { by, checked, text }` (below) |
+| `class:question` | phone | `question.provenance`, from the question as asked |
+| `session:accepted`, `server:result`, `server:exhausted` | phone | in `profile` (`PhoneRow`): `masteryBasis`, and `next.provisional` |
+| `GET /api/session/:code/grid`, `teacher:grid` | staff | each row: `levelBasis: { answers, provisional, sentence }`, `masteryBasis` |
+| `GET /api/bank/:contentId`, and every bank reply carrying `question` or `questions` (edit, split, merge, bulk, regenerate, approve, reject, approve-all, write-your-own) | staff | each question: `provenance` and `levelCheck` (below) |
+| `GET` and `PATCH /api/bank/question/:id/misconceptions`, the misconception reports | staff | each label: `confirmed` (a professor wrote or confirmed it); each report question: `provenance` |
+| `GET /api/session/:code/items`, `GET /api/bank/:contentId/stats` | staff | each item: `provenance`, `levelCheck` (null for a deleted question), `basis`, `languages`; each option's `misconception` gains `confirmed`; the report: `translation` |
+| `GET /api/classes/:id/analytics` | staff | `hardest.items[]` as items above; `sentence` on each room's `accuracy`, each of `levels` and `levelBands`, and the `histogram` |
+| `GET /api/session/:code/insights`, `teacher:insights` | staff | each student: `bandBasis`, `levelBasis`; each KPI: `sentence`; each card: `basis: { students, answers?, sentence }` |
+| `GET /api/session/:code/students/:roll/card` | staff | `band.provisional`; `serving.basis`, `serving.moves`; `mastery`; `languages`; each of `lastAnswers.items`: `language` |
+| `GET /api/session/:code/answers`, a teacher's `GET /api/analytics/:id/answers`, the attainment student report's answers (every read built on `answerItem`) | staff | `language` |
+| `GET /api/dashboard` (HOD, professor) | staff | each room row: `answers`, `students`; an HOD's professor rows: `answers` |
+| `GET /api/analytics/:id` (a professor, read by their HOD) | staff | each `timeline` room: `answers`, `students` |
+| `GET /api/dashboard` (a student, their own) | student | unchanged, except that a history entry never carries `move` |
+| class question view (`GET .../class-questions/:id`, `teacher:class-question`) | staff | `question.sourceLabel` |
+
+### Who wrote a question, and whether it was let in
+
+`provenance` on every bank question sent to staff, read from the row (`source`,
+`model`, `status`, `approvedAt`); nothing is stored:
+
+```js
+{ source: 'ai' | 'professor' | 'template' | 'professor-or-template',
+  sourceLabel: 'AI-generated' | 'Professor-written' | 'Offline template' | 'Professor-written or offline template',
+  model: String | null,                 // the model id; 'offline-template' for the offline generator
+  approval: 'draft' | 'approved' | 'written' | 'unrecorded' | 'discarded',
+  approvedAt, approvedBy,
+  aiDraft: Boolean,                     // an AI question waiting for approval
+  label: 'AI draft' | 'AI-generated, approved' | 'Professor-written' | 'Offline template draft' | ...,
+  sentence: 'Written by the language model (gemini-2.5-flash) from the professor\'s material. A draft: no room serves it until a professor approves it.' }
+```
+
+- `professor-or-template` is `source: 'fallback'` with no model: a professor's own
+  question from before 19 Nov 2026, or a template row older than `0013`. Nothing on the
+  row tells the two apart, so neither is claimed.
+- `written`: a professor wrote it, which is its approval. `unrecorded`: in use since
+  before approvals were recorded (`0013`). `discarded`: rejected, retired by its
+  replacement, or removed.
+
+The phone is told `question.provenance` only for a question its room serves, so never
+a draft (`servableFor` is the gate; the end-to-end run checks every question served):
+
+```js
+{ by: 'professor' | 'ai' | 'not-ai', checked: Boolean, text: String }
+```
+
+| The row | `text` |
+|---|---|
+| `teacher` | Written by your professor. |
+| `llm`, approved | Written with AI help and checked by your professor. |
+| `llm`, no approval recorded (older rows; and a class question, whose snapshot keeps no approval) | Written with AI help and chosen by your professor. |
+| `fallback` from the offline template, approved | Made without AI from your professor's material, and checked by your professor. |
+| `fallback` from the offline template, not | Made without AI from your professor's material. |
+| `fallback` with no model | Made without AI, by your professor or from their material. |
+
+Never "template", "fallback", "offline" or a model's name. `question.source` stays
+beside it, as before, for the phone already built; the new phone should show `text`.
+
+### An uncertain Bloom level (staff only)
+
+`levelCheck` on every bank question and every item:
+
+```js
+{ uncertain: Boolean,
+  reasons: [{ id: 'model-level-unconfirmed' | 'kind-does-not-fit-level', message }],
+  sentence: 'Level uncertain. ...' | null }
+```
+
+- `model-level-unconfirmed`: an AI question no professor has approved (a draft, or an
+  older one in use with no approval recorded). Approval is the confirmation.
+- `kind-does-not-fit-level`: its kind is not one that asks for its level
+  (`KINDS_FOR_LEVEL`): an older Choose one at Analyse, or a pick at Create (then the
+  Create check's own sentence). A poll is never uncertain: its level is where it sits.
+
+Never on a phone, the projector or a student's own read.
+
+### The count behind every estimate
+
+Each is a number and a sentence; "provisional" means the count is under the engine's
+own minimum, and a screen must not show it as a firm state.
+
+| Estimate | Where | Count and sentence | Provisional when |
+|---|---|---|---|
+| A student's level | grid `levelBasis`, insights `levelBasis`, card `serving.basis` | `levelEvidence`: "Based on the last 4 answers at Apply." / "Moved to Apply on the last 3 answers at Understand; 1 answer at Apply since." / "Based on 5 answers overall." (the below-40% band) / "No graded answers yet: Understand is the room's start level, not an estimate." | no ladder decision is behind it: fewer than 3 answers at the level, and no move into it |
+| A student's level, on the phone | `PhoneRow.next` | `answers`, `why` (as before), `provisional` (as staff) | the same |
+| A level's mastery | `masteryBasis` on the grid row, the phone row and the card | `{ level, answers, correct, mastered, provisional, sentence }`, levels answered at only: "3 of 4 right at Apply: at or above this room's goal, so Apply counts as mastered." No percentage and no band, so phone and staff are told the same words | fewer than 3 counted answers at the level |
+| An accuracy band | insights `bandBasis`, card `band.provisional` | `bandReason`'s sentence, as before | fewer than 3 graded answers (no band) |
+| Item difficulty | each item's `basis` | "Based on 3 answers: too few for a difficulty band (5 needed)." | fewer than 5 answers (no band) |
+| An insight | each card's `basis`, each KPI's `sentence` | "Based on 12 students with a graded answer, and 30 Apply answers in this room." | |
+| Class analytics | `sentence` beside each count | "Based on 40 graded answers from 12 students." | |
+| Dashboards | room rows' `answers`, `students` | numbers only | |
+| Attainment | unchanged | already carries `answers` on every figure and the `not-enough-evidence` state below `minAnswers` (checked, not changed) | |
+
+### Reasons for level moves
+
+Every move the ladder makes is kept on the history entry of the answer that caused it,
+as `move`, so it survives a reload (the profile's `reason` holds only the latest):
+
+```js
+move: { rule: 'promote' | 'demote' | 'band' | 'top' | 'floor',
+        from, to,            // levels; equal for a hold at the top or the floor
+        window: 5 | null,    // the ladder's window; null for the below-40% band, which reads every counted answer
+        share: 0.6667,       // right in that window, four places
+        answers: 3,          // answers in it
+        reason: '100% at Understand over the last 3 - promoted to Apply.' }   // the professor's sentence
+```
+
+`band` is the move into Understand when a student enters the below-40% band; `top` and
+`floor` are a hold where the rule said move and there was nowhere to go. A hold in the
+middle of the ladder keeps nothing (it is every other answer). A room with adapt off
+moves nobody and keeps nothing. Staff read them on the student card, newest first, as
+`serving.moves: [{ at, questionId, rule, from, to, window, share, answers, reason }]`.
+They are staff-only: the band's sentence names the band, so a student's own dashboard
+trail is sent without `move`. The phone is told why in its own words (`next.why`,
+decision (a)), as before.
+
+### Translation-related difficulty warnings
+
+`answers.language` is written by the live loop, as `'en'` on every answer and vote
+(`sockets/index.js`): no phone shows a translated question yet and no question records
+its language, so every question is taken as written in English (the generator writes
+English). The reads below are ready for the Hub's language switch (Phase 6); until
+then they find one language and say nothing.
+
+Each item's `languages`:
+
+```js
+{ original: 'en', originalName: 'English',
+  languages: [{ language: 'en', name: 'English', answers: 10, correct: 8, share: 0.8, original: true },
+              { language: 'hi', name: 'Hindi', answers: 5, correct: 2, share: 0.4, original: false }],
+  otherThanOriginal: 5,
+  note: '5 of 15 answers were given in a language other than the question\'s own (English).' | null,
+  warning: { languages: ['en', 'hi'], higher, lower, gap: 0.4,
+             text: 'Answers in Hindi were right 2 of 5 times (40%), against 8 of 10 (80%) in English: a gap of 40 points, above the 20-point threshold. Translation can change how hard a question is, so check the Hindi version before reading this as a gap in understanding.' } | null }
+```
+
+The warning needs two or more languages with at least 5 counted answers each, and the
+highest and lowest shares more than 20 percentage points apart, compared in whole
+numbers (80% against 60% is exactly 20: no warning). A default
+(`TRANSLATION_WARNING`, `docs/PRODUCT_DECISIONS.md`). The report's `translation` says
+the threshold and how many questions have a warning. The student card's `languages`
+says which of the student's answers were in another language
+(`"1 of this student's 1 answer was in Hindi, not the question's own English. ..."`),
+and each of its last answers carries `language`.
+
+### The labels audit
+
+Every string that can reach a phone or the projector was read: the phone's events
+(`session:accepted`, `session:rejected`, `server:question`, `server:result`,
+`server:exhausted`, `server:waiting`, `session:teacher-led`, `session:paused` and
+`resumed`, `session:closed`, `class:question`, `class:vote`, `class:closed`), the
+projector's (`projector:state`, `projector:refused`, `projector:closed`, all through
+`toProjector()`), `GET /api/session/:code`, and a student's own dashboard and
+analytics. None names a band, labels a student or ranks one. The professor's pin reason
+("Below-40% band: serving ...", `selector.js`) stays on the pin, server-side. No coins,
+points, badges, leaderboards or streaks exist anywhere on the server (searched).
+`honesty.mjs` checks every event three phones heard for band words, staff fields,
+ranking and gamification words. Staff-side orderings by score are listed under the
+open issues below.
+
+### What the screens need
+
+**The phone.**
+- Under each question, show `question.provenance.text` as it is (a quiet line, not a
+  warning), in place of the chip built from `question.source`, which today says "Not
+  written by AI" with a tip naming the offline template. Same on a class question.
+- Where the level is shown, when `profile.next.provisional` is true, say so gently
+  ("early days: your level settles after a few more answers"), next to `next.why`.
+- Where mastered levels are shown, show each level's `masteryBasis[].sentence` (no
+  percentages, no bands).
+
+**The professor's console.**
+- **Question bank**: a chip with `provenance.label` on every question ("AI draft" on an
+  unapproved AI question), `provenance.sentence` on hover or in the detail; when
+  `levelCheck.uncertain`, an "uncertain level" mark beside the Bloom tag with
+  `levelCheck.sentence`. Misconception labels: "AI draft" until `confirmed`.
+- **Grid and live view**: beside each student's level, `levelBasis.sentence`, and the
+  level shown as provisional (lighter, "provisional") when `levelBasis.provisional`;
+  mastered chips with their `masteryBasis` sentence. Never a firm band for
+  `bandBasis.provisional`.
+- **Insights**: each KPI's `sentence` under its tile, each card's `basis.sentence` under
+  its text.
+- **Student card**: `serving.basis.sentence` beside the level; a "Level changes" list
+  from `serving.moves` (time, from → to, the sentence); `mastery` per level;
+  `languages.note` when present, and a small language tag on each last answer whose
+  `language` is not `languages.original`.
+- **Item statistics** (room, bank, class analytics' hardest): `basis.sentence` beside
+  the difficulty, `provenance.label`, the uncertain-level mark, `languages.note`, and
+  `languages.warning.text` as a warning when present.
+- **Dashboards**: the count beside each room's accuracy.
+
+**The projector.** Nothing.
+
 ## Known open issues
 
 Phase 2, open (none is a failing test; each is a gap or a default awaiting the owner):
@@ -3955,11 +5029,9 @@ Phase 2, open (none is a failing test; each is a gap or a default awaiting the o
 - **The gate can show a draft's slides, not their text.** `sourceRef` names the
   slides the topic was read from. No route returns the passage the generator
   worked from, and the stored raw text keeps no slide boundaries.
-- **A professor's own question is stored as `source: 'fallback'`**, which the
-  console labels as template text. `model: null` is what says a person wrote it.
-  Labelling it truthfully needs a contract amendment (`PRODUCT_DECISIONS.md`). The
-  Phase 4 reports' question sources therefore label such answers "offline-template or
-  professor-written".
+- **A professor's own question is stored as `source: 'fallback'`. Decided and fixed,
+  19 Nov 2026:** it is stored as `'teacher'` (contract amended, `0022`). Questions
+  written before then keep `'fallback'`; the console still labels those template text.
 - **`GET /api/session/:code/answers` lists every option** of an mcq or multi
   answered on the fewer-choices support, while the response is a position in the
   shorter list; `shownOptions` in the snapshot says which were shown. The item
@@ -3982,9 +5054,13 @@ Phase 3, open:
   staff-only, but `CONTRACT.md` sections 4 and 5 fix the phone's `profile` as the one
   `GridRow` shape with `slowLearner` in it, so a phone-only row needs a contract
   amendment, an owner decision on what a phone is told about the band, and the phone
-  client's agreement. Not changed. Confirmed again by the Phase 3 review: a classmate
-  who types your roll number into a room you joined is sent your row, `slowLearner`
-  and integrity summary included (decision 7's gap).
+  client's agreement. Confirmed again by the Phase 3 review: a classmate who types
+  your roll number into a room you joined is sent your row, `slowLearner` and
+  integrity summary included (decision 7's gap). **Decided and fixed on the server,
+  19 Nov 2026** (decision (a), `CONTRACT.md` Amendment 3): the phone gets `PhoneRow`
+  and its own sentences. A classmate typing your roll number is still sent your
+  phone row (levels, totals, `next`), which a room without sign-in cannot prevent.
+  The phone client still has to stop showing the old fields (client work).
 - **Re-running every migration failed at 0005 once a room was `waiting`. Fixed.**
   0005 now lists `'waiting'` in `sessions_status_check` too, so a re-run never
   narrows the check below what 0018 allows. A widening only: no row can fail it. The
@@ -4066,6 +5142,64 @@ Phase 3, open:
   second teacher screen's view of the counts catch up only at the next grid push or
   read.
 
+Phase 5 (class questions, misconception labels and the review fixes), open:
+
+- **Closing a room while a class question runs can leave the phones uninformed.**
+  `POST /api/session/:code/close` closes the running class question inside the room's
+  status lock, after the status is written and before the phones and the projector
+  are told, with no catch around it. A store error there (reading or updating the
+  class question) answers 500 for a room already closed, and the phones never get
+  `session:closed` until the professor tries again. Reported by the Phase 5 review,
+  traced, not reproduced, **not fixed**. The fix is to catch and log that step so the
+  notifications always run.
+- **No phone's own `mine` after a room is resumed**, and a phone that joins while the
+  room is paused is sent no class question until the resume ("What the screens
+  need", the phone). Asked for by the UI session; not built.
+- **`under18Note` only after a write**: `GET /api/classes/:id` carries each
+  student's `under18` but not the sentence, so a fresh load or an HOD never sees it.
+  Asked for by the UI session; not built.
+- **`levelBands` on `GET /api/dashboard` and `GET /api/analytics` for a professor**
+  (decision 6: three bands first). Only class analytics and attainment carry both;
+  the client sums the six levels itself. Asked for by the UI session; not built.
+- **Splitting or merging a regenerated draft loses its link** (`replacesId`): the
+  question it was to replace keeps serving after the new drafts are approved, until it
+  is retired by hand. Recorded as a known gap under the owner's delegation, 19 Nov
+  2026.
+- **Supports follow a typed roll number.** A phone that does not sign in gets the
+  supports (accommodations) of the roster student whose roll number it typed, the
+  fewer-choices support included. Rooms are account-free (decision 7), so a token
+  cannot be required for them. Kept, and recorded as a known gap, 19 Nov 2026.
+- **Two projector refusals still name a field** (`question.questionId …`,
+  `question.tallyId …`, Phase 3; "What the review fixes changed", 6).
+- **One server process.** The class question's vote and state locks, its push
+  throttle and the projector's `showCounts` are in memory, as every room lock is. The
+  class question's state itself is stored and survives a restart.
+
+Phase 5 (honest indicators), open:
+
+- **No phone sends a language, and no question records one.** Every answer row is
+  `'en'`, so the translation warning and the card's language note can only fire on
+  rows written some other way (the unit tests and `honesty.mjs` use fixtures). The
+  Hub's language switch (Phase 6) must record the language a question was shown in.
+- **The phone still gets `question.source`** (`'fallback'` among its values) beside the
+  new `provenance`, for the phone already built; drop it once the phone shows
+  `provenance.text`. A student's own history (`redactForStudent`) shows its questions
+  through `forStudent` with `source` and no `provenance` (the stored snapshot keeps no
+  approval to word it from).
+- **Moves are kept from now on.** A history written before carries none: the student
+  card lists no moves for it, and `levelEvidence` reads a move off the last answers as
+  `nextStep` does.
+- **Staff lists ordered by score.** The insights' sort orders `band` and `lowest` (the
+  Support card's "Show them"), and a professor's analytics (`GET /api/analytics/:id`,
+  `students`, highest accuracy first) order students by accuracy. Both are staff-only and
+  were left as built; the directive's "students are listed in roll order, never ordered
+  by score" says otherwise. The room CSV still has a "Slow Learner" column (staff). The
+  owner's call.
+- **The HOD dashboard's professor accuracy** is a running pairwise average
+  (`(a + b) / 2` per room, `dashboard.js`), not a mean of the rooms, so it weighs the
+  latest room as half. Left as built; each room row and each professor row now carries
+  its count of answers.
+
 Phase 4 (course outcomes, mappings, the CSV import), open:
 
 - **A renamed topic is not followed.** Renaming a topic in a chapter's list leaves its
@@ -4084,7 +5218,8 @@ Phase 4 (course outcomes, mappings, the CSV import), open:
 - **The boot probe does not check `0019`'s tables**, on purpose: they are not needed
   by any room, so a server deployed before `0019` is applied keeps every room working
   and answers the outcome routes with a 500 naming the missing table, instead of
-  falling back to the in-process store.
+  falling back to the in-process store. **Since 19 Nov 2026 it checks them without
+  failing**: a missing table is a boot-log line naming `0019` and what fails.
 - **No route deletes an outcome that has evidence**, by design; nor a class.
 
 Phase 4 (attainment and the marks register), open:
@@ -4124,15 +5259,13 @@ Phase 4 (attainment and the marks register), open:
 - **The `aiProvisional` type is the keyword marker today**, and every report calls it a
   provisional machine mark, not AI. No model marks written answers; if one is added,
   its marks fall in the same type unless a column says which marker it was.
-- **A professor's own question counts as "offline-template or professor-written"**
-  in the question sources, since it is stored as `source: 'fallback'` (the Phase 2
-  issue above). `professorWritten` stays empty until a `teacher` value exists.
-- **`best` across rooms with provisional marks counted.** When a formula counts
-  `aiProvisional` as well as `humanReviewed`, `best` takes the highest mark among the
-  counted types across rooms, so a provisional mark in one room can be chosen over a
-  lower reviewed mark of the same question in another. Within one room the final
-  attempt, the one a professor can review, is the only written one that counts. Not
-  changed by the review fixes; the default example counts no provisional marks.
+- **A professor's own question written before 19 Nov 2026 counts as offline-template**
+  in the question sources, since it was stored as `source: 'fallback'`; the label says
+  so ("Offline-template questions (and professor-written ones from before 19 Nov
+  2026)"). Questions written since are `teacher` and count as `professorWritten`.
+- **`best` across rooms with provisional marks counted. Fixed 19 Nov 2026.** For the
+  same question, a professor-reviewed attempt now always beats a provisional machine
+  mark, whatever the scores and whichever room each came from; the methodology says so.
 
 Phase 4 (CSV exports and printable pages), open:
 

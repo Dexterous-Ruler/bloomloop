@@ -135,7 +135,7 @@ async function rowCounts(db) {
   const out = {};
   for (const table of ['contents', 'questions', 'sessions', 'profiles', 'accounts', 'invites', 'answers', 'room_archives',
     'answer_reviews', 'media', 'classes', 'class_students', 'attendance', ...RECORD_TABLES, 'projector_links',
-    ...OUTCOME_TABLES]) {
+    ...OUTCOME_TABLES, 'class_questions']) {
     const exists = await db.query(`select to_regclass('public.${table}') is not null as ok`);
     if (!exists.rows[0].ok) continue;
     out[table] = Number((await db.query(`select count(*)::int as n from public.${table}`)).rows[0].n);
@@ -149,16 +149,17 @@ async function rowCounts(db) {
 const COLUMNS_THE_SERVER_USES = {
   contents: ['id', 'title', 'kind', 'raw_text', 'topics', 'owner_id', 'created_at', 'topic_slides'],
   questions: ['id', 'content_id', 'topic', 'text', 'kind', 'options', 'answer_idx', 'bloom', 'status',
-    'source', 'payload', 'created_at', 'model', 'source_ref', 'checks', 'created_by', 'approved_by', 'approved_at'],
+    'source', 'payload', 'created_at', 'model', 'source_ref', 'checks', 'created_by', 'approved_by', 'approved_at',
+    'replaces_id', 'misconceptions'],
   sessions: ['id', 'code', 'content_id', 'title', 'status', 'owner_id', 'started_at', 'closed_at', 'paused_at',
     'mastery_goal', 'reattempts', 'redemption', 'question_ids', 'class_id', 'mode', 'adapt', 'start_level',
     'questions_per_student', 'time_per_question'],
   profiles: ['id', 'session_id', 'roll_no', 'name', 'levels', 'working_level', 'reason', 'history', 'served_id',
-    'served_at', 'served_why', 'served_tries', 'served_last', 'integrity', 'account_id', 'updated_at'],
+    'served_at', 'served_why', 'served_tries', 'served_last', 'integrity', 'account_id', 'updated_at', 'account_verified'],
   answers: ['id', 'session_id', 'answer_key', 'roll_no', 'account_id', 'question_id', 'content_id', 'topic', 'bloom',
     'kind', 'question_snapshot', 'response', 'attempt', 'final', 'correct', 'score', 'detail', 'ungraded',
     'language', 'question_source', 'served_at', 'answered_at', 'review_status', 'auto_correct', 'auto_score',
-    'auto_detail', 'reviewed_by', 'reviewed_at', 'review_note', 'confidence'],
+    'auto_detail', 'reviewed_by', 'reviewed_at', 'review_note', 'confidence', 'account_verified', 'class_question_id', 'round'],
   accounts: ['id', 'role', 'full_name', 'email', 'code', 'department', 'reports_to', 'roll_no', 'active',
     'created_at', 'updated_at', 'google_sub', 'google_email', 'google_linked_at', 'google_link_source',
     'accommodations'],
@@ -169,7 +170,7 @@ const COLUMNS_THE_SERVER_USES = {
     'reviewed_at'],
   media: ['id', 'owner_id', 'content_id', 'mime', 'bytes', 'sha256', 'data', 'alt', 'created_at'],
   classes: ['id', 'owner_id', 'course_name', 'section', 'term_label', 'created_at', 'updated_at'],
-  class_students: ['id', 'class_id', 'roll_no', 'name', 'added_at', 'removed_at'],
+  class_students: ['id', 'class_id', 'roll_no', 'name', 'added_at', 'removed_at', 'under_18'],
   attendance: ['id', 'session_id', 'class_student_id', 'status', 'source', 'marked_at', 'marked_by', 'roll_no'],
   observations: ['id', 'session_id', 'class_id', 'class_student_id', 'roll_no', 'day', 'kind', 'note', 'observed_by',
     'observed_at'],
@@ -187,6 +188,8 @@ const COLUMNS_THE_SERVER_USES = {
   outcome_topics: ['id', 'outcome_id', 'class_id', 'content_id', 'topic', 'weight', 'created_at'],
   question_outcome_overrides: ['id', 'class_id', 'question_id', 'outcome_ids', 'excluded', 'updated_at', 'updated_by'],
   attainment_configs: ['id', 'class_id', 'version', 'config', 'created_at', 'created_by'],
+  class_questions: ['id', 'session_id', 'seq', 'question_id', 'question_snapshot', 'state', 'revealed', 'started_at',
+    'started_by', 'paused_at', 'revote_at', 'closed_at', 'closed_by'],
 };
 
 // The course-outcome tables (0019), and the attainment formula's (0020).
@@ -197,7 +200,8 @@ const RECORD_TABLES = ['observations', 'wheel_rounds', 'wheel_picks', 'hand_tall
 
 // A roster holds a roll number and a name, and nothing that identifies a person
 // any further. A column added to it should be a decision, so this says so.
-const ROSTER_COLUMNS = ['id', 'class_id', 'roll_no', 'name', 'added_at', 'removed_at'];
+// under_18 was one: the owner's yes-or-no mark (decision 8, 0022), no date of birth.
+const ROSTER_COLUMNS = ['id', 'class_id', 'roll_no', 'name', 'added_at', 'removed_at', 'under_18'];
 
 // The fields outAccount() in services/accounts.js reads off an accounts_below() row.
 const OUT_ACCOUNT_FIELDS = ['id', 'role', 'full_name', 'email', 'code', 'department', 'reports_to', 'roll_no',
@@ -877,7 +881,7 @@ section('classes, rosters and attendance (0016)');
     const { rows } = await db.query(
       `select column_name from information_schema.columns where table_schema = 'public' and table_name = 'class_students'`);
     const extra = rows.map((r) => r.column_name).filter((c) => !ROSTER_COLUMNS.includes(c));
-    check('a roster row holds a roll number and a name and nothing else about the student', extra.length === 0,
+    check('a roster row holds a roll number, a name and the under-18 mark (0022), and nothing else about the student', extra.length === 0,
       `extra columns: ${extra.join(', ')}`);
   }
 
@@ -1552,6 +1556,242 @@ let rollMark = null;
   // Left in place: the re-run below runs over them.
 }
 
+section('the owner\'s decisions of 19 Nov 2026 (0022)');
+
+// Kept by the re-run section below, which checks each survives it.
+const kept22 = {};
+{
+  const shape = async (table, column) => (await db.query(`select data_type, is_nullable, column_default from information_schema.columns
+    where table_schema = 'public' and table_name = $1 and column_name = $2`, [table, column])).rows[0] ?? null;
+  for (const [table, column] of [['profiles', 'account_verified'], ['answers', 'account_verified'], ['class_students', 'under_18']]) {
+    const s = await shape(table, column);
+    check(`${table}.${column} is boolean, never null, default false`,
+      s?.data_type === 'boolean' && s?.is_nullable === 'NO' && s?.column_default === 'false', JSON.stringify(s));
+  }
+  const r = await shape('questions', 'replaces_id');
+  check('questions.replaces_id is a uuid, null allowed, with no default', r?.data_type === 'uuid' && r?.is_nullable === 'YES'
+    && r?.column_default === null, JSON.stringify(r));
+
+  // Decision 7. The profile saved above (saveProfile, linked to STUDENT) never
+  // said it was verified: a link without the flag reads as unverified.
+  {
+    const { rows } = await db.query('select account_id, account_verified from public.profiles where session_id = $1', [session?.id]);
+    check('a profile linked without saying so reads back unverified', rows[0]?.account_id === STUDENT && rows[0]?.account_verified === false);
+  }
+  await accepts('saveProfile\'s upsert with account_verified, as a signed-in phone\'s join sends it', () => db.query(
+    `insert into public.profiles (session_id, roll_no, account_id, account_verified, updated_at) values ($1, '07', $2, true, now())
+     on conflict (session_id, roll_no) do update set account_id = excluded.account_id, account_verified = excluded.account_verified,
+       updated_at = excluded.updated_at`, [session?.id, STUDENT]));
+  {
+    const { rows } = await db.query('select account_verified from public.profiles where session_id = $1', [session?.id]);
+    check('and it reads back verified', rows.length === 1 && rows[0].account_verified === true);
+  }
+  const [unflagged] = (await insertAnswer({ key: 'k-22a', questionId: match?.id })).rows;
+  check('an answer written without the flag is unverified', unflagged?.account_verified === false);
+  const [flagged] = (await accepts('an answer sent by a signed-in phone, as recordAnswer writes it', () => db.query(
+    `insert into public.answers (session_id, answer_key, roll_no, account_id, bloom, account_verified)
+     values ($1, 'k-22b', '07', $2, 'apply', true) returning *`, [session?.id, STUDENT]))) ?? [];
+  check('reads back verified', flagged?.account_verified === true);
+  await rejects('an answer\'s account_verified is written once (0012\'s guard covers it as it covers every new column)', () =>
+    db.query('update public.answers set account_verified = true where id = $1', [unflagged?.id]), { code: '23001' });
+  kept22.answer = flagged?.id;
+
+  // Decision 8.
+  const [cls] = (await db.query(
+    `insert into public.classes (owner_id, course_name, section) values ($1, 'Biology', 'FY-A') returning id`, [PROF])).rows;
+  const [plain] = (await accepts('a roster row as every add before 0022 sent it: no mark', () => db.query(
+    `insert into public.class_students (class_id, roll_no, name) values ($1, '24BIO01', 'Asha') returning *`, [cls.id]))) ?? [];
+  check('is not under 18', plain?.under_18 === false);
+  const [minor] = (await accepts('a roster row marked under 18, as addClassStudents sends it', () => db.query(
+    `insert into public.class_students (class_id, roll_no, name, under_18) values ($1, '24BIO02', 'Bilal', true) returning *`,
+    [cls.id]))) ?? [];
+  check('reads back under 18', minor?.under_18 === true);
+  await accepts('the mark is changed on its own, as updateClassStudent sends it', () =>
+    db.query('update public.class_students set under_18 = true where id = $1', [plain?.id]));
+  kept22.minor = minor?.id;
+
+  // A professor's own question, and a regenerated draft that replaces an active one.
+  const [own] = (await accepts('a question a professor wrote: source teacher', () =>
+    insertQuestion({ text: 'Own question', kind: 'mcq', options: ['a', 'b', 'c', 'd'], answerIdx: 1, bloom: 'remember', source: 'teacher' }))) ?? [];
+  await accepts('llm and fallback are still accepted', async () => {
+    await insertQuestion({ text: 'Model', kind: 'mcq', options: ['a', 'b', 'c', 'd'], answerIdx: 1, bloom: 'remember', source: 'llm' });
+    return insertQuestion({ text: 'Template', kind: 'mcq', options: ['a', 'b', 'c', 'd'], answerIdx: 1, bloom: 'remember', source: 'fallback' });
+  });
+  await rejects('a source outside llm, fallback and teacher', () =>
+    insertQuestion({ text: 'Bad', kind: 'mcq', options: ['a', 'b', 'c', 'd'], answerIdx: 1, bloom: 'remember', source: 'human' }),
+  { code: '23514', match: /questions_source_check/ });
+  {
+    // 0000's inline check is named questions_source_check by Postgres, which is
+    // the name 0022 drops: so one check, the wide one, not two side by side.
+    const { rows } = await db.query(`select conname, pg_get_constraintdef(oid) as def from pg_constraint
+      where conrelid = 'public.questions'::regclass and contype = 'c' and pg_get_constraintdef(oid) like '%(source = %'`);
+    check('one check limits questions.source: 0000\'s inline one was replaced, not left beside it',
+      rows.length === 1 && rows[0].conname === 'questions_source_check' && /'teacher'/.test(rows[0].def), JSON.stringify(rows));
+  }
+  const [draft] = (await accepts('a regenerated draft naming the active question it replaces', () => db.query(
+    `insert into public.questions (content_id, topic, text, kind, options, answer_idx, bloom, status, source, payload, model, replaces_id)
+     values ($1, 'Sets', 'Replacement', 'mcq', '["a","b","c","d"]', 2, 'remember', 'draft', 'llm', '{}', 'm', $2) returning *`,
+    [content?.id, own?.id]))) ?? [];
+  check('it reads back with the link', draft?.replaces_id === own?.id);
+  await rejects('a link to a question that does not exist', () => db.query(
+    `insert into public.questions (content_id, text, options, answer_idx, bloom, replaces_id) values ($1, 'x', '["a","b","c","d"]', 0, 'apply', $2)`,
+    [content?.id, randomUUID()]), { code: '23503' });
+  await db.query('delete from public.questions where id = $1', [own?.id]);
+  {
+    const { rows } = await db.query('select replaces_id, status from public.questions where id = $1', [draft?.id]);
+    check('deleting the replaced question (a replacing generate) keeps the draft and clears its link',
+      rows[0]?.status === 'draft' && rows[0]?.replaces_id === null);
+  }
+  const idx = await db.query(`select indexdef from pg_indexes where schemaname = 'public' and indexname = 'questions_replaces_idx'`);
+  check('drafts that replace a question have their own index', /WHERE \(replaces_id IS NOT NULL\)/.test(idx.rows[0]?.indexdef ?? ''),
+    idx.rows[0]?.indexdef ?? 'missing');
+  // Left in place: the re-run below runs over them.
+}
+
+section('class questions and their votes (0023)');
+
+// Kept by the re-run section below, which checks each survives it.
+const kept23 = {};
+{
+  const KEPT = { code: '23001' };
+  const [room] = (await db.query(
+    `insert into public.sessions (code, content_id, owner_id) values ('CQ0001', $1, $2) returning *`, [content?.id, PROF])).rows;
+  const snap = { id: match?.id, text: 'Pick one', kind: 'mcq', options: ['a', 'b', 'c', 'd'], answerIdx: 2, bloom: 'remember', topic: 'Sets' };
+  // The columns addClassQuestion() writes.
+  const ask = (seq, cols = {}) => db.query(
+    `insert into public.class_questions (session_id, seq, question_id, question_snapshot, state, started_at, started_by)
+     values ($1, $2, $3, $4, $5, now(), $6) returning *`,
+    [cols.sessionId ?? room.id, seq, cols.questionId ?? match?.id, JSON.stringify(snap), cols.state ?? 'open', PROF]);
+  const [cq] = (await accepts('a class question, as addClassQuestion writes it', () => ask(1))) ?? [];
+  check('it opens in round 1, not revealed, with no pause, re-vote or close yet',
+    cq?.state === 'open' && cq?.revealed === false && cq?.paused_at === null && cq?.revote_at === null && cq?.closed_at === null
+    && cq?.question_snapshot?.answerIdx === 2, JSON.stringify(cq));
+  await rejects('a second class question running in the same room', () => ask(2), { code: '23505', match: /class_questions_one_running/ });
+  await rejects('a state outside open, paused, revote and closed', () =>
+    db.query(`update public.class_questions set state = 'voting' where id = $1`, [cq?.id]), { code: '23514' });
+  await rejects('a key revealed before it closes', () =>
+    db.query('update public.class_questions set revealed = true where id = $1', [cq?.id]), { code: '23514', match: /class_questions_revealed_check/ });
+  await accepts('pausing round 1, as updateClassQuestion writes it', () =>
+    db.query(`update public.class_questions set state = 'paused', paused_at = now() where id = $1`, [cq?.id]));
+
+  // A vote is an answers row with the class question's id and its round.
+  const vote = (key, cols = {}) => db.query(
+    `insert into public.answers (session_id, answer_key, roll_no, question_id, content_id, topic, bloom, kind, question_snapshot,
+       response, attempt, final, correct, score, class_question_id, round, confidence)
+     values ($1, $2, '07', $3, $4, 'Sets', 'remember', 'mcq', $5, '2', $6, $7, true, 1, $8, $9, $10) returning *`,
+    [room.id, key, match?.id, content?.id, JSON.stringify(snap), cols.attempt ?? 1, cols.final ?? true,
+      'classQuestionId' in cols ? cols.classQuestionId : cq?.id, 'round' in cols ? cols.round : 1, cols.confidence ?? null]);
+  const [v1] = (await accepts('a round 1 vote with a confidence tap, as handleVote writes it', () => vote('cq-1', { confidence: 'sure' }))) ?? [];
+  check('it reads back with its class question and round', v1?.class_question_id === cq?.id && v1?.round === 1 && v1?.confidence === 'sure');
+  await accepts('a round 2 vote, the re-vote after discussion', () => vote('cq-2', { round: 2, confidence: 'guess' }));
+  await rejects('a round 3', () => vote('cq-3', { round: 3 }), { code: '23514', match: /answers_round_check/ });
+  await rejects('a round with no class question', () => vote('cq-4', { classQuestionId: null, round: 1 }), { code: '23514' });
+  await rejects('a class question with no round', () => vote('cq-5', { round: null }), { code: '23514' });
+  await accepts('a vote the phone changed, kept with final = false (the one update a vote takes)', () =>
+    db.query('update public.answers set final = false where id = $1', [v1?.id]));
+  await rejects('a vote\'s class question is written once (0012\'s guard)', () =>
+    db.query('update public.answers set class_question_id = null, round = null where id = $1', [v1?.id]), KEPT);
+  await rejects('a vote\'s round is written once', () => db.query('update public.answers set round = 2 where id = $1', [v1?.id]), KEPT);
+  // The taps are stored in 0008's own spellings (services/confidence.js): no check was widened.
+  await rejects('a confidence spelt the way the phone sends it, think_so, is not a stored value', () =>
+    vote('cq-6', { confidence: 'think_so' }), { code: '23514', match: /answers_confidence_check/ });
+  {
+    const { rows } = await db.query(`select pg_get_constraintdef(oid) as def from pg_constraint
+      where conrelid = 'public.answers'::regclass and conname = 'answers_confidence_check'`);
+    check('answers_confidence_check is 0008\'s, unchanged: sure, think and guess', rows.length === 1
+      && /'sure'/.test(rows[0].def) && /'think'/.test(rows[0].def) && /'guess'/.test(rows[0].def) && !/think_so/.test(rows[0].def),
+      JSON.stringify(rows));
+  }
+  {
+    const [plain] = (await insertAnswer({ key: 'k-23a', questionId: match?.id })).rows;
+    check('every other answer has no class question and no round', plain?.class_question_id === null && plain?.round === null);
+  }
+  await accepts('closing it with the key revealed', () => db.query(
+    `update public.class_questions set state = 'closed', closed_at = now(), closed_by = $2, revealed = true where id = $1`, [cq?.id, PROF]));
+  const [next] = (await accepts('another class question once the first is closed', () => ask(2))) ?? [];
+  await rejects('the same place twice in one room', () => ask(2, { state: 'closed' }), { code: '23505', match: /class_questions_session_seq_key/ });
+  await accepts('a closed class question in the same room, whatever else is running', () => ask(3, { state: 'closed' }));
+  await rejects('a class question in a room that does not exist', () => ask(1, { sessionId: randomUUID() }), { code: '23503' });
+  {
+    const idx = await db.query(`select indexname, indexdef from pg_indexes where schemaname = 'public'
+      and (tablename = 'class_questions' or indexname = 'answers_class_question_idx')`);
+    const by = Object.fromEntries(idx.rows.map((r) => [r.indexname, r.indexdef]));
+    check('one running class question per room is an index of its own, and a vote is found by its class question',
+      /UNIQUE INDEX class_questions_one_running .*WHERE \(state <> 'closed'::text\)/.test(by.class_questions_one_running ?? '')
+      && /WHERE \(class_question_id IS NOT NULL\)/.test(by.answers_class_question_idx ?? ''), JSON.stringify(by));
+  }
+  kept23.room = room.id;
+  kept23.next = next?.id;
+  {
+    // Deleting a room takes its class questions and their votes with it.
+    const [gone] = (await db.query(
+      `insert into public.sessions (code, content_id, owner_id) values ('CQ0002', $1, $2) returning id`, [content?.id, PROF])).rows;
+    const [c] = (await ask(1, { sessionId: gone.id })).rows;
+    await db.query(`insert into public.answers (session_id, answer_key, roll_no, bloom, class_question_id, round)
+      values ($1, 'cq-gone', '07', 'remember', $2, 1)`, [gone.id, c.id]);
+    await accepts('deleting a room that asked the class a question', () => db.query('delete from public.sessions where id = $1', [gone.id]));
+    const left = await db.query(`select (select count(*) from public.class_questions where session_id = $1)::int as cq,
+      (select count(*) from public.answers where session_id = $1)::int as votes`, [gone.id]);
+    check('its class questions and their votes go with it', left.rows[0].cq === 0 && left.rows[0].votes === 0, JSON.stringify(left.rows[0]));
+  }
+  // Left in place: the re-run below runs over them.
+}
+
+section('misconception labels on wrong options (0024)');
+
+// Kept by the re-run section below, which checks it survives it.
+const kept24 = {};
+{
+  const s = (await db.query(`select data_type, is_nullable, column_default from information_schema.columns
+    where table_schema = 'public' and table_name = 'questions' and column_name = 'misconceptions'`)).rows[0] ?? null;
+  check('questions.misconceptions is jsonb, never null, an empty list by default',
+    s?.data_type === 'jsonb' && s?.is_nullable === 'NO' && /^'\[\]'::jsonb$/.test(s?.column_default ?? ''), JSON.stringify(s));
+  const [plain] = (await accepts('a question saved as every save before 0024 sent it: no labels', () =>
+    insertQuestion({ text: 'Which is a set?', kind: 'mcq', options: ['a', 'b', 'c', 'd'], answerIdx: 2, bloom: 'remember' }))) ?? [];
+  check('has none', JSON.stringify(plain?.misconceptions) === '[]', JSON.stringify(plain?.misconceptions));
+  // As insertQuestions and updateQuestion write it (services/misconceptions.js).
+  const at = '2026-11-19T09:00:00.000Z';
+  const labels = [
+    { option: 'a', label: 'Thinks a set holds repeats', provenance: 'ai', addedAt: at, changedAt: at, by: null },
+    { option: 'b', label: 'Reads union as intersection', provenance: 'professor', addedAt: at, changedAt: at, by: PROF },
+  ];
+  const label = async (value) => {
+    const result = await db.query('update public.questions set misconceptions = $2 where id = $1 returning misconceptions',
+      [plain?.id, JSON.stringify(value)]);
+    // An update that matched no row would pass every refusal below for nothing.
+    if (result.rows.length !== 1) throw new Error('the question to label is missing');
+    return result;
+  };
+  const [saved] = (await accepts('labels from the generator and from the professor, as the label route writes them',
+    () => label(labels))) ?? [];
+  // jsonb keeps no key order, so each entry is compared key by key.
+  const sorted = (list) => JSON.stringify((list ?? []).map((l) => Object.fromEntries(Object.entries(l).sort())));
+  check('they read back as written', sorted(saved?.misconceptions) === sorted(labels), JSON.stringify(saved));
+  await accepts('a question\'s labels cleared', () => label([]));
+  await rejects('labels that are not a list', () => label({ option: 'a', label: 'x', provenance: 'ai' }),
+    { code: '23514', match: /questions_misconceptions_check/ });
+  await rejects('a label from neither the generator nor the professor', () =>
+    label([{ option: 'a', label: 'x', provenance: 'human' }]), { code: '23514', match: /questions_misconceptions_check/ });
+  await rejects('a label with no provenance', () => label([{ option: 'a', label: 'x' }]), { code: '23514' });
+  await rejects('a label with no option', () => label([{ label: 'x', provenance: 'ai' }]), { code: '23514' });
+  await rejects('a label that is not text', () => label([{ option: 'a', label: 7, provenance: 'ai' }]), { code: '23514' });
+  await rejects('an entry that is not an object', () => label(['Thinks a set holds repeats']), { code: '23514' });
+  const [inserted] = (await accepts('a generated question saved with its proposed labels, as insertQuestions sends it', () => db.query(
+    `insert into public.questions (content_id, topic, text, kind, options, answer_idx, bloom, status, source, payload, model, misconceptions)
+     values ($1, 'Sets', 'Which is a set?', 'mcq', '["a","b","c","d"]', 2, 'remember', 'draft', 'llm', '{}', 'm', $2) returning *`,
+    [content?.id, JSON.stringify(labels.slice(0, 1))]))) ?? [];
+  check('it reads back with them', inserted?.misconceptions?.[0]?.provenance === 'ai');
+  await accepts('the labels are changed on their own, leaving the question\'s status and payload alone', () =>
+    db.query('update public.questions set misconceptions = $2 where id = $1', [inserted?.id, JSON.stringify(labels)]));
+  {
+    const { rows } = await db.query('select status, payload, misconceptions from public.questions where id = $1', [inserted?.id]);
+    check('a draft stays a draft with its labels changed', rows[0]?.status === 'draft' && JSON.stringify(rows[0]?.payload) === '{}'
+      && rows[0]?.misconceptions?.length === 2, JSON.stringify(rows[0]));
+  }
+  kept24.question = inserted?.id;
+  // Left in place: the re-run below runs over it.
+}
+
 section('deleting');
 
 await rejects('deleting the sign-in of a professor who owns material and students', () =>
@@ -1594,6 +1834,33 @@ sameSnapshot('the re-run left the schema exactly as it was', shapeBeforeRerun, a
   await accepts('and a mark carrying a roll number is still accepted after it', () => db.query(
     `update public.attendance set roll_no = '21CS 01', source = 'teacher', status = 'late', marked_by = $3
       where session_id = $1 and class_student_id = $2`, [rollMark?.sessionId, rollMark?.studentId, PROF]));
+  // 0022: the values survive, and no earlier file's re-run (0000 creates
+  // questions with the narrower inline check, if the table is missing) narrows
+  // what 0022 allows.
+  const a22 = await db.query('select account_verified from public.answers where id = $1', [kept22.answer]);
+  const m22 = await db.query('select under_18 from public.class_students where id = $1', [kept22.minor]);
+  check('a verified answer and an under-18 mark survive the re-run (0022)',
+    a22.rows[0]?.account_verified === true && m22.rows[0]?.under_18 === true);
+  await accepts('and a professor\'s question (source teacher) is still accepted after it', () =>
+    insertQuestion({ text: 'Own, after the re-run', kind: 'mcq', options: ['a', 'b', 'c', 'd'], answerIdx: 0, bloom: 'remember', source: 'teacher' }));
+  // 0023: the class questions and their votes survive, and a round 2 vote is still accepted after it.
+  const c23 = await db.query('select state, revealed, seq from public.class_questions where session_id = $1 order by seq', [kept23.room]);
+  const v23 = await db.query('select round, final, confidence from public.answers where session_id = $1 and class_question_id is not null order by answer_key', [kept23.room]);
+  check('class questions and their votes survive the re-run (0023)',
+    JSON.stringify(c23.rows.map((r) => [r.seq, r.state, r.revealed])) === JSON.stringify([[1, 'closed', true], [2, 'open', false], [3, 'closed', false]])
+    && JSON.stringify(v23.rows.map((r) => [r.round, r.final, r.confidence])) === JSON.stringify([[1, false, 'sure'], [2, true, 'guess']]),
+    JSON.stringify({ c: c23.rows, v: v23.rows }));
+  await accepts('and a re-vote is still accepted after it', () => db.query(
+    `insert into public.answers (session_id, answer_key, roll_no, bloom, class_question_id, round) values ($1, 'cq-after', '08', 'remember', $2, 2)`,
+    [kept23.room, kept23.next]));
+  // 0024: the labels survive, and a label is still accepted after it.
+  const l24 = await db.query('select misconceptions from public.questions where id = $1', [kept24.question]);
+  check('a question\'s misconception labels survive the re-run (0024)',
+    JSON.stringify(l24.rows[0]?.misconceptions?.map((l) => [l.option, l.provenance])) === JSON.stringify([['a', 'ai'], ['b', 'professor']]),
+    JSON.stringify(l24.rows));
+  await accepts('and a label is still accepted after it', () => db.query(
+    `update public.questions set misconceptions = '[{"option": "c", "label": "after", "provenance": "professor"}]' where id = $1`,
+    [kept24.question]));
 }
 
 await db.close();
@@ -1692,10 +1959,126 @@ section('0021 on a database that already holds attendance');
   const ok = await applyAll(before21, files.filter((f) => f.name >= '0021'), 'over existing marks');
   const { rows } = await before21.query('select status, source, roll_no from public.attendance');
   check('0021 applies over existing marks, changing no row: each reads back with no roll number',
-    ok && JSON.stringify(counts) === JSON.stringify(await rowCounts(before21))
+    // A table a later file creates (class_questions, 0023) is no row changed.
+    ok && JSON.stringify(counts) === JSON.stringify(
+      Object.fromEntries(Object.entries(await rowCounts(before21)).filter(([t]) => t in counts)))
     && rows.length === 1 && rows[0].status === 'present' && rows[0].source === 'joined' && rows[0].roll_no === null,
     JSON.stringify(rows));
   await before21.close();
+}
+
+// ------------------------------- 0022 over links, rosters and questions --
+
+section('0022 on a database that already holds links, a roster and a professor\'s question');
+
+{
+  const before22 = await freshDatabase();
+  await applyAll(before22, files.filter((f) => f.name < '0022'), 'up to 0021');
+  const [H, P, S] = [randomUUID(), randomUUID(), randomUUID()];
+  await before22.query('insert into auth.users (id) values ($1), ($2), ($3)', [H, P, S]);
+  const add = (id, role, code, reportsTo, rollNo) => before22.query(
+    `insert into public.accounts (id, role, code, department, reports_to, roll_no) values ($1, $2, $3, 'CSE', $4, $5)`,
+    [id, role, code, reportsTo, rollNo]);
+  await add(H, 'hod', 'BL-HD0022', null, null);
+  await add(P, 'professor', 'BL-PR0022', H, null);
+  await add(S, 'student', 'BL-ST0022', P, '21CS01');
+  await before22.exec(`
+    insert into public.contents (id, title, kind, owner_id) values ('41111111-1111-4111-8111-111111111111', 'deck', 'pptx', '${P}');
+    insert into public.questions (id, content_id, text, options, answer_idx, bloom, source, created_by)
+      values ('42222222-2222-4222-8222-222222222222', '41111111-1111-4111-8111-111111111111', 'Own', '["a","b","c","d"]', 1,
+              'remember', 'fallback', '${P}');
+    insert into public.sessions (id, code, content_id, status, owner_id)
+      values ('43333333-3333-4333-8333-333333333333', 'OLD022', '41111111-1111-4111-8111-111111111111', 'closed', '${P}');
+    insert into public.profiles (session_id, roll_no, account_id)
+      values ('43333333-3333-4333-8333-333333333333', '21CS01', '${S}');
+    insert into public.answers (session_id, answer_key, roll_no, account_id, bloom)
+      values ('43333333-3333-4333-8333-333333333333', 'k-old', '21CS01', '${S}', 'remember');
+    insert into public.classes (id, course_name, section) values ('44444444-4444-4444-8444-444444444444', 'Networks', 'A');
+    insert into public.class_students (class_id, roll_no, name) values ('44444444-4444-4444-8444-444444444444', '21CS01', 'Asha');
+  `);
+  const counts = await rowCounts(before22);
+  const ok = await applyAll(before22, files.filter((f) => f.name >= '0022'), 'over existing rows');
+  const read = async (sql) => (await before22.query(sql)).rows[0] ?? {};
+  const p = await read('select account_id, account_verified from public.profiles');
+  const a = await read('select account_id, account_verified from public.answers');
+  const r = await read('select under_18, name from public.class_students');
+  const q = await read('select source, replaces_id, created_by from public.questions');
+  // Tables a later file creates (class_questions, 0023) are left out of the
+  // comparison, as in the 0011 section: a new empty table is no row changed.
+  check('0022 applies over existing rows, adding and removing none', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before22)).filter(([t]) => t in counts))));
+  check('a link made before it is kept, and reads back unverified, on the profile and on the answer',
+    p.account_id === S && p.account_verified === false && a.account_id === S && a.account_verified === false,
+    JSON.stringify({ p, a }));
+  check('a roster row reads back not under 18; a professor\'s question stays fallback (not rewritten), with no link',
+    r.under_18 === false && r.name === 'Asha' && q.source === 'fallback' && q.replaces_id === null && q.created_by === P,
+    JSON.stringify({ r, q }));
+  await before22.close();
+}
+
+// --------------------------------------------- 0023 over answers already given --
+
+section('0023 on a database that already holds answers');
+
+{
+  const before23 = await freshDatabase();
+  await applyAll(before23, files.filter((f) => f.name < '0023'), 'up to 0022');
+  await before23.exec(`
+    insert into public.contents (id, title, kind) values ('51111111-1111-4111-8111-111111111111', 'deck', 'pptx');
+    insert into public.sessions (id, code, content_id, status)
+      values ('53333333-3333-4333-8333-333333333333', 'OLD023', '51111111-1111-4111-8111-111111111111', 'open');
+    insert into public.answers (session_id, answer_key, roll_no, bloom, confidence)
+      values ('53333333-3333-4333-8333-333333333333', 'k-old-1', '21CS01', 'remember', null),
+             ('53333333-3333-4333-8333-333333333333', 'k-old-2', '21CS02', 'apply', 'think');
+  `);
+  const counts = await rowCounts(before23);
+  const ok = await applyAll(before23, files.filter((f) => f.name >= '0023'), 'over existing answers');
+  const after = Object.fromEntries(Object.entries(await rowCounts(before23)).filter(([t]) => t in counts));
+  check('0023 applies over existing answers, adding and removing none', ok && JSON.stringify(counts) === JSON.stringify(after),
+    `${JSON.stringify(counts)} -> ${JSON.stringify(after)}`);
+  const { rows } = await before23.query('select answer_key, class_question_id, round, confidence from public.answers order by answer_key');
+  check('every answer given before it is an ordinary answer: no class question, no round, its tap as it was',
+    JSON.stringify(rows.map((r) => [r.answer_key, r.class_question_id, r.round, r.confidence]))
+      === JSON.stringify([['k-old-1', null, null, null], ['k-old-2', null, null, 'think']]), JSON.stringify(rows));
+  const t = await before23.query(`select count(*)::int as n from public.class_questions`);
+  check('and the room has no class question', t.rows[0].n === 0);
+  await before23.close();
+}
+
+// ------------------------------------------ 0024 over questions already saved --
+
+section('0024 on a database that already holds questions and answers');
+
+{
+  const before24 = await freshDatabase();
+  await applyAll(before24, files.filter((f) => f.name < '0024'), 'up to 0023');
+  await before24.exec(`
+    insert into public.contents (id, title, kind) values ('61111111-1111-4111-8111-111111111111', 'deck', 'pptx');
+    insert into public.questions (id, content_id, text, options, answer_idx, bloom, status, source, payload)
+      values ('62222222-2222-4222-8222-222222222222', '61111111-1111-4111-8111-111111111111', 'Pick one', '["a","b","c","d"]', 1,
+              'remember', 'active', 'teacher', '{}'),
+             ('62222222-2222-4222-8222-222222222223', '61111111-1111-4111-8111-111111111111', 'Pick all', '["a","b","c","d"]', null,
+              'analyse', 'draft', 'llm', '{"answerIdxs": [0, 1]}');
+    insert into public.sessions (id, code, content_id, status)
+      values ('63333333-3333-4333-8333-333333333333', 'OLD024', '61111111-1111-4111-8111-111111111111', 'closed');
+    insert into public.answers (session_id, answer_key, roll_no, question_id, bloom, kind, response, question_snapshot)
+      values ('63333333-3333-4333-8333-333333333333', 'k-24', '21CS01', '62222222-2222-4222-8222-222222222222', 'remember', 'mcq', '0',
+              '{"text": "Pick one", "options": ["a","b","c","d"], "answerIdx": 1}');
+  `);
+  const counts = await rowCounts(before24);
+  const shape = async () => (await before24.query(
+    `select id, text, options, answer_idx, status, source, payload from public.questions order by id`)).rows;
+  const answersBefore = (await before24.query('select * from public.answers')).rows;
+  const questionsBefore = await shape();
+  const ok = await applyAll(before24, files.filter((f) => f.name >= '0024'), 'over existing questions');
+  check('0024 applies over existing questions and answers, adding and removing none', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before24)).filter(([t]) => t in counts))));
+  const { rows } = await before24.query('select misconceptions from public.questions order by id');
+  check('every question saved before it has no labels, and is otherwise as it was',
+    rows.length === 2 && rows.every((r) => JSON.stringify(r.misconceptions) === '[]')
+    && JSON.stringify(await shape()) === JSON.stringify(questionsBefore), JSON.stringify(rows));
+  check('no answer is touched', JSON.stringify((await before24.query('select * from public.answers')).rows) === JSON.stringify(answersBefore));
+  await before24.close();
 }
 
 // ------------------------------------- 0011 over accounts that already clash --

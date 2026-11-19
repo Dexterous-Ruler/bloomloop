@@ -32,8 +32,21 @@ import {
 import { runChecks, failedChecks, isSelectedResponse } from '../services/checks.js';
 import { withUpload } from '../services/media.js';
 import { KINDS_FOR_LEVEL, LABEL as KIND_LABEL, PAYLOAD_FIELDS, isUngraded } from '../questionTypes.js';
-import { contentItemStats } from '../services/itemStats.js';
-import { assertCanRead, assertCanWrite, readable } from '../ownership.js';
+import { contentItemStats, questionMisconceptions } from '../services/itemStats.js';
+import {
+  LABELLED_KINDS,
+  LABEL_NOTE,
+  MAX_LABEL,
+  changeLabels,
+  keptLabels,
+  labelView,
+  labelsOf,
+  optionTexts,
+  stampLabels,
+  wrongIdxs,
+} from '../services/misconceptions.js';
+import { assertCanRead, assertCanWrite, canWrite, readable } from '../ownership.js';
+import { staffQuestion } from '../services/honesty.js';
 
 const router = Router();
 
@@ -47,6 +60,24 @@ const MAX_TOPIC_CHARS = 160;
 
 /** Who is acting, for created_by and approved_by: null on the shared teacher key. */
 const actor = (req) => req.viewer?.id ?? null;
+
+/**
+ * A question just made active, and the active question it was regenerated to
+ * replace (`replacesId`, 0022): the old one is retired now, set discarded, as a
+ * plain regenerate always discarded it, only later. Until this approval it went
+ * on serving (the owner's decision of 19 Nov 2026). Only an active question of
+ * the same chapter is retired; one discarded or edited away since is left alone.
+ * Every route that makes a question active calls this.
+ *
+ * @returns {Promise<string|null>} the id retired, or null
+ */
+async function retireReplaced(repo, question) {
+  if (question?.status !== 'active' || !question.replacesId) return null;
+  const old = await repo.getQuestion(question.replacesId).catch(() => null);
+  if (!old || old.status !== 'active' || String(old.contentId) !== String(question.contentId)) return null;
+  await repo.updateQuestion(old._id, { status: 'discarded' });
+  return String(old._id);
+}
 
 /**
  * The body with its stimulus checked against the store: an uploaded image must
@@ -92,6 +123,49 @@ async function forWrite(repo, viewer, id, contents = null) {
   return { question, content };
 }
 
+/**
+ * The misconception labels an edit leaves standing (keptLabels): an option
+ * reworded or taken away, or made a right answer, loses its label with the
+ * edit, which writes the shorter list into `patch`. Returns what was removed,
+ * so the reply can name each one rather than let a label go quietly.
+ */
+function prunedLabels(existing, question, patch) {
+  const before = labelsOf(existing);
+  const { kept, removed } = keptLabels(question, before);
+  if (JSON.stringify(kept) !== JSON.stringify(before)) patch.misconceptions = kept;
+  return removed.map((l) => ({ option: l.option, label: l.label, provenance: l.provenance }));
+}
+
+const removedNote = (n) => (n === 1
+  ? 'One misconception label no longer applied and was removed: its option was reworded or taken away, or became a '
+    + 'right answer. Add it again if it still fits.'
+  : `${n} misconception labels no longer applied and were removed: their options were reworded or taken away, or `
+    + 'became right answers. Add them again where they still fit.');
+
+/** A question's labels as the label routes answer them. */
+const labelsBody = (question, canEdit) => {
+  const kind = question.kind ?? 'mcq';
+  return {
+    question: {
+      _id: String(question._id),
+      text: question.text ?? '',
+      kind,
+      kindLabel: KIND_LABEL[kind] ?? kind,
+      bloom: question.bloom ?? null,
+      topic: question.topic ?? '',
+      status: question.status ?? 'active',
+      // The options a label can sit on, by index (true/false: True, False).
+      options: optionTexts(question) ?? [],
+    },
+    labelled: LABELLED_KINDS.includes(kind),
+    wrongOptions: wrongIdxs(question),
+    misconceptions: labelView(question),
+    canEdit,
+    maxLength: MAX_LABEL,
+    note: LABEL_NOTE,
+  };
+};
+
 router.get('/:contentId', async (req, res, next) => {
   try {
     const repo = getRepo();
@@ -117,7 +191,9 @@ router.get('/:contentId', async (req, res, next) => {
     }
 
     res.json({
-      questions,
+      // Each with its provenance and approval state, and whether its level is
+      // one to check (services/honesty.js, Phase 5): staff-only, like the rest.
+      questions: questions.map(staffQuestion),
       counts,
       total: questions.length,
       active,
@@ -127,6 +203,10 @@ router.get('/:contentId', async (req, res, next) => {
       // a teacher sees and the list the server accepts cannot drift apart -
       // and the client is never the thing deciding what a question may be.
       kinds: { forLevel: KINDS_FOR_LEVEL, label: KIND_LABEL },
+      // Which kinds take a misconception label on their wrong options, and how
+      // long one may be (services/misconceptions.js), so the editor offers what
+      // the label route accepts.
+      misconceptionLabels: { kinds: LABELLED_KINDS, maxLength: MAX_LABEL, note: LABEL_NOTE },
     });
   } catch (err) {
     next(err);
@@ -191,6 +271,7 @@ router.patch('/question/:id', async (req, res, next) => {
     // list is imported, never retyped - a second copy here would decide that a
     // field was not an edit while applyEdit went on merging it.
     const edits = EDITABLE.some((field) => body[field] !== undefined);
+    let labelsRemoved = [];
 
     if (edits) {
       const { question, reason } = applyEdit(existing, await withStimulus(repo, body, existing.contentId));
@@ -200,14 +281,22 @@ router.patch('/question/:id', async (req, res, next) => {
       Object.assign(patch, patchFor(question));
       // The checks describe the wording, so new wording is checked again.
       patch.checks = runChecks(question);
+      labelsRemoved = prunedLabels(existing, question, patch);
     }
 
     if (!Object.keys(patch).length) throw fail('Nothing to update.', 400);
 
     const question = await repo.updateQuestion(existing._id, patch);
     if (!question) throw fail('Question not found.', 404);
+    // Setting a regenerated draft active is its approval: the question it
+    // replaces leaves rooms now.
+    const retired = body.status === 'active' && existing.status !== 'active' ? await retireReplaced(repo, question) : null;
 
-    res.json({ question });
+    res.json({
+      question: staffQuestion(question),
+      ...(retired ? { retired } : {}),
+      ...(labelsRemoved.length ? { misconceptionsRemoved: labelsRemoved, misconceptionsNote: removedNote(labelsRemoved.length) } : {}),
+    });
   } catch (err) {
     next(err);
   }
@@ -229,12 +318,16 @@ router.post('/question/:id/split', async (req, res, next) => {
     // Insert first: a failed insert must not leave the teacher holding one
     // fewer usable question than they started with. The halves keep the
     // original's status (a draft's halves are drafts) and are checked afresh.
+    // Each half keeps the labels of the wrong options it carries over, by their
+    // words, as an edit keeps them.
     const questions = await repo.insertQuestions(
-      parts.map((part) => ({ ...part, createdBy: actor(req), checks: runChecks(part) })),
+      parts.map((part) => ({
+        ...part, misconceptions: keptLabels(part, labelsOf(old)).kept, createdBy: actor(req), checks: runChecks(part),
+      })),
     );
     await repo.updateQuestion(old._id, { status: 'discarded' });
 
-    res.json({ questions, discarded: String(old._id) });
+    res.json({ questions: questions.map(staffQuestion), discarded: String(old._id) });
   } catch (err) {
     next(err);
   }
@@ -254,11 +347,13 @@ router.post('/merge', async (req, res, next) => {
     const { question: made, reason } = mergeQuestions(a, b);
     if (reason) throw fail(reason, 400);
 
-    const [question] = await repo.insertQuestions([{ ...made, createdBy: actor(req), checks: runChecks(made) }]);
+    // Both parents' labels on the wrong options the merged question carries.
+    const misconceptions = keptLabels(made, [...labelsOf(a), ...labelsOf(b)]).kept;
+    const [question] = await repo.insertQuestions([{ ...made, misconceptions, createdBy: actor(req), checks: runChecks(made) }]);
     await repo.updateQuestion(a._id, { status: 'discarded' });
     await repo.updateQuestion(b._id, { status: 'discarded' });
 
-    res.json({ question, discarded: [String(a._id), String(b._id)] });
+    res.json({ question: staffQuestion(question), discarded: [String(a._id), String(b._id)] });
   } catch (err) {
     next(err);
   }
@@ -300,6 +395,8 @@ router.post('/bulk', async (req, res, next) => {
     const contents = new Map();
     const changed = [];
     const refused = [];
+    const retired = [];
+    const labelsRemoved = [];
 
     for (const id of unique) {
       try {
@@ -314,6 +411,9 @@ router.post('/bulk', async (req, res, next) => {
           const { question, reason } = applyEdit(existing, { bloom });
           if (reason) throw fail(reason, 400);
           patch = { ...patchFor(question), checks: runChecks(question) };
+          // A retag that changes the kind can leave no option a label fits.
+          const removed = prunedLabels(existing, question, patch);
+          if (removed.length) labelsRemoved.push({ id: String(existing._id), labels: removed });
         } else if (action === 'stimulus') {
           // Through applyEdit like any edit, so the whole question is validated
           // with its new stimulus, and the checks re-run: attaching the picture
@@ -330,6 +430,11 @@ router.post('/bulk', async (req, res, next) => {
         const question = await repo.updateQuestion(existing._id, patch);
         if (!question) throw fail('Question not found.', 404);
         changed.push(question);
+        // A restore of a regenerated draft approves it, so what it replaces retires.
+        if (action === 'restore' && existing.status !== 'active') {
+          const gone = await retireReplaced(repo, question);
+          if (gone) retired.push(gone);
+        }
       } catch (err) {
         refused.push({ id, reason: err.message });
       }
@@ -337,10 +442,15 @@ router.post('/bulk', async (req, res, next) => {
 
     res.json({
       action,
-      questions: changed,
+      questions: changed.map(staffQuestion),
       changed: changed.length,
       refused,
+      ...(retired.length ? { retired } : {}),
       ...(action === 'bloom' ? { bloom, level: LEVEL_LABEL[bloom] } : {}),
+      ...(labelsRemoved.length ? {
+        misconceptionsRemoved: labelsRemoved,
+        misconceptionsNote: removedNote(labelsRemoved.reduce((n, r) => n + r.labels.length, 0)),
+      } : {}),
     });
   } catch (err) {
     next(err);
@@ -350,8 +460,11 @@ router.post('/bulk', async (req, res, next) => {
 /**
  * A new question in place of this one, written by the generator.
  *
- * With no body it is a replacement at the same level, and the old one is
- * discarded, as it always was. With `direction: 'harder'` or `'easier'` it is a
+ * With no body it is a replacement at the same level. An active question goes
+ * on serving until the replacement is approved, which retires it (19 Nov 2026,
+ * `replacesId`); a draft or rejected one is discarded at once, as before, and
+ * when it was itself a replacement the new draft takes over what it replaces. With
+ * `direction: 'harder'` or `'easier'` it is a
  * new draft one Bloom level up or down, on the same topic and from the same
  * slides, and the original is left exactly as it is: the professor is asking for
  * a second question beside it, not rejecting it.
@@ -412,6 +525,18 @@ router.post('/question/:id/regenerate', async (req, res, next) => {
       throw fail(`The generator offered a "${KIND_LABEL[item.kind] ?? item.kind}" at ${LEVEL_LABEL[CEILING]}, which picking cannot reach. Nothing was saved.`, 502);
     }
 
+    // A plain regenerate of an ACTIVE question (the owner's decision of 19 Nov
+    // 2026): the old one goes on serving, and the draft names it (0022), so
+    // approving the draft retires it (retireReplaced). Before, the old one was
+    // discarded here and its slot left rooms until the draft was approved.
+    const replacing = !direction && old.status === 'active';
+    // A plain regenerate of a replacement that was never approved (a draft, or
+    // a draft rejected) passes its link on: the new draft replaces the same
+    // active question, so approving it still retires that one. The draft itself
+    // is discarded below, as always; without this its link went with it, and
+    // the active question and the approved replacement both served.
+    const carried = !direction && !replacing && old.replacesId && !old.approvedAt ? String(old.replacesId) : null;
+    const replaces = replacing ? String(old._id) : carried;
     const row = {
       contentId: content._id,
       topic: old.topic || item.topic,
@@ -425,6 +550,7 @@ router.post('/question/:id/regenerate', async (req, res, next) => {
       // looks its topic up instead.
       sourceRef: old.sourceRef ?? sourceRefFor(content, old.topic || item.topic),
       createdBy: actor(req),
+      ...(replaces ? { replacesId: replaces } : {}),
     };
     if (Array.isArray(item.options)) row.options = item.options;
     if (Number.isInteger(item.answerIdx)) row.answerIdx = item.answerIdx;
@@ -433,22 +559,30 @@ router.post('/question/:id/regenerate', async (req, res, next) => {
     // with nothing to answer - the same bug generate.js had, in the one route
     // that had not been fixed with it.
     for (const f of PAYLOAD_FIELDS) if (item[f] !== undefined) row[f] = item[f];
+    // The model's proposed misconception labels (0024), AI drafts like the
+    // question. The old question's labels stay with the old question.
+    if (item.misconceptions?.length) row.misconceptions = stampLabels(item.misconceptions);
     row.checks = runChecks(row);
 
     // Insert first: a failed insert must not leave the teacher with one fewer
     // usable item than they started with.
     const [question] = await repo.insertQuestions([row]);
 
-    if (!direction) await repo.updateQuestion(old._id, { status: 'discarded' });
+    // A draft or a rejected question being replaced was serving nothing, and is
+    // discarded now, as it always was. An active one waits for the approval.
+    if (!direction && !replacing) await repo.updateQuestion(old._id, { status: 'discarded' });
 
-    // Said, because it is the one way a regenerate takes something away: the
-    // old question was let into rooms and the new one has not been yet. A bank
-    // just at the floor stops opening rooms until it is approved.
-    const warnings = !direction && old.status === 'active'
-      ? ['The question this replaces was in use, so it has left rooms now. Its replacement is a draft, and joins them when you approve it.']
-      : [];
-
-    res.json({ question, ...(direction ? { direction, from: String(old._id) } : {}), ...(warnings.length ? { warnings } : {}) });
+    res.json({
+      question: staffQuestion(question),
+      ...(direction ? { direction, from: String(old._id) } : {}),
+      ...(replaces
+        ? {
+          replaces,
+          note: 'The question this replaces stays in rooms until you approve its replacement. Approving it takes the old '
+            + 'one out; rejecting it leaves the old one as it is.',
+        }
+        : {}),
+    });
   } catch (err) {
     next(err);
   }
@@ -474,8 +608,10 @@ router.post('/question/:id/approve', async (req, res, next) => {
       ? await repo.updateQuestion(existing._id, { ...patch, checks })
       : existing;
     if (!question) throw fail('That question was not found.', 404);
+    // The question a regenerated draft replaces leaves rooms with this approval.
+    const retired = existing.status !== 'active' ? await retireReplaced(repo, question) : null;
 
-    res.json({ question, changed, failedChecks: failedChecks(checks) });
+    res.json({ question: staffQuestion(question), changed, failedChecks: failedChecks(checks), ...(retired ? { retired } : {}) });
   } catch (err) {
     next(err);
   }
@@ -489,7 +625,7 @@ router.post('/question/:id/reject', async (req, res, next) => {
     const { patch, changed } = rejectPatch(existing);
     const question = changed ? await repo.updateQuestion(existing._id, patch) : existing;
     if (!question) throw fail('That question was not found.', 404);
-    res.json({ question, changed });
+    res.json({ question: staffQuestion(question), changed });
   } catch (err) {
     next(err);
   }
@@ -510,6 +646,7 @@ router.post('/:contentId/approve-all', async (req, res, next) => {
     const at = new Date().toISOString();
     const questions = [];
     const flagged = [];
+    const retired = [];
     for (const draft of drafts) {
       const checks = runChecks(draft);
       const { patch } = approvePatch(draft, { by: actor(req), at });
@@ -518,12 +655,16 @@ router.post('/:contentId/approve-all', async (req, res, next) => {
       questions.push(question);
       const failed = failedChecks(checks);
       if (failed.length) flagged.push({ id: String(question._id), text: question.text, failedChecks: failed });
+      const gone = await retireReplaced(repo, question);
+      if (gone) retired.push(gone);
     }
 
     res.json({
       approved: questions.length,
-      questions,
+      questions: questions.map(staffQuestion),
       flagged,
+      // Questions that regenerated drafts replaced, taken out of rooms now.
+      retired,
       bankCount: await repo.countQuestions(content._id),
     });
   } catch (err) {
@@ -537,9 +678,10 @@ router.post('/:contentId/approve-all', async (req, res, next) => {
  * it is the person who would approve it. No model wrote it, so `model` is null,
  * and the rule checks run on it too - as advice, in the reply.
  *
- * `source` is 'fallback', because CONTRACT.md section 6 rule 5 says every item
- * not produced by the model must carry it. model: null is what says a person
- * wrote it.
+ * `source` is 'teacher': a professor wrote it (CONTRACT.md section 6 rule 5,
+ * amended 19 Nov 2026; 0022 widened the check). Before that it was stored as
+ * 'fallback', which the console labelled template text; those rows are left as
+ * they are. model: null says no model wrote it either.
  */
 router.post('/:contentId/questions', async (req, res, next) => {
   try {
@@ -561,7 +703,7 @@ router.post('/:contentId/questions', async (req, res, next) => {
       contentId: content._id,
       topic,
       ...patchFor(made),
-      source: 'fallback',
+      source: 'teacher',
       status: 'active',
       model: null,
       sourceRef: null,
@@ -569,7 +711,66 @@ router.post('/:contentId/questions', async (req, res, next) => {
       createdBy: actor(req),
     }]);
 
-    res.status(201).json({ question, failedChecks: failedChecks(checks) });
+    res.status(201).json({ question: staffQuestion(question), failedChecks: failedChecks(checks) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/*
+ * Misconception labels (Phase 5, 0024): the misunderstanding behind each wrong
+ * option of a Choose one, Choose all that apply or True or false question, and
+ * how many students chose each (services/misconceptions.js). Three segments
+ * deep, so neither GET /:contentId nor GET /:contentId/stats answers them.
+ */
+
+/**
+ * One question's labels, and how many students chose each labelled option in
+ * every room on its chapter the caller may read (a roll number counted once
+ * per room: two classes may share one). Read rule, so an HOD reads it; a missing
+ * question and another teacher's are the same 404, word for word.
+ */
+router.get('/question/:id/misconceptions', async (req, res, next) => {
+  try {
+    const repo = getRepo();
+    const question = await repo.getQuestion(req.params.id).catch(() => null);
+    if (!question) throw fail('That question was not found.', 404);
+    const content = await repo.getContent(question.contentId).catch(() => null);
+    await assertCanRead(req.viewer, content, 'That question');
+    const rooms = await readable(req.viewer, await repo.listSessionsForContent(content._id));
+    res.json({
+      ...labelsBody(question, await canWrite(req.viewer, content.ownerId ?? null)),
+      rooms: rooms.map((r) => ({ code: r.code, title: r.title ?? '', status: r.status, startedAt: r.startedAt ?? null })),
+      report: await questionMisconceptions(repo, question, rooms),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Add, edit, confirm or clear labels: { misconceptions: [{ option, label }] },
+ * where `option` is the option's index (true/false: 0 True, 1 False), a label
+ * adds or replaces one, null clears it, and { option, confirm: true } confirms
+ * an AI draft as it stands. Options not named keep their labels. One refused
+ * change refuses the lot.
+ *
+ * The owner only: an HOD gets 403, anyone else the question's 404. A label
+ * changes no mark, so the question keeps its status, its approval and its
+ * checks: an approved question is not sent back to draft, a draft stays a
+ * draft, and approving a question never confirms its labels.
+ */
+router.patch('/question/:id/misconceptions', async (req, res, next) => {
+  try {
+    const repo = getRepo();
+    const { question: existing } = await forWrite(repo, req.viewer, req.params.id);
+    const { labels, changed, reason } = changeLabels(existing, req.body?.misconceptions, { by: actor(req) });
+    if (reason) throw fail(reason, 400);
+    const question = JSON.stringify(labels) === JSON.stringify(labelsOf(existing))
+      ? existing
+      : await repo.updateQuestion(existing._id, { misconceptions: labels });
+    if (!question) throw fail('That question was not found.', 404);
+    res.json({ ...labelsBody(question, true), changed });
   } catch (err) {
     next(err);
   }

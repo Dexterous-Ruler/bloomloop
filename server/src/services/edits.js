@@ -435,8 +435,13 @@ export function mergeQuestions(a, b) {
   // there. That marker is this file's own bookkeeping, so it goes when the parts
   // come back together - a teacher's own words are never touched.
   const merged = { ...inherit(a), text: String(a.text).replace(/\s*\(part \d+\)\s*$/i, '') };
-  // Either parent being template text makes the result template text.
-  merged.source = a.source === 'fallback' || b.source === 'fallback' ? 'fallback' : 'llm';
+  // The least model-like source of the two: either parent being template text
+  // makes the result template text; otherwise either parent written by a
+  // professor ('teacher', 19 Nov 2026) makes it the professor's, since merging
+  // is their edit too; only two model questions merge into a model question.
+  // `model` below still says a model wrote part of it.
+  const sources = [a.source, b.source];
+  merged.source = sources.includes('fallback') ? 'fallback' : sources.includes('teacher') ? 'teacher' : 'llm';
   // Either parent unreviewed makes the result unreviewed; either parent written
   // by a model makes the result partly model-written. When `a` is unreviewed,
   // inherit() has already made this a draft, so b's approval is never copied

@@ -33,6 +33,7 @@ import { allAnswers } from './evidence.js';
 import { itemAnalysis, MIN_ANSWERS_FOR_BAND } from './itemStats.js';
 import { attendanceReport } from './roster.js';
 import { BANDS, INSIGHTS_PRIVACY, THRESHOLDS, classLevels, histogram, roomFigures } from './insights.js';
+import { basedOn } from './honesty.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -72,11 +73,13 @@ export function levelViews(cells) {
     answers: cells[level].answers,
     correct: cells[level].correct,
     accuracy: rate(cells[level].correct, cells[level].answers),
+    // The count again, as the sentence a figure carries (Phase 5).
+    sentence: basedOn(cells[level].answers, { unit: 'graded answer' }),
   }));
   const levelBands = LEVEL_BANDS.map((b) => {
     const answers = b.levels.reduce((n, l) => n + cells[l].answers, 0);
     const correct = b.levels.reduce((n, l) => n + cells[l].correct, 0);
-    return { id: b.id, label: b.label, levels: b.levels, answers, correct, accuracy: rate(correct, answers) };
+    return { id: b.id, label: b.label, levels: b.levels, answers, correct, accuracy: rate(correct, answers), sentence: basedOn(answers, { unit: 'graded answer' }) };
   });
   return { levels, levelBands };
 }
@@ -100,7 +103,7 @@ export function roomReport(session, { profiles = [], roster = [], marks = [] } =
     startedAt: session.startedAt ?? null,
     closedAt: session.closedAt ?? null,
     mode: sessionSettings(session).mode,
-    accuracy: { value: f.accuracy, students: f.graded, answers: f.answers },
+    accuracy: { value: f.accuracy, students: f.graded, answers: f.answers, sentence: basedOn(f.answers, { students: f.graded, unit: 'graded answer' }) },
     participation: { value: f.participation, present: f.present, answered: f.answered, notAnswered: f.present - f.answered },
     attendance: att ? {
       // Present counts late arrivals, as "N / M present" does everywhere.
@@ -167,11 +170,12 @@ export async function classAnalytics(repo, cls, rooms = [], { last = DEFAULT_WIN
   // The hardest questions over the window's final graded answers, the item
   // report's own reading: flagged items first, then the lowest proportion right.
   // Only questions with at least MIN_ANSWERS_FOR_BAND answers, the item report's
-  // floor for calling a question hard at all.
+  // floor for calling a question hard at all. Class question votes are left
+  // out, as the item report leaves them out (Phase 5).
   const sessionIds = chosen.map((s) => String(s._id));
   const contentIds = [...new Set(chosen.map((s) => String(s.contentId)))];
   const [answers, banks] = await Promise.all([
-    sessionIds.length ? allAnswers(repo, { sessionIds, final: true }) : [],
+    sessionIds.length ? allAnswers(repo, { sessionIds, final: true, classVotes: false }) : [],
     Promise.all(contentIds.map((id) => repo.listQuestions(id, { includeDiscarded: true }))),
   ]);
   const report = itemAnalysis({ answers, questions: banks.flat() });
@@ -192,7 +196,11 @@ export async function classAnalytics(repo, cls, rooms = [], { last = DEFAULT_WIN
       accuracy: trendOf(reports.map((r) => r.accuracy.value)),
       participation: trendOf(reports.map((r) => r.participation.value)),
     },
-    histogram: histogram([...pooled.values()]),
+    histogram: (() => {
+      const h = histogram([...pooled.values()]);
+      const short = h.notEnough ? ` ${h.notEnough} more with too few answers for a band are not in it.` : '';
+      return { ...h, sentence: `${basedOn(h.answers, { students: h.students, unit: 'graded answer' })}${short}` };
+    })(),
     ...levelViews(cells),
     hardest: {
       items: hardest,

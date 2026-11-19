@@ -232,12 +232,16 @@ describe('slide-only-reference', () => {
     assert.match(check(mcq({ text: 'As shown on the slide, which pigment is it?' }), 'slide-only-reference').message, /on the slide/);
   });
 
-  test('a figure is fine with an image stimulus; "shown above" is fine with any stimulus', () => {
+  test('a figure is fine with an image or a passage attached; "shown above" is fine with any stimulus', () => {
     const image = { kind: 'image', url: '/u/leaf.png', alt: 'A leaf in cross-section' };
     const passage = { kind: 'passage', text: 'Chlorophyll absorbs red and blue light and reflects green.' };
     assert.ok(passes(mcq({ text: 'What does the diagram show?', stimulus: image }), 'slide-only-reference'));
-    assert.ok(fails(mcq({ text: 'What does the diagram show?', stimulus: passage }), 'slide-only-reference'));
+    // The owner's decision of 19 Nov 2026: an attached passage clears it too.
+    assert.ok(passes(mcq({ text: 'What does the diagram show?', stimulus: passage }), 'slide-only-reference'));
+    assert.ok(passes(mcq({ text: 'What does the orange curve represent?', stimulus: passage }), 'slide-only-reference'));
     assert.ok(passes(mcq({ text: 'As shown above, which pigment absorbs red light?', stimulus: passage }), 'slide-only-reference'));
+    // With nothing attached it still fails, and says a passage would do.
+    assert.match(check(mcq({ text: 'What does the diagram show?' }), 'slide-only-reference').message, /the picture or a passage/);
   });
 
   test('does not fire on "Which of the following"', () => {

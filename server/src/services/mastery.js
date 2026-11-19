@@ -9,6 +9,7 @@
 import {
   LEVELS,
   FLOOR,
+  CEILING,
   emptyLevels,
   normaliseLevels,
   levelIndex,
@@ -231,9 +232,12 @@ export function emptyProfile({ sessionId, rollNo, name = '', accountId = null, s
     sessionId,
     rollNo: String(rollNo).trim(),
     name,
-    // The student account this roll number belongs to on the room owner's
-    // roster, when there is one. Null for a guest roll number.
+    // The student account this room profile is linked to, or null for a guest.
     accountId,
+    // Decision 7 (0022): true only when the link was made because the phone
+    // presented that signed-in student's token at join. A typed roll number
+    // never makes one.
+    accountVerified: false,
     levels: emptyLevels(),
     workingLevel: start,
     history: [],
@@ -260,6 +264,8 @@ export function hydrate(raw = {}) {
     served: normaliseServed(raw.served),
     integrity: Array.isArray(raw.integrity) ? raw.integrity.slice() : [],
     accountId: raw.accountId ?? null,
+    // Strictly true: a link written before 0022, or by a typed roll number, is unverified.
+    accountVerified: raw.accountVerified === true,
   };
 }
 
@@ -411,15 +417,24 @@ export function eligibleLevels(profile) {
 /**
  * Decide the working level from the profile as it now stands.
  * Pure: returns the new level plus the one-sentence explanation.
+ *
+ * `basis` (Phase 5, honest indicators) is the same decision as data: which rule
+ * fired, the level whose answers it read, the window, the share right in it and
+ * how many answers that share rests on. The sentence is written from the same
+ * numbers, so the two cannot disagree. `window` is null for the below-40% band,
+ * which reads every counted answer rather than the last WINDOW at one level.
  */
 export function recomputeWorkingLevel(profile) {
   const { seen } = totals(profile);
+  const current = profile.workingLevel;
+  const basis = (rule, share = null, answers = 0, window = WINDOW) => ({ rule, level: current, window, share, answers });
 
   if (seen === 0) {
     return {
       workingLevel: COLD_START_LEVEL,
       reason: 'No history yet - starting at Understand.',
       changed: profile.workingLevel !== COLD_START_LEVEL,
+      basis: basis('start'),
     };
   }
 
@@ -431,10 +446,11 @@ export function recomputeWorkingLevel(profile) {
       workingLevel: 'understand',
       reason: `Overall ${pct}% is inside the below-40% band - serving Remember and Understand items only.`,
       changed: profile.workingLevel !== 'understand',
+      // What the band read: the counted figure (isSlowLearner), every answer.
+      basis: basis('band', countedAccuracy(profile), countedTotals(profile).seen, null),
     };
   }
 
-  const current = profile.workingLevel;
   const rolling = rollingAccuracy(profile, current);
 
   if (!rolling) {
@@ -442,6 +458,7 @@ export function recomputeWorkingLevel(profile) {
       workingLevel: current,
       reason: `No answers yet at ${LABEL[current]} - holding level.`,
       changed: false,
+      basis: basis('none'),
     };
   }
 
@@ -450,6 +467,7 @@ export function recomputeWorkingLevel(profile) {
       workingLevel: current,
       reason: `Only ${rolling.n} answer${rolling.n === 1 ? '' : 's'} at ${LABEL[current]} so far - need ${MIN_LEVEL_EVIDENCE} before moving level.`,
       changed: false,
+      basis: basis('too-few', rolling.accuracy, rolling.n),
     };
   }
 
@@ -462,12 +480,14 @@ export function recomputeWorkingLevel(profile) {
         workingLevel: current,
         reason: `${pct}% at ${LABEL[current]} over the last ${rolling.n} - already at the top of the ladder.`,
         changed: false,
+        basis: basis('top', rolling.accuracy, rolling.n),
       };
     }
     return {
       workingLevel: next,
       reason: `${pct}% at ${LABEL[current]} over the last ${rolling.n} - promoted to ${LABEL[next]}.`,
       changed: true,
+      basis: basis('promote', rolling.accuracy, rolling.n),
     };
   }
 
@@ -478,12 +498,14 @@ export function recomputeWorkingLevel(profile) {
         workingLevel: FLOOR,
         reason: `${pct}% at ${LABEL[current]} over the last ${rolling.n} - already at the floor, holding at Remember.`,
         changed: false,
+        basis: basis('floor', rolling.accuracy, rolling.n),
       };
     }
     return {
       workingLevel: next,
       reason: `${pct}% at ${LABEL[current]} over the last ${rolling.n} - demoted to ${LABEL[next]}.`,
       changed: true,
+      basis: basis('demote', rolling.accuracy, rolling.n),
     };
   }
 
@@ -491,6 +513,40 @@ export function recomputeWorkingLevel(profile) {
     workingLevel: current,
     reason: `${pct}% at ${LABEL[current]} over the last ${rolling.n} - holding at ${LABEL[current]}.`,
     changed: false,
+    basis: basis('hold', rolling.accuracy, rolling.n),
+  };
+}
+
+/**
+ * The decisions worth keeping with the answer that caused them: every move (up,
+ * down, and into the below-40% band's Understand), and a hold at either end of
+ * the ladder, where the rule said move and there was nowhere to go. A plain hold
+ * is not kept: it is every other answer, and the profile's `reason` already says
+ * it.
+ */
+const KEPT_RULES = ['promote', 'demote', 'band', 'top', 'floor'];
+
+/**
+ * The level decision an answer caused, as its history entry keeps it (`move`),
+ * or null when there is none worth keeping. Kept on the entry, not only in the
+ * profile's `reason`, because `reason` is overwritten by the next answer: without
+ * this, "why did she go down to Apply at 10:42?" had no answer after a reload.
+ * Staff-only, like `reason`: the band's sentence names the band.
+ */
+function moveRecord(decision, from) {
+  const b = decision.basis;
+  if (!b || !KEPT_RULES.includes(b.rule)) return null;
+  if (!decision.changed && b.rule !== 'top' && b.rule !== 'floor') return null;
+  return {
+    rule: b.rule,
+    from,
+    to: decision.workingLevel,
+    window: b.window,
+    // Four places: 2 of 3 must stay distinguishable from 0.67, and a share is
+    // never shown from here without its answers beside it.
+    share: b.share === null ? null : Math.round(b.share * 10000) / 10000,
+    answers: b.answers,
+    reason: decision.reason,
   };
 }
 
@@ -584,6 +640,8 @@ export function applyAnswer(
   // A room with adapt off (0018) records the answer like any other and moves
   // nobody: strictly false, so every room before the setting adapts as it did.
   const decision = adapt === false ? heldLevel(next) : recomputeWorkingLevel(next);
+  const move = moveRecord(decision, next.workingLevel);
+  if (move) next.history[next.history.length - 1] = { ...next.history[next.history.length - 1], move };
   next.workingLevel = decision.workingLevel;
   next.reason = decision.reason;
 
@@ -608,6 +666,191 @@ function heldLevel(profile) {
     };
   }
   return { workingLevel: level, reason: `${off}.`, changed: false };
+}
+
+/* ------------------------------------------------- what the phone is told --
+
+   Decision (a) of 19 Nov 2026: labels are staff-only. The professor's sentence
+   (`reason`, above) may name the below-40% band; the phone is told this instead:
+   the level its next questions are at, why, in plain words, and how many answers
+   that rests on. It never names a band or a cut-off. Derived from the profile as
+   it stands, so every phone payload can carry it with nothing new stored. */
+
+const answersWord = (n) => `${n} answer${n === 1 ? '' : 's'}`;
+
+/**
+ * What comes next for this student, as their phone may be told it.
+ *
+ * Inside the below-40% band the ceiling holds, so the next questions are at
+ * Remember and Understand; the sentence says that and why, without the band.
+ * Otherwise the level is the working level, and the reason is the evidence the
+ * ladder reads. Straight after a move it is the answers that moved the student:
+ * the last graded answer was at another level, whose last answers meet the
+ * ladder's rule for the move (mostly right below, mostly wrong above).
+ * Otherwise it is the last answers at the working level itself.
+ *
+ * @returns {{ levels: string[], why: string, answers: number }} `answers` is how
+ *   many answers the sentence rests on
+ */
+export function nextStep(profile, { adapt = true } = {}) {
+  const p = hydrate(profile);
+  const level = p.workingLevel;
+  const here = LABEL[level];
+  if (isSlowLearner(p)) {
+    const n = countedTotals(p).seen;
+    return {
+      levels: ['remember', 'understand'],
+      why: `From your ${answersWord(n)} so far, your next questions are at ${LABEL.remember} and ${LABEL.understand}, `
+        + 'to build a firm base before the levels above.',
+      answers: n,
+    };
+  }
+  const seen = totals(p).seen;
+  if (adapt === false) {
+    return { levels: [level], why: `This room keeps every student at ${here}, so your next questions are at ${here}.`, answers: seen };
+  }
+  if (seen === 0) return { levels: [level], why: `Your first questions are at ${here}.`, answers: 0 };
+
+  const from = p.history.filter((h) => !h.ungraded && LEVELS.includes(h.bloom)).at(-1)?.bloom;
+  const moved = from && from !== level ? rollingAccuracy(p, from) : null;
+  if (moved && moved.n >= MIN_LEVEL_EVIDENCE) {
+    if (levelIndex(from) < levelIndex(level) && moved.accuracy >= PROMOTE_AT) {
+      return {
+        levels: [level],
+        why: `Your last ${answersWord(moved.n)} at ${LABEL[from]} were mostly right, so your next questions are at ${here}.`,
+        answers: moved.n,
+      };
+    }
+    if (levelIndex(from) > levelIndex(level) && moved.accuracy < DEMOTE_AT) {
+      return {
+        levels: [level],
+        why: `Your last ${answersWord(moved.n)} at ${LABEL[from]} were mostly wrong, so your next questions step back to ${here}.`,
+        answers: moved.n,
+      };
+    }
+  }
+
+  const atLevel = rollingAccuracy(p, level);
+  if (!atLevel) return { levels: [level], why: `Your next questions are at ${here}.`, answers: 0 };
+  if (atLevel.n < MIN_LEVEL_EVIDENCE) {
+    return {
+      levels: [level],
+      why: `Your next questions are at ${here}. You have ${answersWord(atLevel.n)} there so far, and your level can change `
+        + `once you have ${MIN_LEVEL_EVIDENCE}.`,
+      answers: atLevel.n,
+    };
+  }
+  if (level === CEILING && atLevel.accuracy >= PROMOTE_AT) {
+    return {
+      levels: [level],
+      why: `Your last ${answersWord(atLevel.n)} at ${here} were mostly right. ${here} is the highest level, so your next questions stay there.`,
+      answers: atLevel.n,
+    };
+  }
+  return { levels: [level], why: `Your next questions are at ${here}, from your last ${answersWord(atLevel.n)} there.`, answers: atLevel.n };
+}
+
+/* --------------------------------------------- what an estimate rests on --
+
+   Phase 5, honest indicators. Every level and mastery figure a screen shows
+   carries how many answers it rests on, as a number and a sentence, and one
+   resting on fewer than the engine's own minimum (MIN_LEVEL_EVIDENCE) says it is
+   provisional instead of looking like a firm state. The sentences here name no
+   band and no cut-off, so the phone may be told the mastery ones as they are. */
+
+/** The last level move kept on the history (`move`, from applyAnswer), or null. */
+const lastMove = (p) => [...p.history].reverse().find((h) => h?.move && h.move.from !== h.move.to)?.move ?? null;
+
+/**
+ * What a student's working level rests on, for staff.
+ *
+ * Firm when the ladder has a decision behind the level: at least
+ * MIN_LEVEL_EVIDENCE answers at it, the move that brought the student there (kept
+ * on the history since Phase 5, else read off the last answers as nextStep()
+ * reads it), or the below-40% band, which needs MIN_EVIDENCE answers to engage.
+ * Provisional otherwise: the room's start level with too few answers at it to
+ * move anyone, which is a starting point and not yet an estimate.
+ *
+ * @returns {{ answers: number, provisional: boolean, sentence: string }}
+ */
+export function levelEvidence(profile, { adapt = true } = {}) {
+  const p = hydrate(profile);
+  const level = p.workingLevel;
+  const here = LABEL[level];
+  if (isSlowLearner(p)) {
+    const n = countedTotals(p).seen;
+    return { answers: n, provisional: false, sentence: `Based on ${answersWord(n)} overall.` };
+  }
+  if (adapt === false) {
+    return { answers: 0, provisional: false, sentence: `Set by the room, not by answers: adaptive levels are off, so every student stays at ${here}.` };
+  }
+  if (totals(p).seen === 0) {
+    return { answers: 0, provisional: true, sentence: `No graded answers yet: ${here} is the room's start level, not an estimate.` };
+  }
+  const n = rollingAccuracy(p, level)?.n ?? 0;
+  if (n >= MIN_LEVEL_EVIDENCE) return { answers: n, provisional: false, sentence: `Based on the last ${answersWord(n)} at ${here}.` };
+
+  const kept = lastMove(p);
+  if (kept && kept.to === level) {
+    const how = kept.rule === 'band' ? `on ${answersWord(kept.answers)} overall` : `on the last ${answersWord(kept.answers)} at ${LABEL[kept.from]}`;
+    return { answers: kept.answers, provisional: false, sentence: `Moved to ${here} ${how}; ${answersWord(n)} at ${here} since.` };
+  }
+  // A history from before moves were kept: the same reading nextStep() makes.
+  const from = p.history.filter((h) => !h.ungraded && LEVELS.includes(h.bloom)).at(-1)?.bloom;
+  const moved = from && from !== level ? rollingAccuracy(p, from) : null;
+  if (moved && moved.n >= MIN_LEVEL_EVIDENCE
+    && ((levelIndex(from) < levelIndex(level) && moved.accuracy >= PROMOTE_AT)
+      || (levelIndex(from) > levelIndex(level) && moved.accuracy < DEMOTE_AT))) {
+    return { answers: moved.n, provisional: false, sentence: `Moved to ${here} on the last ${answersWord(moved.n)} at ${LABEL[from]}.` };
+  }
+  return {
+    answers: n,
+    provisional: true,
+    sentence: `Provisional: ${answersWord(n)} at ${here} so far, and the ladder needs ${MIN_LEVEL_EVIDENCE} before it can move a student.`,
+  };
+}
+
+/**
+ * Every level move kept on a student's history, newest first: when, which
+ * answer, the rule, from and to, the window, the share right and the answers it
+ * rests on, and the professor's sentence. Staff-only: the band's sentence names
+ * the band.
+ */
+export function levelMoves(profile) {
+  return hydrate(profile).history
+    .filter((h) => h?.move && typeof h.move === 'object')
+    .map((h) => ({ at: h.at ?? null, questionId: h.questionId, ...h.move }))
+    .reverse();
+}
+
+/**
+ * Per level a student has answered at, what its mastery rests on: the counted
+ * answers, how many were right, whether it counts as mastered against the room's
+ * goal, and whether that is still provisional (fewer than MIN_LEVEL_EVIDENCE
+ * answers, below which masteryReport() calls nothing mastered). No percentage and
+ * no band in the sentence, so the phone is told the same words as the professor.
+ */
+export function masteryBasis(profile, { goal = DEFAULT_MASTERY_GOAL } = {}) {
+  return masteryReport(hydrate(profile), { goal }).filter((r) => r.seen > 0).map((r) => {
+    const at = r.label;
+    let sentence;
+    if (r.seen < MIN_LEVEL_EVIDENCE) {
+      sentence = `${answersWord(r.seen)} at ${at} so far: ${MIN_LEVEL_EVIDENCE} are needed before ${at} can count as mastered.`;
+    } else if (r.mastered) {
+      sentence = `${r.correct} of ${r.seen} right at ${at}: at or above this room's goal, so ${at} counts as mastered.`;
+    } else {
+      sentence = `${r.correct} of ${r.seen} right at ${at}: not yet at this room's goal.`;
+    }
+    if (r.withdrawn) sentence += ` ${r.withdrawn} earlier ${r.withdrawn === 1 ? 'answer' : 'answers'} at ${at} set aside.`;
+    return {
+      level: r.level,
+      answers: r.seen,
+      correct: r.correct,
+      mastered: r.mastered,
+      provisional: r.seen < MIN_LEVEL_EVIDENCE,
+      sentence,
+    };
+  });
 }
 
 /**

@@ -29,6 +29,8 @@ import attainmentRoutes, { presetRoutes as attainmentPresetRoutes } from './rout
 import recordRoutes from './routes/records.js';
 import projectorRoutes from './routes/projector.js';
 import insightRoutes from './routes/insights.js';
+import classQuestionRoutes from './routes/classQuestions.js';
+import misconceptionRoutes, { classMisconceptionRoutes } from './routes/misconceptions.js';
 
 /**
  * Any successful write to a question bank drops the live loop's cached copy of
@@ -131,6 +133,15 @@ export function createApp() {
   // and /api/session/:code/students/:roll/card. Staff-only, gated per route for
   // the same reason; the same insights are pushed to teacher screens only.
   app.use('/api/session', insightRoutes);
+  // Class questions and the confidence counts (Phase 5):
+  // /api/session/:code/class-questions and /api/session/:code/confidence. The
+  // room's owner runs a class question; the phones vote over the socket and
+  // never call these. Gated per route for the same reason.
+  app.use('/api/session', classQuestionRoutes);
+  // How many students chose each option linked to a misunderstanding (Phase 5):
+  // /api/session/:code/misconceptions. Staff-only, gated per route for the same
+  // reason; the class's own is at /api/classes/:id/misconceptions below.
+  app.use('/api/session', misconceptionRoutes);
 
   // Teacher-only: class rosters are names and roll numbers, and nothing a phone
   // needs. Whose class is whose is checked inside, by ownership.js.
@@ -144,6 +155,9 @@ export function createApp() {
   // formulas at /api/attainment/presets, for any teacher.
   app.use('/api/classes', requireTeacher, attainmentRoutes);
   app.use('/api/attainment', requireTeacher, attainmentPresetRoutes);
+  // The class's misconception counts (Phase 5): /api/classes/:id/misconceptions,
+  // staff-only like the class, whose ownership they follow.
+  app.use('/api/classes', requireTeacher, classMisconceptionRoutes);
 
   // Teacher-only: the queue carries students' written answers and the question
   // snapshots with their rubrics. Which rooms a teacher may read or decide on is

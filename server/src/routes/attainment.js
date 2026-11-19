@@ -238,7 +238,7 @@ presetRoutes.get('/presets', (_req, res, next) => {
       evidenceTypes: EVIDENCE_TYPES,
       states: STATES,
       note: 'These are examples to start from, not an institutional standard. A class uses the default until its owner saves '
-        + 'a formula (PUT /api/classes/:id/attainment/config), and every report states the formula it used.',
+        + 'a formula of their own for it, and every report states the formula it used.',
     });
   } catch (err) {
     next(err);

@@ -2,8 +2,9 @@
 //
 // A room only ever knew the phones that joined it. A professor teaches a class:
 // a course and a section with a list of students, some of whom never join. The
-// roster is that list, kept as a roll number and a name and nothing else, and a
-// room opened for a class can say who of it was there.
+// roster is that list, kept as a roll number and a name and nothing else (bar the
+// owner's yes-or-no under-18 mark, decision 8, 0022), and a room opened for a
+// class can say who of it was there.
 //
 // Everything here is teacher-only. Attendance and roster names never go to a
 // phone: not in the live loop's payloads (buildGridRow in routes/session.js
@@ -45,10 +46,11 @@ export const ATTENDANCE_STATUSES = ['present', 'absent', 'late'];
 export const ATTENDANCE_LOCK = '#attendance';
 
 /**
- * Decision 7's known gap, said wherever a 'joined' mark is shown. A room has no
- * sign-in: the roll number is whatever was typed, so a classmate can be marked
- * present by someone else's phone. Not solved here; it needs the phone to
- * present a signed-in student's token (docs/PRODUCT_DECISIONS.md, decision 7).
+ * Said wherever a 'joined' mark is shown. A room has no sign-in: the roll number
+ * is whatever was typed, so a classmate can be marked present by someone else's
+ * phone. Decision 7 (19 Nov 2026) keeps it so: a join from a typed roll number
+ * stays 'joined', with this sentence; a phone's sign-in links the room to the
+ * student's history, not their attendance (docs/PRODUCT_DECISIONS.md).
  */
 export const JOINED_CAVEAT =
   '"Joined" means a phone joined this room with that roll number. A room has no sign-in, '
@@ -56,8 +58,32 @@ export const JOINED_CAVEAT =
 
 // The keys a roster row may carry. Anything else (a phone number, an email) is
 // left out of what is stored and named back in `ignoredFields` (a CSV import
-// names unread columns in `ignoredColumns` instead: rosterFromCsv).
-const ROW_KEYS = new Set(['roll', 'rollNo', 'name']);
+// names unread columns in `ignoredColumns` instead: rosterFromCsv). `under18` is
+// the owner's optional mark (decision 8, 0022).
+const ROW_KEYS = new Set(['roll', 'rollNo', 'name', 'under18']);
+
+/**
+ * Decision 8 (19 Nov 2026), said wherever the mark is set. It is the owner's
+ * working posture, not a legal determination.
+ */
+export const UNDER_18_NOTE = 'Integrity signals are neither recorded nor shown for a student marked under 18, in any room '
+  + 'opened for this class. The mark is a yes or no; no date of birth is kept. This is a working default, not legal advice: '
+  + 'a lawyer must confirm it before any college signs or before 13 May 2027.';
+
+/**
+ * The under-18 mark off a row: true, false, or null when it says something else.
+ * JSON sends a boolean; a CSV cell sends text (yes, y, true, 1 / no, n, false, 0,
+ * or blank for no).
+ */
+export function under18From(raw) {
+  if (raw === undefined || raw === null || raw === false) return false;
+  if (raw === true) return true;
+  if (typeof raw !== 'string') return null;
+  const word = raw.trim().toLowerCase();
+  if (['yes', 'y', 'true', '1'].includes(word)) return true;
+  if (['', 'no', 'n', 'false', '0'].includes(word)) return false;
+  return null;
+}
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -157,6 +183,7 @@ export const REFUSAL = Object.freeze({
   noRoll: 'no-roll',
   badRoll: 'bad-roll',
   badName: 'bad-name',
+  badUnder18: 'bad-under-18',
   onRoster: 'on-roster',
   removed: 'removed',
   repeated: 'repeated',
@@ -183,7 +210,7 @@ export function byRoll(a, b) {
  * list; the CSV import allows a longer file (MAX_CSV_ROWS) and its rows past the
  * class's room are refused one by one, with their lines, by the same rule.
  *
- * @returns {{ accepted: {index, rollNo, name}[], refused: {index, roll, name, code, reason}[], ignoredFields: string[] }}
+ * @returns {{ accepted: {index, rollNo, name, under18}[], refused: {index, roll, name, code, reason}[], ignoredFields: string[] }}
  */
 export function validateRoster(list, existing = [], { maxRows = MAX_CLASS_SIZE } = {}) {
   if (!Array.isArray(list)) throw fail('students must be a list of { roll, name }.', 400);
@@ -224,6 +251,10 @@ export function validateRoster(list, existing = [], { maxRows = MAX_CLASS_SIZE }
     const name = cleanName(row.name);
     const problem = nameProblem(name);
     if (problem) return refuse(REFUSAL.badName, problem);
+    const under18 = under18From(row.under18);
+    if (under18 === null) {
+      return refuse(REFUSAL.badUnder18, 'the under-18 mark must be yes or no (or left blank for no)');
+    }
 
     const prior = held.get(rollNo);
     if (prior && !prior.removedAt) return refuse(REFUSAL.onRoster, `roll number ${rollNo} is already on this class's roster`);
@@ -235,7 +266,7 @@ export function validateRoster(list, existing = [], { maxRows = MAX_CLASS_SIZE }
 
     room -= 1;
     taken.add(rollNo);
-    accepted.push({ index, rollNo, name });
+    accepted.push({ index, rollNo, name, under18 });
     return undefined;
   });
 
@@ -258,7 +289,7 @@ export async function addToRoster(repo, classId, list, { maxRows = MAX_CLASS_SIZ
   const roster = await repo.listClassStudents(classId);
   const { accepted, refused, ignoredFields } = validateRoster(list, roster, { maxRows });
   const made = accepted.length
-    ? await repo.addClassStudents(classId, accepted.map(({ rollNo, name }) => ({ rollNo, name })))
+    ? await repo.addClassStudents(classId, accepted.map(({ rollNo, name, under18 }) => ({ rollNo, name, under18 })))
     : [];
   const added = new Set(made.map((s) => s.rollNo));
   for (const row of accepted) {
@@ -283,6 +314,10 @@ export const MAX_CSV_ROWS = 2000;
 // spaces as one: "Roll No.", "ROLL_NO" and "roll  no" are all "roll no".
 const ROLL_HEADERS = new Set(['roll', 'roll no', 'roll number', 'rollno']);
 const NAME_HEADERS = new Set(['name', 'student name']);
+// The owner's optional under-18 mark (decision 8, 0022): a yes or no, read only
+// when a column says so. A date-of-birth column is never read: it stays unread
+// and named back like any other column.
+const UNDER_18_HEADERS = new Set(['under 18', 'under18', 'minor', 'below 18']);
 const headerKey = (cell) => String(cell ?? '').toLowerCase().replace(/[._-]+/g, ' ').replace(/\s+/g, ' ').trim();
 
 /**
@@ -290,15 +325,17 @@ const headerKey = (cell) => String(cell ?? '').toLowerCase().replace(/[._-]+/g, 
  *
  * The first non-blank line must name the columns: one roll number column (roll,
  * roll no, roll number or rollno) and one name column (name or student name),
- * in any case and any order. Every other column is left unread and named back
- * in `ignoredColumns`, so a sheet that also carries phone numbers or emails
- * never brings them in: a roster keeps a roll number and a name only. A line
- * whose cells are all blank is skipped and counted.
+ * in any case and any order. One more column is read when the file has it: the
+ * owner's under-18 mark (under 18, under18, minor or below 18), as yes or no
+ * (decision 8). Every other column is left unread and named back in
+ * `ignoredColumns`, so a sheet that also carries phone numbers, emails or dates
+ * of birth never brings them in: a roster keeps a roll number, a name and that
+ * mark only. A line whose cells are all blank is skipped and counted.
  *
  * Refuses the whole file (400) when it has no such header, names either column
  * twice, or holds more than MAX_CSV_ROWS rows; 413 when it is over MAX_CSV_BYTES.
  *
- * @returns {{ delimiter, columns: { roll, name, all }, rows: { line, roll, name }[], ignoredColumns: string[], blankLines: number }}
+ * @returns {{ delimiter, columns: { roll, name, under18, all }, rows: { line, roll, name, under18? }[], ignoredColumns: string[], blankLines: number }}
  */
 export function rosterFromCsv(text) {
   if (typeof text !== 'string' || !text.trim()) {
@@ -318,18 +355,20 @@ export function rosterFromCsv(text) {
   const keys = names.map(headerKey);
   const rollAt = keys.flatMap((k, i) => (ROLL_HEADERS.has(k) ? [i] : []));
   const nameAt = keys.flatMap((k, i) => (NAME_HEADERS.has(k) ? [i] : []));
+  const minorAt = keys.flatMap((k, i) => (UNDER_18_HEADERS.has(k) ? [i] : []));
   if (!rollAt.length || !nameAt.length) {
     const found = names.filter(Boolean).map((n) => `"${n}"`).join(', ') || 'nothing';
     throw fail(`Line ${header.line} must name the columns: ${wanted}. It names ${found}.`, 400);
   }
-  for (const [at, what] of [[rollAt, 'roll number'], [nameAt, 'name']]) {
+  for (const [at, what] of [[rollAt, 'roll number'], [nameAt, 'name'], [minorAt, 'under-18']]) {
     if (at.length > 1) {
       throw fail(`Line ${header.line} names ${at.length} ${what} columns (${at.map((i) => `"${names[i]}"`).join(', ')}); keep one.`, 400);
     }
   }
+  const read = new Set([rollAt[0], nameAt[0], ...minorAt]);
 
   const ignoredColumns = names
-    .map((n, i) => (i === rollAt[0] || i === nameAt[0] ? null : n || `column ${i + 1} (no header)`))
+    .map((n, i) => (read.has(i) ? null : n || `column ${i + 1} (no header)`))
     .filter(Boolean);
   const rows = [];
   let blankLines = 0;
@@ -339,7 +378,12 @@ export function rosterFromCsv(text) {
     // A cell past the last named column has no header to say what it is: not
     // read, and named back once, like an ignored column.
     if (!pastHeader && r.cells.slice(names.length).some((c) => c.trim())) pastHeader = true;
-    rows.push({ line: r.line, roll: r.cells[rollAt[0]] ?? '', name: r.cells[nameAt[0]] ?? '' });
+    rows.push({
+      line: r.line,
+      roll: r.cells[rollAt[0]] ?? '',
+      name: r.cells[nameAt[0]] ?? '',
+      ...(minorAt.length ? { under18: r.cells[minorAt[0]] ?? '' } : {}),
+    });
   }
   if (pastHeader) ignoredColumns.push('cells past the last named column');
   if (!rows.length) throw fail(`The CSV names its columns on line ${header.line} but has no students under them.`, 400);
@@ -348,7 +392,7 @@ export function rosterFromCsv(text) {
   }
   return {
     delimiter,
-    columns: { roll: names[rollAt[0]], name: names[nameAt[0]], all: names },
+    columns: { roll: names[rollAt[0]], name: names[nameAt[0]], under18: minorAt.length ? names[minorAt[0]] : null, all: names },
     rows,
     ignoredColumns,
     blankLines,
@@ -364,7 +408,42 @@ export function studentView(s) {
     active: !s.removedAt,
     addedAt: s.addedAt ?? null,
     removedAt: s.removedAt ?? null,
+    // The owner's optional mark (decision 8, 0022). Staff-only, like the roster.
+    under18: s.under18 === true,
   };
+}
+
+/**
+ * The roll numbers of a class room tied to a roster student marked under 18
+ * (decision 8, 0022): each such student's roll number on the roster now, and any
+ * roll number an attendance mark of the room was made under for them (0021), so
+ * a corrected roll number still ties the room's rows to the student. A removed
+ * student is still the age they were. Integrity signals are neither recorded nor
+ * shown for these. `marks` are the room's, `roster` its class's.
+ */
+export function minorRolls(roster = [], marks = []) {
+  const minors = roster.filter((s) => s.under18 === true);
+  const ids = new Set(minors.map((s) => String(s._id)));
+  const out = new Set(minors.map((s) => s.rollNo));
+  for (const m of marks) if (m.rollNo && ids.has(String(m.classStudentId))) out.add(m.rollNo);
+  return out;
+}
+
+/**
+ * Is a signal about this roll number in this room to be dropped (decision 8)?
+ * True in a class room for a student marked under 18. Read only when a signal is
+ * about to be recorded, so a room pays nothing for it otherwise; a failed read
+ * says true, so a signal is lost rather than recorded about a minor.
+ */
+export async function signalsOff(repo, session, rollNo) {
+  if (!session?.classId) return false;
+  try {
+    const [roster, marks] = await Promise.all([repo.listClassStudents(session.classId), repo.listAttendance(session._id)]);
+    return minorRolls(roster, marks).has(String(rollNo));
+  } catch (err) {
+    console.error('[roster] under-18 check failed:', err);
+    return true;
+  }
 }
 
 /** A class as a teacher's screen gets it. `size` is the active roster. */
@@ -538,8 +617,8 @@ export function markRollNo(marks = [], roster = []) {
  * over a later join, and a rejoin changes nothing. A roll number not on the
  * roster is let into the room as always and simply marks nobody.
  *
- * Decision 7's known gap applies (JOINED_CAVEAT): the roll number is typed, not
- * proven, so this records that a phone claimed the student, nothing more.
+ * The roll number is typed, not proven (JOINED_CAVEAT), so this records that a
+ * phone claimed the student, nothing more; decision 7 keeps it that way.
  *
  * @returns {Promise<{created: boolean} | null>} null when the room has no class or the roll is not on it
  */
@@ -582,12 +661,21 @@ export async function classGrid(repo, session, rows, seen = null) {
     ]);
     if (seen) Object.assign(seen, { roster, marks });
     const names = new Map(roster.filter((s) => !s.removedAt).map((s) => [s.rollNo, s.name]));
+    // Decision 8: no signal is shown for a student marked under 18. `integrity`
+    // is null rather than an empty summary, which would read as "nothing seen".
+    const minors = minorRolls(roster, marks);
     return {
-      rows: rows.map((r) => ({ ...r, rosterName: names.get(String(r.rollNo)) ?? null })),
+      rows: rows.map((r) => ({
+        ...r,
+        rosterName: names.get(String(r.rollNo)) ?? null,
+        ...(minors.has(String(r.rollNo)) ? { integrity: null } : {}),
+      })),
       attendance: presentCount(roster, marks),
     };
   } catch (err) {
     console.error('[roster] class grid failed:', err);
-    return { rows };
+    // Who is under 18 cannot be told without the roster, so no row shows a
+    // signal on this push (decision 8): the safe side, for one push.
+    return { rows: rows.map((r) => ({ ...r, integrity: null })) };
   }
 }

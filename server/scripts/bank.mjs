@@ -287,13 +287,16 @@ const newDrafts = [];
   check('any other direction is refused', odd.status === 400);
 }
 {
+  // The owner's decision of 19 Nov 2026: the old question goes on serving until
+  // its replacement is approved (decisions.mjs follows it through a room).
   const from = pick('apply');
   const r = await post(`/api/bank/question/${from._id}/regenerate`);
-  check('a plain regenerate still replaces at the same level, as a draft, discarding the old one',
+  check('a plain regenerate still replaces at the same level, as a draft, naming the active question it replaces',
     r.status === 200 && r.body.question?.bloom === 'apply' && r.body.question?.status === 'draft'
-    && (await repo.getQuestion(from._id)).status === 'discarded', `${r.status} ${r.body.error ?? ''}`);
-  check('and, since the old one was in use, the reply says it has left rooms until the new one is approved',
-    r.body.warnings?.some((w) => /left rooms/.test(w) && /approve/.test(w)), JSON.stringify(r.body.warnings));
+    && r.body.question?.replacesId === String(from._id) && r.body.replaces === String(from._id), `${r.status} ${r.body.error ?? ''}`);
+  check('and the old one stays active, and the reply says it stays in rooms until the new one is approved',
+    (await repo.getQuestion(from._id)).status === 'active' && !r.body.warnings
+    && /stays in rooms until you approve its replacement/.test(r.body.note ?? ''), JSON.stringify(r.body.note));
   if (r.body.question) newDrafts.push(r.body.question);
 }
 
@@ -314,7 +317,7 @@ let own = null;
   check('a professor\'s own question is created active', r.status === 201 && own?.status === 'active', `${r.status} ${r.body.error ?? ''}`);
   check('with no model, no slides, and no creator on the shared key',
     own?.model === null && own?.sourceRef === null && own?.createdBy === null);
-  check('labelled as not written by the model', own?.source === 'fallback');
+  check('labelled as the professor\'s, not the model\'s or a template\'s (source teacher, 19 Nov 2026)', own?.source === 'teacher');
   check('its rule checks run as advice, named in the reply',
     Array.isArray(own?.checks) && r.body.failedChecks?.some((c) => c.id === 'all-none-of-the-above'));
 

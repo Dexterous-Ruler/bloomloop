@@ -178,7 +178,9 @@ describe('redactForStudent, for every kind', () => {
     assert.equal(item.review.reviewedBy, null);
     assert.deepEqual(item.student, { rollNo: '21CS01', name: 'Asha', accountId: 'acct-1' });
     // The shared fields are the student's own copy, so the two cannot drift.
-    const { student, questionId, snapshot, detail, auto, review, servedAt, questionSource, ...shared } = item;
+    const { student, questionId, snapshot, detail, auto, review, servedAt, questionSource, classQuestion, language, ...shared } = item;
+    assert.equal(classQuestion, null, 'not a class question vote (Phase 5)');
+    assert.equal(language, 'en', 'the language the answer was given in, for staff (Phase 5)');
     const { review: studentReview, ...studentShared } = redactForStudent(row, ROOM);
     assert.deepEqual(shared, studentShared);
     assert.deepEqual({ ...review, reviewedBy: undefined }, { ...studentReview, reviewedBy: undefined });
@@ -291,12 +293,14 @@ describe('listStudentAnswers on the in-process store', () => {
     const room = (code) => repo.createSession({ code, contentId: content._id, title: `Room ${code}`, status: 'closed' });
     const [r1, r2, r3] = [await room('ROOMAA'), await room('ROOMBB'), await room('ROOMCC')];
     const q = question('mcq');
-    const add = async (key, session, { rollNo = 'S-1', accountId = null, topic = 'T1', bloom = 'remember', at }) => (await repo.recordAnswer({
-      ...answerRow(q, 2, { rollNo }), _id: undefined, sessionId: session._id, answerKey: key, accountId, topic, bloom, answeredAt: at,
+    const add = async (key, session, { rollNo = 'S-1', accountId = null, accountVerified = false, topic = 'T1', bloom = 'remember', at }) => (await repo.recordAnswer({
+      ...answerRow(q, 2, { rollNo }), _id: undefined, sessionId: session._id, answerKey: key, accountId, accountVerified, topic, bloom, answeredAt: at,
     })).answer;
     const rows = {
       a1: await add('k-a1', r1, { at: '2026-11-01T09:00:00.000Z' }),
-      a2: await add('k-a2', r2, { accountId: 'acct-1', topic: 'T2', bloom: 'understand', at: '2026-11-02T09:00:00.000Z' }),
+      // Sent by a phone signed in as acct-1 (decision 7, 0022).
+      a2: await add('k-a2', r2, { accountId: 'acct-1', accountVerified: true, topic: 'T2', bloom: 'understand', at: '2026-11-02T09:00:00.000Z' }),
+      // Linked to acct-1 by a typed roll number, as every link before 0022 was: unverified.
       a3: await add('k-a3', r2, { rollNo: 'S-OLD', accountId: 'acct-1', at: '2026-11-03T09:00:00.000Z' }),
       a4: await add('k-a4', r2, { accountId: 'acct-2', at: '2026-11-04T09:00:00.000Z' }), // linked to someone else
       a5: await add('k-a5', r3, { at: '2026-11-05T09:00:00.000Z' }), // a room out of scope
@@ -349,10 +353,16 @@ describe('listStudentAnswers on the in-process store', () => {
   // 'S-1' with no account, and before this rule both the student with that roll
   // number and a second account whose roll number differs only in case were
   // handed their written answers.
-  test('a student reading their own answers gets the rows linked to their account, and no others', async () => {
+  // Decision 7 (19 Nov 2026): and of those, only the rows a phone signed in as
+  // the student sent. a3 is linked to their account by a typed roll number, the
+  // way every link was made before 0022, so it is not theirs to read.
+  test('a student reading their own answers gets the verified rows linked to their account, and no others', async () => {
     const { repo, rooms, rows } = await fixture();
-    assert.deepEqual(ids(await listStudentAnswers(repo, { rooms, student })), [rows.a3._id, rows.a2._id]);
-    assert.deepEqual(ids(await listStudentAnswers(repo, { rooms, student, view: 'student' })), [rows.a3._id, rows.a2._id]);
+    assert.deepEqual(ids(await listStudentAnswers(repo, { rooms, student })), [rows.a2._id]);
+    assert.deepEqual(ids(await listStudentAnswers(repo, { rooms, student, view: 'student' })), [rows.a2._id]);
+    // The professor still reads both, verified or not.
+    assert.deepEqual(ids(await listStudentAnswers(repo, { rooms, student, view: teacher })).filter((id) => [rows.a2._id, rows.a3._id].includes(id)),
+      [rows.a3._id, rows.a2._id]);
     // Another account, same roll number once normalised: nothing of S-1's.
     const twin = { accountId: 'acct-9', rollNo: rollKey('s-1') };
     assert.deepEqual(ids(await listStudentAnswers(repo, { rooms, student: twin })), []);

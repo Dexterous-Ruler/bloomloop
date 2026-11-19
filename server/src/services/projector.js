@@ -22,6 +22,13 @@
 //             person: under that, the counts would be one student's own.
 //   pick      the wheel's latest pick: roll number and first name, or the roll
 //             number alone with the names toggle off.
+//   class     a class question (Phase 5, services/classQuestions.js) on the
+//             question screen: its text and options, how many have voted, and,
+//             only when the professor chooses to show counts, each closed
+//             round's votes per option and confidence taps once at least
+//             MIN_VOTES_FOR_WALL voted in it. The key, the share right and the
+//             changes from round 1 to round 2 only once the professor revealed
+//             the key as the question closed.
 //
 // Never a name beyond the pick's first name, never a score, accuracy, band,
 // observation or any teacher record, and no answer key before the reveal. Every
@@ -39,11 +46,12 @@ import crypto from 'node:crypto';
 
 import { LEVELS, LABEL } from '../bloom.js';
 import { forStudent } from '../questionTypes.js';
-import { hydrate } from './mastery.js';
+import { hydrate, sessionSettings } from './mastery.js';
 import { servableFor } from './selector.js';
 import { presentCount as rosterPresent } from './roster.js';
 import { OPTION_KEYS, roomPeople } from './records.js';
 import { pickForProjector } from './wheel.js';
+import { MIN_VOTES_FOR_WALL, votesOf, wallQuestion } from './classQuestions.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -106,7 +114,9 @@ export const PROJECTOR_RULE = 'The projector shows the question (its key only on
   + 'question\'s key only in a Teacher-led room, where no phone can still be served it), a diagram, counts for the '
   + `class (per level only once ${MIN_ANSWERED_FOR_LEVELS} students have answered), and the wheel's pick as a roll `
   + 'number and first name. Never a score, accuracy, band, observation or any other name. '
-  + `A projector link works for ${PROJECTOR_LINK_HOURS} hours from when it is made.`;
+  + `A projector link works for ${PROJECTOR_LINK_HOURS} hours from when it is made. A class question shows how many have `
+  + 'voted; its votes per option and confidence taps only when you choose to show counts, once a round has closed and '
+  + `${MIN_VOTES_FOR_WALL} or more voted in it; and its key, share right and changes only once you reveal the key as it closes.`;
 
 // ------------------------------------------------------------ whitelist --
 
@@ -117,11 +127,23 @@ export const PROJECTOR_RULE = 'The projector shows the question (its key only on
  * event a projector receives in a whole room run against its own copy of this.
  */
 export const PROJECTOR_FIELDS = {
-  'projector:state': ['code', 'title', 'status', 'mode', 'question', 'diagram', 'progress', 'pick'],
-  'projector:state.question': ['source', 'text', 'kind', 'options', 'stimulus', 'revealed', 'correct'],
+  'projector:state': ['code', 'title', 'status', 'mode', 'roomMode', 'question', 'diagram', 'progress', 'pick'],
+  'projector:state.question': ['source', 'text', 'kind', 'options', 'stimulus', 'revealed', 'correct', 'round', 'state', 'voted', 'counts'],
   'projector:state.question.options[]': ['key', 'label'],
   'projector:state.question.stimulus': ['kind', 'url', 'alt', 'text'],
   'projector:state.question.correct[]': null,
+  // A class question's counts (Phase 5): numbers per option and per tap, never a name.
+  'projector:state.question.counts': ['minVotes', 'before', 'after', 'changes'],
+  'projector:state.question.counts.before': ['voted', 'options', 'correct', 'confidence'],
+  'projector:state.question.counts.before.options[]': ['key', 'votes'],
+  'projector:state.question.counts.before.correct': ['students', 'share'],
+  'projector:state.question.counts.before.confidence': ['sure', 'think_so', 'guessing', 'none'],
+  'projector:state.question.counts.after': ['voted', 'options', 'correct', 'confidence'],
+  'projector:state.question.counts.after.options[]': ['key', 'votes'],
+  'projector:state.question.counts.after.correct': ['students', 'share'],
+  'projector:state.question.counts.after.confidence': ['sure', 'think_so', 'guessing', 'none'],
+  'projector:state.question.counts.changes': ['both', 'onlyBefore', 'onlyAfter', 'wrongToRight', 'rightToWrong',
+    'rightToRight', 'wrongToSameWrong', 'wrongToOtherWrong', 'kept', 'changed'],
   'projector:state.diagram': ['stimulus'],
   'projector:state.diagram.stimulus': ['kind', 'url', 'alt', 'text'],
   'projector:state.progress': ['present', 'classSize', 'answered', 'levels', 'minAnswered'],
@@ -162,8 +184,10 @@ export function emitProjector(target, event, payload) {
 
 export const PROJECTOR_MODES = ['question', 'diagram', 'progress'];
 
-/** The handoff's own defaults: the question screen, names on. */
-const DEFAULT_SCREEN = { mode: 'question', question: null, revealed: false, diagram: null, pickId: null, showNames: true };
+/** The handoff's own defaults: the question screen, names on; a class question's counts off until chosen. */
+const DEFAULT_SCREEN = {
+  mode: 'question', question: null, revealed: false, diagram: null, pickId: null, showNames: true, showCounts: false,
+};
 
 const screens = new Map(); // sessionId -> what the professor has put on the wall
 
@@ -201,14 +225,18 @@ const sameId = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? ''
  *
  *   mode       question | diagram | progress
  *   question   { questionId } of the room's servable set, { tallyId } of the
- *              room's tallies, or null. A new question starts unrevealed.
- *   revealed   true or false: the question's key on the wall.
+ *              room's tallies, { classQuestionId } of the room's class
+ *              questions (Phase 5), or null. A new question starts unrevealed.
+ *   revealed   true or false: the question's key on the wall. Not for a class
+ *              question, whose key goes up only when the professor closes it
+ *              with the key revealed.
+ *   showCounts true or false: a class question's counts on the wall
  *   diagram    { questionId } of a servable question carrying a stimulus, or null
  *   showNames  true or false: the pick's first name, or its roll number alone
  *   pick       null takes the pick down; { pickId } puts one of the room's up
  *
- * `room` gives what to check against: servable (questions), tallies, picks, and
- * the room's mode. A mode left out is taken as one that serves phones, so a
+ * `room` gives what to check against: servable (questions), tallies, picks,
+ * classQuestions, and the room's mode. A mode left out is taken as one that serves phones, so a
  * caller that forgets it gets the strict rule below, never the loose one.
  *
  * A bank question's key goes up only in a Teacher-led room (409 otherwise). In
@@ -217,7 +245,9 @@ const sameId = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? ''
  * asked aloud from the bank (a tally with a questionId) carries the bank's key,
  * so the same holds; one the professor typed in is no bank question.
  */
-export function screenChangeFrom(body = {}, current, { servable = [], tallies = [], picks = [], mode = 'devices' } = {}) {
+export function screenChangeFrom(body = {}, current, {
+  servable = [], tallies = [], picks = [], classQuestions = [], mode = 'devices',
+} = {}) {
   const next = { ...current };
   let touched = false;
   const bool = (key) => {
@@ -232,11 +262,16 @@ export function screenChangeFrom(body = {}, current, { servable = [], tallies = 
     touched = true;
   }
   if (body.question !== undefined) {
-    next.question = questionRef(body.question, { servable, tallies });
+    next.question = questionRef(body.question, { servable, tallies, classQuestions });
     next.revealed = false;
     touched = true;
   }
-  if (body.revealed !== undefined) bool('revealed');
+  if (body.revealed !== undefined) {
+    if (next.question?.source === 'class' && body.revealed === true) {
+      throw fail('A class question\'s key goes on the wall when you close it with the key revealed, not before.', 400);
+    }
+    bool('revealed');
+  }
   if (body.diagram !== undefined) {
     if (body.diagram === null) next.diagram = null;
     else {
@@ -248,6 +283,7 @@ export function screenChangeFrom(body = {}, current, { servable = [], tallies = 
     touched = true;
   }
   if (body.showNames !== undefined) bool('showNames');
+  if (body.showCounts !== undefined) bool('showCounts');
   if (body.pick !== undefined) {
     if (body.pick === null) next.pickId = null;
     else {
@@ -257,7 +293,7 @@ export function screenChangeFrom(body = {}, current, { servable = [], tallies = 
     }
     touched = true;
   }
-  if (!touched) throw fail('Send mode, question, revealed, diagram, showNames or pick to change.', 400);
+  if (!touched) throw fail('Send mode, question, revealed, diagram, showNames, showCounts or pick to change.', 400);
   if (next.revealed && next.question && mode !== 'teacher-led' && keyStillServable(next.question, tallies)) {
     throw fail('That key cannot go on the wall: this room\'s phones may still be served this question, and a phone '
       + 'that has not answered it yet would have been shown its answer. A bank question\'s key is revealed on the '
@@ -268,15 +304,21 @@ export function screenChangeFrom(body = {}, current, { servable = [], tallies = 
 
 /** Is the key of the question on the screen one of the bank's? A tally that cannot be found is treated as if it were. */
 function keyStillServable(question, tallies) {
-  if (question.source === 'bank') return true;
+  if (question.source === 'bank' || question.source === 'class') return true;
   const t = tallies.find((x) => sameId(x._id, question.id));
   return !t || Boolean(t.questionId);
 }
 
-function questionRef(raw, { servable, tallies }) {
+function questionRef(raw, { servable, tallies, classQuestions = [] }) {
   if (raw === null) return null;
-  if (raw?.questionId !== undefined && raw?.tallyId !== undefined) {
-    throw fail('question names a questionId or a tallyId, not both.', 400);
+  const named = ['questionId', 'tallyId', 'classQuestionId'].filter((k) => raw?.[k] !== undefined);
+  if (named.length > 1) {
+    throw fail('Choose one thing to show: a question of the room, a question asked aloud or a class question.', 400);
+  }
+  if (raw?.classQuestionId !== undefined) {
+    const c = classQuestions.find((x) => sameId(x._id, raw.classQuestionId));
+    if (!c) throw fail('That class question was not asked in this room: choose one that was.', 400);
+    return { source: 'class', id: String(c._id) };
   }
   if (raw?.questionId !== undefined) {
     const q = servable.find((x) => sameId(x._id, raw.questionId));
@@ -288,7 +330,8 @@ function questionRef(raw, { servable, tallies }) {
     if (!t) throw fail('question.tallyId is not a question asked aloud in this room.', 400);
     return { source: 'tally', id: String(t._id) };
   }
-  throw fail('question must be { questionId }, { tallyId } or null.', 400);
+  throw fail('Choose what the question screen shows: a question of the room, a question asked aloud, a class question, '
+    + 'or nothing.', 400);
 }
 
 /** The professor's screen state as their own screen gets it (ids, not content). */
@@ -300,6 +343,7 @@ export function screenView(screen) {
     diagram: screen.diagram ? { questionId: screen.diagram.questionId } : null,
     pickId: screen.pickId ?? null,
     showNames: screen.showNames !== false,
+    showCounts: screen.showCounts === true,
   };
 }
 
@@ -401,13 +445,15 @@ export async function projectorPayload(repo, session) {
   const screen = screenOf(session);
   const needsBank = screen.mode === 'diagram' || (screen.mode === 'question' && screen.question?.source === 'bank');
   const needsPeople = screen.mode === 'progress' || Boolean(screen.pickId);
-  const [bank, tallies, picks, profiles, roster, marks] = await Promise.all([
+  const onClass = screen.mode === 'question' && screen.question?.source === 'class';
+  const [bank, tallies, picks, profiles, roster, marks, cq] = await Promise.all([
     needsBank ? repo.listQuestions(session.contentId).then((qs) => servableFor(session, qs)) : [],
     screen.mode === 'question' && screen.question?.source === 'tally' ? repo.listTallies(session._id) : [],
     screen.pickId ? repo.listWheelPicks(session._id) : [],
     needsPeople ? repo.listProfiles(session._id) : [],
     needsPeople && session.classId ? repo.listClassStudents(session.classId) : [],
     needsPeople && session.classId ? repo.listAttendance(session._id) : [],
+    onClass ? repo.getClassQuestion(screen.question.id) : null,
   ]);
 
   let question = null;
@@ -418,6 +464,11 @@ export async function projectorPayload(repo, session) {
       // A question discarded since it went up is simply no longer shown.
       const q = bank.find((x) => sameId(x._id, screen.question.id));
       question = q ? bankQuestionForWall(q, screen.revealed) : null;
+    } else if (screen.question.source === 'class') {
+      // Only this room's: a class question of another room is never shown.
+      question = cq && sameId(cq.sessionId, session._id)
+        ? wallQuestion(cq, await votesOf(repo, cq), { showCounts: screen.showCounts === true })
+        : null;
     } else {
       const t = tallies.find((x) => sameId(x._id, screen.question.id));
       question = t ? tallyForWall(t, screen.revealed) : null;
@@ -444,6 +495,10 @@ export async function projectorPayload(repo, session) {
     title: session.title ?? '',
     status: session.status,
     mode: screen.mode,
+    // How the room runs ('devices', 'teacher-led' or 'mixed'), not what the
+    // screen shows (`mode`): the wall hides the join code in a Teacher-led
+    // room, which no phone joins.
+    roomMode: sessionSettings(session).mode,
     question,
     diagram,
     progress,

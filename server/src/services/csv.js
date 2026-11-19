@@ -52,7 +52,7 @@ function headerRow() {
   return cells;
 }
 
-function profileRow(raw) {
+function profileRow(raw, quiet = new Set()) {
   // hydrate() guarantees all six levels exist, so the row can never come out
   // short and shift every column to the right of a missing cell.
   const profile = hydrate(raw);
@@ -76,8 +76,9 @@ function profileRow(raw) {
   // name, in a file that will be read weeks later by someone who was not in the
   // room, is precisely the verdict this feature refuses to render; the sentences
   // describe what was recorded and leave the reading of it to a person.
-  // An empty cell is a student nothing was recorded about.
-  const signals = summarise(profile).notes.join(' ');
+  // An empty cell is a student nothing was recorded about, and a student their
+  // class roster marks under 18, about whom nothing is shown (decision 8).
+  const signals = quiet.has(String(profile.rollNo)) ? '' : summarise(profile).notes.join(' ');
 
   // The caveat rides on the rows that make a claim, and only those. A sheet gets
   // mailed, filtered and quoted one row at a time, and this column is the only
@@ -92,10 +93,11 @@ function profileRow(raw) {
 
 /**
  * @param {object[]} profiles raw profile documents, in the order they should appear
- * @param {{sessionCode?: string, contentTitle?: string}} meta
+ * @param {{sessionCode?: string, contentTitle?: string, quiet?: Set<string>}} meta
+ *   `quiet`: roll numbers whose signals are not shown (decision 8, minorRolls)
  * @returns {string} a complete CSV file, BOM included
  */
-export function profilesToCsv(profiles, { sessionCode = '', contentTitle = '' } = {}) {
+export function profilesToCsv(profiles, { sessionCode = '', contentTitle = '', quiet = new Set() } = {}) {
   const rows = Array.isArray(profiles) ? profiles : [];
 
   // The header MUST be row 1 with no caption or blank line above it. Test TC-08
@@ -105,7 +107,7 @@ export function profilesToCsv(profiles, { sessionCode = '', contentTitle = '' } 
   // Provenance lives in the filename instead: bloomloop-<CODE>-<date>.csv,
   // built by routes/export.js from sessionCode and today().
   const lines = [line(headerRow())];
-  for (const raw of rows) lines.push(line(profileRow(raw)));
+  for (const raw of rows) lines.push(line(profileRow(raw, quiet)));
 
   return BOM + lines.join(EOL) + EOL;
 }

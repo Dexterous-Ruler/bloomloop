@@ -89,6 +89,11 @@ Profile  { _id, sessionId, rollNo, name, levels:{<level>:{seen,correct}} x6,
            workingLevel, reason, history:[{questionId, bloom, correct, at}] }
 ```
 
+> **Amendment 5 (19 Nov 2026, decided under the owner's delegation).** Additive only.
+> `Question.source` may also be `'teacher'`: a question a professor wrote in the bank
+> (section 6 rule 5). A professor's question written before this date stays
+> `'fallback'`; no stored row is rewritten.
+
 Profiles are only ever built/changed through `mastery.js`. Never hand-edit `levels`
 or `workingLevel` anywhere else — that is the whole point of having a pure module.
 
@@ -117,6 +122,15 @@ Mounted in `server/src/app.js`; each router is `export default router`.
 | | `GET /courses` | | `{courses:[{id,name}]}` |
 | | `POST /post` | `{code, courseId}` | `{ok, courseWorkId, posted, skipped[]}` |
 
+> **Amendment 5 (19 Nov 2026, decided under the owner's delegation), the regenerate
+> row.** On an **active** question, `POST /question/:id/regenerate` no longer discards
+> the old question: it stays active and serving, the new draft names it
+> (`replacesId`), and the reply adds `replaces` and a `note`. Whichever route approves
+> the draft (approve, approve-all, `PATCH` with `status: 'active'`, a bulk restore)
+> sets the old one `discarded` and says so (`retired`). Rejecting the draft leaves the
+> old one as it is. On a draft or a rejected question the old row is discarded at
+> once, as before.
+
 `GridRow` (used by REST *and* the socket broadcast — one shape only):
 
 ```js
@@ -124,6 +138,28 @@ Mounted in `server/src/app.js`; each router is `export default router`.
   levels: { remember:{seen,correct}, ... },   // all six, always present
   total: { seen, correct }, answered:Number, online:Boolean }
 ```
+
+> **Amendment 3 (19 Nov 2026, the owner's decision (a), taken under his delegation).**
+> Labels are staff-only. `GridRow` is the **teacher's** row (`GET /:code/grid`,
+> `teacher:grid`) and is unchanged. A phone gets `PhoneRow`, a student subset of it,
+> built field by field (`phoneRow` in `server/src/routes/session.js`): never
+> `slowLearner`, the integrity summary or the professor's `reason`, which can name the
+> below-40% band. In their place `next` says, in plain words and with no band, which
+> level comes next, why, and how many answers that rests on:
+>
+> ```js
+> PhoneRow = { rollNo, name, workingLevel, levels, total, answered, online,
+>              counted, withdrawn, mastered, masteryGoal,
+>              next: { levels:[<level>], why:String, answers:Number } }
+> ```
+>
+> **Amendment 4 (19 Nov 2026, Phase 5 honest indicators; the honesty fields the owner's
+> decisions of that day approved, under his delegation).** Additive only. `GridRow`
+> gains `levelBasis: { answers, provisional, sentence }` (what the working level rests
+> on) and `masteryBasis: [{ level, answers, correct, mastered, provisional, sentence }]`
+> (per level answered at). `PhoneRow` gains the same `masteryBasis` (its sentences name
+> no band and no percentage) and `next.provisional: Boolean` (the level is a starting
+> point, not yet an estimate). Nothing is removed.
 
 Error style: `next(Object.assign(new Error('message'), {status: 400}))`.
 
@@ -147,6 +183,40 @@ Client constants live in `client/src/socket.js` (`EV`). Server must match verbat
 - `server:exhausted` `{profile: GridRow}`
 - `session:closed` `{}`
 
+> **Amendment 3 (19 Nov 2026), for the phone's events.** Every `profile` sent to a
+> phone (`session:accepted`, `server:result`, `server:exhausted`) is a `PhoneRow`
+> (section 4), not a `GridRow`. The `reason` a phone is sent (`server:question`,
+> `server:result`) is the phone's own sentence: why this question, or what comes next
+> and why, never naming the band. The teacher's events below are unchanged.
+>
+> **Amendment 4 (19 Nov 2026, Phase 5 honest indicators, as above).** `server:question`'s
+> `question`, and a class question's on `class:question`, gain `provenance: { by:
+> 'professor'|'ai'|'not-ai', checked: Boolean, text: String }`: who wrote it, in a
+> student's words ("Written with AI help and checked by your professor."), never
+> naming a template, a fallback or a model. `question.source` stays as it was. Section
+> 6 rule 5's visible label is `text`.
+>
+> **Amendment 5 (19 Nov 2026, decided under the owner's delegation; decision 7 and
+> Phase 5).** Additive only; every event above keeps its fields.
+> - `student:join` may carry `token`: a signed-in student's access token. It only
+>   links the room profile to that student's account (when the account is a student
+>   of the room's owner with the roll number typed); it never admits or refuses a
+>   phone. The credential stays room code + roll number (section 6 rule 3).
+> - `session:accepted` adds `linked: Boolean`, `linkNote?: String` (only when a token
+>   was sent and could not link) and `confidence: [{id, label}]`, the three taps.
+> - `student:answer` may carry `confidence`: `'sure' | 'think_so' | 'guessing'`. It is
+>   stored and read by nothing that marks or moves anything.
+> - New, student → server: `student:vote` `{classQuestionId, round, response,
+>   confidence?, answerId}`, a vote in the class question the professor is running.
+> - New, server → student: `class:question` `{id, seq, round, state, voting, question,
+>   options, confidence, mine, message}` (the question through `forStudent()`, named by
+>   the class question's id, never with its key); `class:vote` `{id, round, counted,
+>   mine, message}` (never whether it was right); `class:closed` `{id, revealed,
+>   answer, correct, message}` (`answer` and `correct` null unless revealed).
+> - New, server → teacher: `teacher:class-question`, a class question as the
+>   professor's screens get it (counts, never a student's name).
+> - A misconception label is never sent on any socket event.
+
 **Server → teacher** (room `teacher:<code>`)
 - `teacher:grid` `{rows:[GridRow], code}` — broadcast on every join, answer and disconnect
 
@@ -156,13 +226,25 @@ and must not create a second row in the grid.
 
 ## 6. Hard rules from the mentor transcript
 
-1. **No PPT/content generation, ever.** Ingest only. No image generation.
+1. **Generated teaching content only from the professor's own material.** It cites
+   the slide or line it came from, is marked "AI draft" until the professor approves
+   it, and never adds syllabus content the professor did not teach. No image
+   generation. *(Amended 19 Nov 2026, the owner's decision 1, taken under his
+   delegation; it read "No PPT/content generation, ever. Ingest only.")*
+   "No image generation" means no image-model output. A figure drawn by code from
+   data (an SVG plot, a labelled diagram from coordinates) is allowed, being
+   reproducible and checkable; a code-rendered graph question kind is to be built as
+   its own batch after Phase 6. *(Amended 19 Nov 2026, the owner's decision 4 and its
+   revision that day, taken under his delegation.)*
 2. **The live loop makes zero LLM calls.** Generation happens before the session.
 3. **No student accounts or passwords.** The credential is `room code + roll number`.
 4. The slow-learner ceiling is real: a student inside the below-40% band is
    **never** served an item above Understand.
-5. Any question item not produced by the LLM must carry `source:'fallback'` and be
-   visibly labelled in the UI. Never present a template item as model output.
+5. Any question item not produced by the LLM must say so in `source` and be visibly
+   labelled in the UI: `'fallback'` for an offline-template item, `'teacher'` for a
+   question a professor wrote. Never present a template item, or a professor's, as
+   model output. *(Amended 19 Nov 2026, under the owner's delegation: `'teacher'` is
+   new, and a professor's own questions written before it stay `'fallback'`.)*
 
 ## 7. Style notes for UI agents
 

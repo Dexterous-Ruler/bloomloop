@@ -22,9 +22,12 @@ export async function initStore({ log = console.log } = {}) {
     try {
       // Probe before committing: a wrong key or an unrun migration should fail
       // here, at boot, and not on the first student join.
-      await probeSupabase();
+      const { warnings = [] } = (await probeSupabase()) ?? {};
       repo = createSupabaseRepo();
       log(`[store] Supabase connected (${new URL(config.supabase.url).host}).`);
+      // Rooms run; some routes will not until a migration is applied. Each line
+      // names the file, so the fix is in the boot log rather than in a 500.
+      for (const warning of warnings) log(`[store] WARNING: ${warning}`);
       return repo;
     } catch (err) {
       log(`[store] Supabase connection FAILED: ${err.message}`);

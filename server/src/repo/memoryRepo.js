@@ -38,6 +38,8 @@ export function createMemoryRepo() {
   const overrides = new Map(); // key: `${classId}:${questionId}`
   // Attainment formulas (0020): every saved version, append-only.
   const attainmentConfigs = [];
+  // Class questions (0023), keyed by _id.
+  const classQuestions = new Map();
 
   // Unique on (classId, code) among outcomes not archived, as Postgres's partial
   // unique index course_outcomes_class_code_key is.
@@ -103,6 +105,10 @@ export function createMemoryRepo() {
           createdBy: null,
           approvedBy: null,
           approvedAt: null,
+          // 0022: the active question a regenerated draft would replace.
+          replacesId: null,
+          // 0024: misconception labels on its wrong options, none by default.
+          misconceptions: [],
           createdAt: new Date().toISOString(),
           ...d,
           contentId: String(d.contentId),
@@ -213,7 +219,7 @@ export function createMemoryRepo() {
       for (const list of [observations, insightActions]) {
         for (let i = list.length - 1; i >= 0; i -= 1) if (list[i].sessionId === key) list.splice(i, 1);
       }
-      for (const map of [wheelRounds, wheelPicks, tallies, activities, projectorLinks]) {
+      for (const map of [wheelRounds, wheelPicks, tallies, activities, projectorLinks, classQuestions]) {
         for (const [id, rec] of map) if (rec.sessionId === key) map.delete(id);
       }
       return sessions.delete(key);
@@ -283,6 +289,11 @@ export function createMemoryRepo() {
         reviewedAt: null,
         reviewNote: '',
         confidence: null,
+        // 0022: sent by a phone signed in as the linked account.
+        accountVerified: false,
+        // 0023: the class question and round a vote was given in; null for every other answer.
+        classQuestionId: null,
+        round: null,
         answeredAt: new Date().toISOString(),
         ...clone(doc),
         sessionId: String(doc.sessionId),
@@ -309,17 +320,26 @@ export function createMemoryRepo() {
     // their account, plus rows under their roll number that are linked to no
     // account. A row linked to a DIFFERENT account is that account's answer,
     // whatever roll number it carries, so it is never handed to this one.
+    // `student: { accountId, verifiedOnly: true }` is the student reading
+    // themself (decision 7, 0022): rows linked to their account AND sent by a
+    // phone signed in as it. Never a roll number.
     //
     // `before: { answeredAt, id }` is a page cursor: only rows earlier than it in
     // that same (answeredAt, id) order. The review queue pages by it, newest
     // first, because offsets drift as answers are reviewed out of the queue.
+    //
+    // `classQuestionId` (0023) is one class question's votes; `classVotes: false`
+    // leaves every class question's votes out, for the readers of a student's
+    // own work: the ladder's evidence, item statistics, a student's history.
     async listAnswers({
       sessionId, sessionIds, rollNo, accountId, student, topic, bloom, reviewStatus, kind, final, before,
-      order = 'asc', limit = 2000, offset = 0,
+      classQuestionId, classVotes, order = 'asc', limit = 2000, offset = 0,
     } = {}) {
       const ids = Array.isArray(sessionIds) ? new Set(sessionIds.map(String)) : null;
-      const isStudents = (a) => (student.accountId && a.accountId && String(a.accountId) === String(student.accountId))
-        || (student.rollNo && !a.accountId && a.rollNo === String(student.rollNo));
+      const isStudents = (a) => (student.verifiedOnly
+        ? Boolean(student.accountId) && String(a.accountId ?? '') === String(student.accountId) && a.accountVerified === true
+        : (student.accountId && a.accountId && String(a.accountId) === String(student.accountId))
+          || (student.rollNo && !a.accountId && a.rollNo === String(student.rollNo)));
       const inOrder = (a, b) => (a.answeredAt < b.answeredAt ? -1 : a.answeredAt > b.answeredAt ? 1
         : a._id < b._id ? -1 : a._id > b._id ? 1 : 0);
       const rows = [...answers.values()]
@@ -333,6 +353,8 @@ export function createMemoryRepo() {
           && (!reviewStatus || a.reviewStatus === reviewStatus)
           && (!kind || a.kind === kind)
           && (final === undefined || a.final === final)
+          && (!classQuestionId || String(a.classQuestionId ?? '') === String(classQuestionId))
+          && (classVotes !== false || a.classQuestionId == null)
           && (!before || inOrder(a, { answeredAt: before.answeredAt, _id: before.id }) < 0))
         .sort(inOrder);
       if (order === 'desc') rows.reverse();
@@ -466,21 +488,22 @@ export function createMemoryRepo() {
       for (const d of docs) {
         if (rollHeld(classId, d.rollNo)) continue;
         const _id = oid();
-        const rec = { _id, addedAt: new Date().toISOString(), removedAt: null, ...clone(d), classId: String(classId) };
+        // under18 (0022): the owner's optional mark, false unless sent.
+        const rec = { _id, addedAt: new Date().toISOString(), removedAt: null, ...clone(d), under18: d.under18 === true, classId: String(classId) };
         classStudents.set(_id, rec);
         made.push(rec);
       }
       return clone(made);
     },
 
-    /** Name, roll number and removedAt only. A roll number another row holds is a 409. */
+    /** Name, roll number, removedAt and under18 only. A roll number another row holds is a 409. */
     async updateClassStudent(id, patch) {
       const rec = classStudents.get(String(id));
       if (!rec) return null;
       if (patch.rollNo !== undefined && rollHeld(rec.classId, patch.rollNo, rec._id)) {
         throw Object.assign(new Error(`Roll number ${patch.rollNo} is already on this class's roster.`), { status: 409 });
       }
-      for (const k of ['name', 'rollNo', 'removedAt']) if (patch[k] !== undefined) rec[k] = patch[k];
+      for (const k of ['name', 'rollNo', 'removedAt', 'under18']) if (patch[k] !== undefined) rec[k] = patch[k];
       return clone(rec);
     },
 
@@ -814,6 +837,42 @@ export function createMemoryRepo() {
       };
       attainmentConfigs.push(rec);
       return clone(rec);
+    },
+
+    // -- class questions (0023; services/classQuestions.js, routes/classQuestions.js) --
+
+    /**
+     * One class question. A room holds at most one that is not closed, and one
+     * per seq: a second is a 409, as class_questions_one_running and
+     * class_questions_session_seq_key make it in Postgres.
+     */
+    async addClassQuestion(doc) {
+      const mine = ofRoom(classQuestions, doc.sessionId);
+      if (mine.some((c) => c.state !== 'closed')) {
+        throw Object.assign(new Error('Another class question is still running in this room. Close it first.'), { status: 409 });
+      }
+      if (mine.some((c) => c.seq === doc.seq)) throw taken('place in the room\'s class questions');
+      const rec = {
+        _id: oid(), questionId: null, state: 'open', revealed: false, startedAt: new Date().toISOString(), startedBy: null,
+        pausedAt: null, revoteAt: null, closedAt: null, closedBy: null,
+        ...clone(doc), sessionId: String(doc.sessionId),
+      };
+      classQuestions.set(rec._id, rec);
+      return clone(rec);
+    },
+
+    async getClassQuestion(id) {
+      return clone(classQuestions.get(String(id)) ?? null);
+    },
+
+    /** In the order they were asked. */
+    async listClassQuestions(sessionId) {
+      return clone(ofRoom(classQuestions, sessionId).sort((a, b) => a.seq - b.seq));
+    },
+
+    /** Where it stands, and nothing else: what was asked, in which room and when are written once. */
+    async updateClassQuestion(id, patch) {
+      return update(classQuestions, id, patch, ['state', 'revealed', 'pausedAt', 'revoteAt', 'closedAt', 'closedBy']);
     },
   };
 }

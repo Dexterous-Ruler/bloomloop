@@ -2,9 +2,246 @@
 
 Newest first. Nothing below is deployed. The 18 November entries are committed as
 `b4585a0` on branch `roadmap-phase0-evidence`, the Phase 1 entries of 19 November as
-`05daf56` and the Phase 2 entries as `27559ca`. **Phase 3 is committed as `d162cc8`.**
-The Phase 4 entries, its review fixes and `0019` to `0021` included, are
-uncommitted.
+`05daf56` and the Phase 2 entries as `27559ca`. **Phase 3 is committed as `d162cc8`**
+and Phase 4, its review fixes and `0019` to `0021` included, as `eedfd5e`. The
+owner's decisions of 19 November (`0022`) are uncommitted, and so are Phase 5's
+confidence tap and class question (`0023`), its misconception labels (`0024`), its
+honest indicators and the fixes from its review (no migration).
+
+## Unreleased: Phase 5 docs pass and contract amendments (19 November 2026)
+
+- **`CONTRACT.md` Amendment 5**, dated and marked as decided under the owner's
+  delegation, where the follow-up decisions of 19 November named it: section 3
+  (`Question.source` may be `'teacher'`), section 4 (the regenerate row: an active
+  question keeps serving until its replacement is approved), section 5 (`student:join`'s
+  optional `token`; `session:accepted`'s `linked`, `linkNote`, `confidence`;
+  `student:answer`'s `confidence`; the events `student:vote`, `class:question`,
+  `class:vote`, `class:closed`, `teacher:class-question`) and section 6 rule 1 ("No
+  image generation" means image-model output; a code-rendered graph question kind
+  after Phase 6). `V2-CONTRACT.md` read against the decisions; unchanged.
+- **`docs/PRODUCT_DECISIONS.md`**: decision 4's revision (a graph question kind after
+  Phase 6), decision 7's fix, the builders' open questions as decided under the
+  delegation, the rules the review fixes chose, and "Phase 5 in brief" (why a class
+  question moves no level, the label matching rule, the translation threshold, and
+  what is open).
+- **`docs/API.md`**: one index of every Phase 5 endpoint and socket event, what the
+  review fixes changed (with payloads captured after the fixes), a student's own
+  history after the decision 7 fix, and the open issues.
+- **`docs/IMPLEMENTATION_STATUS.md`**: one Phase 5 checklist by the directive's items
+  (every screen unticked), the test table and the risks brought up to date.
+- `docs/TESTING.md`, `docs/ARCHITECTURE.md`, `docs/DATABASE_SCHEMA.md` and
+  `supabase/README.md` brought up to `0024` and the review fixes.
+- Every suite through the offline runner: unit 719/719, migrations 752/752, and every
+  end-to-end script at its figure (`docs/TESTING.md`, "Full rerun after Phase 5").
+
+## Unreleased: Phase 5, fixes from the review (19 November 2026)
+
+Server only, no migration. Each fix is checked by the new
+`server/scripts/keysafety.mjs` (41 checks, added to the offline runner) or by
+`decisions.mjs`, and by unit tests (`test/classQuestions.test.js` 20 to 24,
+`test/decisions.test.js` 22 to 27).
+
+- **A class question's key could reach a phone before the reveal.** Fixed four ways:
+  - `class:question` named the bank question, an id a phone could send back as its own
+    answer (here, or in another open room on the chapter) and be marked on. Its
+    question is now named by the class question's id.
+  - A vote's key sent again through `student:answer` was answered from the vote (its
+    mark, the key, and a move on the ladder). Now it is re-keyed like another student's
+    row, the answer kept with the class question and never counted, and the phone moved
+    on with no result.
+  - A resend of an answer sent to the asked question as a phone's own told the mark,
+    one option at a time, before the reveal or after a close without one. Now it only
+    moves the phone on.
+  - A vote for a round not yet open was kept as "late"; it is now kept as early, with
+    its own sentence.
+- **A typed roll number could take a signed-in student's vote** (decision 7). A phone
+  not signed in as her is no longer sent her vote or tap, and its vote stops counting
+  once her phone has voted in the round (kept, with a sentence).
+- **A vote while the room was paused counted.** Now kept and not counted, and the phone
+  is told the room is paused (`session:paused`).
+- **The professor is told how many phones answered the question on their own first**
+  (`phones.answeredAlone`, `answeredAloneNote`), and such a student's round 1 vote is
+  set aside in attainment, their own answer counting instead; every methodology says so.
+- **A student's own dashboard and analytics read a whole linked profile** (decision
+  7's residual): now only the history entries of their own verified answers, with the
+  room's working level withheld when other answers helped set it; the `note` says so.
+- **A deleted class room's archive** is served without the signals of a student the
+  roster marks under 18 now (decision 8), whenever the mark was set.
+- **A regenerate of a never-approved replacement lost its link**; it now passes it on.
+- **Refusal sentences named fields** (`questionId`, `reveal`, three projector
+  sentences); reworded.
+- **Not acted on:** closing a room while a class question runs awaits that close with
+  no catch, so a store error there could leave the phones uninformed (traced, not
+  reproduced; `docs/API.md`, "Known open issues").
+
+## Unreleased: Phase 5, honest indicators (19 November 2026)
+
+Server only, no migration; every console and phone screen is the UI session's
+(`docs/API.md`, "Phase 5: honest indicators", "What the screens need"). Audited first:
+most counts already existed, and only what was missing was built. The defaults chosen
+are in `docs/PRODUCT_DECISIONS.md`, "Phase 5: honest indicators". Every change is a
+field added.
+
+- **Who wrote a question, and whether it was let in** (`services/honesty.js`). Every
+  bank question sent to staff carries `provenance` (AI-generated, professor-written,
+  offline template, or the older rows nothing tells apart; the model; draft, approved,
+  written, in use from before approvals, or discarded; "AI draft" on an unapproved AI
+  question). Every misconception label carries `confirmed`. The phone's question, and a
+  class question, carries `provenance.text` in a student's words, never "template" or a
+  model's name, and only for a question the room serves (`CONTRACT.md` Amendment 4).
+- **An uncertain Bloom level** (`levelCheck`, staff only): an AI question no professor
+  approved, or a kind that does not ask for its level, with the reason; on every bank
+  question and item.
+- **Every level move kept with its reason.** A promotion, a demotion, the move into the
+  below-40% band and a hold at the top or the floor are kept on the answer's history
+  entry (`move`: rule, from, to, window, share, answers, the professor's sentence),
+  read on the student card (`serving.moves`). Staff-only: a student's own dashboard
+  trail is sent without it. The Mongo schema declares it.
+- **The count behind every estimate**, with a sentence: `levelBasis` and `masteryBasis`
+  on the teacher's grid row, `masteryBasis` and `next.provisional` on the phone's
+  (`CONTRACT.md` Amendment 4); `bandBasis` and `levelBasis` per student, a `sentence`
+  per KPI and a `basis` per card in the insights; the card's `band.provisional`,
+  `serving.basis`, `mastery`; each item's `basis` (provisional under 5 answers); class
+  analytics' sentences; the dashboards' and a professor's analytics' room counts.
+  Attainment already carried its counts (checked).
+- **Translation warnings.** Each item splits its answers by language and warns when two
+  languages with 5 or more answers each differ by more than 20 points; the student card
+  says which answers were in another language; staff answer reads carry `language`.
+  Every answer is `'en'` today, so this is tested on fixtures in two languages.
+- **Labels audit**: nothing stigmatising or ranking reaches a phone or the projector; no
+  coins, points, badges, leaderboards or streaks on the server.
+- Tests: `server/test/honesty.test.js` (27) and `server/scripts/honesty.mjs` (59
+  checks), added to the runner. Four existing assertions gained the new fields
+  (`evidence.test.js`, `insights.test.js`, `misconceptions.test.js`,
+  `decisions.test.js`) and `decisions.mjs`'s list of the phone row's keys gained
+  `masteryBasis`; none changed what it checks.
+
+## Unreleased: Phase 5, misconception labels on wrong options (19 November 2026)
+
+Server and database only (`0024`); every console screen is the UI session's
+(`docs/API.md`, "Phase 5: misconception labels on wrong options"), and the phone and
+the projector change in nothing. The defaults chosen are in
+`docs/PRODUCT_DECISIONS.md`, "Phase 5: misconception labels".
+
+- **A label per wrong option** of a Choose one, Choose all that apply or True or false
+  question: optional, at most 120 characters, no contact details, never on a poll or a
+  right answer. Stored on the question by the option's words
+  (`questions.misconceptions`, `0024`), with its provenance: `ai` ("AI draft") or
+  `professor`.
+- **The owner adds, edits, confirms and clears them**
+  (`PATCH /api/bank/question/:id/misconceptions`), all or nothing; an HOD reads and is
+  refused (403), anyone else gets the question's 404. A label changes no mark: the
+  question keeps its status, approval and checks, so an approved question is not sent
+  back to draft, and approving a question confirms no label.
+- **Edits keep labels honest**: a reorder keeps each label on its option; rewording or
+  removing a labelled option, or making it a right answer, removes its label and the
+  reply names it (`misconceptionsRemoved`, `misconceptionsNote`, on `PATCH
+  /question/:id` and a bulk retag); split and merge carry the labels they can.
+- **The generator may propose labels** (professor-triggered, decision 5): a new prompt
+  rule and response field, parsed by `validateItems` into AI drafts; a bad one is
+  dropped and the question kept. The offline templates propose none.
+- **Reports, staff only**: per room (`GET /api/session/:code/misconceptions`), per class
+  (`GET /api/classes/:id/misconceptions`, with attainment's room filters) and per question
+  (`GET /api/bank/question/:id/misconceptions`): "12 students chose the option linked to
+  the misunderstanding ...", counted from each student's final answer (class-question
+  votes left out), matched through the option's words in the answer's own snapshot to
+  the question's current label, with "Label added after these answers" where true.
+  Counts, never names.
+- **Item statistics** show each option's label beside its count.
+- **Never on a phone or the projector**; labels are left out of every stored answer
+  snapshot (`snapshotOf`), and so of a room's archive.
+- The Supabase boot probe checks `questions.misconceptions` as a piece rooms need.
+- Tests: `server/test/misconceptions.test.js` (40) and `server/scripts/misconceptions.mjs`
+  (54 checks), added to the runner; `migrations.mjs` gains `0024`'s section, its re-run
+  check and `0024` over existing questions and answers. No existing assertion changed.
+
+## Unreleased: Phase 5, the confidence tap and class questions (19 November 2026)
+
+Server and database only (`0023`); every screen is the UI session's (`docs/API.md`,
+"Phase 5"). The defaults chosen are in `docs/PRODUCT_DECISIONS.md`, "Phase 5".
+
+- **The confidence tap.** `student:answer` (and a vote) takes an optional `confidence`:
+  `sure`, `think_so` or `guessing`, stored on the answer row in the spellings `0008`
+  already allows. It changes no mark, level, band, insight or attainment (proved by a
+  unit test and end to end). Staff see counts by tap and by right and wrong: per room
+  and per question (`GET /api/session/:code/confidence`), per class-question round, and
+  on the student card. Never beside an answer, never a label. `session:accepted`
+  carries the three taps.
+- **Class questions with pause, discuss, re-vote.** The room's owner puts one approved
+  `mcq`, `truefalse`, `poll` or `multi` question to every phone in a Student-devices or
+  Mixed room (`/api/session/:code/class-questions`): round 1, the pause (the
+  distribution, share right and taps are shown then, not while voting is open), the
+  re-vote, and the close with or without revealing the key. Phones park their own
+  question, vote with `student:vote`, and go back; `class:question`, `class:vote` and
+  `class:closed` to phones, `teacher:class-question` to the professor's screens. The
+  class-level changes (wrong to right, right to wrong, right both times, wrong both
+  times on the same or another answer) are counted once round 2 closes. The state is
+  stored (`class_questions`), so a phone that joins or reconnects is sent it.
+- **Every vote is an answer row**, never overwritten (`answers.class_question_id`,
+  `round`); a changed vote and a late one are kept, not counted. **No vote moves a
+  level.** A question asked to the class is never served on its own in that room again.
+- **Attainment: a fourth evidence type, `revote`** (the re-vote after discussion),
+  shown in the JSON, CSV and HTML and never counted; round 1 is a digital answer. Every
+  methodology says so.
+- **The projector** may show a class question (`PATCH …/projector`
+  `{ question: { classQuestionId }, showCounts }`): a count of votes, and only when the
+  professor chooses, each closed round's counts from 5 votes; the key, share right and
+  changes only once revealed.
+- **Readers of a student's own work leave votes out**: topics, item statistics, class
+  analytics, the student card's last answers, a student's own history. The room's
+  record labels each vote (`classQuestion: { id, round }`).
+- **A deleted room's archive** keeps its class questions and every vote.
+- Tests: `server/test/classQuestions.test.js` (20) and `server/scripts/classquestion.mjs`
+  (70 checks, eight phones), added to the runner; `migrations.mjs` gains `0023`'s
+  checks. Four assertions changed where the new evidence type is now listed
+  (`test/attainment.test.js` twice, `scripts/acceptance4.mjs`, `scripts/attainment.mjs`),
+  and one where an answer item gained `classQuestion` (`test/evidence.test.js`).
+
+## Unreleased: the owner's decisions of 19 November 2026
+
+The owner delegated the eight open product decisions, the two Phase 3 questions and
+the Phase 2 defaults. Each is recorded in `docs/PRODUCT_DECISIONS.md` as decided under
+the owner's delegation, with what was built; server and database only, one migration
+(`0022`). Decision 8 is a working posture, not a legal decision: a lawyer must confirm
+it before any college signs or before 13 May 2027.
+
+- **Decision 7, the identity gap closed.** A room profile is linked to a student
+  account only when the phone presents that signed-in student's token at
+  `student:join` (verified as the student routes verify one). The link and every
+  answer that phone sends are marked verified (`profiles.account_verified`,
+  `answers.account_verified`). A student's own history (`/api/analytics/:id/answers`,
+  `/api/analytics`, `/api/dashboard`) reads verified rows only, so a typed roll
+  number, and every link made that way before, exposes nothing; those links are kept,
+  unverified. `session:accepted` gains `linked` and `linkNote`. Attendance from a
+  typed roll number stays `joined`.
+- **Decision 8, the under-18 mark.** `class_students.under_18`, set by the owner (the
+  student edit, a pasted list, an `Under 18` CSV column). No integrity signal is
+  recorded for such a student in the class's rooms, and none is shown: grid, trail,
+  room CSV, archive.
+- **Labels are staff-only (Phase 3 question (a)).** The phone gets a `PhoneRow` (no
+  `slowLearner`, signals or professor's `reason`; a neutral `next`) and sentences of
+  its own; `CONTRACT.md` sections 4 and 5 amended. A student account's own dashboard
+  and analytics no longer carry `banded`.
+- **A professor's own question is `source: 'teacher'`** (contract §6 rule 5 amended;
+  check widened). Older ones stay `fallback`. Attainment labels follow.
+- **The slide-only check** passes with a passage attached.
+- **Regenerating an active question keeps it serving** until the replacement is
+  approved (`questions.replaces_id`); every approval route retires it.
+- **`GET /api/classes` carries `canCreate`; `projector:state` carries `roomMode`.**
+- **Four people-facing sentences** no longer name an API path, field or verb.
+- **The boot probe** checks every table and column written from `0016` to `0022` and
+  names the migration to apply: `0019` to `0021` as warnings that keep Supabase,
+  `0022` as one rooms need. It now probes with a GET: a HEAD could not see a missing
+  table.
+- **`best` attempts:** a professor-reviewed attempt always beats a provisional machine
+  mark at the same question, whatever the scores and rooms; the methodology says so.
+- `CONTRACT.md` section 6 rule 1 amended per decision 1. Decisions 1 to 6 recorded.
+
+Tests: `server/test/decisions.test.js` (22) and `server/scripts/decisions.mjs` (64,
+added to the offline runner); existing suites updated where a decision changed what
+they assert. Full run through the offline runner: unit 623/623, migrations 633/633,
+decisions 64/64, and every earlier suite at its earlier figure. Nothing was run
+against Supabase, Mongo, Gemini or a real Auth token.
 
 ## Unreleased: 19 November 2026
 

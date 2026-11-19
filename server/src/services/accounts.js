@@ -308,10 +308,14 @@ export const rollKey = (value) => String(value ?? '').trim().replace(/\s+/g, ' '
 /**
  * The student account a room roll number belongs to, on the room owner's roster.
  *
- * Linked only when exactly one active student reporting to `ownerId` carries
- * that roll number. None or several means no link: guessing would attach one
- * student's answers to another student's account, which is worse than leaving a
- * guest row unlinked.
+ * Found only when exactly one active student reporting to `ownerId` carries
+ * that roll number. None or several means none: guessing would attach one
+ * student's supports to another student's phone.
+ *
+ * Since decision 7 (19 Nov 2026) the live loop reads only the supports from
+ * this: a typed roll number never links a room profile to the account any more.
+ * Only the phone presenting that signed-in student's token does
+ * (verifyAccountToken in auth.js, at student:join).
  *
  * Returns the id and the stored supports; nothing else about the account leaves.
  *

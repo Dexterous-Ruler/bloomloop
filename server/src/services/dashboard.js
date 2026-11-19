@@ -22,6 +22,8 @@ import { getRepo } from '../repo/index.js';
 import { scopeFor } from '../auth.js';
 import { listBelow, getAccount, rollKey } from './accounts.js';
 import { hydrate, overallAccuracy, isSlowLearner, totals } from './mastery.js';
+import { SIGNED_IN_ONLY } from './analytics.js';
+import { verifiedKeys, verifiedView } from './evidence.js';
 
 /** Empty per-level tallies, in taxonomy order. */
 const emptyBloom = () =>
@@ -89,10 +91,12 @@ async function harvest(ownerIds, { includeUnowned = false, limit = 200 } = {}) {
     let sessionAcc = 0;
     let sessionN = 0;
     let sessionBanded = 0;
+    let sessionAnswers = 0;
     for (const profile of profiles) {
       foldLevels(bloom, profile);
       const { seen } = totals(profile);
       answered += seen;
+      sessionAnswers += seen;
       const acc = overallAccuracy(profile);
       if (acc !== null) {
         accuracySum += acc;
@@ -127,6 +131,10 @@ async function harvest(ownerIds, { includeUnowned = false, limit = 200 } = {}) {
       joined: profiles.length,
       banded: sessionBanded,
       accuracy: sessionN ? sessionAcc / sessionN : null,
+      // What the accuracy rests on (Phase 5): the graded answers, and the
+      // students who gave at least one, whose accuracies it is the mean of.
+      answers: sessionAnswers,
+      students: sessionN,
     });
   }
 
@@ -202,6 +210,8 @@ export async function hodDashboard(viewer) {
     sessions: 0,
     lastSessionAt: null,
     accuracy: null,
+    // The graded answers behind `accuracy`, over their rooms (Phase 5).
+    answers: 0,
   }]));
 
   for (const s of students) {
@@ -218,6 +228,7 @@ export async function hodDashboard(viewer) {
     const row = byProfessor.get(String(s.ownerId));
     if (!row) continue;
     row.sessions += 1;
+    row.answers += s.answers;
     if (!row.lastSessionAt || (s.startedAt && s.startedAt > row.lastSessionAt)) {
       row.lastSessionAt = s.startedAt;
     }
@@ -302,11 +313,22 @@ export async function professorDashboard(viewer) {
 /**
  * The student's own history, and nothing else.
  *
- * The join is on roll number, because a live session identifies a student by the
- * number they typed on their phone - there are no accounts in the room. That
- * makes the roll number the one thing linking a signed-in student to their own
- * results, so an account without one gets an honest empty state rather than
- * somebody else's marks.
+ * A room has no sign-in: a phone types a roll number. Since decision 7 (19 Nov
+ * 2026) a room counts here only when a phone signed in as this student joined
+ * it, which linked the room's profile to their account, verified
+ * (`accountVerified`, 0022). The roll number finds the profile; the verified
+ * link decides whether it is theirs. A profile under their roll number from a
+ * phone that did not sign in, or linked by the roll number alone before 0022,
+ * exposes nothing here. Nor, inside a linked room, does any answer a phone that
+ * did not sign in sent under the roll number: the counts, the levels and the
+ * per-question trail come from her verified answers alone, and the room's
+ * working level is shown only when every answer behind it is hers
+ * (verifiedView in services/evidence.js). An account without a roll number
+ * gets an honest empty state rather than somebody else's marks.
+ *
+ * No band either: labels are staff-only (the owner's decision (a), 19 Nov 2026,
+ * and the rule that no label like "slow learner" reaches a student), so
+ * `banded` is no longer sent to a student.
  */
 export async function studentDashboard(viewer) {
   const account = (await getAccount(viewer.id)) ?? viewer;
@@ -319,9 +341,9 @@ export async function studentDashboard(viewer) {
     professor: null,
     counts: { sessions: 0, answered: 0, correct: 0, accuracy: null },
     workingLevel: null,
-    banded: false,
     bloom: bloomReport(emptyBloom()),
     sessions: [],
+    note: SIGNED_IN_ONLY,
   };
 
   if (!rollNo) {
@@ -352,10 +374,20 @@ export async function studentDashboard(viewer) {
   let accN = 0;
   let latest = null;
 
+  const linked = [];
   for (const session of theirs) {
-    const raw = await repo.getProfile(session._id, rollNo);
-    if (!raw) continue;
-    const profile = hydrate(raw);
+    // Compared as the room stores it (trimmed, single-spaced, upper case).
+    const raw = await repo.getProfile(session._id, rollKey(rollNo));
+    if (!raw || String(raw.accountId ?? '') !== String(viewer.id) || raw.accountVerified !== true) continue;
+    linked.push({ session, raw });
+  }
+  // Within a linked room, only what her own signed-in phone answered (decision
+  // 7): the profile also holds whatever a phone typing her roll number without
+  // signing in answered there, before her sign-in or after it (verifiedView).
+  const keys = await verifiedKeys(repo, { sessionIds: linked.map(({ session }) => session._id), accountId: viewer.id });
+
+  for (const { session, raw } of linked) {
+    const { profile } = verifiedView(hydrate(raw), keys.get(String(session._id)));
     foldLevels(tally, profile);
 
     const t = totals(profile);
@@ -366,7 +398,7 @@ export async function studentDashboard(viewer) {
 
     const startedAt = session.startedAt ?? session.started_at ?? null;
     if (!latest || (startedAt && startedAt > latest.startedAt)) {
-      latest = { startedAt, workingLevel: profile.workingLevel, banded: isSlowLearner(profile) };
+      latest = { startedAt, workingLevel: profile.workingLevel };
     }
 
     base.sessions.push({
@@ -378,10 +410,11 @@ export async function studentDashboard(viewer) {
       correct: t.correct,
       accuracy: acc,
       workingLevel: profile.workingLevel,
-      banded: isSlowLearner(profile),
       // The per-question trail, so the student can see the run of answers that
-      // moved them rather than only the verdict.
-      history: (profile.history ?? []).slice(-40),
+      // moved them rather than only the verdict. Without `move` (Phase 5): the
+      // ladder's record of a move is the professor's sentence, which can name
+      // the below-40% band.
+      history: (profile.history ?? []).slice(-40).map(({ move, ...h }) => h),
     });
   }
 
@@ -393,7 +426,6 @@ export async function studentDashboard(viewer) {
     accuracy: accN ? accSum / accN : null,
   };
   base.workingLevel = latest?.workingLevel ?? null;
-  base.banded = Boolean(latest?.banded);
   base.bloom = bloomReport(tally);
   return base;
 }

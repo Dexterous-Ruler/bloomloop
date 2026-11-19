@@ -99,6 +99,19 @@ function explain(profile, level, slow, onTarget) {
 }
 
 /**
+ * Why this question, in the words a phone is told (decision (a) of 19 Nov 2026:
+ * labels are staff-only). The same choice explain() describes for the
+ * professor, never naming the band. `profile` is hydrated; `level` is the
+ * question's.
+ */
+export function reasonForPhone(profile, level) {
+  const label = LABEL[level] ?? level;
+  if (isSlowLearner(profile)) return `This question is at ${label}, to build a firm base before the levels above.`;
+  if (level === profile.workingLevel) return `This question is at ${label}, the level you are working at.`;
+  return `No questions are left for you at ${LABEL[profile.workingLevel]}, so this one is at ${label}.`;
+}
+
+/**
  * A room's question set (sessions.question_ids, 0015): the ids of the only
  * questions it may serve, or null for its whole active bank, which is what every
  * room opened before sets existed, and every room opened without one, serves.

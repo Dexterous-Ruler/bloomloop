@@ -3,9 +3,48 @@
 `migrations/` is the only source of truth for the BloomLoop database. There are no
 other SQL files to run.
 
+## The files
+
+Apply in this order. The last column is what the server's boot probe does when a
+file has not been applied (`ROOM_SCHEMA` and `ROUTE_SCHEMA` in
+`server/src/repo/supabaseRepo.js`): "stops" means it does not use Supabase at all and
+its log names the file; "warns" means it keeps Supabase, logs the file and what fails
+until it is applied; "not checked" means nothing at boot notices, so apply in order.
+Full detail: `docs/DATABASE_SCHEMA.md`.
+
+| File | What it adds | The boot probe |
+|---|---|---|
+| `0000_core_tables.sql` | `contents`, `questions`, `sessions`, `profiles` (v1) | Stops |
+| `0001_accounts_ownership_question_kinds.sql` | Accounts and their hierarchy, owners, question kinds | Stops (the `accounts` table) |
+| `0002_invites.sql` | Invites | Stops |
+| `0003_student_google_link.sql` | A student's Google link | Not checked |
+| `0004_invite_google_sub.sql` | An invite's Google identity | Not checked |
+| `0005_sessions_and_profiles_v2.sql` | Paused rooms, the pin, signals, `profiles.account_id` | Not checked |
+| `0006_accommodations.sql` | Accommodations on accounts | Not checked |
+| `0007_mastery_settings.sql` | Room settings | Not checked |
+| `0008_answers.sql` | `answers`, the evidence store | Stops |
+| `0009_room_archives.sql` | A deleted room kept as JSON | Stops |
+| `0010_answer_reviews.sql` | The review log | Stops |
+| `0011_roll_no_normalised_unique.sql` | One roll number per department (warns and waits on a clash) | Not checked (an index) |
+| `0012_evidence_guards.sql` | Evidence written once; reviews append-only | Not checked (triggers) |
+| `0013_question_provenance_and_approval.sql` | Drafts, provenance and approval | Stops |
+| `0014_media.sql` | Uploaded images | Stops |
+| `0015_room_question_sets.sql` | A room's question set | Stops |
+| `0016_classes_roster_attendance.sql` | Classes, rosters, attendance | Stops |
+| `0017_teacher_records.sql` | The teacher-record store | Stops |
+| `0018_room_modes_and_projector.sql` | Room modes, the waiting room, projector links | Stops |
+| `0019_course_outcomes.sql` | Course outcomes and their mappings | Warns: the outcome and coverage routes fail |
+| `0020_attainment_configs.sql` | Attainment formulas, by version | Warns: the attainment and register routes fail |
+| `0021_attendance_roll.sql` | The roll number a mark was made under | Warns, but every attendance mark writes it: apply it before the server |
+| `0022_owner_decisions.sql` | Verified links, the under-18 mark, `replaces_id`, `source` may be `teacher` | Stops |
+| `0023_class_questions.sql` | Class questions; `answers.class_question_id` and `round` | Stops |
+| `0024_misconception_labels.sql` | `questions.misconceptions` | Stops |
+
+The next new file takes `0025`.
+
 ## Applying
 
-Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0021`).
+Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0024`).
 
 `0013` must be in place before the Phase 2 server is deployed: every generated
 question is saved with columns it adds, and the server's boot probe falls back to
@@ -28,7 +67,9 @@ Understand, no cap, no time per question), and `sessions.status` now also allows
 
 Phase 4 adds three files, applied in this order: `0019` (course outcomes and their
 mappings), `0020` (attainment formulas) and `0021` (the roll number an attendance mark
-was made under). The boot probe checks none of them.
+was made under). Since 19 November 2026 the boot probe checks all three without
+failing: a missing one is a boot-log line naming its file and what fails until it is
+applied, and Supabase is still used.
 - `0019` and `0020` add tables no room needs: a server deployed before them keeps every
   room working, and only the outcome and attainment routes fail, naming the missing
   table. Apply them before anyone uses those routes.
@@ -39,6 +80,35 @@ was made under). The boot probe checks none of them.
   before it has no roll number.
 
 None of the three has run anywhere but PGlite (`npm run migrations`).
+
+**`0022` (the owner's decisions of 19 November 2026) must be applied before the server
+that writes it is deployed.** It adds `profiles.account_verified` and
+`answers.account_verified` (a room is linked to a student only by a signed-in phone),
+`class_students.under_18`, `questions.replaces_id`, and widens `questions.source` to
+`teacher`. The server writes these on every join, answer, question saved and roster
+row added, so the boot probe treats them as pieces rooms need: without `0022` the
+server does not use Supabase at all and its boot log names `0022` to apply. `0022`
+rewrites no row; every existing link reads as unverified. Run only on PGlite.
+
+**`0023` (Phase 5: class questions) must be applied before the server that writes it
+is deployed.** It adds the `class_questions` table (one approved question put to every
+phone in a room, round 1, a pause, a re-vote) and two nullable columns on `answers`,
+`class_question_id` and `round`, which every vote carries and every other answer
+leaves null. The server writes both columns with every answer and reads the table
+with every room's bank, so the boot probe treats them as pieces rooms need: without
+`0023` the server does not use Supabase at all and its boot log names `0023` to apply.
+`0023` rewrites no row and backfills nothing; every existing answer reads as an
+ordinary answer. It widens no check: the confidence taps are stored in the spellings
+`0008` already allows (`sure`, `think`, `guess`). Run only on PGlite.
+
+**`0024` (Phase 5: misconception labels) must be applied before the server that writes
+it is deployed.** It adds one column, `questions.misconceptions` (jsonb, default `[]`):
+the labels a professor or the generator put on a question's wrong options, each with
+its provenance (`ai` or `professor`). The server writes it with every question it
+saves, so the boot probe treats it as a piece rooms need: without `0024` the server
+does not use Supabase at all and its boot log names `0024` to apply. `0024` rewrites no
+row and adds nothing to `answers`; every existing question reads as having no labels.
+Run only on PGlite.
 
 `0011` creates its index only if no two accounts in one department hold the same
 roll number once trimmed, single-spaced and upper-cased. If some do, it raises a

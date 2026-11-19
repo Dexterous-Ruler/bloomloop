@@ -21,6 +21,7 @@ import {
   invalidReason,
 } from '../questionTypes.js';
 import { resolveKindMix, spreadKinds, countKinds, kindAllowedAt } from './plan.js';
+import { MAX_LABEL, proposedLabels } from './misconceptions.js';
 
 /**
  * The kinds this file may write. Everything the contract offers, minus the
@@ -1914,6 +1915,13 @@ export function validateItems(raw, topic = '', kinds) {
       errors.push(`${label} item ${i + 1} (${kind}) rejected: ${problems.join('; ')}.`);
       return;
     }
+    // The misunderstanding behind each wrong option, if the model proposed one
+    // (0024): stored as an AI draft until the professor confirms it. Read only
+    // from a valid item, and a bad label costs that label, never the item: it is
+    // advice beside the question, not part of it. The offline templates propose
+    // none, so only this path ever carries one.
+    const labels = proposedLabels(clean, item?.misconceptions);
+    if (labels.length) clean.misconceptions = labels;
     valid.push(clean);
   });
 
@@ -2101,12 +2109,31 @@ const ITEM_SCHEMA = {
         items: { type: Type.STRING },
         description: 'kind "open" only: 2 to 5 short points a full answer must make. Each is a few significant words.',
       },
+      misconceptions: {
+        type: Type.ARRAY,
+        description:
+          'Optional, kinds "mcq", "multi" and "truefalse" only: for a WRONG option, the misunderstanding a student who picks it most likely holds. Never for a correct option.',
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            optionIdx: {
+              type: Type.INTEGER,
+              description: 'Index into "options" of the wrong option. Leave it out for "truefalse": the label is for the wrong judgement.',
+            },
+            label: {
+              type: Type.STRING,
+              description: `The misunderstanding itself, in at most ${MAX_LABEL} characters, e.g. "Thinks UDP resends lost packets".`,
+            },
+          },
+          required: ['label'],
+        },
+      },
     },
     required: ['bloom', 'kind', 'text'],
     propertyOrdering: [
       'bloom', 'kind', 'text', 'options', 'answerIdx', 'answerIdxs', 'answerBool', 'pairs',
       'buckets', 'blanks', 'value', 'tolerance', 'unit', 'sequence', 'criterion', 'accept', 'rubric',
-      'tokens', 'gaps', 'columns', 'tableRows', 'gridRows', 'answers',
+      'tokens', 'gaps', 'columns', 'tableRows', 'gridRows', 'answers', 'misconceptions',
     ],
   },
 };
@@ -2202,6 +2229,7 @@ Rules, all of them mandatory:
 6. Never use "all of the above", "none of the above", "both of the above", or any option that refers to the other options.
 7. Options must be mutually distinct and of comparable length and specificity, so that length alone does not give the answer away.
 8. Write plain, exam-ready English. No markdown, no numbering inside the stem, no explanations, no commentary.
+9. On "mcq", "multi" and "truefalse" items you may add "misconceptions": for a wrong option, the misunderstanding a student who picks it most likely holds, in at most ${MAX_LABEL} characters ("Thinks UDP resends lost packets"), as the source text shows it. Never label a correct option and never name a person. Leave it out when the source does not show what the misunderstanding would be.
 ${avoid}
 Source text for "${topic}":
 """

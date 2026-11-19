@@ -503,7 +503,11 @@ export async function classCoverage(repo, cls, rooms = []) {
   // Every answer written since the evidence store carries its chapter; one that
   // somehow does not is its room's.
   const roomChapter = new Map(rooms.map((r) => [String(r._id), r.contentId]));
-  const rows = answers.map((a) => (a.contentId ? a : { ...a, contentId: roomChapter.get(String(a.sessionId)) ?? null }));
+  // A class question's re-vote after discussion (round 2, Phase 5) is never
+  // counted in attainment, so it is no evidence for an outcome here either; its
+  // first round is, as a digital answer.
+  const rows = answers.filter((a) => Number(a.round) !== 2)
+    .map((a) => (a.contentId ? a : { ...a, contentId: roomChapter.get(String(a.sessionId)) ?? null }));
   const chapters = chapterMap(contents);
   const report = outcomeCoverage({ ...map, questions: banks.flat(), answers: rows, chapters });
   return {

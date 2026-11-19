@@ -161,7 +161,7 @@ function evidenceTable(r, counts) {
   return html`<table>
 <thead><tr><th>Evidence</th><th>What it is</th><th class="n">Answers here</th><th>In the marks</th></tr></thead>
 <tbody>
-${r.evidenceTypes.map((t) => html`<tr><td>${t.label}</td><td>${t.description}</td><td class="n">${counts[t.id]}</td><td>${ev[t.id] ? 'Counted' : 'Shown, not counted'}</td></tr>`)}
+${r.evidenceTypes.map((t) => html`<tr><td>${t.label}</td><td>${t.description}</td><td class="n">${counts[t.id] ?? 0}</td><td>${t.id === 'revote' ? 'Never counted: shown only' : ev[t.id] ? 'Counted' : 'Shown, not counted'}</td></tr>`)}
 <tr><td>Polls</td><td>Questions with no right answer.</td><td class="n">${counts.ungraded}</td><td>Not marked; a count only</td></tr>
 <tr><td>Teacher records</td><td>Observations, wheel picks, hand tallies and activities recorded by the professor.</td><td class="n"></td><td>Never counted: reported in their own section</td></tr>
 </tbody>

@@ -298,10 +298,12 @@ await post(`/api/bank/${contentId}/approve-all`);
 let active = (await get(`/api/bank/${contentId}`)).body.questions.filter((q) => q.status === 'active');
 const target = active.find((q) => q.kind === 'mcq');
 {
-  const pointed = await patch(`/api/bank/question/${target._id}`, { text: 'Which term does the diagram label X?' });
+  // With nothing attached: since 19 Nov 2026 a passage clears the check too, and
+  // an offline-template question may carry a shared reading, so it goes first.
+  const pointed = await patch(`/api/bank/question/${target._id}`, { text: 'Which term does the diagram label X?', stimulus: null });
   const flag = (q) => q?.checks?.find((c) => c.id === 'slide-only-reference');
-  check('a stem pointing at a diagram is flagged by the slide-only check', pointed.status === 200 && flag(pointed.body.question)?.ok === false,
-    `${pointed.status} ${pointed.body.error ?? ''}`);
+  check('a stem pointing at a diagram, with nothing attached, is flagged by the slide-only check',
+    pointed.status === 200 && flag(pointed.body.question)?.ok === false, `${pointed.status} ${pointed.body.error ?? ''}`);
   const attached = await patch(`/api/bank/question/${target._id}`, {
     stimulus: { kind: 'image', url: `/API/Media/${up.png._id.toUpperCase()}` },
   });

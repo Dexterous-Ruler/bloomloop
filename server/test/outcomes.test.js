@@ -115,7 +115,22 @@ describe('rosterFromCsv: a class list read for its roll numbers and names only',
     const csv = rosterFromCsv('S.No,Name,,Roll No\n1,Asha,x,21CS01\n2,Bilal,,21CS02,extra\n');
     assert.deepEqual(csv.rows.map((r) => [r.roll, r.name]), [['21CS01', 'Asha'], ['21CS02', 'Bilal']]);
     assert.deepEqual(csv.ignoredColumns, ['S.No', 'column 3 (no header)', 'cells past the last named column']);
-    assert.deepEqual(csv.columns, { roll: 'Roll No', name: 'Name', all: ['S.No', 'Name', '', 'Roll No'] });
+    assert.deepEqual(csv.columns, { roll: 'Roll No', name: 'Name', under18: null, all: ['S.No', 'Name', '', 'Roll No'] });
+  });
+
+  // Decision 8 (19 Nov 2026): one more column is read when the file has it.
+  test('an under-18 column is read as yes or no; a date of birth never is', () => {
+    const csv = rosterFromCsv('Roll No,Name,Under 18,DOB\n21CS01,Asha,yes,2008-05-12\n21CS02,Bilal,,2004-01-02\n21CS03,Chitra,maybe,\n');
+    assert.deepEqual(csv.rows.map((r) => [r.roll, r.under18]), [['21CS01', 'yes'], ['21CS02', ''], ['21CS03', 'maybe']]);
+    assert.equal(csv.columns.under18, 'Under 18');
+    assert.deepEqual(csv.ignoredColumns, ['DOB']);
+    assert.equal(JSON.stringify(csv.rows).includes('2008'), false, 'the date of birth is never read into a row');
+    for (const header of ['under18', 'MINOR', 'below_18']) {
+      assert.equal(rosterFromCsv(`roll,name,${header}\n1,A,y\n`).rows[0].under18, 'y', header);
+    }
+    status(400, () => rosterFromCsv('Roll,Name,Under 18,Minor\n1,A,y,n\n'), /2 under-18 columns/);
+    // Without the column a row carries no mark at all, and adds as not under 18.
+    assert.equal('under18' in rosterFromCsv('roll,name\n1,A\n').rows[0], false);
   });
 
   test('blank lines are skipped and counted, before the header too, and every row keeps its line', () => {
@@ -158,6 +173,17 @@ describe('the roster check the JSON list and the CSV import share', () => {
     assert.deepEqual(refused.map((r) => [r.index, r.code]), [
       [0, REFUSAL.onRoster], [1, REFUSAL.removed], [3, REFUSAL.repeated], [4, REFUSAL.noRoll], [5, REFUSAL.badRoll],
       [6, REFUSAL.badName], [7, REFUSAL.notARow]]);
+  });
+
+  test('the under-18 mark: a boolean, or yes / no text from a file; anything else refuses the row with a reason', () => {
+    const { accepted, refused } = validateRoster([
+      { roll: 'A1', name: 'A', under18: true }, { roll: 'A2', name: 'B', under18: 'Yes' }, { roll: 'A3', name: 'C', under18: 'n' },
+      { roll: 'A4', name: 'D' }, { roll: 'A5', name: 'E', under18: '' }, { roll: 'A6', name: 'F', under18: 'maybe' },
+      { roll: 'A7', name: 'G', under18: 17 },
+    ]);
+    assert.deepEqual(accepted.map((a) => [a.rollNo, a.under18]), [['A1', true], ['A2', true], ['A3', false], ['A4', false], ['A5', false]]);
+    assert.deepEqual(refused.map((r) => [r.index, r.code]), [[5, REFUSAL.badUnder18], [6, REFUSAL.badUnder18]]);
+    assert.match(refused[0].reason, /must be yes or no/);
   });
 
   test('a longer request is allowed when the caller says so, and rows past the class\'s room are refused one by one', () => {

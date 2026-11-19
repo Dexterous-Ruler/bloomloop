@@ -17,6 +17,9 @@ import {
   totals,
   countedTotals,
   masteredLevels,
+  masteryBasis,
+  levelEvidence,
+  nextStep,
   sessionSettings,
   MASTERY_GOALS,
   MAX_REATTEMPTS,
@@ -27,7 +30,7 @@ import {
   TIME_PER_QUESTION,
 } from '../services/mastery.js';
 import { summarise, HONESTY } from '../services/integrity.js';
-import { ARCHIVE_LIMIT_BYTES, buildRoomArchive } from '../services/archive.js';
+import { ARCHIVE_LIMIT_BYTES, buildRoomArchive, servedArchive } from '../services/archive.js';
 import { answerItem, pageFrom, rollKey, roomTopics } from '../services/evidence.js';
 import { roomItemStats } from '../services/itemStats.js';
 import { roomQuestionIds, servableFor } from '../services/selector.js';
@@ -45,6 +48,8 @@ import {
   roomDeleting,
   broadcastGrid,
   startRoom,
+  closeClassQuestionWithRoom,
+  resendClassQuestion,
 } from '../sockets/index.js';
 import { roomFeed, startBlocker } from '../services/modes.js';
 import { closeWall, forgetScreen, pushProjector } from '../services/projector.js';
@@ -55,9 +60,11 @@ import {
   markRollNo,
   marksFrom,
   marksFromJoins,
+  signalsOff,
 } from '../services/roster.js';
 import { RECORDS_LOCK } from '../services/records.js';
 import { forgetInsights } from '../services/insights.js';
+import { CLASS_LOCK } from '../services/classQuestions.js';
 
 const router = express.Router();
 
@@ -86,7 +93,7 @@ const fail = (message, status) => Object.assign(new Error(message), { status });
  * The one and only GridRow builder (CONTRACT section 4). `profile` may be a raw
  * repo document; it is hydrated here so a half-written profile still renders.
  */
-export function buildGridRow(profile, { online = false, goal = DEFAULT_MASTERY_GOAL } = {}) {
+export function buildGridRow(profile, { online = false, goal = DEFAULT_MASTERY_GOAL, adapt = true } = {}) {
   const p = hydrate(profile);
   const counted = countedTotals(p);
   const raw = totals(p);
@@ -120,6 +127,47 @@ export function buildGridRow(profile, { online = false, goal = DEFAULT_MASTERY_G
     // both is how a teacher sees who is being carried by the cushion level.
     mastered: masteredLevels(p, goal),
     masteryGoal: goal,
+    // Phase 5, honest indicators: what the working level rests on, provisional
+    // while the ladder has no decision behind it (levelEvidence), and per level
+    // answered at, what its mastery rests on (masteryBasis). The room's adapt
+    // setting decides the first: with adapt off the level is the room's, not an
+    // estimate.
+    levelBasis: levelEvidence(p, { adapt }),
+    masteryBasis: masteryBasis(p, { goal }),
+  };
+}
+
+/**
+ * What a phone is told about itself (decision (a) of 19 Nov 2026; CONTRACT.md
+ * sections 4 and 5, amended): a student subset of GridRow, in every
+ * session:accepted, server:result and server:exhausted.
+ *
+ * Labels are staff-only. Never `slowLearner`, the integrity summary or the
+ * professor's `reason`, which can name the below-40% band; `next` says instead
+ * which level comes next, why, in plain words, and on how many answers
+ * (nextStep in services/mastery.js). Built field by field from the teacher's
+ * row, never by deleting from it, so a field added to GridRow later stays off
+ * the phone until somebody adds it here on purpose.
+ */
+export function phoneRow(profile, { online = true, goal = DEFAULT_MASTERY_GOAL, adapt = true } = {}) {
+  const row = buildGridRow(profile, { online, goal, adapt });
+  return {
+    rollNo: row.rollNo,
+    name: row.name,
+    workingLevel: row.workingLevel,
+    levels: row.levels,
+    total: row.total,
+    answered: row.answered,
+    online: row.online,
+    counted: row.counted,
+    withdrawn: row.withdrawn,
+    mastered: row.mastered,
+    masteryGoal: row.masteryGoal,
+    // The same words the professor's row carries: no band, no percentage.
+    masteryBasis: row.masteryBasis,
+    // `provisional` (Phase 5): the level is a starting point, not yet an
+    // estimate, as the professor's levelBasis says; the sentence is still `why`.
+    next: { ...nextStep(profile, { adapt }), provisional: row.levelBasis.provisional },
   };
 }
 
@@ -198,9 +246,9 @@ async function withStatusLock(session, what, fn) {
 async function gridFor(session) {
   const repo = getRepo();
   const profiles = await repo.listProfiles(session._id);
-  const { masteryGoal } = sessionSettings(session);
+  const { masteryGoal, adapt } = sessionSettings(session);
   const rows = profiles.map((p) =>
-    buildGridRow(p, { online: isOnline(session.code, p.rollNo), goal: masteryGoal }));
+    buildGridRow(p, { online: isOnline(session.code, p.rollNo), goal: masteryGoal, adapt }));
   const grid = await classGrid(repo, session, rows);
   return { ...grid, ...(await roomFeed(repo, session, grid.rows, grid.attendance)) };
 }
@@ -434,16 +482,24 @@ router.get('/archives', requireTeacher, async (req, res, next) => {
   }
 });
 
-/** One deleted room as its JSON file. Same answer for "not yours" and "not there". */
+/**
+ * One deleted room as its JSON file. Same answer for "not yours" and "not there".
+ * A class room's archive is served with the class's under-18 marks as they are
+ * now (servedArchive, decision 8): a failed read of the roster is an error, not
+ * an archive that might show a minor's signals.
+ */
 router.get('/archives/:id', requireTeacher, async (req, res, next) => {
   try {
+    const repo = getRepo();
     const id = String(req.params.id ?? '');
-    const archive = isRecordId(id) ? await getRepo().getRoomArchive(id) : null;
+    const archive = isRecordId(id) ? await repo.getRoomArchive(id) : null;
     await assertCanRead(req.viewer, archive, 'That archive');
+    const classId = archive.data?.room?.classId ?? null;
+    const roster = classId ? await repo.listClassStudents(classId) : [];
     const day = String(archive.archivedAt ?? '').slice(0, 10) || 'undated';
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="bloomloop-${archive.code}-archive-${day}.json"`);
-    res.send(JSON.stringify(archive.data));
+    res.send(JSON.stringify(servedArchive(archive.data, roster)));
   } catch (err) {
     next(err);
   }
@@ -829,6 +885,8 @@ async function setPaused(req, res, next, paused) {
           code: session.code,
           status: paused ? 'paused' : 'open',
         });
+        // A class question the pause covered is sent to the phones again (Phase 5).
+        if (!paused) await resendClassQuestion(io, written ?? session);
         // The projector says the room is paused (it shows no student either way).
         await pushProjector(io, getRepo(), written ?? session);
       }
@@ -923,9 +981,10 @@ router.delete('/:code', requireTeacher, async (req, res, next) => {
       profiles = await repo.listProfiles(session._id);
       // A class room's attendance is written by the teacher under a lock of its
       // own (POST /:code/attendance), and archived with the room: waited out too.
-      // So are the teacher records (routes/records.js), in any room, and a
-      // change of status (a start serving its waiting phones, above all).
-      return [...profiles.map((p) => p.rollNo), ...(session.classId ? [ATTENDANCE_LOCK] : []), RECORDS_LOCK, STATUS_LOCK];
+      // So are the teacher records (routes/records.js), in any room, a change
+      // of status (a start serving its waiting phones, above all) and a change
+      // to a class question (Phase 5, archived with the room).
+      return [...profiles.map((p) => p.rollNo), ...(session.classId ? [ATTENDANCE_LOCK] : []), RECORDS_LOCK, STATUS_LOCK, CLASS_LOCK];
     });
     let archive;
     try {
@@ -974,9 +1033,24 @@ router.delete('/:code', requireTeacher, async (req, res, next) => {
 router.get('/:code/integrity/:rollNo', requireTeacher, async (req, res, next) => {
   try {
     const session = await teacherRoom(req.params.code, req.viewer);
-    const stored = await getRepo().getProfile(session._id, String(req.params.rollNo));
+    const repo = getRepo();
+    const stored = await repo.getProfile(session._id, String(req.params.rollNo));
     if (!stored) throw fail('No such student in this room.', 404);
     const profile = hydrate(stored);
+    // Decision 8: nothing is shown for a student their class's roster marks
+    // under 18, not even signals recorded before the mark was set.
+    if (await signalsOff(repo, session, profile.rollNo)) {
+      res.json({
+        rollNo: profile.rollNo,
+        name: profile.name,
+        summary: null,
+        events: [],
+        signalsOff: true,
+        message: 'Signals are not recorded or shown for this student: the class roster marks them under 18.',
+        honesty: HONESTY,
+      });
+      return;
+    }
     res.json({
       rollNo: profile.rollNo,
       name: profile.name,
@@ -1008,6 +1082,9 @@ router.post('/:code/close', requireTeacher, async (req, res, next) => {
       releaseSession({ sessionId: session._id, code: session.code });
 
       const io = req.app.get('io');
+      // A class question still running closes with the room, its key not
+      // revealed (Phase 5): no vote can come any more.
+      await closeClassQuestionWithRoom(io, written ?? session, { by: req.viewer?.id ?? null });
       if (io) {
         io.to(`session:${session.code}`).emit('session:closed', {});
         io.to(`teacher:${session.code}`).emit('teacher:status', { code: session.code, status: 'closed' });

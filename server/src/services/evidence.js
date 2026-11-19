@@ -177,6 +177,13 @@ export function answerItem(answer, room, { name = '' } = {}) {
     review: { ...view.review, reviewedBy: answer?.reviewedBy ?? null },
     servedAt: answer?.servedAt ?? null,
     questionSource: answer?.questionSource ?? 'llm',
+    // The language the answer was given in (0008; 'en' on every row today), so
+    // a screen can say when it was not the question's own (Phase 5).
+    language: answer?.language ?? 'en',
+    // A vote in a class question (Phase 5): which one, and which round (2 is
+    // the re-vote after discussion); null for every other answer. The
+    // confidence tap is not here: staff see it as counts, never per answer.
+    classQuestion: answer?.classQuestionId ? { id: String(answer.classQuestionId), round: Number(answer.round) || null } : null,
   };
 }
 
@@ -279,6 +286,65 @@ export function topicReport({ answers = [], profiles = [] } = {}) {
   };
 }
 
+/* ------------------------------------------------- a student's own view -- */
+
+/**
+ * A room profile as the student it is linked to may read it (decision 7, the
+ * residual closed under the owner's delegation, 19 Nov 2026): only the history
+ * entries that record answers a phone signed in as them sent, and the level
+ * tallies counted from those entries alone.
+ *
+ * A sign-in links the profile, but the profile is the ROOM's record of a roll
+ * number: a guest who typed it before she signed in, or a classmate typing it
+ * on another phone afterwards, answered into the same history and tallies. Read
+ * whole, her dashboard showed their answers as hers. `keys` are the answer keys
+ * of her verified rows in this room (`accountVerified`); an entry records the
+ * row whose key it carries (`answerId`).
+ *
+ * `whole` is true when every entry is hers: the profile comes back unchanged,
+ * working level and all. Otherwise its working level is not hers to read (it was
+ * set by the other answers too), and a redemption pairing with an entry that is
+ * not hers is left off the entry that names it.
+ *
+ * @returns {{ profile: object, whole: boolean }}
+ */
+export function verifiedView(profile, keys = new Set()) {
+  const history = Array.isArray(profile?.history) ? profile.history : [];
+  const kept = history.filter((h) => h?.answerId && keys.has(String(h.answerId)));
+  if (kept.length === history.length) return { profile, whole: true };
+  const ids = new Set(kept.map((h) => String(h.questionId)));
+  const levels = Object.fromEntries(LEVELS.map((level) => [level, { seen: 0, correct: 0 }]));
+  const own = kept.map(({ redeems, redeemedBy, ...h }) => {
+    if (!h.ungraded && LEVELS.includes(h.bloom)) {
+      levels[h.bloom].seen += 1;
+      if (h.correct) levels[h.bloom].correct += 1;
+    }
+    return {
+      ...h,
+      ...(redeems !== undefined && ids.has(String(redeems)) ? { redeems } : {}),
+      ...(redeemedBy !== undefined && ids.has(String(redeemedBy)) ? { redeemedBy } : {}),
+    };
+  });
+  return { profile: { ...profile, history: own, levels, workingLevel: null }, whole: false };
+}
+
+/**
+ * The keys of a student's own verified answers in these rooms, per room: what
+ * verifiedView reads. Final rows only (a history entry records the final
+ * attempt), class votes left out (no vote is in a history).
+ *
+ * @returns {Promise<Map<string, Set<string>>>} room id -> answer keys
+ */
+export async function verifiedKeys(repo, { sessionIds = [], accountId }) {
+  const out = new Map(sessionIds.map((id) => [String(id), new Set()]));
+  if (!sessionIds.length || !accountId) return out;
+  const rows = await allAnswers(repo, {
+    sessionIds: sessionIds.map(String), student: { accountId, verifiedOnly: true }, final: true, classVotes: false,
+  });
+  for (const a of rows) out.get(String(a.sessionId))?.add(String(a.answerKey));
+  return out;
+}
+
 /* ----------------------------------------------------------------- reads -- */
 
 /** Every answer a filter matches, oldest first. Paged at READ_PAGE; see there. */
@@ -291,10 +357,14 @@ export async function allAnswers(repo, filter) {
   }
 }
 
-/** The topic report for one room the caller has already been allowed to read. */
+/**
+ * The topic report for one room the caller has already been allowed to read.
+ * Per topic and level, of the students' own questions: a class question's votes
+ * (Phase 5) are not evidence at a level, and are left out.
+ */
 export async function roomTopics(repo, session) {
   const [answers, profiles] = await Promise.all([
-    allAnswers(repo, { sessionId: session._id, final: true }),
+    allAnswers(repo, { sessionId: session._id, final: true, classVotes: false }),
     repo.listProfiles(session._id),
   ]);
   return topicReport({ answers, profiles });
@@ -312,20 +382,29 @@ export async function roomTopics(repo, session) {
  *            account (listAnswers in the repos). One query, so a row that
  *            matches both ways is still one row. A professor reads every answer
  *            in their own rooms anyway; this only gathers them.
- *   student  by the account ONLY. A roll number is typed on a phone with no
- *            sign-in, so an unlinked row under it may be anybody's: a guest, a
- *            mistyped classmate, or a second account whose roll number is the
- *            same one in different case. Handing those written answers to
- *            whoever holds the roll number is handing them to the wrong person.
+ *   student  by the account ONLY, and only rows a phone signed in as that
+ *            account sent (`accountVerified`, decision 7, 0022). A roll number
+ *            is typed on a phone with no sign-in, so a row under it, linked by
+ *            it or not, may be anybody's: a guest, a mistyped classmate, a
+ *            classmate typing it on purpose, or a second account whose roll
+ *            number is the same one in different case. Handing those written
+ *            answers to whoever holds the roll number is handing them to the
+ *            wrong person. Rows linked before 0022 were linked by a typed roll
+ *            number, so none of them is verified.
  *
  * `view` is 'student' unless the caller says otherwise: the redacted copy, and
  * the narrow match, are the ones to fall back to.
+ *
+ * A student's own read leaves out their class question votes (Phase 5): a
+ * vote's mark would tell a class question's key before the professor reveals
+ * it, and a vote is not their own work at a level. A teacher's read keeps them,
+ * each labelled with its class question and round (answerItem).
  */
 export async function listStudentAnswers(repo, {
   rooms = [], student, topic = '', level = '', code = '', limit = DEFAULT_LIMIT, offset = 0, view = 'student',
 } = {}) {
   const scoped = code ? rooms.filter((r) => r.code === code) : rooms;
-  const whose = view === 'teacher' ? student : (student?.accountId ? { accountId: student.accountId } : null);
+  const whose = view === 'teacher' ? student : (student?.accountId ? { accountId: student.accountId, verifiedOnly: true } : null);
   if (!scoped.length || !whose) return { items: [], hasMore: false };
   // One row more than asked for says whether there is a next page without a count.
   const rows = await repo.listAnswers({
@@ -333,6 +412,7 @@ export async function listStudentAnswers(repo, {
     student: whose,
     ...(topic ? { topic } : {}),
     ...(level ? { bloom: level } : {}),
+    ...(view === 'teacher' ? {} : { classVotes: false }),
     order: 'desc',
     limit: limit + 1,
     offset,

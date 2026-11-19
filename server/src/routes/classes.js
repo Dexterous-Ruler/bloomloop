@@ -19,6 +19,7 @@ import {
   MAX_CSV_BYTES,
   MAX_CSV_ROWS,
   REFUSAL,
+  UNDER_18_NOTE,
   addToRoster,
   classFields,
   classView,
@@ -27,6 +28,7 @@ import {
   rosterFromCsv,
   rosterRoll,
   studentView,
+  under18From,
   validateRoster,
 } from '../services/roster.js';
 import { OBSERVATION_KINDS, STAFF_ONLY, observationDays } from '../services/records.js';
@@ -38,7 +40,7 @@ const fail = (message, status) => Object.assign(new Error(message), { status });
 
 /** Removed students, as the reply that removes one says them. */
 const KEPT = 'Nothing they did is deleted: their answers in every room, their attendance and their records stay, '
-  + 'and they can be put back on the roster (PATCH with { "active": true }).';
+  + 'and they can be put back on the roster at any time.';
 
 /**
  * A class this viewer may read, by id, or the one 404 for "not there" and "not
@@ -87,7 +89,9 @@ router.get('/', async (req, res, next) => {
       // buttons follow the rule the routes enforce, as in the room list.
       canEdit: await canWrite(req.viewer, cls.ownerId ?? null),
     })));
-    res.json({ classes: rows });
+    // Whether this viewer may make a class, by the rule POST / enforces: an HOD
+    // reads the department's classes and creates none.
+    res.json({ classes: rows, canCreate: req.viewer?.role !== 'hod' });
   } catch (err) {
     next(err);
   }
@@ -153,6 +157,7 @@ router.post('/:id/students', async (req, res, next) => {
       ...(ignoredFields.length
         ? { note: `A roster keeps a roll number and a name only. Not stored: ${ignoredFields.join(', ')}.` }
         : {}),
+      ...(made.some((s) => s.under18) ? { under18Note: UNDER_18_NOTE } : {}),
       size: body.class.size,
       class: body.class,
     });
@@ -203,7 +208,8 @@ router.post('/:id/students/import', csvText, async (req, res, next) => {
     const dryRun = dryRunFrom(req);
     const csv = rosterFromCsv(typeof req.body === 'string' ? req.body : req.body?.csv);
     const repo = getRepo();
-    const list = csv.rows.map(({ roll, name }) => ({ roll, name }));
+    // The under-18 mark only when the file has that column (decision 8).
+    const list = csv.rows.map(({ roll, name, under18 }) => ({ roll, name, ...(under18 !== undefined ? { under18 } : {}) }));
 
     let result;
     if (dryRun) {
@@ -225,12 +231,12 @@ router.post('/:id/students/import', csvText, async (req, res, next) => {
       dryRun,
       read: {
         delimiter: DELIMITER_NAMES[csv.delimiter],
-        columns: { roll: csv.columns.roll, name: csv.columns.name },
+        columns: { roll: csv.columns.roll, name: csv.columns.name, under18: csv.columns.under18 },
         rows: csv.rows.length,
         blankLines: csv.blankLines,
       },
       ...(dryRun
-        ? { wouldAdd: accepted.map((a) => ({ line: lineOf(a.index), rollNo: a.rollNo, name: a.name })) }
+        ? { wouldAdd: accepted.map((a) => ({ line: lineOf(a.index), rollNo: a.rollNo, name: a.name, under18: a.under18 })) }
         : { added: made.map((s) => ({ line: firstLine.get(s.rollNo) ?? null, ...studentView(s) })) }),
       refused: refused.map((r) => ({ line: lineOf(r.index), roll: r.roll, name: r.name, code: r.code, reason: r.reason })),
       duplicates: {
@@ -247,9 +253,17 @@ router.post('/:id/students/import', csvText, async (req, res, next) => {
         ? { note: `A roster keeps a roll number and a name only. Not read from the file: ${csv.ignoredColumns.join(', ')}.` }
         : {}),
       ...(withCode(REFUSAL.removed).length
-        ? { restore: 'Removed students are not restored by an import. To bring one back, restore them on the roster '
-            + '(PATCH /api/classes/:id/students/:studentId with { "active": true }).' }
+        ? { restore: 'Removed students are not restored by an import. To bring one back, restore them on the class\'s roster.' }
         : {}),
+      // An import only adds: a student already on the roster keeps the mark
+      // they have, whatever the file says. Said, so a file marking them under
+      // 18 is not taken to have marked them.
+      ...(csv.columns.under18 && withCode(REFUSAL.onRoster).some((r) => under18From(csv.rows[r.index].under18) === true
+        && byRoll.get(rollOf(r))?.under18 !== true)
+        ? { under18: 'Some students already on the roster are marked under 18 in the file but not on the roster. An import does '
+            + 'not change a student already on it: mark them on the class\'s roster.' }
+        : {}),
+      ...(csv.columns.under18 ? { under18Note: UNDER_18_NOTE } : {}),
       ...(dryRun ? { message: 'Nothing was changed: this is what importing the file would do.' } : {}),
       size: body.class.size,
       ...(dryRun ? { sizeAfter: body.class.size + accepted.length } : {}),
@@ -261,10 +275,11 @@ router.post('/:id/students/import', csvText, async (req, res, next) => {
 });
 
 /**
- * Change one student: { name }, { rollNo } (or roll), or { active: true } to put
- * a removed student back ({ active: false } removes, as DELETE does). Changing a
- * roll number keeps the student's attendance, which points at this row; rooms
- * already run keep the roll number their answers were given under.
+ * Change one student: { name }, { rollNo } (or roll), { active: true } to put a
+ * removed student back ({ active: false } removes, as DELETE does), or
+ * { under18 } (decision 8). Changing a roll number keeps the student's
+ * attendance, which points at this row; rooms already run keep the roll number
+ * their answers were given under.
  */
 router.patch('/:id/students/:studentId', async (req, res, next) => {
   try {
@@ -300,8 +315,15 @@ router.patch('/:id/students/:studentId', async (req, res, next) => {
       if (body.active && student.removedAt) patch.removedAt = null;
       if (!body.active && !student.removedAt) patch.removedAt = new Date().toISOString();
     }
-    if (body.name === undefined && given === undefined && body.active === undefined) {
-      throw fail('Send name, rollNo or active to change.', 400);
+    // The owner's optional "under 18" mark (decision 8, 0022): integrity
+    // signals are neither recorded nor shown for the student in this class's
+    // rooms from the moment it is set. Owner only, like every write here.
+    if (body.under18 !== undefined) {
+      if (typeof body.under18 !== 'boolean') throw fail('under18 must be true or false.', 400);
+      if (body.under18 !== (student.under18 === true)) patch.under18 = body.under18;
+    }
+    if (body.name === undefined && given === undefined && body.active === undefined && body.under18 === undefined) {
+      throw fail('Send name, rollNo, active or under18 to change.', 400);
     }
 
     const updated = Object.keys(patch).length ? await getRepo().updateClassStudent(student._id, patch) : student;
@@ -309,6 +331,7 @@ router.patch('/:id/students/:studentId', async (req, res, next) => {
     res.json({
       student: studentView(updated),
       ...(patch.removedAt ? { message: `Removed from the roster. ${KEPT}` } : {}),
+      ...(body.under18 !== undefined ? { under18Note: UNDER_18_NOTE } : {}),
     });
   } catch (err) {
     next(err);

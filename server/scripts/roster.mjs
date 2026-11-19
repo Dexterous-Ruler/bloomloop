@@ -269,9 +269,10 @@ check('rows a phone can join with are added, in the room\'s form, names tidied',
 const rosterOf = async (as = 'profA') => get(`/api/classes/${classId}`, as);
 let read = await rosterOf();
 const idOf = (roll) => [...(read.body.students ?? []), ...(read.body.removed ?? [])].find((s) => s.rollNo === roll)?.id;
-check('reading the class gives its roster: a roll number and a name per student, nothing else',
+check('reading the class gives its roster: a roll number and a name per student, and the under-18 mark (0022), nothing else',
   read.status === 200 && read.body.students?.length === 5 && read.body.removed?.length === 0
-  && read.body.students.every((s) => JSON.stringify(Object.keys(s).sort()) === '["active","addedAt","id","name","removedAt","rollNo"]'),
+  && read.body.students.every((s) => JSON.stringify(Object.keys(s).sort()) === '["active","addedAt","id","name","removedAt","rollNo","under18"]'
+    && s.under18 === false),
   JSON.stringify(read.body.students?.[0]));
 {
   const stored = await repo.listClassStudents(classId);

@@ -68,8 +68,9 @@ const questionSchema = new Schema(
     bloom: { type: String, enum: LEVELS, required: true },
     // 'draft': generated and not yet approved, never served (supabase/migrations/0013).
     status: { type: String, enum: ['active', 'discarded', 'draft'], default: 'active' },
-    // [D] provenance, so the UI can never pass a template item off as an LLM one
-    source: { type: String, enum: ['llm', 'fallback'], default: 'llm' },
+    // [D] provenance, so the UI can never pass a template item off as an LLM one.
+    // 'teacher' (0022): a question a professor wrote in the bank.
+    source: { type: String, enum: ['llm', 'fallback', 'teacher'], default: 'llm' },
     // 0013. Declared because Mongoose drops every path it has no schema for, and
     // a draft that lost its model or its approval on save would be undetectable.
     model: { type: String, default: null },
@@ -78,6 +79,14 @@ const questionSchema = new Schema(
     createdBy: { type: String, default: null },
     approvedBy: { type: String, default: null },
     approvedAt: { type: String, default: null },
+    // 0022. The active question a regenerated draft would replace; approving
+    // the draft retires it. Declared, or Mongoose drops it and the old question
+    // is never retired.
+    replacesId: { type: String, default: null },
+    // 0024. Misconception labels on the wrong options, [{ option, label,
+    // provenance, addedAt, changedAt, by }] (services/misconceptions.js checks
+    // the shape before anything is written). Declared, or Mongoose drops them.
+    misconceptions: { type: Schema.Types.Mixed, default: () => [] },
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: false } },
 );
@@ -175,6 +184,11 @@ const profileSchema = new Schema(
           // the written answer behind this entry; `correct` and `score` then
           // carry the reviewed mark. Declared so Mongoose does not drop it.
           review: String,
+          // Phase 5. The level decision this answer caused, when it moved the
+          // student or held them at either end of the ladder: rule, from, to,
+          // window, share, answers and the sentence (mastery.js moveRecord).
+          // Declared so Mongoose does not drop it.
+          move: Object,
           at: String,
         },
       ],
@@ -201,8 +215,11 @@ const profileSchema = new Schema(
     // Phase 6. Append-only integrity signals.
     integrity: { type: Array, default: [] },
 
-    // The student account this roll number maps to on the room owner's roster.
+    // The student account this room profile is linked to.
     accountId: { type: String, default: null },
+    // 0022 (decision 7): true only when the link was made by the phone
+    // presenting that signed-in student's token at join.
+    accountVerified: { type: Boolean, default: false },
   },
   { versionKey: false },
 );
@@ -240,10 +257,17 @@ const answerSchema = new Schema(
     reviewedAt: { type: String, default: null },
     reviewNote: { type: String, default: '' },
     confidence: { type: String, enum: ['sure', 'think', 'guess', null], default: null },
+    // 0022 (decision 7): sent by a phone signed in as the linked account.
+    accountVerified: { type: Boolean, default: false },
+    // 0023: the class question and round (1, or 2 for the re-vote) a vote was
+    // given in; null on every other answer.
+    classQuestionId: { type: String, default: null },
+    round: { type: Number, enum: [1, 2, null], default: null },
   },
   { versionKey: false },
 );
 answerSchema.index({ sessionId: 1, answerKey: 1 }, { unique: true });
+answerSchema.index({ classQuestionId: 1 }, { partialFilterExpression: { classQuestionId: { $type: 'string' } } });
 answerSchema.index({ sessionId: 1, rollNo: 1 });
 
 // roll number is the identity within a session [F4]
@@ -313,7 +337,8 @@ export const Media = model('Media', mediaSchema);
 
 // A professor's class and its roster (supabase/migrations/0016). Ids are kept as
 // strings, as for reviews, so a query by either id needs no cast. A roster row
-// holds a roll number and a name and nothing else: Mongoose drops any path it
+// holds a roll number, a name and, since 0022, the owner's yes-or-no "under 18"
+// mark, and nothing else: Mongoose drops any path it
 // has no schema for, so a phone number sent with a row could not be stored here
 // even if a route forgot to leave it out.
 const classSchema = new Schema(
@@ -335,6 +360,8 @@ const classStudentSchema = new Schema(
     addedAt: { type: String, default: () => new Date().toISOString() },
     // Removed, never deleted: answers and attendance outlive a correction to the list.
     removedAt: { type: String, default: null },
+    // 0022 (decision 8): the owner's optional "under 18" mark. A yes or no only.
+    under18: { type: Boolean, default: false },
   },
   { versionKey: false },
 );
@@ -553,5 +580,30 @@ const attainmentConfigSchema = new Schema(
 );
 attainmentConfigSchema.index({ classId: 1, version: 1 }, { unique: true });
 export const AttainmentConfig = model('AttainmentConfig', attainmentConfigSchema);
+
+// A class question (supabase/migrations/0023). The repository changes only
+// where it stands; what was asked, in which room and when are written once.
+// Postgres's "one not closed per room" is a partial unique index that Mongo's
+// partial filters cannot express (they take no $ne), so the repository checks
+// it, under the room's class-question lock (routes/classQuestions.js).
+const classQuestionSchema = new Schema(
+  {
+    sessionId: { type: String, required: true, index: true },
+    seq: { type: Number, required: true, min: 1 },
+    questionId: { type: String, default: null },
+    questionSnapshot: { type: Object, required: true },
+    state: { type: String, enum: ['open', 'paused', 'revote', 'closed'], default: 'open' },
+    revealed: { type: Boolean, default: false },
+    startedAt: { type: String, default: nowIso },
+    startedBy: by,
+    pausedAt: { type: String, default: null },
+    revoteAt: { type: String, default: null },
+    closedAt: { type: String, default: null },
+    closedBy: by,
+  },
+  { versionKey: false, minimize: false },
+);
+classQuestionSchema.index({ sessionId: 1, seq: 1 }, { unique: true });
+export const ClassQuestion = model('ClassQuestion', classQuestionSchema);
 
 export { levelCounter };

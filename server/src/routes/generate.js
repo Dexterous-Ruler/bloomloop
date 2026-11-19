@@ -14,6 +14,7 @@ import { generateBank, sourceRefFor } from '../services/generate.js';
 import { planBank, describePlan, PRESETS, CONFIRM_ABOVE } from '../services/plan.js';
 import { PAYLOAD_FIELDS, KINDS_FOR_LEVEL } from '../questionTypes.js';
 import { runChecks, failedChecks } from '../services/checks.js';
+import { stampLabels } from '../services/misconceptions.js';
 import { assertCanRead, assertCanWrite } from '../ownership.js';
 import { startRun, updateRun, finishRun, failRun, getRun, cleanRunId } from '../services/runs.js';
 
@@ -170,6 +171,7 @@ router.post('/', async (req, res, next) => {
     let removed = 0;
     if (mode === 'replace') removed = await repo.deleteQuestions(content._id);
 
+    const at = new Date().toISOString();
     const inserted = await repo.insertQuestions(
       questions.map((q) => {
         const row = {
@@ -191,6 +193,8 @@ router.post('/', async (req, res, next) => {
         if (Array.isArray(q.options)) row.options = q.options;
         if (Number.isInteger(q.answerIdx)) row.answerIdx = q.answerIdx;
         for (const f of PAYLOAD_FIELDS) if (q[f] !== undefined) row[f] = q[f];
+        // The model's proposed misconception labels (0024), AI drafts from now.
+        if (q.misconceptions?.length) row.misconceptions = stampLabels(q.misconceptions, at);
         row.checks = runChecks(row);
         return row;
       }),

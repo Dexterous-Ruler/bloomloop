@@ -248,9 +248,12 @@ function slideOnlyReference(q) {
   const stimulus = q.stimulus && typeof q.stimulus === 'object' ? q.stimulus : null;
   const said = [q.text, ...optionSets(q).flatMap((s) => s.options)].map(text).join(' \n ');
   const visual = VISUAL.map((rx) => said.match(rx)?.[0]).find(Boolean);
-  if (visual && stimulus?.kind !== 'image') {
+  // An attached image or passage clears it (the owner's decision of 19 Nov
+  // 2026): a passage can carry what the figure showed, a table or a described
+  // curve, and the professor who attached it has judged that it does.
+  if (visual && stimulus?.kind !== 'image' && stimulus?.kind !== 'passage') {
     return result(id, false,
-      `It refers to "${visual}", which only the slide shows. Add the picture as an image stimulus, or reword it so it can be answered without the slide.`);
+      `It refers to "${visual}", which only the slide shows. Add the picture or a passage as a stimulus, or reword it so it can be answered without the slide.`);
   }
   const onScreen = ON_SCREEN.map((rx) => said.match(rx)?.[0]).find(Boolean);
   if (onScreen && !stimulus) {

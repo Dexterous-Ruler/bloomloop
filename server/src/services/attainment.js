@@ -36,6 +36,11 @@
 //                   saved formulas use it
 //   humanReviewed   review_status 'confirmed' or 'overridden': a professor
 //                   confirmed or changed the mark (answer_reviews, 0010)
+//   revote          round 2 of a class question (Phase 5, 0023): the re-vote
+//                   after the class discussed it. Shown under its own label and
+//                   NEVER counted, whatever a formula says: it follows the
+//                   discussion, so it is not the student's own work. A class
+//                   question's round 1 is an ordinary digital answer
 //   ungraded        a poll: no mark at all. Counted as a number, nowhere else
 // Teacher records (observations, wheel picks, tallies, activities) are never a
 // mark here (decision 3's safe default): they are summarised in their own,
@@ -44,9 +49,10 @@
 // QUESTION SOURCES (questionSourceOf), a second split of the same answers, by
 // who wrote the question rather than who marked the answer, from the
 // question_source each answer row keeps (0008): AI-generated ('llm'),
-// professor-written ('teacher') and the offline template's ('fallback', which
-// is also how a professor's own question is stored until 'teacher' is). It
-// moves no mark; it says what a figure's counted marks rest on.
+// professor-written ('teacher', since 0022 and the owner's 19 Nov 2026
+// decision) and the offline template's ('fallback', which is also how a
+// professor's own question was stored before then). It moves no mark; it says
+// what a figure's counted marks rest on.
 //
 // WHOSE ANSWERS (rollResolver). A room's answers carry the roll number typed
 // into the phone; its attendance marks carry the roster row and, since 0021,
@@ -98,12 +104,23 @@ export const EVIDENCE_TYPES = Object.freeze([
     label: 'Reviewed by a professor',
     description: 'Written answers whose mark a professor confirmed or changed in the review queue.',
   }),
+  Object.freeze({
+    id: 'revote',
+    label: 'Re-votes after discussion',
+    description: 'The second vote on a question the professor put to the whole class, given after the class discussed it. '
+      + 'Shown, and never counted towards a mark by any formula: it follows the discussion, so it is not the student\'s own '
+      + 'work. The first vote on such a question is a digital answer.',
+  }),
 ]);
 const TYPE_IDS = EVIDENCE_TYPES.map((t) => t.id);
+/** The types a formula may count. A re-vote after discussion is never one of them. */
+const COUNTABLE_IDS = Object.freeze(['digital', 'aiProvisional', 'humanReviewed']);
 
 /** Which kind of evidence an answer row is. The rule every figure here is split by. */
 export function evidenceTypeOf(answer) {
   if (answer?.ungraded) return 'ungraded';
+  // A class question's round 2 (0023). Its round 1 reads as any other answer.
+  if (answer?.classQuestionId && Number(answer.round) === 2) return 'revote';
   const status = answer?.reviewStatus;
   if (status === 'confirmed' || status === 'overridden') return 'humanReviewed';
   if (status === 'provisional') return 'aiProvisional';
@@ -121,13 +138,14 @@ export const QUESTION_SOURCES = Object.freeze([
   Object.freeze({
     id: 'professorWritten',
     label: 'Professor-written questions',
-    description: 'Questions a professor wrote in the question bank (question_source "teacher").',
+    description: 'Questions a professor wrote in the question bank (question_source "teacher", since 19 Nov 2026).',
   }),
   Object.freeze({
     id: 'offlineTemplate',
-    label: 'Offline-template or professor-written questions',
+    label: 'Offline-template questions (and professor-written ones from before 19 Nov 2026)',
     description: 'Questions no model wrote (question_source "fallback"): the offline template\'s, and a professor\'s own '
-      + 'while they are stored the same way. An answer row cannot tell these two apart.',
+      + 'written before 19 Nov 2026, which were stored the same way. An answer row cannot tell those two apart, so they '
+      + 'were not relabelled.',
   }),
 ]);
 const SOURCE_IDS = QUESTION_SOURCES.map((s) => s.id);
@@ -174,10 +192,11 @@ export const CONFIG_FIELDS = Object.freeze({
   evidence: 'Which evidence counts towards a mark: { digital, aiProvisional, humanReviewed }, each true or false, one '
     + 'at least true; aiProvisional only with humanReviewed, since a review replaces the machine\'s mark. aiProvisional is '
     + 'the keyword marker\'s provisional machine mark, not AI; the key keeps its stored name. Teacher records never count '
-    + '(decision 3).',
+    + '(decision 3), and neither does a re-vote after a class discussion, which every report shows under its own label.',
   attempts: '"final": every final attempt counts (an attempt followed by a retry does not). "best": only a student\'s '
-    + 'best attempt at each question counts, across attempts and rooms; a written answer\'s attempt followed by a retry '
-    + 'never does, since only a final attempt can be reviewed.',
+    + 'best attempt at each question counts, across attempts and rooms; a professor-reviewed attempt always beats a '
+    + 'provisional machine mark at the same question, whatever the two scores and whichever room each came from; a '
+    + 'written answer\'s attempt followed by a retry never counts, since only a final attempt can be reviewed.',
   roomWeights: `Up to ${LIMITS.roomWeights} rooms of the class, [{ roomId or code, weight }], weight above 0 and at most `
     + `${LIMITS.roomWeight}: how much that room's answers count beside the rest. Rooms not listed count 1.`,
 });
@@ -240,17 +259,19 @@ export function validateConfig(raw, { rooms = null } = {}) {
   });
 
   if (!isObject(raw.evidence)) throw fail('evidence must be { digital, aiProvisional, humanReviewed }, each true or false.', 400);
-  const strayEvidence = Object.keys(raw.evidence).filter((k) => !TYPE_IDS.includes(k));
+  const strayEvidence = Object.keys(raw.evidence).filter((k) => !COUNTABLE_IDS.includes(k));
   if (strayEvidence.length) {
-    throw fail(`evidence takes ${TYPE_IDS.join(', ')} only, not ${strayEvidence.join(', ')}. Teacher observations and other `
-      + 'teacher records never count towards a mark (decision 3); every report lists them beside the marks.', 400);
+    throw fail(`evidence takes ${COUNTABLE_IDS.join(', ')} only, not ${strayEvidence.join(', ')}. Teacher observations and other `
+      + 'teacher records never count towards a mark (decision 3); every report lists them beside the marks.'
+      + `${strayEvidence.includes('revote') ? ' A re-vote after a class discussion is never counted either: every report shows '
+        + 'it under its own label.' : ''}`, 400);
   }
   const evidence = {};
-  for (const t of TYPE_IDS) {
+  for (const t of COUNTABLE_IDS) {
     if (typeof raw.evidence[t] !== 'boolean') throw fail(`evidence.${t} must be true or false.`, 400);
     evidence[t] = raw.evidence[t];
   }
-  if (!TYPE_IDS.some((t) => evidence[t])) throw fail('evidence must count at least one type, or nothing could be marked.', 400);
+  if (!COUNTABLE_IDS.some((t) => evidence[t])) throw fail('evidence must count at least one type, or nothing could be marked.', 400);
 
   if (!ATTEMPTS.includes(raw.attempts)) throw fail(`attempts must be ${ATTEMPTS.map((a) => `"${a}"`).join(' or ')}.`, 400);
 
@@ -398,8 +419,14 @@ const TYPE_PHRASE = {
 
 const SOURCES_SENTENCE = 'Every figure also splits its counted marks by who wrote the question: AI-generated (by the '
   + 'language model from the professor\'s material, approved by a professor before use), professor-written, or the offline '
-  + 'template (a professor\'s own questions are stored the same way until they are stored apart). This is where a question '
-  + 'came from, not how its answer was marked, and it changes no mark.';
+  + 'template (a professor\'s own questions written before 19 November 2026 were stored the same way as the template\'s and '
+  + 'are counted with them). This is where a question came from, not how its answer was marked, and it changes no mark.';
+
+// Phase 5: class questions and the confidence tap, said in every report.
+const CLASS_SENTENCE = 'A question the professor put to the whole class counts its first vote as a digital answer, except '
+  + 'from a student who had already answered that question on their own in the same room and was shown its answer then, '
+  + 'whose own answer counts instead; its re-vote after the class discussed it is shown under its own label and never '
+  + 'counted. How sure a student said they were never changes a mark.';
 
 const ROOMS_SENTENCE = 'Only rooms opened for this class are counted: a room opened without choosing this class is not in '
   + 'this report, whoever answered in it.';
@@ -485,8 +512,10 @@ export function methodologyText(formula, { rooms = [], counted: inReport = null 
   const counted = PHRASE_ORDER.filter((t) => c.evidence[t]);
   const left = PHRASE_ORDER.filter((t) => !c.evidence[t]);
   const attempts = c.attempts === 'best'
-    ? 'counting only their best attempt at each question, across attempts and rooms (a written answer\'s attempt followed '
-      + 'by a retry is left out, since only a final attempt can be reviewed)'
+    ? 'counting only their best attempt at each question, across attempts and rooms (an attempt a professor reviewed '
+      + 'always counts ahead of a provisional machine mark at the same question, whatever the two scores and whichever room '
+      + 'each came from, since a professor\'s review replaces the machine\'s mark; a written answer\'s attempt followed by a '
+      + 'retry is left out, since only a final attempt can be reviewed)'
     : 'counting final attempts only (an attempt followed by a retry is left out, and a question answered in two rooms '
       + 'counts in both)';
   return [
@@ -510,6 +539,7 @@ export function methodologyText(formula, { rooms = [], counted: inReport = null 
       + 'actually given.',
     'Polls are not marked and are counted only as a number. Teacher observations, wheel picks and hand tallies are reported '
       + 'in their own section and never enter a mark or move a level.',
+    CLASS_SENTENCE,
     ROOMS_SENTENCE,
     'Rooms deleted from the live views are not counted; their evidence is kept in room archives.',
     'This is direct attainment from class evidence only. A college\'s final attainment may combine it with examinations or '
@@ -526,11 +556,13 @@ export function registerMethodologyText(formula) {
     formulaSentence(formula),
     'Each cell is the marks a student obtained of the marks possible in one room: every question answered is one mark, '
       + `scored from 0 to 1 as it was marked ${reviewClause(c)}, `
-      + `${c.attempts === 'best' ? 'counting only the best attempt at each question in that room (a written answer\'s attempt '
+      + `${c.attempts === 'best' ? 'counting only the best attempt at each question in that room (an attempt a professor '
+        + 'reviewed always counts ahead of a provisional machine mark, whatever the two scores; a written answer\'s attempt '
         + 'followed by a retry is left out, since only a final attempt can be reviewed)' : 'counting final attempts only (an attempt followed by a retry is left out)'}.`,
     `Counted: ${listed(counted.map((t) => TYPE_PHRASE[t]))}.`,
     ...(left.length ? [`${cap(listed(left.map((t) => TYPE_PHRASE[t])))} are shown apart and not counted.`] : []),
     'Polls are counted only as a number.',
+    CLASS_SENTENCE,
     'A student who answered nothing in a room has no marks there, not a zero: the attendance mark says whether they were '
       + 'present.',
     ROLLS_SENTENCE,
@@ -625,7 +657,8 @@ const marksView = (m) => ({ answers: m.answers, obtained: marksDown(m.obtained),
  */
 function breakdownView(b, config) {
   const out = {};
-  for (const t of TYPE_IDS) out[t] = { ...marksView(b[t]), counted: config.evidence[t] };
+  // `=== true`: a re-vote has no key in a formula, and is never counted.
+  for (const t of TYPE_IDS) out[t] = { ...marksView(b[t]), counted: config.evidence[t] === true };
   out.ungraded = { answers: b.ungraded, counted: false };
   out.questionSources = Object.fromEntries(SOURCE_IDS.map((s) => [s, {
     ...marksView(countedOf(b.sources[s], config)),
@@ -668,7 +701,12 @@ const later = (a, b) => String(a.answeredAt ?? '').localeCompare(String(b.answer
  *   best    for each student and question (and room, with `perRoom`), the one
  *           attempt with the highest mark among the types the formula counts, or
  *           among all when none of its attempts is of a counted type; a tie goes
- *           to a final attempt, then the later one. A WRITTEN answer's attempt
+ *           to a final attempt, then the later one. A professor-REVIEWED attempt
+ *           always beats a provisional machine mark at the same question,
+ *           whatever the two scores and whichever room each came from (the
+ *           owner's decision of 19 Nov 2026): when the group holds a reviewed
+ *           attempt, provisional ones are not candidates, since a professor's
+ *           review replaces the machine's mark. A WRITTEN answer's attempt
  *           followed by a retry is set aside here too: the review queue holds
  *           final attempts only (routes/review.js refuses the rest, "it never
  *           counted"), so such a mark can never be checked, and counting it let
@@ -676,14 +714,43 @@ const later = (a, b) => String(a.answeredAt ?? '').localeCompare(String(b.answer
  *           final attempt. An objective attempt is marked from the key, so a
  *           retried one still counts under best
  *
- * @returns {{ chosen: object[], chosenIds: Set<string>, setAside: number }}
+ * A class question's votes (Phase 5): a vote a phone changed, or one that came
+ * after its round closed, was never the vote in force, and is set aside under
+ * either rule. A re-vote after discussion (round 2) is kept apart, one per
+ * student, question and room, the latest: it is shown under its own type and
+ * never counted, so it never displaces, or competes with, an answer that is.
+ * A first-round vote from a student who had already given a final answer of
+ * their own to that question in the same room is set aside too (`knewKey`):
+ * that answer's result showed them the key, and a question leaves the room's
+ * bank once asked, so their own answer always came first. Their own answer is
+ * the one that counts, under either rule.
+ *
+ * @returns {{ chosen: object[], chosenIds: Set<string>, setAside: number, knewKey: Set<string> }}
  */
 export function chooseAnswers(answers = [], config, { perRoom = false } = {}) {
   const groups = new Map();
   const polls = new Map();
+  const revotes = new Map();
+  const ownFinal = new Set();
+  for (const a of answers) {
+    if (!a.classQuestionId && a.final !== false && !a.ungraded) {
+      ownFinal.add(`${a.sessionId}\u0000${a.rollNo}\u0000${questionKeyOf(a)}`);
+    }
+  }
+  const knewKey = new Set();
   for (const a of answers) {
     const roll = String(a.rollNo);
     const room = String(a.sessionId);
+    if (a.classQuestionId && a.final === false) continue;
+    if (evidenceTypeOf(a) === 'revote') {
+      const k = `${room}\u0000${roll}\u0000${questionKeyOf(a)}`;
+      if (!revotes.has(k) || later(a, revotes.get(k)) > 0) revotes.set(k, a);
+      continue;
+    }
+    if (a.classQuestionId && !a.ungraded && ownFinal.has(`${room}\u0000${roll}\u0000${questionKeyOf(a)}`)) {
+      knewKey.add(String(a._id));
+      continue;
+    }
     if (a.ungraded) {
       if (a.final === false) continue;
       const k = `${room}\u0000${roll}\u0000${questionKeyOf(a)}`;
@@ -702,15 +769,17 @@ export function chooseAnswers(answers = [], config, { perRoom = false } = {}) {
     groups.get(k).push(a);
   }
   const better = (a, b) => (scoreOf(a) - scoreOf(b)) || ((a.final !== false ? 1 : 0) - (b.final !== false ? 1 : 0)) || later(a, b);
-  const chosen = [...polls.values()];
+  const chosen = [...polls.values(), ...revotes.values()];
   for (const g of groups.values()) {
     if (!Array.isArray(g)) { chosen.push(g); continue; }
     const counted = g.filter((a) => config.evidence[evidenceTypeOf(a)]);
-    const pool = counted.length ? counted : g;
+    const candidates = counted.length ? counted : g;
+    const reviewed = candidates.some((a) => evidenceTypeOf(a) === 'humanReviewed');
+    const pool = reviewed ? candidates.filter((a) => evidenceTypeOf(a) !== 'aiProvisional') : candidates;
     chosen.push(pool.reduce((best, a) => (better(a, best) > 0 ? a : best)));
   }
   chosen.sort(later);
-  return { chosen, chosenIds: new Set(chosen.map((a) => String(a._id))), setAside: answers.length - chosen.length };
+  return { chosen, chosenIds: new Set(chosen.map((a) => String(a._id))), setAside: answers.length - chosen.length, knewKey };
 }
 
 /* --------------------------------------------------------- who is in it -- */
@@ -837,7 +906,7 @@ function tally({ rooms = [], answers = [], outcomes = [], links = [], overrides 
   for (const w of config.roomWeights) if (roomWeight.has(w.roomId)) roomWeight.set(w.roomId, milli(w.weight));
   const index = outcomeIndex({ outcomes, links, overrides, questions });
   const known = new Set(outcomes.map((o) => String(o._id)));
-  const { chosen, chosenIds, setAside } = chooseAnswers(answers, config);
+  const { chosen, chosenIds, setAside, knewKey } = chooseAnswers(answers, config);
 
   const byOutcome = new Map(); // roll -> outcome id -> breakdown
   const byLevel = new Map(); // roll -> level -> breakdown
@@ -891,7 +960,7 @@ function tally({ rooms = [], answers = [], outcomes = [], links = [], overrides 
     if (level) addAnswer(cell(byLevel, roll, level), a, s, UNIT * rw);
   }
   return {
-    chosen, chosenIds, resolved, byOutcome, byLevel, totals,
+    chosen, chosenIds, knewKey, resolved, byOutcome, byLevel, totals,
     unmapped: [...unmapped.values()].sort((x, y) => y.answers - x.answers
       || String(x.chapter ?? '').localeCompare(String(y.chapter ?? '')) || String(x.topic).localeCompare(String(y.topic))),
   };
@@ -965,7 +1034,7 @@ function classFigure(students, cellOf, config) {
   };
 }
 
-const TYPE_SHORT = { digital: 'digital', aiProvisional: 'provisional written', humanReviewed: 'reviewed written' };
+const TYPE_SHORT = { digital: 'digital', aiProvisional: 'provisional written', humanReviewed: 'reviewed written', revote: 're-vote' };
 
 /** "Rests on 42 counted answers from the 20 students counted: 30 digital and 12 reviewed written." */
 function restsOn(marks, students) {
@@ -1072,15 +1141,16 @@ export function recordsSummary({ observations = [], picks = [], tallies = [], ac
 /* --------------------------------------------------------- the reports -- */
 
 const DEFINITIONS = Object.freeze({
-  evidenceTypes: 'Every figure is split by evidence type (digital, aiProvisional, humanReviewed), each with its answers '
+  evidenceTypes: 'Every figure is split by evidence type (digital, aiProvisional, humanReviewed, revote), each with its answers '
     + 'and marks and whether the formula counts it; polls (ungraded) are a count only. aiProvisional is a provisional '
     + 'machine mark: the keyword marker\'s match of the rubric\'s words, not AI, until a professor reviews it (the key keeps '
-    + 'its stored name).',
+    + 'its stored name). revote is a class question\'s second vote, after the class discussed it: shown, never counted.',
   questionSources: 'marks.questionSources splits the same counted marks by who wrote the question: aiGenerated (the '
     + 'language model, from the professor\'s material, approved before use; question_source "llm"), professorWritten '
-    + '("teacher") and offlineTemplate ("fallback": the offline template, and a professor\'s own questions while they are '
-    + 'stored the same way). The three add up to the counted types; notCounted is each one\'s answers of a type the formula '
-    + 'does not count. It moves no mark.',
+    + '("teacher", a question a professor wrote in the bank since 19 Nov 2026) and offlineTemplate ("fallback": the offline '
+    + 'template, and a professor\'s own questions written before then, which were stored the same way and cannot be told '
+    + 'apart with certainty). The three add up to the counted types; notCounted is each one\'s answers of a type the '
+    + 'formula does not count. It moves no mark.',
   marks: 'One answer is one mark, scored 0 to 1 as marked, times its topic\'s weight in the outcome (1 for a question mapped '
     + 'directly) and its room\'s weight. For display, obtained is rounded down and possible up to 3 decimals, and every '
     + 'share down to 4, so a printed figure never reads higher than it is; states and levels are decided exactly.',
@@ -1201,17 +1271,29 @@ export function classAttainment({
 }
 
 /** Why an answer did or did not count, in words, for the student report. */
-function answerNote(a, { chosen, type, config, res, known }) {
+function answerNote(a, { chosen, type, config, res, known, knewKey = new Set() }) {
   if (!chosen) {
+    if (knewKey.has(String(a._id))) {
+      return 'Not counted: a class question vote from a student who had already answered this question on their own in '
+        + 'this room, and was shown its answer then. Their own answer counts instead.';
+    }
+    if (a.classQuestionId && a.final === false) {
+      return 'Not counted: a class question vote that was changed afterwards, or that came after its round closed.';
+    }
     if (a.final === false && config.attempts === 'final') return 'Not counted: an attempt followed by a retry.';
     if (a.final === false && isWritten(a)) {
       return 'Not counted: a written attempt followed by a retry. Only a final attempt can be reviewed by a professor, so '
         + 'only final written attempts count.';
     }
+    if (config.attempts === 'best' && type === 'aiProvisional') {
+      return 'Not counted: another attempt at the same question counts instead, either a better one or one a professor '
+        + 'reviewed, which always counts ahead of a provisional machine mark.';
+    }
     if (config.attempts === 'best') return 'Not counted: a better attempt at the same question counts instead.';
     return 'Not counted: a later final answer to the same question in this room replaced it.';
   }
   if (type === 'ungraded') return 'A poll: not marked, counted only as a number.';
+  if (type === 'revote') return 'Shown, not counted: a re-vote after the class discussed the question is never counted.';
   const reaches = res.outcomes.filter((o) => known.has(o.id));
   const where = res.via === VIA.excluded ? ' An override keeps its question out of every course outcome.'
     : reaches.length ? '' : ` No course outcome is mapped to its topic${res.topic ? ` ("${res.topic}")` : ''}.`;
@@ -1286,7 +1368,7 @@ export function studentAttainment({
         questionSourceType: questionSourceOf(a),
         chosen,
         counts: chosen && type !== 'ungraded' && config.evidence[type] === true,
-        note: answerNote(a, { chosen, type, config, res, known }) + (a.givenAs ? ` Given under roll number ${a.givenAs}, `
+        note: answerNote(a, { chosen, type, config, res, known, knewKey: t.knewKey }) + (a.givenAs ? ` Given under roll number ${a.givenAs}, `
           + 'which this room\'s attendance mark for the student was made under.' : ''),
         via: res.via,
         outcomes: res.outcomes.filter((o) => known.has(o.id)).map((o) => ({ id: o.id, code: code.get(o.id), weight: o.weight })),

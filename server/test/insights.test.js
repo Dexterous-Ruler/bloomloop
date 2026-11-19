@@ -380,7 +380,7 @@ describe('class analytics', () => {
     const roster = ['01', '02', '03'].map((r) => ({ _id: `s${r}`, classId: 'c1', rollNo: r, name: `N ${r}`, removedAt: null }));
     const marks = [{ classStudentId: 's01', status: 'present' }, { classStudentId: 's02', status: 'late' }];
     const r = roomReport({ ...room, classId: 'c1' }, { profiles: [scored('01', 1, 4), profileOf('02')], roster, marks });
-    assert.deepEqual(r.accuracy, { value: 0.25, students: 1, answers: 4 });
+    assert.deepEqual(r.accuracy, { value: 0.25, students: 1, answers: 4, sentence: 'Based on 4 graded answers from 1 student.' });
     assert.deepEqual(r.participation, { value: 0.5, present: 2, answered: 1, notAnswered: 1 });
     assert.deepEqual(r.attendance, { present: 2, late: 1, absent: 0, unmarked: 1, classSize: 3, summary: '2 / 3 present' });
     assert.deepEqual(r.bands, { 'needs-support': 1, developing: 0, excelling: 0, notEnough: 1 });

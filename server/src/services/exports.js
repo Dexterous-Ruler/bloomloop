@@ -121,13 +121,15 @@ export function fileHeaders(format, filename) {
 
 /* ----------------------------------------------------------- the words -- */
 
-// The report's own type order (EVIDENCE_TYPES in services/attainment.js).
-export const TYPES = Object.freeze(['digital', 'aiProvisional', 'humanReviewed']);
+// The report's own type order (EVIDENCE_TYPES in services/attainment.js). A
+// re-vote after discussion (Phase 5) comes last, and no formula counts it.
+export const TYPES = Object.freeze(['digital', 'aiProvisional', 'humanReviewed', 'revote']);
 /** What one answer of each type is called in a column, as restsOn says them. */
 export const TYPE_COLUMN = Object.freeze({
   digital: 'digital answers',
   aiProvisional: 'provisional written answers',
   humanReviewed: 'reviewed written answers',
+  revote: 're-votes after discussion',
 });
 
 // Who wrote the question (QUESTION_SOURCES in services/attainment.js), in its order.
@@ -136,7 +138,7 @@ export const SOURCES = Object.freeze(['aiGenerated', 'professorWritten', 'offlin
 export const SOURCE_COLUMN = Object.freeze({
   aiGenerated: 'AI-generated questions',
   professorWritten: 'professor-written questions',
-  offlineTemplate: 'offline-template or professor-written questions',
+  offlineTemplate: 'offline-template questions (and professor-written before 19 Nov 2026)',
 });
 
 /** The leading row every sheet that lists roll numbers carries: how to keep them exactly. */
@@ -220,7 +222,8 @@ export function formulaParameters(formula, { register = false } = {}) {
 export function answersText(a) {
   return `${plural(a.rows, 'attempt')} stored in these rooms; ${a.setAside} set aside by the attempts rule; `
     + `${plural(a.graded, 'marked answer')} (${a.byType.digital} digital, ${a.byType.humanReviewed} reviewed written, `
-    + `${a.byType.aiProvisional} provisional written), of which ${a.mapped} reach a course outcome, ${a.excluded} are `
+    + `${a.byType.aiProvisional} provisional written, ${a.byType.revote ?? 0} re-votes after discussion, never counted), of `
+    + `which ${a.mapped} reach a course outcome, ${a.excluded} are `
     + `excluded from every outcome by an override and ${a.unmapped} reach none; by who wrote the question, `
     + `${listed(SOURCES.map((s) => `${a.bySource?.[s] ?? 0} on ${SOURCE_COLUMN[s]}`))}; `
     + `${plural(a.ungraded, 'poll')} (not marked).`;

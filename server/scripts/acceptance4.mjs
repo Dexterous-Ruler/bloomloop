@@ -449,12 +449,12 @@ const b = report.body;
       ['21CS04', 'active'], ['21CS05', 'active'], ['VISIT9', 'not-on-roster']]));
   // 44 answers: 41 digital, the two written answers left provisional, the one reviewed.
   // Deadlock (D1, three answers) is mapped to no outcome.
-  // Every question was written by the professor (POST /api/bank/:contentId/questions), which stores
-  // question_source 'fallback' until 'teacher' exists: all 44 are on offline-template-or-professor questions.
+  // Every question was written by the professor (POST /api/bank/:contentId/questions), which since
+  // 19 Nov 2026 (0022) stores question_source 'teacher': all 44 are on professor-written questions.
   check('answers: 44, 41 digital, 2 provisional, 1 reviewed; 41 reach an outcome, 3 none, adding up; all on the professor\'s questions',
     same(b.answers, { rows: 44, setAside: 0, chosen: 44, ungraded: 0, graded: 44,
-      byType: { digital: 41, aiProvisional: 2, humanReviewed: 1 }, mapped: 41, excluded: 0, unmapped: 3,
-      bySource: { aiGenerated: 0, professorWritten: 0, offlineTemplate: 44 } }), JSON.stringify(b.answers));
+      byType: { digital: 41, aiProvisional: 2, humanReviewed: 1, revote: 0 }, mapped: 41, excluded: 0, unmapped: 3,
+      bySource: { aiGenerated: 0, professorWritten: 44, offlineTemplate: 0 } }), JSON.stringify(b.answers));
   check('what reaches no outcome is named: Deadlock, 3 answers',
     b.unmapped?.length === 1 && b.unmapped[0].topic === 'Deadlock' && b.unmapped[0].answers === 3);
 
@@ -616,7 +616,7 @@ const sheet = readSheet(csv.text);
       && num(r?.['Provisional written answers behind the share (not counted)']) === o.marks.aiProvisional.answers
       && num(r?.['Reviewed written answers behind the share (counted)']) === o.marks.humanReviewed.answers
       && num(r?.['Their counted answers']) === o.outside.notEnoughEvidence.answers
-      && num(r?.['Counted answers behind the share on offline-template or professor-written questions'])
+      && num(r?.['Counted answers behind the share on offline-template questions (and professor-written before 19 Nov 2026)'])
         === o.marks.questionSources.offlineTemplate.answers && r?.Summary === o.summary;
   });
   check('each outcome\'s class row and level equal the JSON: CO1 75% level 3, CO2 33.33% level 0, CO3 100% level 3',

@@ -9,17 +9,22 @@ the fixes from its review, migrations `0013` to `0015`, and the UI session's Pha
 screens). Commit `d162cc8` holds Phase 3 (the roster, rooms for a class and
 attendance, `0016`; the teacher-record store, `0017`; room modes, the waiting room and
 the projector, `0018`; live insights, the student card and class analytics; the fixes
-from the Phase 3 review; and the UI session's Phase 2 screens). **Phase 4 is
-uncommitted**, on the server only:
+from the Phase 3 review; and the UI session's Phase 2 screens). Commit `eedfd5e`
+holds Phase 4. **The owner's decisions of 19 Nov 2026 are uncommitted**, on the
+server only, with migration `0022` (checklist at the end: "The owner's decisions of
+19 Nov 2026"). **Phase 5 is uncommitted too**, on the server only: the confidence tap
+and class questions (`0023`), misconception labels on wrong options (`0024`), the
+honest indicators (no migration) and the fixes from the Phase 5 review (no migration).
+Its checklist is at the end, by the directive's items: "Phase 5: distinctive
+classroom features". Every suite passes through the offline runner after the review
+fixes (the test table below). Phase 4, as committed:
 - course outcomes, their mappings and coverage, and the roster from CSV (`0019`);
 - configurable attainment and the marks register (`0020`);
 - CSV exports, printable reports and the acceptance run (no migration);
 - the fixes from the Phase 4 review (`0021`: the roll number an attendance mark was
   made under).
 
-Its checklist is at the end. After the review fixes every suite passes: the fix's
-run and a rerun after it, both through the offline runner on 19 November 2026, gave
-the same figures (the test table below).
+Its checklist is at the end.
 
 Source of truth for the plan: `reports/BloomLoop gap analysis and roadmap.md`.
 Decisions that need the owner: `docs/PRODUCT_DECISIONS.md`.
@@ -91,7 +96,7 @@ or resume and does not hear the events.
   `docs/API.md`, "Phase 3". The UI session's uncommitted client now calls the class,
   roster, observation and class-analytics routes (`client/src/lib/api.js`; not
   re-checked beyond a search).
-- Course-outcome attainment, Phase 4 (server only, uncommitted):
+- Course-outcome attainment, Phase 4 (server only, committed in `eedfd5e`):
   - Course outcomes per class, mapped to topics with weights, with per-question
     overrides, coverage, and copying to another section.
   - A roster imported from a CSV file, with a dry run.
@@ -108,6 +113,22 @@ or resume and does not hear the events.
   Endpoints in `docs/API.md`, "Phase 4: every new and changed endpoint". The UI
   session's uncommitted client now calls these routes (`client/src/lib/api.js`, and
   new screens such as `client/src/account/Attainment.jsx`); not checked in this pass.
+- Distinctive classroom features, Phase 5 (server only, uncommitted):
+  - a confidence tap (Sure, Think so, Guessing) on every answer and vote, information
+    only, counted for staff;
+  - class questions: one approved question put to every phone, a pause for
+    discussion, a re-vote, the class-level changes as counts, and the key only once
+    revealed;
+  - misconception labels on wrong options, edited by the owner, with "N students chose
+    the option linked to the misunderstanding X" reports per room, class and question;
+  - honest indicators: who wrote each question and whether it was approved, uncertain
+    levels, the count behind every estimate, the reasons for level moves kept, and
+    translation warnings (waiting for a second language).
+
+  Endpoints in `docs/API.md`, "Phase 5: every new and changed endpoint and socket
+  event". The UI session's uncommitted client has files for some of it
+  (`client/src/learn/ClassVote.jsx`, `client/src/teach/ClassQuestions.jsx`); not
+  checked in this pass.
 
 ## Partially implemented
 
@@ -174,7 +195,14 @@ or resume and does not hear the events.
     - a route to merge answers given under a corrected roll number in a room whose
       marks were made before `0021` (since `0021` the mark ties them).
   - The server pieces built are in the Phase 4 checklist at the end.
-- **Phase 5:** confidence taps, re-vote, misconception tags.
+- **Phase 5:** every screen, none checked against the server: the phone's tap,
+  class-question and provenance screens; the console's class question controls,
+  confidence counts, misconception labels and reports, provenance chips, uncertain
+  levels, counts beside estimates, the student card's level moves and translation
+  warnings; the projector's class-question screen. The server side of all four
+  directive items is in (checklist at the end), except three server asks from the UI
+  session (each phone's own `mine` after a resume, `under18Note` on a class read,
+  `levelBands` on the dashboard and a professor's analytics).
 - **Phase 6:** the Learning Hub.
 - **Phase 7:** offline outbox, service worker, laptop-server mode.
 
@@ -197,18 +225,13 @@ Missing before this pass: room settings in the live loop, poll handling, ownersh
 `teacher:watch`, idempotent answer submission, migrations building a fresh database,
 the client (no client tests exist).
 
-Results after Phase 4 and the fixes from its review. Every suite was run through the
+Results after Phase 5 and the fixes from its review. Every suite was run through the
 offline runner (`docs/TESTING.md`) on 19 November 2026, which first blanks these in
 the environment: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`,
 `MONGO_URI`, `GEMINI_API_KEY`. Node 24.22.3, the in-process store and PGlite; no
-network service.
-
-Each figure below is what the runs printed. Two full runs, the fix's own and a rerun
-after it with no code change between, gave the same figures; every exit code was 0.
-Before the review fixes the three Phase 4 parts had ended at:
-- unit 518, 558 and 573;
-- migrations 509, 533 and 533;
-- `outcomes.mjs` 86, `attainment.mjs` 65 and `acceptance4.mjs` 73.
+network service. Each figure below is what that run printed (the Phase 5 docs pass's
+own run, after the review fixes); every exit code was 0, and every script that
+answers the Auth calls itself ended with no request off the machine.
 
 Earlier phases ended at:
 
@@ -218,13 +241,24 @@ Earlier phases ended at:
 | 1 | 172 | 13 | 204 |
 | 2 | 343 | | 270 |
 | 3 | 475 | | 451 |
+| 4 | 598 | 13 | 573 |
+
+How Phase 5 grew, each through the offline runner as each piece reported it:
+
+| Piece | Unit | Migrations | New script |
+|---|---|---|---|
+| The owner's decisions (`0022`) | 623 | 633 | `decisions.mjs` 64 |
+| Confidence taps and class questions (`0023`) | 643 | 697 | `classquestion.mjs` 70 |
+| Misconception labels (`0024`) | 683 | 752 | `misconceptions.mjs` 54 |
+| Honest indicators | 710 | 752 | `honesty.mjs` 59 |
+| The review fixes | 719 | 752 | `keysafety.mjs` 41; `decisions.mjs` 78 |
 
 | Suite | Command | Result |
 |---|---|---|
-| Unit: mastery, selector, edits, integrity, accounts, archive, reviews, evidence reads, the three repos (76 methods each); since Phase 2 also `checks`, `approval`, `kindmix`, `newkinds`, `media`, `itemstats`; since Phase 3 also `roster`, `wheel`, `records`, `modes`, `insights`; since Phase 4 also `outcomes`, `attainment`, `exports` | `cd server && npm test` | **598 / 598** (137 suites) |
+| Unit: mastery, selector, edits, integrity, accounts, archive, reviews, evidence reads, the three repos (80 methods each); since Phase 2 also `checks`, `approval`, `kindmix`, `newkinds`, `media`, `itemstats`; since Phase 3 also `roster`, `wheel`, `records`, `modes`, `insights`; since Phase 4 also `outcomes`, `attainment`, `exports`; since 19 Nov 2026 also `decisions` (27), `classQuestions` (24), `misconceptions` (40), `honesty` (27) | `cd server && npm test` | **719 / 719** (162 suites) |
 | Live loop: ownership, evidence, idempotency, polls, retries, redemption, status, room archive | `node server/scripts/liveloop.mjs` | 41 / 41 |
 | Security harness, including a phone answering another room's question | `node server/scripts/security.mjs` | 13 / 13 |
-| Migrations on PGlite: fresh build, re-run, upgrade, constraints, `0010` to `0021` | `cd server && npm run migrations` | **573 / 573** |
+| Migrations on PGlite: fresh build, re-run, upgrade, constraints, `0010` to `0024` | `cd server && npm run migrations` | **752 / 752** |
 | Review queue, end to end with the shared key | `node server/scripts/review.mjs` | 83 / 83 |
 | Evidence reads, end to end with the shared key | `node server/scripts/evidence.mjs` | 37 / 37 |
 | Resume, integrity (both read `server/.env`; the runner blanks the network settings first) | `node server/scripts/resume.mjs`, `integrity.mjs` | pass: 7 and 6 mandated steps, 0 failures, 0 supporting failures, 0 known holes |
@@ -240,6 +274,11 @@ Earlier phases ended at:
 | Course outcomes, their mappings and coverage, the roster from CSV (Phase 4), signed-in callers | `node server/scripts/outcomes.mjs` | **87 / 87** |
 | Attainment and the marks register (Phase 4), signed-in callers | `node server/scripts/attainment.mjs` | **73 / 73** |
 | The directive's acceptance criterion: exports and printable pages (Phase 4), signed-in callers | `node server/scripts/acceptance4.mjs` | **76 / 76** |
+| The owner's decisions of 19 Nov 2026, the decision 7 fix included, signed-in callers | `node server/scripts/decisions.mjs` | **78 / 78** |
+| Confidence taps and class questions (Phase 5), eight phones, signed-in callers | `node server/scripts/classquestion.mjs` | **70 / 70** |
+| Misconception labels (Phase 5), signed-in callers | `node server/scripts/misconceptions.mjs` | **54 / 54** |
+| Honest indicators (Phase 5), signed-in callers | `node server/scripts/honesty.mjs` | **59 / 59** |
+| A class question's key and whose vote counts (the Phase 5 review fixes), signed-in callers | `node server/scripts/keysafety.mjs` | **41 / 41** |
 
 "Signed-in callers" means the script answers the server's three Supabase Auth calls
 itself, for a host that cannot resolve, and refuses and counts any other request off
@@ -366,16 +405,36 @@ From Phase 4:
 - Any screen. The UI session's uncommitted client calls the Phase 4 routes; its
   screens were not checked against the server here.
 
+From the owner's decisions and Phase 5:
+- `0022`, `0023` and `0024` on the real database, and the four class-question repo
+  methods, the `classQuestionId` / `classVotes` / `verifiedOnly` filters and the
+  `misconceptions` column against a real Supabase or Mongo (their request shapes were
+  read, not run against a database).
+- A real Supabase Auth token at `student:join`, or anywhere: every signed-in caller,
+  the student who links a room included, was answered in-process.
+- A model proposing misconception labels (a fixture response was parsed) and any other
+  model call.
+- A language other than English from a real phone: none sends one, so the
+  translation warning was tested on fixture rows only.
+- Two server processes: the class question's locks, push throttle and the projector's
+  `showCounts` are in one process's memory. A restart was stood in for by a second
+  server over the same in-process store.
+- Closing a room when the store fails while closing its class question (the review
+  finding not acted on; traced, not run).
+- Any phone, console or projector screen for any of it.
+
 ## Risks found while revalidating
 
 - **Supabase unreachable.** The project's hostname does not resolve (checked against
   public DNS on 18 November 2026). Every account feature is untestable locally and
   broken on the deployed site until the project is restored.
-- **Uncommitted work.** Phases 0 to 3 are committed on branch
-  `roadmap-phase0-evidence` (`b4585a0`, `05daf56`, `27559ca`, `d162cc8`). Two sets of
-  work are not, and one bad checkout loses both:
-  - Phase 4: server, tests, docs, and migrations `0019` to `0021`;
-  - the UI session's newer client work, which now includes Phase 4 screens.
+- **Uncommitted work.** Phases 0 to 4 are committed on branch
+  `roadmap-phase0-evidence` (`b4585a0`, `05daf56`, `27559ca`, `d162cc8`, `eedfd5e`).
+  Two sets of work are not, and one bad checkout loses both:
+  - the owner's decisions and Phase 5: server, tests, docs, the contract amendments,
+    and migrations `0022` to `0024`;
+  - the UI session's newer client work, which depends on them and should be committed
+    after them.
 - **Deploying the server before a client that approves.** Every generated question
   is a draft since Phase 2, and the committed console has no approve, reject or
   approve-all. A professor who generates a bank then cannot open a room on it (409),
@@ -393,6 +452,12 @@ From Phase 4:
   mark would be refused (traced from the code, not run on Supabase). A join would be
   let in and mark nobody, with the failure only logged; a professor's marks would fail.
   None of the three has run anywhere but PGlite. Apply order: `0019`, `0020`, `0021`.
+  **`0022`, `0023` and `0024` must be applied, in that order, before the server of the
+  owner's decisions and Phase 5 is deployed.** Every join and answer writes `0022`'s
+  and `0023`'s columns, every room's bank reads `class_questions`, and every question
+  saved writes `0024`'s column, so the boot probe treats all three as pieces rooms
+  need: missing any one, the server does not use Supabase at all and its log names the
+  file to apply. None of the three has run anywhere but PGlite.
 - **Attainment leaves out deleted rooms.** An archive's class is inside its JSON, so a
   report does not read archives, and every report says so. A professor who deletes a
   room loses its answers from attainment, though they are kept in the archive.
@@ -402,19 +467,32 @@ From Phase 4:
 - **Re-running every migration once a room is waiting** (Phase 3 review, fixed).
   `0005` now lists `'waiting'` too; the migration test re-runs the set with a room
   left waiting.
-- **The phone is still told the band** (Phase 3 review, open; `CONTRACT.md` sections 4
-  and 5). The phone's `profile` is the teacher's grid row, so it carries
-  `slowLearner` and the integrity summary, and `reason` can name the below-40% band,
-  which today's phone shows. The roadmap and this phase's privacy rules say labels
-  are staff-only. Changing it needs a contract amendment and the owner's word on
-  what a phone is told; until then no new screen should show those fields to a
-  student.
-- **A typed roll number marks attendance** (decision 7). A classmate's phone can mark
-  someone present in a class room. The mark says `source: joined`, every attendance
-  read carries the caveat, and a professor's own mark always wins. Not solved.
+- **The phone is still told the band, by the committed client** (Phase 3 review).
+  Fixed on the server on 19 Nov 2026 (decision (a), `CONTRACT.md` Amendment 3): the
+  phone gets a `PhoneRow` with no `slowLearner`, signals or band sentence. The phone
+  client must stop showing the old fields; until it does, no screen should show them
+  to a student.
+- **A typed roll number marks attendance and gets a student's supports** (decision
+  7). A classmate's phone can mark someone present in a class room, and is given the
+  roster student's supports. The mark says `source: joined`, every attendance read
+  carries the caveat, and a professor's own mark always wins. Kept by decision (rooms
+  stay account-free); a typed roll number no longer exposes anything in the student's
+  own history, nor takes a signed-in student's class vote.
+- **Closing a room while a class question runs** (Phase 5 review, not acted on). The
+  close awaits the class question's close inside the status lock with no catch; a
+  store error there answers 500 for a room already closed and the phones are not told
+  `session:closed` until the professor tries again. Traced, not reproduced.
+- **A class question's key before the reveal** (Phase 5 review, fixed). Four routes
+  by which a phone could learn it (the bank id on `class:question`, a vote's key sent
+  as an answer, a resend of an answer to the asked question, an early vote) are
+  closed and checked over every event the phones heard (`keysafety.mjs`). A phone
+  that answered the question on its own before it was asked was shown its key then;
+  the professor is told how many, and their votes do not count in attainment.
 - **State held in one process's memory** (Phase 3): what the projector shows, the
   insights' KPI series and their "since the start", the insights' push throttle, and
-  the status, attendance and records locks. A restart loses the first three (the
+  the status, attendance and records locks; since Phase 5 also the class question's
+  vote and state locks, its push throttle and the projector's `showCounts` (the class
+  question's state itself is stored). A restart loses the first three (the
   projector shows an empty question screen, first names off for older rooms; the
   series starts again); a second server process would share none of it, and two
   processes could interleave writes the locks keep apart in one. Fine for one
@@ -1381,3 +1459,358 @@ Across the phase
   - a copy or topic set failing part way on Supabase (not atomic);
   - the reports' cost over thousands of answers on Supabase;
   - every screen.
+
+### The owner's decisions of 19 Nov 2026: server done, screens absent
+
+On 19 November 2026 the owner delegated the eight open decisions, the two Phase 3
+questions and the Phase 2 defaults ("decide the best outcomes yourself"). Each is
+recorded in `docs/PRODUCT_DECISIONS.md` as decided under the owner's delegation, with
+what was built. Everything that needed the schema is in one migration, `0022`.
+Decision 8 is a working posture, **not a legal decision: a lawyer must confirm it
+before any college signs or before 13 May 2027.**
+
+Ticked only with a test on this tree, over HTTP and the socket on a real server on the
+in-process store, with signed-in callers answered in-process (`decisions.mjs`, 64
+checks), plus `test/decisions.test.js` (22 unit tests) and PGlite for `0022`.
+
+| Suite | Before (`eedfd5e`) | After, offline runner, 19 Nov 2026 |
+|---|---|---|
+| Unit | 598 / 598 | 623 / 623 |
+| Migrations | 573 / 573 | 633 / 633 |
+| `decisions.mjs` (new) | none | 64 / 64 |
+| `bank.mjs` | 73 / 73 | 73 / 73 (two checks rewritten for the decisions) |
+| `media.mjs` | 67 / 67 | 67 / 67 (one check now clears a stem's passage first) |
+| `roster.mjs`, `modes.mjs`, `outcomes.mjs`, `acceptance4.mjs` | 80, 101, 87, 76 | the same (expected fields updated: `under18`, `roomMode`, the source label) |
+| Every other suite | its figure | the same |
+
+Decision 7: a link only by a sign-in
+- [x] A room profile is linked to a student account only when the phone presents
+  that signed-in student's token at `student:join`, verified as the student routes
+  verify one; the account must be a student of the room's owner with the roll number
+  typed (`decisions.mjs`)
+- [x] A typed roll number links nothing, and a token that does not qualify (expired,
+  another student's, another professor's student, a professor's) joins as a guest
+  with one sentence saying why (`decisions.mjs`)
+- [x] Nothing from a typed roll number reaches the student's own history: the answer
+  list, analytics and the dashboard read verified profiles and verified answers only
+  (`decisions.mjs`, `test/evidence.test.js`, `test/decisions.test.js`)
+- [x] Links made the old way are kept, read as unverified, and expose nothing; nothing
+  deleted or rewritten (`decisions.mjs`; `0022` over existing rows, migrations)
+- [x] A classmate typing the roll number into a verified room writes unverified rows,
+  which never reach the student (`decisions.mjs`)
+- [x] Attendance from a typed roll number stays `joined` with its caveat (unchanged;
+  `roster.mjs`)
+- [ ] The phone sending the token: **client work**, not built. Until it is, no room
+  links and a student's own history shows nothing new
+
+Decision 8: the under-18 mark
+- [x] `class_students.under_18`, set by the owner through the student edit, a pasted
+  list or a CSV column; an HOD 403, another professor 404, a non-boolean 400; a
+  date-of-birth column never read (`decisions.mjs`, `outcomes.test.js`)
+- [x] No integrity signal recorded for a student so marked in a class room: reports,
+  too-fast, second-socket, level-jump (`decisions.mjs`)
+- [x] None shown: the grid, the signal trail, the room's CSV and a deleted room's
+  archive, including signals recorded before the mark (`decisions.mjs`,
+  `test/decisions.test.js`, `test/roster.test.js`)
+- [ ] A room opened **without a class** cannot know the mark (no roster): signals are
+  recorded there as before. Open
+
+Phase 3 question (a): labels are staff-only
+- [x] The phone's row (`session:accepted`, `server:result`, `server:exhausted`) is a
+  `PhoneRow` with no `slowLearner`, signals or professor's `reason`, and a neutral
+  `next`; the phone's `reason` sentences never name a band; the teacher's rows are
+  unchanged (`decisions.mjs`; a unit test over a thousand random rooms)
+- [x] A student account's own dashboard and analytics carry no `banded`
+  (`decisions.mjs`)
+- [x] `CONTRACT.md` sections 4 and 5 amended, dated
+- [ ] The phone client still shows the old fields: **client work**
+
+The rest
+- [x] A professor's own question is `source: 'teacher'`, and its answers
+  `question_source: 'teacher'`; `0022` widens the check, and a re-run never narrows it
+  (`decisions.mjs`, `bank.mjs`, migrations). Existing rows not rewritten
+- [x] Attainment maps `teacher` to `professorWritten`; the `fallback` label says it holds
+  professor-written questions from before 19 Nov 2026 (`attainment.test.js`,
+  `acceptance4.mjs`)
+- [x] The slide-only check: an attached passage clears it (`checks.test.js`,
+  `media.test.js`)
+- [x] Regenerating an active question keeps it serving until the replacement is
+  approved; approve, approve-all and the older restore retire it; reject keeps it
+  (`decisions.mjs`, `bank.mjs`; `questions.replaces_id`)
+- [x] `GET /api/classes` carries `canCreate`; `projector:state` carries `roomMode`
+  (`decisions.mjs`, `modes.mjs`'s whitelist walk)
+- [x] Four people-facing sentences no longer name a path, field or verb
+  (`decisions.mjs`)
+- [x] The boot probe checks `0016` to `0022` and names the file to apply; `0019` to
+  `0021` are warnings that keep Supabase, `0022` stops it (`decisions.mjs`,
+  `test/decisions.test.js`). It now asks with a GET, since a HEAD could not see a
+  missing table
+- [x] `best`: a reviewed attempt always beats a provisional machine mark at the same
+  question, whatever the scores and rooms; methodology updated (`attainment.test.js`)
+- [x] Decisions 1, 4, 5 recorded; `CONTRACT.md` section 6 rule 1 amended (decision 1)
+- [x] The three repos expose the same methods (unit test); no new repo method, three
+  changed (`listAnswers`' `student.verifiedOnly`, `addClassStudents` and
+  `updateClassStudent`'s `under18`) and four new columns mapped in all three
+- [ ] **Not tested:** `0022` and the new columns against a real Supabase or Mongo; a
+  real Supabase Auth token at join; a server deployed before `0022` against a real
+  project (the probe names it, traced and tested only against a stand-in); every
+  screen
+
+Fixed since, by the Phase 5 review fixes (`decisions.mjs` 78 checks,
+`test/decisions.test.js` 27):
+- [x] A profile linked by a sign-in can hold attempts a classmate typed under the same
+  roll number. Everything a student reads about themself (level tallies, counts,
+  timeline, Bloom tally, history trail) now comes from the history entries of their own
+  verified answers; the room's working level is withheld when other answers helped
+  set it (`decisions.mjs`: a classmate after the sign-in and a guest before it, five
+  checks that failed before the fix)
+- [x] A deleted class room's archive is served without the signals of a student the
+  roster marks under 18 now, whenever the mark was set (`test/decisions.test.js`)
+- [x] A regenerate of a never-approved replacement keeps its link, so approving the
+  new draft still retires the active question (`decisions.mjs`)
+- [x] `CONTRACT.md` amended where the follow-up decisions named it (Amendment 5,
+  dated): section 3's `source`, section 4's regenerate row, section 5's `token`,
+  `linked`, `linkNote`, `confidence` and the class-question events, section 6 rule 1's
+  "No image generation" (decision 4 and its revision)
+
+Open, from this batch:
+- Supports (accommodations) still follow a typed roll number to the room owner's
+  roster when no sign-in is presented (as before): a classmate typing the roll number
+  gets that student's supports, the fewer-choices support included. Kept under the
+  delegation as a known gap: rooms are account-free.
+- The under-18 mark does not reach a room opened without a class.
+- `GET /api/classes/:id` carries `under18` but not `under18Note` (the UI session's
+  ask; not built).
+- Splitting or merging a regenerated draft loses its `replacesId`, so the old question
+  keeps serving until retired by hand (a known gap, recorded under the delegation).
+
+**Client work** (the UI session's; nothing in `client/` was touched):
+- The phone sends the signed-in student's access token in `student:join` as `token`
+  when one exists, and shows `linkNote` when present.
+- The phone reads `PhoneRow`: it stops showing `slowLearner`, the integrity summary
+  and the band sentence, and shows `next.why` (with `next.levels`, `next.answers`) and
+  the new `reason` sentences.
+- The student's own dashboard and analytics (`account/Me.jsx`) stop using `banded`
+  ("in the support band"), and show the `note`.
+- The roster screen shows and edits `under18`, with `under18Note`; the CSV import
+  screen shows `read.columns.under18`, `wouldAdd[].under18` and the `under18` sentence.
+- The live grid shows "no signals" for a row whose `integrity` is null; the signal
+  trail shows `message` when `signalsOff`.
+- The bank labels `source: 'teacher'` as the professor's own question (and `fallback`
+  as template text, which still covers older professor questions); shows a draft's
+  `replacesId` ("replaces ..."), the regenerate `note`, and `retired` after approve,
+  approve-all, a restore or bulk restore; drops the old regenerate `warnings`.
+- The class list uses `canCreate` from the server instead of `role !== 'hod'`.
+- The wall hides the join code when `projector:state.roomMode` is `teacher-led`.
+- Decision 2: correct the handoff copy that says "60% / 3" to 70% over five, three at
+  least. Decision 6: class summaries and attainment show the three level bands first,
+  the six levels one click away. Phase 3 question (b): the class page says a deleted
+  room's records are in its archive.
+
+**Do not deploy this server** until `0022` is applied: every join, answer, saved
+question and roster add writes its columns, and without them the boot probe falls
+back to the in-process store (it names `0022` in the log).
+
+### Phase 5: distinctive classroom features: server done, every screen unticked
+
+The owner's directive for Phase 5 is "Distinctive classroom features": confidence
+voting (Sure, Think so, Guessing; informational, never deducting marks);
+pause-discuss-re-vote (first response, confidence recording, the professor pauses,
+students discuss, students vote again, class-level changes displayed);
+misconception-tagged distractors (wrong options tied to misunderstandings, reports
+such as "12 students selected the option associated with misunderstanding X", labels
+the professor reviews and edits); honest AI indicators (AI draft labels, reasons for
+mastery movements, the number of responses behind an estimate, uncertain
+classifications, translation-related difficulty warnings); no stigmatising label in
+the student interface; no coins, competitive leaderboards or punitive streaks.
+
+Uncommitted, server and database only: `0023` (class questions), `0024`
+(misconception labels); the honest indicators and the review fixes need no migration.
+Endpoints: `docs/API.md`, "Phase 5: every new and changed endpoint and socket event".
+The defaults chosen and the owner's open questions: `docs/PRODUCT_DECISIONS.md`,
+"Phase 5 in brief" and the three Phase 5 sections after it.
+
+A box is ticked only when the feature works **end to end with a test** on this tree:
+over HTTP and the socket on a real server (the production `createApp` and
+`attachSockets`), on the in-process store, **with signed-in callers** answered
+in-process, plus unit tests and PGlite for the migrations. **No screen was checked
+against any of it, so every screen line is unticked.** The UI session's uncommitted
+client has files for some of it (`client/src/learn/ClassVote.jsx`,
+`client/src/teach/ClassQuestions.jsx`); not checked here.
+
+The Phase 5 docs pass's run through the offline runner, after the review fixes:
+
+| Suite | Result |
+|---|---|
+| Unit | 719 / 719 (162 suites); `classQuestions` 24, `misconceptions` 40, `honesty` 27, `decisions` 27 |
+| Migrations | 752 / 752 |
+| `classquestion.mjs` | 70 / 70 |
+| `misconceptions.mjs` | 54 / 54 |
+| `honesty.mjs` | 59 / 59 |
+| `keysafety.mjs` (the review fixes) | 41 / 41 |
+| `decisions.mjs` | 78 / 78 |
+| Every Phase 0 to 4 suite | its old figure |
+
+**Do not deploy this server** until `0022`, `0023` and `0024` are applied, in that
+order: every join and answer writes `0022`'s and `0023`'s columns, every room's bank
+reads `class_questions`, and every question saved writes `0024`'s column. Missing any,
+the boot probe falls back to the in-process store and names the file to apply.
+
+Confidence voting
+
+- [x] **The tap**: `sure`, `think_so`, `guessing` on every phone answer and vote,
+  optional; a missing or unknown one is stored as none (`services/confidence.js`).
+  Stored in `answers.confidence` in `0008`'s own spellings (no check widened)
+  (`classquestion.mjs`, `test/classQuestions.test.js`)
+- [x] **Informational, never deducting.** Read by nothing that marks or moves
+  anything: the same answers with and without taps give identical ladders, topic and
+  item reports and attainment (unit test), and two phones giving the same answers, one
+  tapping, got identical results and levels (`classquestion.mjs`)
+- [x] **Staff see counts only**, by tap and by right and wrong: per room and per
+  question (`GET /api/session/:code/confidence`), per class-question round, and on the
+  student card. No answer carries its tap on a staff screen; no student is labelled
+  (`classquestion.mjs`)
+- [ ] The phone's tap and the console's confidence counts. **Not checked**
+
+Pause-discuss-re-vote
+
+- [x] **First response**: the room's owner puts one approved `mcq`, `truefalse`, `poll`
+  or `multi` question to every phone in a Student-devices or Mixed room; each phone
+  parks its own question and goes back to it; a phone that joins or reconnects is sent
+  it where it stands. Other kinds, Teacher-led rooms, rooms not open, a second running
+  one and a question asked before are refused, each with a sentence naming no field
+  (`classquestion.mjs`, `keysafety.mjs`)
+- [x] **Confidence recording** on every vote, counted per round (`classquestion.mjs`)
+- [x] **The professor pauses the question**: round 1 closes and its distribution, share
+  right and taps appear then, not while voting is open; every vote under way is waited
+  for, so the counts are whole (`classquestion.mjs`)
+- [x] **Students discuss**: the phones are told to talk it over; no vote counts until
+  the re-vote (`classquestion.mjs`)
+- [x] **Students vote again**: round 2; a phone that missed round 1 may vote; the close
+  with or without revealing the key, from any round (`classquestion.mjs`)
+- [x] **Class-level changes displayed**, as counts: distribution per option, share
+  right and taps before and after; wrong to right, right to wrong, right both times,
+  wrong both times on the same or another answer. Staff always; the projector only
+  when the professor chooses, per closed round, from 5 votes, and the key, share right
+  and changes only once revealed (`classquestion.mjs`, `test/classQuestions.test.js`)
+- [x] **Every vote stored, never overwritten** (`answers.class_question_id`, `round`,
+  `0023`): a changed, late or early vote, one sent while the room is paused, one from a
+  phone not signed in after the signed-in student's, and an answer sent as a phone's
+  own question are each kept with `final` false and a `detail` saying why, never
+  counted (`classquestion.mjs`, `keysafety.mjs`)
+- [x] **No level moves**: no vote touches a profile; the readers of a student's own
+  work leave votes out (`classquestion.mjs`, `keysafety.mjs`)
+- [x] **Attainment**: round 1 a digital answer, except from a student who had answered
+  the question on their own in that room first (set aside, their own answer counts);
+  round 2 its own type, `revote`, shown and never counted, in the JSON, CSV and HTML
+  (`test/classQuestions.test.js`, `test/attainment.test.js`)
+- [x] **The key before the reveal** (review fixes): the phone's class question is named
+  by its own id, not the bank question's; nothing kept with a class question is
+  answered back through `student:answer`; no phone or projector event carries the key
+  before the reveal (`keysafety.mjs` over every event the phones heard;
+  `classquestion.mjs`)
+- [x] **The professor is told who saw the key first**, as a count and a sentence
+  (`answeredAlone`) (`keysafety.mjs`, `test/classQuestions.test.js`)
+- [x] **Whose vote counts** (decision 7, review fix): a phone typing a signed-in
+  student's roll number is not sent her vote and never displaces it (`keysafety.mjs`)
+- [x] **Ownership**: only the room's owner runs one; an HOD reads and gets 403 on
+  every write; another professor gets the room's 404, word for word; no credentials,
+  401; a phone only votes (`classquestion.mjs`)
+- [x] **Stored state**: a `class_questions` row; a second server over the same store
+  sends a joining phone the question as it stands. The archive keeps the class
+  questions and every vote (`classquestion.mjs`)
+- [ ] **Each phone's own vote after the room is resumed.** The resume sends the class
+  question to the whole room with `mine: null`, and a phone that joins while the room
+  is paused gets none until then. Asked for by the UI session; **not built**
+- [ ] **Closing a room when the store fails** while closing its class question: a 500
+  for a room already closed, the phones not told (Phase 5 review finding, **not
+  acted on**; traced, not reproduced)
+- [ ] The phone's class-question screen, the console's controls and before-and-after
+  view, the projector's class-question screen. **Not checked**
+
+Misconception-tagged distractors
+
+- [x] **Incorrect options tied to misunderstandings**: a label per wrong option of a
+  Choose one, Choose all that apply or True or false question, at most 120 characters,
+  no contact details, never on a poll or a right answer, kept by the option's words
+  with its provenance (`questions.misconceptions`, `0024`; `misconceptions.mjs`,
+  `test/misconceptions.test.js`, migrations)
+- [x] **Reports such as "12 students selected the option associated with
+  misunderstanding X"**: per room, per class (with attainment's filters) and per
+  question across its chapter, counting the distinct students whose counted answer
+  chose each labelled option, matched through the option's words in each answer's own
+  snapshot, saying when a label was added or reworded after the answers; AI drafts
+  marked; counts, never names (`misconceptions.mjs` against hand counts)
+- [x] **Professors review and edit labels**: add, edit, confirm, clear, all or
+  nothing, owner only (an HOD 403, anyone else the question's 404); a label edit never
+  touches the question's approval, and approving a question confirms no label;
+  rewording, removing or keying a labelled option removes its label and the reply
+  names it; split and merge carry the labels they can (`misconceptions.mjs`)
+- [x] **Generated labels as AI drafts**, on the professor's press only; a bad proposal
+  dropped and the question kept (parsed from a fixture response; the model was never
+  called) (`test/misconceptions.test.js`)
+- [x] **Item statistics** show each option's label beside its count; labels never
+  reach a phone or the projector, nor any stored answer snapshot or archive; no mark,
+  level or attainment figure reads one (`misconceptions.mjs`, unit tests)
+- [ ] Not in the live insights, on purpose (built from profiles every two seconds;
+  these counts need every answer and the bank)
+- [ ] The bank's label boxes and the report panels. **Not checked**
+
+Honest AI indicators
+
+- [x] **AI draft labels**: every bank question sent to staff carries `provenance`
+  (who wrote it, the model, its approval state, "AI draft" on an unapproved AI
+  question); every misconception label carries `confirmed`; the phone's question, and
+  a class question, carries `provenance.text` in a student's words, only for questions
+  the room serves (`honesty.mjs`, `test/honesty.test.js`)
+- [x] **Reasons for mastery movements**: every promotion, demotion, move into the
+  below-40% band and hold at either end is kept on its answer's history entry
+  (`move`) and listed on the student card; staff-only (`honesty.mjs`)
+- [x] **The number of responses behind an estimate**, with a sentence: levels, bands,
+  mastery, item difficulty, insight cards and KPIs, class analytics, dashboards
+  (`honesty.mjs`, `test/honesty.test.js`)
+- [x] **Uncertain classifications**: a level or band under the engine's own minimum
+  is `provisional` (the phone's `next.provisional` too); `levelCheck` marks a level
+  the model chose that no professor approved, or a kind that does not ask for its
+  level; staff only (`honesty.mjs`)
+- [x] **Translation-related difficulty warnings**, computed and served end to end on
+  fixture answers in two languages: the share right per language, a warning above a
+  20-point gap with 5 answers each, the student card's language note (`honesty.mjs`)
+- [ ] **A second language from a phone.** Every answer the live loop writes is `'en'`
+  and no question records its language, so the warning cannot fire in a real room
+  until the Hub's language switch (Phase 6)
+- [ ] The phone's provenance line and provisional note; the console's chips, uncertain
+  marks, counts, level moves and warnings. **Not checked**
+
+Labels, ranks and gamification
+
+- [x] **No stigmatising label in the student interface.** The phone's row and
+  sentences name no band (decision (a)); a student's own dashboard and analytics carry
+  no `banded` and no level move; every event the phones heard in `honesty.mjs` was
+  searched for band words, staff fields, ranking and gamification words: none
+  (`decisions.mjs`, `honesty.mjs`)
+- [ ] **No coins, leaderboards or streaks**: none exists on the server (searched); no
+  test can show an absence
+- [ ] **Staff lists ordered by score.** The insights' "By band" and "Lowest first"
+  sorts and a professor's analytics list of students (highest accuracy first) order
+  students by score, on staff screens; the directive says roll order, never by score.
+  Left as built for the owner; the room CSV's "Slow Learner" column likewise.
+  **Open**
+
+Across the phase
+
+- [x] **The live loop makes no model call** (decision 5): every script refuses and
+  counts any request off the machine, 0 in every run; a misconception proposal comes
+  only from generation, which a professor's press starts
+- [x] **Existing behaviour kept**: every Phase 0 to 4 suite gives its old figure;
+  every change to an existing payload is a field added or a sentence reworded
+- [x] **The three repos expose the same 80 methods** (unit test; four class-question
+  methods new). `0023` and `0024` are additive and idempotent, re-run over rows, RLS
+  on and no policies, and change no existing row (`npm run migrations`, PGlite only)
+- [ ] **Not tested:** `0023`, `0024` and the class-question and label repo methods
+  against a real Supabase or Mongo; a real Auth token; a model call; a real phone in
+  another language; two server processes; every screen
+
+**Client work** (the UI session's; nothing in `client/` was touched): `docs/API.md`,
+"What the screens need" in each of the three Phase 5 parts, and the three server asks
+above that are not built.

@@ -155,7 +155,11 @@ describe('evidence types, as Phase 1 writes them', () => {
     assert.equal(questionSourceOf({ questionSource: 'teacher' }), 'professorWritten');
     assert.equal(questionSourceOf({ questionSource: 'fallback' }), 'offlineTemplate');
     assert.deepEqual(QUESTION_SOURCES.map((x) => x.id), ['aiGenerated', 'professorWritten', 'offlineTemplate']);
-    assert.match(QUESTION_SOURCES[2].description, /a professor's own while they are stored the same way/);
+    // Since 19 Nov 2026 a professor's question is stored 'teacher'; the older
+    // ones stayed 'fallback', and the label says so.
+    assert.match(QUESTION_SOURCES[1].description, /question_source "teacher", since 19 Nov 2026/);
+    assert.match(QUESTION_SOURCES[2].description, /a professor's own written before 19 Nov 2026, which were stored the same way/);
+    assert.match(QUESTION_SOURCES[2].label, /professor-written ones from before 19 Nov 2026/);
   });
 
   test('the mark in force is the score, else 1 or 0 from correct, kept between 0 and 1', () => {
@@ -384,7 +388,7 @@ describe('the class report on a hand-computed class', () => {
   test('every chosen answer is mapped, excluded or unmapped, and they add up', () => {
     assert.deepEqual(r.answers, {
       rows: 25, setAside: 1, chosen: 24, ungraded: 1, graded: 23,
-      byType: { digital: 21, aiProvisional: 1, humanReviewed: 1 }, mapped: 21, excluded: 1, unmapped: 1,
+      byType: { digital: 21, aiProvisional: 1, humanReviewed: 1, revote: 0 }, mapped: 21, excluded: 1, unmapped: 1,
       bySource: { aiGenerated: 23, professorWritten: 0, offlineTemplate: 0 },
     });
     assert.deepEqual(r.unmapped, [{ contentId: C1, chapter: 'Networks: Unit 2', topic: 'Switching', inChapter: true, answers: 1 }]);
@@ -457,7 +461,8 @@ describe('the class report on a hand-computed class', () => {
     assert.equal(r.formula.version, 7);
     assert.deepEqual(r.formula.config, validateConfig(EXAMPLE));
     assert.match(r.methodology, /^Formula: version 7 of this class's own formula, saved 2026-11-19\./);
-    assert.deepEqual(r.evidenceTypes.map((t) => t.id), ['digital', 'aiProvisional', 'humanReviewed']);
+    // Phase 5 added the fourth: a class question's re-vote after discussion, shown and never counted.
+    assert.deepEqual(r.evidenceTypes.map((t) => t.id), ['digital', 'aiProvisional', 'humanReviewed', 'revote']);
     assert.match(r.privacy, /staff only/);
     assert.doesNotMatch(JSON.stringify(r), /slow learner|weak student|topper/i);
   });
@@ -532,7 +537,7 @@ describe('which attempts count, and room weights', () => {
     assert.deepEqual([best.answers, best.obtained, best.possible], [2, 1.5, 2], 'L1 1 (room 2) + the multi\'s retried 0.5');
   });
 
-  test('best picks among counted evidence first: a provisional 1 does not beat a reviewed 0.4 when provisional is off', () => {
+  test('best: a reviewed 0.4 beats a provisional 1 at the same question, whatever the formula counts and whichever room', () => {
     const open = Q.OP1;
     const answers = [
       ans('21CS01', open, 1, { sessionId: R1._id, reviewStatus: 'provisional' }),
@@ -540,8 +545,19 @@ describe('which attempts count, and room weights', () => {
     ];
     const { chosen } = chooseAnswers(answers, validateConfig({ ...clone(EXAMPLE), attempts: 'best' }));
     assert.deepEqual(chosen.map((a) => a.score), [0.4]);
-    const all = chooseAnswers(answers, validateConfig({ ...clone(EXAMPLE), attempts: 'best', evidence: { digital: true, aiProvisional: true, humanReviewed: true } }));
-    assert.deepEqual(all.chosen.map((a) => a.score), [1]);
+    // The owner's decision of 19 Nov 2026: with provisional marks counted too,
+    // the professor's review still wins, as "a review replaces the machine's
+    // mark" says. Before it, the provisional 1 was chosen here.
+    const everything = validateConfig({ ...clone(EXAMPLE), attempts: 'best', evidence: { digital: true, aiProvisional: true, humanReviewed: true } });
+    assert.deepEqual(chooseAnswers(answers, everything).chosen.map((a) => a.score), [0.4]);
+    assert.deepEqual(chooseAnswers([...answers].reverse(), everything).chosen.map((a) => a.score), [0.4], 'in either order');
+    // Per room (the register): each room's own best, the review winning only where there is one.
+    assert.deepEqual(chooseAnswers(answers, everything, { perRoom: true }).chosen.map((a) => a.score).sort(), [0.4, 1]);
+    // Two provisional marks with no review: the higher, as before.
+    const two = [answers[0], { ...answers[1], reviewStatus: 'provisional', score: 0.6 }];
+    assert.deepEqual(chooseAnswers(two, everything).chosen.map((a) => a.score), [1]);
+    assert.match(methodologyText({ ...formula(), config: everything }),
+      /an attempt a professor reviewed always counts ahead of a provisional machine mark at the same question, whatever the two scores and whichever room each came from/);
   });
 
   test('best never counts a written attempt followed by a retry: no professor can review it, so it cannot beat a review', () => {

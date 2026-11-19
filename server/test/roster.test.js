@@ -307,16 +307,35 @@ describe('the teacher\'s grid for a class room', () => {
     assert.deepEqual(out.attendance, { present: 1, classSize: 2, summary: '1 / 2 present' });
   });
 
-  test('a failed roster read leaves the grid as it was rather than breaking it', async () => {
+  test('a failed roster read does not break the grid, and shows no signal on that push', async () => {
     const broken = { listClassStudents: async () => { throw new Error('down'); }, listAttendance: async () => [] };
-    const rows = [{ rollNo: '1' }];
+    const rows = [{ rollNo: '1', integrity: { level: 'watch' } }];
     const quiet = console.error;
     console.error = () => {};
     try {
-      assert.deepEqual(await classGrid(broken, { _id: 's', classId: 'c' }, rows), { rows });
+      // Who is marked under 18 cannot be told without the roster (decision 8),
+      // so no row carries a signal until the next push reads it.
+      assert.deepEqual(await classGrid(broken, { _id: 's', classId: 'c' }, rows), { rows: [{ rollNo: '1', integrity: null }] });
     } finally {
       console.error = quiet;
     }
+  });
+
+  test('a student marked under 18 shows no signal on the teacher\'s grid; everyone else is as before', async () => {
+    const repo = {
+      listClassStudents: async () => [
+        { _id: 'a', rollNo: '21CS01', name: 'Asha', under18: true },
+        { _id: 'b', rollNo: '21CS02', name: 'Bilal' },
+        { _id: 'c', rollNo: '21CS13', name: 'Chitra', under18: true },
+      ],
+      // Chitra's roll number was corrected on the roster; her mark here keeps the one she joined with (0021).
+      listAttendance: async () => [{ classStudentId: 'c', status: 'present', rollNo: '21CS03' }],
+    };
+    const sig = { level: 'watch', notes: ['Left the page 3 times.'] };
+    const rows = ['21CS01', '21CS02', '21CS03', 'GUEST'].map((rollNo) => ({ rollNo, integrity: sig }));
+    const { rows: out } = await classGrid(repo, { _id: 's', classId: 'k' }, rows);
+    assert.deepEqual(out.map((r) => [r.rollNo, r.integrity]), [['21CS01', null], ['21CS02', sig], ['21CS03', null], ['GUEST', sig]]);
+    assert.ok(out.every((r) => !('under18' in r)), 'the grid is told nothing about age, only that there is no signal');
   });
 });
 
@@ -435,7 +454,8 @@ describe('the Supabase repo\'s roster and attendance requests', () => {
       assert.equal(seen[0].method, 'POST');
       assert.equal(seen[0].url.searchParams.get('on_conflict'), 'class_id,roll_no');
       assert.match(seen[0].prefer, /resolution=ignore-duplicates/);
-      assert.deepEqual(seen[0].body, [{ class_id: CLASS, roll_no: '21CS01', name: 'Asha' }], 'a roll number and a name, nothing else');
+      assert.deepEqual(seen[0].body, [{ class_id: CLASS, roll_no: '21CS01', name: 'Asha', under_18: false }],
+        'a roll number, a name and the under-18 mark (0022), nothing else');
       assert.deepEqual(made.map((s) => [s.rollNo, s.removedAt]), [['21CS01', null]]);
 
       const joined = await repo.addAttendanceIfAbsent({ sessionId: ROOM, classStudentId: STUDENT, status: 'present', source: 'joined', markedBy: null });

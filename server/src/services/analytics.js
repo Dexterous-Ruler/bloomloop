@@ -20,7 +20,7 @@ import { scopeFor } from '../auth.js';
 import { listBelow, getAccount } from './accounts.js';
 import { hydrate, overallAccuracy, isSlowLearner, totals, MIN_EVIDENCE } from './mastery.js';
 import {
-  allAnswers, topicReport, listStudentAnswers, pageFrom, levelFrom, rollKey,
+  allAnswers, topicReport, listStudentAnswers, pageFrom, levelFrom, rollKey, verifiedKeys, verifiedView,
 } from './evidence.js';
 
 const deny = (message, status) => Object.assign(new Error(message), { status });
@@ -147,9 +147,11 @@ async function professorAnalytics(subject, viewer) {
     let accSum = 0;
     let accN = 0;
     let banded = 0;
+    let answers = 0;
 
     for (const profile of profiles) {
       fold(tally, profile);
+      answers += totals(profile).seen;
       const acc = overallAccuracy(profile);
       if (acc !== null) { accSum += acc; accN += 1; }
       if (isSlowLearner(profile)) banded += 1;
@@ -174,6 +176,9 @@ async function professorAnalytics(subject, viewer) {
       joined: profiles.length,
       banded,
       accuracy: accN ? accSum / accN : null,
+      // What the accuracy rests on (Phase 5).
+      answers,
+      students: accN,
     });
   }
 
@@ -230,6 +235,14 @@ async function studentAnalytics(subject, viewer) {
   // Compared the way the room stored it. An account's roll number is typed by a
   // person; the room's was normalised on join, so '21cs 01' must find '21CS 01'.
   const rollNo = rollKey(subject.rollNo);
+  // A student reading themself (decision 7, 19 Nov 2026) gets only rooms a phone
+  // signed in as them was linked to (`accountVerified`), and only the answers
+  // such a phone sent. A roll number typed without signing in proves nothing
+  // about who held the phone, so it exposes nothing of their history, links
+  // made that way before 0022 included. Nor are they told a band: labels are
+  // staff-only. A professor reading their student is unchanged.
+  const self = viewer?.role === 'student';
+  const theirs = (raw) => !self || (String(raw.accountId ?? '') === String(subject.id) && raw.accountVerified === true);
 
   const base = {
     kind: 'student',
@@ -255,10 +268,21 @@ async function studentAnalytics(subject, viewer) {
   const tally = emptyLevels();
   const profiles = [];
 
+  const linked = [];
   for (const session of sessions) {
     const raw = await repo.getProfile(session._id, rollNo);
-    if (!raw) continue;
-    const profile = hydrate(raw);
+    if (raw && theirs(raw)) linked.push({ session, raw });
+  }
+  // A student reading themself, within a linked room: only what her own
+  // signed-in phone answered there, never what a phone typing her roll number
+  // without signing in did, before her sign-in or after (verifiedView in
+  // services/evidence.js). The professor's view reads the whole profile.
+  const keys = self
+    ? await verifiedKeys(repo, { sessionIds: linked.map(({ session }) => session._id), accountId: subject.id })
+    : null;
+
+  for (const { session, raw } of linked) {
+    const profile = self ? verifiedView(hydrate(raw), keys.get(String(session._id))).profile : hydrate(raw);
     fold(tally, profile);
     profiles.push(profile);
 
@@ -271,7 +295,7 @@ async function studentAnalytics(subject, viewer) {
       correct: t.correct,
       accuracy: t.seen ? t.correct / t.seen : null,
       workingLevel: profile.workingLevel,
-      banded: isSlowLearner(profile),
+      ...(self ? {} : { banded: isSlowLearner(profile) }),
     });
     base.counts.answered += t.seen;
     base.counts.correct += t.correct;
@@ -290,9 +314,16 @@ async function studentAnalytics(subject, viewer) {
 
   // Topics are mined from the evidence store: final, graded answers in these
   // rooms, matched by account or roll number, with the profile history standing
-  // in for attempts older than the store (services/evidence.js).
+  // in for attempts older than the store (services/evidence.js). A class
+  // question's votes are not the student's own work at a level (Phase 5,
+  // services/classQuestions.js), so they are left out.
   const answers = sessions.length
-    ? await allAnswers(repo, { sessionIds: sessions.map((s) => String(s._id)), student, final: true })
+    ? await allAnswers(repo, {
+      sessionIds: sessions.map((s) => String(s._id)),
+      student: self ? { accountId: subject.id, verifiedOnly: true } : student,
+      final: true,
+      classVotes: false,
+    })
     : [];
   base.topicLevels = topicReport({ answers, profiles });
   // The original list keeps its shape, and is read off the same rows so the two
@@ -301,8 +332,17 @@ async function studentAnalytics(subject, viewer) {
     .slice(0, 12)
     .map(({ topic, seen, correct, accuracy }) => ({ topic, seen, correct, accuracy }));
   base.currentLevel = base.timeline.length ? base.timeline[base.timeline.length - 1].workingLevel : null;
+  if (self) base.note = SIGNED_IN_ONLY;
   return base;
 }
+
+/**
+ * Said with a student's own history (decision 7): why a room they sat may be
+ * missing from it.
+ */
+export const SIGNED_IN_ONLY = 'Only rooms you joined while signed in on your phone appear here, and in them only the '
+  + 'answers that phone sent. A roll number typed without signing in is not proof that it was you, so those answers, and '
+  + 'a room level they helped set, stay with your professor.';
 
 /* ------------------------------------------------------------ entry points */
 
@@ -360,9 +400,10 @@ export async function analyticsFor(viewer, subjectId) {
  *
  * A student gets every answer redacted (evidence.js redactForStudent): their
  * response, the mark and the review, never the key, the rubric or the machine's
- * own reading. And only the answers linked to their account: an unlinked row
- * under their roll number may have been typed by anyone (listStudentAnswers). A
- * professor gets the full snapshot, matched by account or unlinked roll number.
+ * own reading. And only the answers a phone signed in as them sent (decision 7,
+ * `accountVerified`): a row under their roll number, linked by it or not, may
+ * have been typed by anyone (listStudentAnswers). A professor gets the full
+ * snapshot, matched by account or unlinked roll number, verified or not.
  */
 export async function answersFor(viewer, subjectId, query = {}) {
   const subjects = await subjectsFor(viewer);

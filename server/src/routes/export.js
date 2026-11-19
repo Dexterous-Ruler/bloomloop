@@ -12,6 +12,7 @@ import { Router } from 'express';
 
 import { getRepo } from '../repo/index.js';
 import { profilesToCsv } from '../services/csv.js';
+import { minorRolls } from '../services/roster.js';
 import { requireTeacher } from '../auth.js';
 import { assertCanRead } from '../ownership.js';
 
@@ -35,14 +36,18 @@ router.get('/session/:code/export', requireTeacher, async (req, res, next) => {
 
     // A content row that has been deleted must not cost the teacher their
     // results, so the title falls back to the session's own.
-    const [content, profiles] = await Promise.all([
+    const [content, profiles, roster, marks] = await Promise.all([
       Promise.resolve(repo.getContent(session.contentId)).catch(() => null),
       repo.listProfiles(session._id),
+      session.classId ? repo.listClassStudents(session.classId) : [],
+      session.classId ? repo.listAttendance(session._id) : [],
     ]);
 
     const csv = profilesToCsv(profiles, {
       sessionCode: session.code,
       contentTitle: session.title || content?.title || '',
+      // Decision 8: no signal leaves the room for a student marked under 18.
+      quiet: minorRolls(roster, marks),
     });
 
     // The code is [A-Z0-9] by construction, but it arrives from the URL, and a

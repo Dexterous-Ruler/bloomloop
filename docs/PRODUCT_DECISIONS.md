@@ -1,24 +1,39 @@
 # Product decisions
 
 Eight decisions the gap analysis said cannot be assumed, plus one the owner has since made (9). Each has a recommendation,
-its consequences, and what waits on it. **None of the eight is approved yet.** Work that
-does not depend on a decision goes ahead; work that does uses the "safe default"
-column, chosen so it can be reversed without a data migration.
+its consequences, and what waits on it.
 
-`CONTRACT.md` and `V2-CONTRACT.md` are not changed by this file. If a recommendation
-is approved, the contract is amended in the same change and the approval date recorded
-here.
+**19 November 2026.** The owner delegated the eight ("decide the best outcomes
+yourself"). Each is now **decided under the owner's delegation, 19 Nov 2026**, and
+each section below says what was decided and what was built. The same batch settled
+the two Phase 3 questions ("Phase 3: the two questions, decided" below) and the Phase 2
+defaults the owner was asked to look at. Decision 8 is a working posture, **not a legal
+decision**: a lawyer must confirm it before any college signs or before 13 May 2027.
+
+Where a decision moved a contract, the contract was amended and the date recorded:
+`CONTRACT.md` section 6 rule 1 (decision 1), sections 4 and 5 (Phase 3 question (a):
+the phone's row; Amendment 3) and section 6 rule 5 (`source: 'teacher'`). The
+amendments the follow-up decisions of that day named were made in the Phase 5 docs
+pass (Amendment 5, dated): section 3 (`Question.source` may be `'teacher'`), section 4
+(the regenerate row: an active question is retired at the approval), section 5
+(`student:join`'s optional `token`; `session:accepted`'s `linked`, `linkNote` and
+`confidence`; `student:answer`'s optional `confidence`; the new events `student:vote`,
+`class:question`, `class:vote`, `class:closed` and `teacher:class-question`) and
+section 6 rule 1 ("No image generation" means image-model output; decision 4 and its
+revision). `V2-CONTRACT.md` was read against the decisions and still holds: a profile's
+`account_id` is still the student's account or null, guest join still works, and a
+student still reads only their own results; it was not changed.
 
 | # | Decision | Status |
 |---|---|---|
-| 1 | Generated teaching content in the Hub | Awaiting owner |
-| 2 | Which mastery threshold is authoritative | Awaiting owner (safe default in use) |
-| 3 | Do observations and spoken answers move a level | Awaiting owner (safe default in use) |
-| 4 | Does "no image generation" cover plotted diagrams | Awaiting owner |
-| 5 | AI calls for professor-triggered actions | Awaiting owner |
-| 6 | Six levels or three bands by default | Awaiting owner |
-| 7 | Hub identity: accounts or roll number | Awaiting owner (safe default in use) |
-| 8 | DPDP role and students under 18 | Needs legal review |
+| 1 | Generated teaching content in the Hub | **Decided under the owner's delegation, 19 Nov 2026**: as recommended; contract amended; nothing to build yet |
+| 2 | Which mastery threshold is authoritative | **Decided under the owner's delegation, 19 Nov 2026**: as recommended (already built) |
+| 3 | Do observations and spoken answers move a level | **Decided under the owner's delegation, 19 Nov 2026**: never (already built) |
+| 4 | Does "no image generation" cover plotted diagrams | **Decided under the owner's delegation, 19 Nov 2026**: code-rendered figures allowed; revised the same day: a code-rendered graph question kind is built after Phase 6; contract amended |
+| 5 | AI calls for professor-triggered actions | **Decided under the owner's delegation, 19 Nov 2026**: as recommended; nothing to build yet |
+| 6 | Six levels or three bands by default | **Decided under the owner's delegation, 19 Nov 2026**: as recommended (server already returns both) |
+| 7 | Hub identity: accounts or roll number | **Decided under the owner's delegation, 19 Nov 2026**: rooms account-free; a link only by a signed-in phone (built, `0022`) |
+| 8 | DPDP role and students under 18 | **Decided under the owner's delegation, 19 Nov 2026, as a working posture. Not a legal decision: a lawyer must confirm it before any college signs or before 13 May 2027.** The under-18 mark is built (`0022`) |
 | 9 | What deleting a room does to the evidence | **Decided by owner, 18 Nov 2026** |
 
 ---
@@ -41,6 +56,18 @@ for questions in Phase 2) and an approval state. Keeps the contract's intent (th
 professor's material is the ground truth) while making the Hub possible.
 
 **Waits on it.** Hub steps 9 to 11 (lessons, language switch, tutor).
+
+**Status: decided under the owner's delegation, 19 Nov 2026.** Approved as
+recommended. Generated teaching content comes only from the professor's own material
+and cites the slide or line it came from; it is marked "AI draft" until the professor
+approves it; it never adds syllabus the professor did not teach. "Learn from scratch"
+starts from the prerequisites of this professor's own material.
+
+**What was built.** Nothing yet: no lesson generation exists, so there is nothing to
+change. `CONTRACT.md` section 6 rule 1 (it read "No PPT/content generation, ever.
+Ingest only.") now says exactly the rule above, dated. It unblocks the Hub's lessons
+(Phase 6), which must carry a source reference and an approval state as questions do
+(`sourceRef`, `approvedBy`/`approvedAt`, `0013`).
 
 ## 2. Which mastery threshold is authoritative?
 
@@ -70,6 +97,16 @@ part of each class's formula, chosen by the college. The shipped example uses 60
 named as an example. It moves no level and changes no question.
 
 **Waits on it.** Room settings screen copy, bands, analytics wording.
+
+**Status: decided under the owner's delegation, 19 Nov 2026.** Approved as
+recommended: promotion at 70% over a five-answer window with at least three answers
+at the level; the mastery goal is the room's setting, 80% by default; the accuracy
+bands' 0.4 and 0.6 stay, for display only.
+
+**What was built.** Nothing new on the server: this is how it already ran
+(`PROMOTE_AT`, `WINDOW`, `MIN_LEVEL_EVIDENCE` in `services/mastery.js`; the room's
+goal; `BAND_CUTS`). The handoff's copy that says "60% / 3" is the client's to correct
+(`docs/IMPLEMENTATION_STATUS.md`, client work).
 
 ## 3. Do observations and spoken answers move a Bloom level?
 
@@ -104,6 +141,11 @@ section of their own that moves no figure (`services/attainment.js`;
 `server/scripts/attainment.mjs` records an observation and a tally and checks that
 every figure is unchanged).
 
+**Status: decided under the owner's delegation, 19 Nov 2026.** Approved: teacher
+records never move a level, and are reported in their own labelled column, never
+blended into accuracy. **What was built:** nothing new; the safe default above was
+already exactly this.
+
 ## 4. Does "no image generation" cover plots and diagrams drawn from data?
 
 **Conflict.** `CONTRACT.md:159` forbids image generation. Graph and pattern questions
@@ -118,6 +160,22 @@ MIT), never a generated bitmap.
 
 **Waits on it.** Graph, pattern and visual question kinds.
 
+**Status: decided under the owner's delegation, 19 Nov 2026.** Approved: figures
+rendered deterministically from data (code-rendered SVG plots and diagrams) are
+allowed; image-model output is not. **What was built:** nothing yet.
+
+**Revised the same day (about 13:00), under the delegation, when the owner asked again
+for "graphical patterns like in maths".** The half that said no graph question kind
+would be built is reversed: a code-rendered graph question kind is built as its own
+batch **after Phase 6 and before Phase 7**. The rule is unchanged: drawn by code from
+data (SVG), never image-model output; generated from the professor's material and
+approval-gated like every kind. Candidate shapes: read a value off a plotted graph,
+plot points or pick the matching graph, continue a number or shape pattern. The
+research behind it, widened by the owner to every subject, is in
+`reports/BloomLoop visuals research.md`. `CONTRACT.md` section 6 rule 1 now says what
+"No image generation" means and that this batch comes after Phase 6 (Amendment 5's
+dated note).
+
 ## 5. May professor-triggered actions call a model, given "zero LLM calls in the live loop"?
 
 **Conflict.** `CONTRACT.md:160` says the live loop makes no model calls. Written-answer
@@ -130,6 +188,13 @@ professor confirms it.
 
 **Waits on it.** Phase 1 review queue (AI pre-marking is optional on top of it),
 Phase 3 insight cards.
+
+**Status: decided under the owner's delegation, 19 Nov 2026.** Approved as
+recommended: model calls only when a professor presses a button, asynchronously,
+never in anything a student waits on, and never moving a level before the professor
+confirms. **What was built:** nothing new; no such call exists yet. The live loop
+makes none (`CONTRACT.md` section 6 rule 2, unchanged), and the keyword marker of
+written answers is not a model.
 
 ## 6. Six levels or three bands by default?
 
@@ -153,6 +218,12 @@ are not about levels at all.
 **Waits on it.** Phase 3 class analytics (now built both ways), Phase 4 reports. Phase
 4's Bloom attainment is built both ways too: per level (`bloom.levels`) and per level
 band (`bloom.bands`), with the same rules.
+
+**Status: decided under the owner's delegation, 19 Nov 2026.** Approved: six levels
+where the next question is chosen and in detail views; class summaries and attainment
+show the three level bands first, with the six one click away. **What was built:**
+nothing on the server, which already returns both; which to show first is the
+client's (client work).
 
 ## 7. Must the Hub require student accounts?
 
@@ -184,6 +255,62 @@ this decision.
 
 **Waits on it.** The Hub, cross-room history for students without accounts.
 
+**Status: decided under the owner's delegation, 19 Nov 2026.** Rooms stay
+account-free; the Hub requires a student account. The safe default changes to close
+the known gap: **a room profile is linked to a student account only when the phone
+presents that signed-in student's token when it joins.** A link made from a typed roll
+number alone no longer exposes anything in the student's own history. Attendance from
+a typed roll number stays `joined`, with the existing sentence.
+
+**What was built** (`0022`; `server/scripts/decisions.mjs` checks it end to end):
+- **The join.** `student:join` takes an optional `token`. The server verifies it as
+  the student's own routes verify a bearer token (`verifyAccountToken` in `auth.js`:
+  Supabase Auth, then the account, which must be active). It links the room profile
+  only when the account is a student of the room's owner with the roll number typed
+  (compared in the room's form). The profile then carries `accountVerified: true`
+  (`profiles.account_verified`). Without a token, or with one that does not
+  qualify (expired, another student's, another professor's student, a professor's),
+  the phone joins as a guest exactly as before and is told in one sentence that the
+  room is not linked (`linked: false`, `linkNote`). A typed roll number never links
+  anything. A join without a token never unlinks a verified profile.
+- **Each answer.** `answers.account_verified` is true only when the phone that sent it
+  presented the token of the account the row is linked to. A classmate typing the roll
+  number into a verified room writes rows under that account, unverified.
+- **The student's own history.** Every student-facing read of their own history
+  reads verified rows only: `GET /api/analytics/:id/answers`, `GET /api/analytics` and
+  `/:id` (the timeline, levels and topics), and `GET /api/dashboard`. A profile counts
+  only when it is linked to the student and verified; an answer only when it is
+  verified. Each carries a sentence (`note`) saying only rooms joined while signed in
+  appear.
+- **Links made the old way** (from a typed roll number, before 0022) are kept, marked
+  unverified by the column's default, and expose nothing to the student. Nothing was
+  deleted or rewritten. A professor's reads are unchanged: they see their students'
+  answers by account or by unlinked roll number, verified or not.
+- **Supports** (accommodations) still follow the typed roll number to the room owner's
+  roster, as before, when no sign-in is presented: they change how a question renders,
+  reveal nothing and link nothing. A sign-in brings the signed-in student's own.
+- Attendance is unchanged: a join from a typed roll number marks `joined`, with the
+  caveat.
+
+The phone has to send the token (client work); until it does, no room links, and a
+student's own history shows nothing new.
+
+**Fixed under the owner's delegation, 19 Nov 2026 (the Phase 5 review fixes).** A
+profile verified by a sign-in can still hold attempts a classmate typed under the same
+roll number before or after. Everything a student reads about themself now comes from
+their verified answers only, not the profile's totals: inside each linked room, the
+history entries whose answer is one of their own verified final rows, with the level
+tallies, counts, accuracy, timeline, Bloom tally and history trail counted from those
+(`verifiedView` in `services/evidence.js`). The room's working level is not shown to
+them when other answers helped set it. The `note` says so. A class question follows
+the same rule: a phone not signed in as the student is never sent her vote or her
+confidence tap, and its vote stops counting once her own phone has voted in that round
+(kept, with a sentence saying why).
+
+**Kept, as a known gap (19 Nov 2026, under the delegation):** supports follow a typed
+roll number when no sign-in is presented. Rooms are account-free, so a token cannot be
+required for them.
+
 ## 8. DPDP Act: processor or fiduciary, and students under 18
 
 **Conflict.** From 13 May 2027 the Act's notice, consent, children's-data and rights
@@ -203,6 +330,39 @@ exemption covers them.
 their own, and nothing here should be presented as compliance.
 
 **Waits on it.** Sign-up, notices, integrity signals for minors, contracts.
+
+**Status: decided under the owner's delegation, 19 Nov 2026, as a working posture.
+This is NOT a legal decision. A lawyer must confirm it before any college signs and
+before 13 May 2027.** The recommendation is adopted: BloomLoop operates as a processor
+under a data-processing agreement with each college, the college being the fiduciary
+that gives notice and collects consent. The notice, consent, export, erasure,
+retention and audit pieces are built when the Hub gets accounts; erasure must include
+room archives (decision 9).
+
+**What was built now** (`0022`; `server/scripts/decisions.mjs`):
+- **An optional "under 18" mark on a roster student** (`class_students.under_18`,
+  boolean, default false; `under18` on every roster row a teacher's screen gets). Only
+  the class's owner sets it: through the student edit (`PATCH
+  /api/classes/:id/students/:studentId` with `under18`), in a pasted list, or from a
+  CSV import whose file has an `Under 18` (or `under18`, `minor`, `below 18`) column,
+  read as yes or no. A row that says anything else is refused with a reason. No date
+  of birth is read or kept; a date-of-birth column stays unread, as every other column
+  does. An import only adds, so a student already on the roster keeps their mark, and
+  the reply says so when the file disagrees. Each reply that sets the mark carries the
+  sentence that this is a working default and a lawyer must confirm it.
+- **Integrity signals are neither recorded nor shown** for a room profile tied to such
+  a student. Tied means a room opened for the student's class, under the roll number
+  the roster holds for them, or under one an attendance mark of that room was made
+  under for them (`0021`). Recorded: none of the browser's reports, too-fast,
+  second-socket or level-jump is written to their profile (checked when a signal is
+  about to be recorded, so other rooms pay nothing). Shown: the teacher's grid row
+  carries `integrity: null`, the signal trail is empty with `signalsOff: true`, the
+  room's CSV leaves the cell empty, and a deleted room's archive keeps none. Signals
+  recorded before the mark was set are shown nowhere from then on; they stay in the
+  stored profile until the room is deleted (its archive drops them).
+- A room opened **without a class** has no roster to read, so the mark cannot reach
+  it: signals there are recorded as before. Opening rooms for the class is how the
+  mark applies (open, `docs/IMPLEMENTATION_STATUS.md`).
 
 ---
 
@@ -256,7 +416,7 @@ bands side by side while decision 6 is open.
 | What a student sees of their own past answers | The question as their phone showed it (rebuilt from the snapshot by `forStudent()`, same seed), their response, `correct` and `score` in force, the review status, note and date, attempt, final, room and time. Never the snapshot, any answer key, rubric or model answer, the solution, `auto_*`, or `detail` (the machine's reading in words, which on an overridden written answer would contradict the mark). Built field by field, so a new column stays hidden until added on purpose. This rule is for this read of stored answers; the live phone has its own (next row) | `redactForStudent` in `server/src/services/evidence.js` |
 | What the live phone is told when an answer is final | The mark, and the solution to the question it has just finished: for a written answer that is the rubric, which the phone shows as "Points a full answer makes". So a student does see the rubric of a question they have answered, once, at that moment, as every kind shows its answer then. The machine's `detail` is sent only while the machine's mark is the one in force: a resend after a professor's override gets none, since "1/2 rubric points" beside the professor's mark contradicts it. The stored-answer read above never re-serves any of it | `server:result` in `server/src/sockets/index.js` |
 | Who reads the professor's review note | The student. It is shown word for word beside the mark in their answer history. It is a comment to the student, not a private remark, and the screen that takes it must say so. A private note would need its own field; not built | `server/src/routes/review.js`; `redactForStudent` |
-| Which answers are "this student's" across rooms | Rooms owned by the professor they report to (the analytics scope). For the **professor** reading a student: rows linked to the student's account, plus rows under their roll number linked to no account. For the **student** reading themself: rows linked to their account only, because a roll number is typed on a phone with no sign-in, so an unlinked row under it may be a guest's, a mistyped classmate's, or a second account's whose roll number differs only in case. A row linked to a **different** account is never theirs. Roll numbers are compared upper case and single-spaced, as the room stores them, and since `0011` two accounts in one department cannot hold the same roll number in that form | `listStudentAnswers` in `server/src/services/evidence.js`; `listAnswers` `student` filter in all three repos; `studentScope` in `server/src/services/analytics.js` |
+| Which answers are "this student's" across rooms | Rooms owned by the professor they report to (the analytics scope). For the **professor** reading a student: rows linked to the student's account, plus rows under their roll number linked to no account. For the **student** reading themself: rows linked to their account only, because a roll number is typed on a phone with no sign-in, so an unlinked row under it may be a guest's, a mistyped classmate's, or a second account's whose roll number differs only in case; **and since decision 7 (19 Nov 2026) only rows a phone signed in as them sent** (`accountVerified`, `0022`), so a link made from a typed roll number exposes nothing. A row linked to a **different** account is never theirs. Roll numbers are compared upper case and single-spaced, as the room stores them, and since `0011` two accounts in one department cannot hold the same roll number in that form | `listStudentAnswers` in `server/src/services/evidence.js`; `listAnswers` `student` filter in all three repos; `studentScope` in `server/src/services/analytics.js` |
 | A phone that sends no answer key | The key is derived from the roll number, the question and the answer. It used to leave out the roll number, so two students giving the same answer to the same question shared one row and the second was never stored. A key that another student's row already holds is filed under `<key>@<roll number>` and never answered from that row | `handleAnswer` in `server/src/sockets/index.js` |
 | Paging the review queue | By cursor: each page's `next` goes back as `?before=`. `offset` is refused with a 400, since reviewing answers takes them out of the default view and an offset then skips the ones that move up | `server/src/routes/review.js` |
 | Writing into a room while it is deleted | Refused. The delete marks the room, waits out any write already under way, archives, deletes. A review sent meanwhile gets 409 ("Nothing was changed"); a live answer gets the phone's "did not save" notice and is resent, which a deleted room then answers as closed | `holdRoomForDelete` in `server/src/sockets/index.js`; `DELETE /api/session/:code` |
@@ -265,10 +425,10 @@ bands side by side while decision 6 is open.
 | What happens to a generated question (Phase 2) | Saved as a `draft`, which no room serves, until a professor approves it (one, or every draft in a bank). Drafts, offline-template ones included, all wait: the roadmap's "kept out of rooms until approved" draws no line between the model and the templates. A room on a bank with fewer than 6 approved questions and some drafts is refused with 409 and a sentence saying to approve them | `routes/generate.js`; `routes/bank.js`; `POST /api/session` |
 | Failing rule checks | Advice only. Approval is allowed whatever they say; the reply to approve and approve-all names each failed check. The longest-option check fires only when the answer is over 20% longer than every wrong option, because "strictly longest" fires on a quarter of honest four-option items by chance | `server/src/services/checks.js` |
 | The older "restore" on a draft | `PATCH status: active` (the console's restore) and bulk restore are kept. On model output nobody approved they are the approval and record `approved_by`/`approved_at`; on every other question they are the plain status change they were. So no route makes model output active without an approval on record | `activatePatch` in `services/edits.js` |
-| A plain regenerate | Unchanged in shape (`CONTRACT.md` §4: a new item, the old one discarded), but the new item is a draft. Regenerating an **active** question therefore takes that slot out of rooms until the replacement is approved, and the reply says so in `warnings` (a bank at the floor of 6 then stops opening rooms). The alternative, keeping the old question active until its replacement is approved, needs a stored link from the draft to the question it replaces (a new column); owner's call | `POST /api/bank/question/:id/regenerate` |
+| A plain regenerate | **Settled 19 Nov 2026 (owner's delegation): the old question keeps serving until its replacement is approved.** The new item is a draft naming the active question it replaces (`replacesId`, `questions.replaces_id`, `0022`), and the reply says the old one stays in rooms (`replaces`, `note`). Approving the draft by any route (approve, approve-all, the older restore by `PATCH status: active` or bulk restore) retires the old one, set discarded, and the reply names it (`retired`); rejecting the draft leaves the old one as it is. A draft or rejected question being regenerated is discarded at once, as before, since it served nothing. Before: the old question was discarded at once and its slot left rooms until the replacement was approved | `POST /api/bank/question/:id/regenerate`; `retireReplaced` in `routes/bank.js` |
 | A replacing generate while a room runs (Phase 2 review) | Refused with 409 while a room on the chapter is open or paused, before anything is generated. Replacing deletes the approved bank the room is serving and writes only drafts, so every phone in it would get "nothing left". `mode: 'append'` is still allowed. Before the approval gate the replacements were active, so this was never an issue | `POST /api/generate` |
 | Harder / Easier | A new draft one level up or down at that level's default kind (so Create is always a written answer), same topic and slides; the original is untouched. Refused at the ends of the ladder and on a poll | same route, `direction` |
-| A professor's own question | Created active. Any kind **at its own level** (the editor's rule: the level chooses the kind), except a poll, which may sit at any level. `model` null, `created_by` the account. `source` is `'fallback'`, because `CONTRACT.md` §6 rule 5 says every item not produced by the model must carry it; the console labels `fallback` as template text, which misdescribes a professor's question. Needs a contract amendment (a third value such as `teacher`) to label it truthfully; not done here | `POST /api/bank/:contentId/questions`; `authorQuestion` in `services/edits.js` |
+| A professor's own question | Created active. Any kind **at its own level** (the editor's rule: the level chooses the kind), except a poll, which may sit at any level. `model` null, `created_by` the account. **`source` is `'teacher'` since 19 Nov 2026** (owner's delegation; `CONTRACT.md` §6 rule 5 amended; `0022` widened `questions_source_check`), and every answer to it carries `question_source: 'teacher'`. Questions written before then stay `'fallback'`: not rewritten, because they cannot be told apart with certainty from a split or merge of an offline-template question older than `0013` (both have no model and a creator). A merge takes the least model-like source of its two parents: template, else the professor's, else the model's | `POST /api/bank/:contentId/questions`; `authorQuestion`, `mergeQuestions` in `services/edits.js` |
 | Slide reference | The slides the question's **topic** was read from, not the sentence the item was built from: the generator works from the topic's part of the whole chapter, so the topic's slides are what the source supports honestly. Kept on the content at upload (`topic_slides`), because the deck is discarded | `topicSlides` in `services/extract.js`; `sourceRefFor` in `services/generate.js` |
 | Split, merge and edit of a draft | Stay drafts. A **rejected** draft (discarded, model set, never approved) counts as a draft here: its halves, and a merge with it on either side, are drafts with no approval, and one parent's approval is never copied onto the other's unreviewed text. An edit of an active question stays active and keeps its approval | `unreviewed`, `inherit` in `services/edits.js` |
 | `npm run seed` | Still writes active questions (it is the demo bootstrap and opens its room straight from the repository), now with `model` recorded | `server/src/seed.js` (unchanged) |
@@ -284,7 +444,7 @@ bands side by side while decision 6 is open.
 | Metadata inside an upload (Phase 2 review) | Taken out before the file is stored, without decoding the picture (the server has no image library, and none was added). JPEG keeps JFIF, the ICC profile, Adobe's segment and everything that is not an APPn; Exif, XMP, IPTC, MPF, comments and whatever follows the end of the image go. The Exif **orientation** is written back alone, because without it an upright phone photo shows on its side. PNG loses `eXIf`, `tEXt`, `zTXt`, `iTXt`, `tIME` and anything after `IEND`; WebP its `EXIF` and `XMP ` chunks and anything after the container. Why: an upload reaches every phone in the room and anyone a student passes the url to, and a phone camera writes where the photo was taken. A file that cannot be walked keeps the rest as sent from where it stops making sense: refusing it would refuse pictures browsers draw, and camera files walk. Uploads stored before this keep their bytes (no data migration) | `withoutMetadata` in `server/src/services/media.js`; `POST /api/media` |
 | How several questions share a passage or image | Each question carries an equal copy, never a reference to a shared row: a question is served, snapshotted into the evidence and archived on its own, and a passage edited later must not change what answers already given were answers to. The offline generator already wrote its shared readings this way. One press attaches the same stimulus to many questions (`POST /api/bank/bulk`, `action: 'stimulus'`); sending it again with an edited passage changes them all. Questions sharing a passage are the ones whose stimuli are equal | `POST /api/bank/bulk` |
 | A passage's source | Optional `sourceRef` on the stimulus: text the professor types (a textbook and chapter, a slide range), at most 300 characters, also accepted on an image. Teacher-side only: the phone has nowhere to show it, so `forStudent()` leaves it out | `stimulusReason` in `server/src/questionTypes.js` |
-| The slide-only check with a stimulus | Unchanged. The task for this work asked that it pass when an image **or a passage** is attached. It passes when an image is attached, an upload included, and when any stimulus is attached to a stem that says "as shown above" or "on the slide". A stem naming a figure, diagram, graph or coloured curve with only a **passage** attached still fails: a passage cannot show the picture, so the question is still unanswerable on the phone, and the existing unit test already asserts that. The owner may decide otherwise; the change is one condition in `slideOnlyReference` | `server/src/services/checks.js` |
+| The slide-only check with a stimulus | **Settled 19 Nov 2026 (owner's delegation): an attached passage clears it, as the original task asked.** It passes when an image or a passage is attached, whatever the stem names, and fails a stem naming a figure, diagram, graph or coloured curve, or saying "as shown above" or "on the slide", with nothing attached; the message now says a picture or a passage would do. Before: a figure reference with only a passage attached still failed | `slideOnlyReference` in `server/src/services/checks.js` |
 | Options "as shown" with the fewer-choices support | Recorded, not yet shown. Since the item statistics, the live loop keeps which options the support left on the answer's snapshot (`shownOptions`, original indices in shown order; no column needed, it is part of "the question as answered"), because it depends on the student's supports at serving time, which can change. The item report reads it. The answer read still lists an mcq or multi in full for such a student, with their response a position in the shorter list; reading `shownOptions` there is a small follow-up. Answers stored before this have no record. In a deleted room's archive it sits on the answer row, not in the archived question, so a question is stored once however many such students answered it | `snapshotOf` in `server/src/sockets/index.js`; `shownQuestion` in `server/src/services/evidence.js`; `buildRoomArchive` in `server/src/services/archive.js` |
 | What an answer's snapshot leaves out (Phase 2 review) | `checks` (advice, not what was asked) and, since the review, `approvedBy` and `approvedAt`: they describe the bank's row and change without the question changing (an older question approved during a class), so kept they made one unchanged question look like two versions in the item report and two copies in the archive. `model`, `sourceRef` and `createdBy` stay: they say where the question came from and never change on a row. Answers already stored keep what they have | `snapshotOf` in `server/src/sockets/index.js` |
 | What item statistics count (Phase 2) | Final, graded answer rows only, with the mark in force (a professor's review included). A retried attempt, a poll and a room older than the answers table count for nothing; that room's history has no responses, so it could give a proportion but never a count per option. A second final row for the same student and question (possible only after a failed profile write) replaces the first | `gradedAnswers` in `server/src/services/itemStats.js` |
@@ -296,7 +456,7 @@ bands side by side while decision 6 is open.
 | Which options are counted | Kinds where the student chooses among offered options: mcq, multi, true/false, hot text, dropdown (per gap), match (per left item), categorise (per item), grid (per row). Not typed answers (blank, cloze, numeric, open, table) nor arrangements (order, rank), where an arrangement is one answer among many and not a choice of options. Labels and keys are the last version answered; answers to an earlier version whose options differ, in number or in wording, are kept out of the counts (`otherVersions`) but still counted as attempts. Matching on the number alone (until the Phase 2 review) put right answers to a reworded list on whatever option now sat at their index. A key moved over the same options is not a difference: every pick stays on the option it was. `versions` compares what was asked (wording, level, kind, the kind's fields) and nothing else, so the model, slides, approval and a shorter list never make a version | `choiceRows`, `distributionOf`, `versionOf` in `server/src/services/itemStats.js` |
 | A room's question set (Phase 2) | Optional, chosen when the room opens, never changed afterwards (like the settings: what a room could serve is part of what its answers mean). Every id must be an approved question of the room's chapter. No floor of 6 for a set: the floor stops a whole-bank room adapting over too little, and a professor who picks two questions has decided the room is those two. A question discarded later stops being served; one deleted later (a replacing generate, which since the Phase 2 review waits until no room on the chapter is open or paused) leaves the set shorter; a question approved later does not join it | `questionSetFrom` in `server/src/routes/session.js`; `servableFor` in `server/src/services/selector.js` |
 | Who sees a room's set | The teacher's routes (`POST /api/session`, the room list, `/items`). Not the phones' `GET /api/session/:code`, which anyone with the code can read: a list of question ids is a list of things to try answering, since the live loop accepts an answer to any question the room may serve. Its `bankCount` is the set's servable size instead | `GET /api/session/:code` |
-| What a roster holds (Phase 3) | A roll number and a name per student. Any other field sent is dropped and named back; a name holding an `@` or six or more digits is refused as probably carrying an email, phone number or date of birth. The table has no other column, and the migration test fails if one is added | `services/roster.js`; `0016` |
+| What a roster holds (Phase 3) | A roll number and a name per student, and since 19 Nov 2026 the owner's yes-or-no "under 18" mark (decision 8; `under_18`, `0022`). Any other field sent is dropped and named back; a name holding an `@` or six or more digits is refused as probably carrying an email, phone number or date of birth. The table has no other column, and the migration test fails if one is added | `services/roster.js`; `0016`; `0022` |
 | Which roll numbers are one student | Those equal in the room's form (trimmed, single-spaced, upper case: `rollKey`), as the live loop compares them. `03` and `3` are two students, because the room treats them as two; stripping zeros would mark the wrong student present | `rosterRoll` in `services/roster.js` |
 | Removing a student | Soft: `removed_at` is set and the row stays, so their answers (under their roll number in each room), attendance and record are kept and they can be restored as the same row. Adding a removed student's roll number again is refused with "restore them instead", since a second row would split their history | `routes/classes.js` |
 | Class size, and the cap | The roster now, removed students left out. At most 500 students per class and per request (far over a section; the most profiles one room's grid reads back from Supabase) | `MAX_CLASS_SIZE` |
@@ -359,14 +519,16 @@ bands side by side while decision 6 is open.
 ### Phase 2 defaults the owner should look at
 
 Each row above is in use and reversible. These are the ones where the safe default
-may not be what the owner wants, or where a contract is involved:
+may not be what the owner wants, or where a contract is involved. **19 Nov 2026,
+under the owner's delegation: every default kept as built, except the three marked
+settled below.**
 
 | Default | The question for the owner | Cost of changing it |
 |---|---|---|
-| Offline-template questions wait for approval like model ones | Should template output be trusted without review? The roadmap's "kept out of rooms until approved" draws no line, so none is drawn | A condition in generation; no data change |
-| A plain regenerate takes an active question out of rooms until its replacement is approved | Keep the old one serving until then? | A new column linking a draft to what it replaces |
-| A professor's own question is stored as `source: 'fallback'` | Amend `CONTRACT.md` §6 rule 5 with a third value (such as `teacher`), so the console stops labelling it template text? | A contract amendment, then one value in the route |
-| The slide-only check still fails a picture reference with only a passage attached | Should a passage clear it, as the task asked? | One condition in `slideOnlyReference` |
+| Offline-template questions wait for approval like model ones | Should template output be trusted without review? The roadmap's "kept out of rooms until approved" draws no line, so none is drawn | Kept as built (19 Nov 2026) |
+| A plain regenerate takes an active question out of rooms until its replacement is approved | Keep the old one serving until then? | **Settled 19 Nov 2026: yes**, built with `questions.replaces_id` (`0022`) |
+| A professor's own question is stored as `source: 'fallback'` | Amend `CONTRACT.md` §6 rule 5 with a third value (such as `teacher`), so the console stops labelling it template text? | **Settled 19 Nov 2026: `'teacher'`**, contract amended, check widened (`0022`) |
+| The slide-only check still fails a picture reference with only a passage attached | Should a passage clear it, as the task asked? | **Settled 19 Nov 2026: yes**, one condition in `slideOnlyReference` |
 | The negative point-biserial flag fires at any value below 0 | Add a margin (say below -0.1) for small classes? | One constant |
 | The point-biserial is shown from 10 students; bands from 5 answers at 0.8 and 0.4 | Different floors or cut points (for example per room, from its own mastery goal)? | Constants; per room needs the bank report to stop pooling rooms |
 | During a running class, anyone with an image's url can load it | Acceptable for a class activity? Signed urls are the alternative, with the costs given above | A new serving rule and a secret that survives restarts |
@@ -399,14 +561,15 @@ The fixes to the Phase 3 review needed four defaults. Each is in use, said in
 | After a restart, first names on the projector are off for a room opened before it (the handoff's default, on, for a room opened since) | Keep the toggle across restarts? | A column on the room or the link |
 
 Three findings were not fixed, because each needs the owner (all in `docs/API.md`,
-"Known open issues"):
+"Known open issues"). The first and third were decided on 19 Nov 2026 (below,
+"Phase 3: the two questions, decided"):
 
 - **What a phone is told about the band.** The phone's row carries `slowLearner` and
   the integrity summary, and its `reason` sentences name the below-40% band, which the
   phone shows on purpose ("the same sentence the teacher sees"). The roadmap's rule
   says labels are staff-only; `CONTRACT.md` sections 4 and 5 make the phone's
   `profile` the one `GridRow`. Changing it needs a contract amendment, a sentence a
-  student is shown instead, and the phone client.
+  student is shown instead, and the phone client. *Decided and built, 19 Nov 2026.*
 - **Amending `0005`**: done, not waiting on the owner. `0005` now lists `'waiting'` in
   `sessions_status_check`, a widening that no row can fail, so re-running the set
   never narrows the check. Revert that one line if an applied file must never change.
@@ -414,7 +577,50 @@ Three findings were not fixed, because each needs the owner (all in `docs/API.md
   room they were typed in, so deleting one room of a class-day changes the mark in
   force the class's other rooms show for that day. Keeping them (with no room, under
   the class and day) means a test room's marks could never be removed, since
-  observations are append-only.
+  observations are append-only. *Decided 19 Nov 2026: kept as it is.*
+
+### Phase 3: the two questions, decided
+
+Both decided under the owner's delegation, 19 Nov 2026.
+
+**(a) What the phone is told: labels are staff-only.** The phone's own row stops
+carrying `slowLearner`, the integrity summary and any sentence that names a band. It
+gets a neutral reason instead: which level comes next and why, in plain words, with
+the number of answers it rests on. The teacher's rows are unchanged.
+
+*What was built.* `phoneRow` in `routes/session.js` builds the phone's `profile`
+field by field from the teacher's row: `rollNo`, `name`, `workingLevel`, `levels`,
+`total`, `answered`, `online`, `counted`, `withdrawn`, `mastered`, `masteryGoal`, and
+`next: { levels, why, answers }` (`nextStep` in `services/mastery.js`). Every
+`session:accepted`, `server:result` and `server:exhausted` carries it. The phone's
+`reason` is its own sentence too: in `server:result` it is `next.why`, and in
+`server:question` it says why this question (`reasonForPhone` in
+`services/selector.js`), never the band. Inside the below-40% band a phone is told
+"From your N answers so far, your next questions are at Remember and Understand, to
+build a firm base before the levels above." The professor's sentences (`reason` on the
+profile, the pin's reason) are unchanged and stay on the teacher's side. `CONTRACT.md`
+sections 4 and 5 are amended (Amendment 3, dated). A unit test walks a thousand
+random rooms and finds no phone sentence naming a band, a cut-off or a percentage.
+Under the same rule a student account's own dashboard and analytics no longer carry
+`banded` (the directive: no label like "slow learner" anywhere a student can see it);
+a professor's view of them still does.
+
+**(b) Observations of a deleted room: kept as they are.** They leave the live views
+with the room and are kept in its JSON archive (decision 9). The class page should say
+that a deleted room's records are in its archive (client work). Nothing built.
+
+### Settled on 19 Nov 2026, beside the decisions
+
+Asked for by the UI session and settled in the same batch, under the owner's
+delegation:
+
+| What | Settled | Where |
+|---|---|---|
+| The class list says whether the viewer may create a class | `GET /api/classes` carries `canCreate` (false for an HOD, as `POST /api/classes` refuses one) | `routes/classes.js` |
+| The wall knows how the room runs | `projector:state` carries `roomMode` (`devices`, `teacher-led` or `mixed`) beside `mode` (what the screen shows), so the wall can hide the join code in a Teacher-led room | `projectorPayload` in `services/projector.js`; the whitelist |
+| People-facing sentences name no API detail | The remove message ("put back on the roster at any time"), the Teacher-led cards note ("counted on their own, beside this"), the presets' note and the import's restore sentence no longer name a path, a field or a verb | `routes/classes.js`, `services/insights.js`, `routes/attainment.js` |
+| The boot probe checks every table and column the server writes, `0016` to `0022` | Missing what rooms need (`0022`'s columns included) stops Supabase being used, naming the file to apply; missing what only some routes need (`0019`, `0020`, `0021`'s `attendance.roll_no`) keeps Supabase and logs one line per piece naming the file and what fails until it is applied. The probe now asks for no rows with a GET, not a HEAD: the client read a missing table's 404 to a HEAD as "no content", so a missing table was never caught | `ROOM_SCHEMA`, `ROUTE_SCHEMA`, `probeSupabase` in `repo/supabaseRepo.js`; `initStore` |
+| `best` attempts: a review always wins | For the same question, a professor-reviewed attempt always beats a provisional machine mark, whatever the scores and whichever room each came from, as "a professor's review replaces the machine's mark" says; the methodology sentence and the formula's field description say so | `chooseAnswers`, `methodologyText`, `registerMethodologyText` in `services/attainment.js` |
 
 ### Phase 4: course outcomes, their mappings, and the roster from CSV
 
@@ -440,10 +646,10 @@ columns are never read into a row, let alone stored.
 | Weights are per topic (above 0, at most 100, default 1); an override counts with weight 1. Coverage counts unweighted | The task asked weights on topic mappings only; how a weight enters a figure is the attainment formula's, which colleges configure | A per-override weight would be a column |
 | Coverage counts **final, graded** answers (polls and retried attempts out), from the class's rooms the caller may read | As item statistics and the topic report count | One filter (`countsAsEvidence`) |
 | The CSV import is **owner only, dry run included** | The task's "owner only"; an HOD writes nothing, and a dry run is a write's rehearsal | One guard |
-| The CSV import reads one roll number column and one name column, found by header (`roll`, `roll no`, `roll number`, `rollno`; `name`, `student name`, any case, `.`, `_`, `-` as spaces). A file without such a header is refused, not guessed at | Guessing a header-less file's columns could put a phone number in the name | A list of words |
+| The CSV import reads one roll number column and one name column, found by header (`roll`, `roll no`, `roll number`, `rollno`; `name`, `student name`, any case, `.`, `_`, `-` as spaces). A file without such a header is refused, not guessed at. Since 19 Nov 2026 it also reads an optional under-18 column (`under 18`, `under18`, `minor`, `below 18`) as yes or no (decision 8); a date-of-birth column is never read | Guessing a header-less file's columns could put a phone number in the name | A list of words |
 | A CSV may hold **2,000 rows and 1 MB**; the class still stops at 500 students, rows past it refused one by one with their lines | A sheet exported for a whole year may hold several sections; reading it all and saying what was not added beats refusing the file | Constants |
 | A roll number matching a **removed** student is reported and **not restored** | Restoring is a decision about one person; a file is not the place to make it | None |
-| The boot probe does **not** check `0019`'s tables | No room needs them: a server deployed before `0019` keeps its rooms on Supabase and only the outcome routes fail, instead of every room falling back to the in-process store | One line in `probeSupabase` |
+| The boot probe does **not** check `0019`'s tables | No room needs them: a server deployed before `0019` keeps its rooms on Supabase and only the outcome routes fail, instead of every room falling back to the in-process store. **Since 19 Nov 2026 it checks them without failing**: a missing table is a boot-log line naming `0019` and what fails, and Supabase is still used | `ROUTE_SCHEMA` in `repo/supabaseRepo.js` |
 
 ### Phase 4: configurable attainment and the marks register
 
@@ -461,7 +667,7 @@ four.
 | **Below `minAnswers` counted answers, a student is "not enough evidence"**, including with none at all; such students are not counted in the class's share | The task's rule: never "not attained" without the evidence. The class figure's `notEnoughEvidence` and `withNoAnswers` say how many | None |
 | Evidence types are read from `review_status` and `ungraded`: `auto` digital, `provisional` the keyword marker's (a provisional machine mark, not AI), `confirmed` / `overridden` a professor's; a poll counts only as a number | How Phase 1 writes them; no column needed | One function (`evidenceTypeOf`) |
 | One answer is one mark (the score in force, 0 to 1), times the topic's weight in the outcome (1 for a question mapped by an override) times the room's weight; Bloom attainment weighs by room only | Weights on topics were asked for in the mapping, and on rooms in the formula; a question has no maximum marks of its own yet | A per-question mark would be a column on questions |
-| **Final attempts**: every final attempt counts; a question answered in two rooms counts in both; a second final row for one question in one room (only after a failed profile write) replaces the first, as item statistics read it. **Best**: one attempt per student and question across attempts and rooms, the highest mark among the counted types first, ties to a final attempt and then the later one; since the review, a written answer's attempt followed by a retry never counts under best | "Best attempt per question" read as per student and question; choosing among counted types first stops a provisional 1 hiding a reviewed 0.4; only a final written attempt can be reviewed, so an earlier one could never be checked | One function (`chooseAnswers`) |
+| **Final attempts**: every final attempt counts; a question answered in two rooms counts in both; a second final row for one question in one room (only after a failed profile write) replaces the first, as item statistics read it. **Best**: one attempt per student and question across attempts and rooms, the highest mark among the counted types first, ties to a final attempt and then the later one; since the review, a written answer's attempt followed by a retry never counts under best | "Best attempt per question" read as per student and question; choosing among counted types first stops a provisional 1 hiding a reviewed 0.4; only a final written attempt can be reviewed, so an earlier one could never be checked. **Since 19 Nov 2026 (owner's delegation) a reviewed attempt always beats a provisional machine mark at the same question, whatever the scores and whichever room**, also when a formula counts provisional marks | One function (`chooseAnswers`) |
 | Bloom attainment counts every counted answer at its level, mapped to an outcome or not, and an answer excluded from outcomes by an override still counts at its level | An override is about outcomes; the level is the question's own. Both the six levels and decision 6's three bands are given | One filter |
 | **Deleted rooms are not counted** | An archive's class is inside its JSON, so a report would read and decode every archive in full; no `includeArchived` option was built. Every report says so | Reading `room_archives` (a class column on archives would make it cheap) |
 | `from` and `to` select rooms by the day each opened, in India's time (`roomDay`), as observations are dated; `rooms` names codes of the class's rooms | One rule for "which class meetings", not for when each answer was given | One filter in `roomsWindow` |
@@ -502,7 +708,7 @@ or per class (a saved version), never by code.
 | **Provisional machine marks are left out by default** | `evidence.aiProvisional: false` in both examples. Since the review a save may count them only together with reviewed marks (400 otherwise), since a review replaces the machine's mark; a formula stored otherwise before still reads. Provisional marks are shown in every figure, with their answers and marks, and marked "not counted". A professor who reviews them in the queue moves them into the reviewed type, which counts. A class may switch them on in its own formula. The live ladder does count them at once (the review default above), so a student's level and their attainment can rest on different evidence, and the methodology paragraph says which attainment used | A college files attainment; a keyword match is not yet a mark anyone stands behind | One field per class |
 | **Deleted ("archived") rooms** | Not counted in attainment, coverage, the register or the outcome remove check. A deleted room's answers are kept in `room_archives` (decision 9), but an archive's class is inside its JSON, and every report says deleted rooms are left out. An **archived course outcome** is a different thing: one with evidence is archived rather than deleted, keeps its mappings, and is still named and computed in every report, marked archived | Reading every archive in full on every report costs too much, and a class column on archives would be a migration of its own. Most deletions are test rooms | A class column on `room_archives`, then an `includeArchived` option |
 | **Renamed topics** | Not followed. Renaming a topic in a chapter's list leaves its questions and answers under the old name, so that evidence counts as **unmapped** under the old name (`inChapter: false`) until the old name is mapped too. It is never dropped, and coverage and every report list it | Nothing records which name became which, and guessing could join two topics a professor keeps apart | The content edit would need to record renames, and the resolver would follow them |
-| **The CSV import rules** | Owner only, the dry run included. The file is `text/csv` or JSON `{ csv }`, at most 1 MB and 2,000 rows (the class still stops at 500). It may carry a BOM, CRLF, LF or CR, quoted fields, and comma, semicolon or tab, told from the header line. The header must name one roll number column and one name column; a file without one is refused, never guessed. **Every other column is never read into a row** and is listed back (a phone, email or date-of-birth column included). A name holding an `@` or a long number is refused. A removed student's roll number is reported, never restored. The rows go through the JSON list's own check (`addToRoster`). A body is read as UTF-8 | Decision 8's data minimisation, and the roster rule of roll number and name only | Constants and a word list in `services/roster.js` |
+| **The CSV import rules** | Owner only, the dry run included. The file is `text/csv` or JSON `{ csv }`, at most 1 MB and 2,000 rows (the class still stops at 500). It may carry a BOM, CRLF, LF or CR, quoted fields, and comma, semicolon or tab, told from the header line. The header must name one roll number column and one name column; a file without one is refused, never guessed. An under-18 column, when the file has one, is read as yes or no (decision 8, 19 Nov 2026). **Every other column is never read into a row** and is listed back (a phone, email or date-of-birth column included). A name holding an `@` or a long number is refused. A removed student's roll number is reported, never restored. The rows go through the JSON list's own check (`addToRoster`). A body is read as UTF-8 | Decision 8's data minimisation, and the roster rule of roll number and name only | Constants and a word list in `services/roster.js` |
 | **The formula-injection guard** | In every CSV sheet, a text cell starting with `=`, `+`, `-`, `@`, a tab or a CR gets an apostrophe in front **and is always quoted**. Numbers are never guarded. Every sheet says so in its `Formula guard` row. Since the Phase 4 review the guard also works after a semicolon or a tab inside a cell, and every cell holding one is quoted, so a spreadsheet set to split on semicolons (Excel in many European locales) cannot start a cell with `=` from the middle of a name. Of the two fixes the review offered, this one was chosen: names are not narrowed | The OWASP rule for CSV injection, for the comma-separated sheets Indian installs of Excel open by default and for a semicolon locale | Two regular expressions in `services/csv.js`. The Phase 0 room CSV keeps its older guard (`docs/API.md`, "Known open issues") |
 | **Print delivery** | A printable report is a self-contained HTML page from the same route (`?format=html`), served inline with `no-store`. It has no script, font, image or link, its own Content-Security-Policy in the header and the page, and A4 print rules. Readers print with the browser's own Print. No PDF is made on the server (it would need a headless browser or a PDF library). The console fetches with the sign-in header (or the `x-teacher-key` header) and opens the page from a blob or `srcdoc`. Since the review a page or a sheet asked for with `?key=` in its address is a 400, so the shared key is never printed in a page's footer or kept with a download | No new dependency. The page is the report's own words and figures, and the reader's browser prints it | A short-lived link without the key, or a server-side PDF (a new dependency) |
 
@@ -515,7 +721,7 @@ reversible with no data migration unless the last column says otherwise.
 | Rule | What is in use | Why | Cost of changing it |
 |---|---|---|---|
 | **Whose answers: through the attendance mark** | An attendance mark keeps the roll number it was made under (`0021`): a join the phone's, in the roster's form; a professor's mark (and a wheel pick's Absent) the roster's at that moment, unless the mark it replaces already carries one, which is kept. A report gives a room's answers to the student whose mark in that room carries the roll number they were given under, filed under their roll number now; otherwise the roster as it stands decides. **Nothing is inferred**: a roll number two marks of one room carry is tied to neither, and a mark made before `0021` ties nothing. `rollNotes` says, for every roll number left off the roster, where its answers are and whom a mark under it was made for | A professor who corrects a roll number on the roster must not lose the student's earlier answers to "not on the roster". Answers are evidence and are never rewritten (`0012`), so the tie is kept on the mark. Guessing from names or timing could give one student's answers to another | The column is a migration (`0021`); the rule is one function (`rollResolver`) |
-| **Question provenance beside the evidence type** | Every figure's counted marks are split again by who wrote the question, from the answer row's `question_source`: AI-generated (`llm`), professor-written (`teacher`), and offline-template or professor-written (`fallback`, how a professor's own question is stored today). It moves no mark | The directive's "AI-generated assessments" can mean an AI-written question as well as an AI-marked answer. The evidence type says who marked; this says who wrote. Labelling `fallback` as both is honest while a professor's question is stored that way | One function (`questionSourceOf`); a `teacher` value needs the Phase 2 contract change |
+| **Question provenance beside the evidence type** | Every figure's counted marks are split again by who wrote the question, from the answer row's `question_source`: AI-generated (`llm`), professor-written (`teacher`, stored since 19 Nov 2026), and offline-template (`fallback`, which also holds a professor's own questions written before then, labelled so) | The directive's "AI-generated assessments" can mean an AI-written question as well as an AI-marked answer. The evidence type says who marked; this says who wrote | One function (`questionSourceOf`); the `teacher` value is stored since `0022` |
 | **The class figure rests on the students counted** | A figure's `marks` are the answers of the students attained or not attained. Roster students with too few counted answers are outside the share, with their evidence in `outside.notEnoughEvidence`, and the summary says so | Counting their answers in made a figure look better supported than it was | One filter in `classFigure` |
 | **Rounding down for display** | A share is cut to 4 decimals, rounded down; obtained marks to 3 decimals down, possible marks up. States and levels are decided exactly, never from these | A share of 59.996% printed as 60% beside "Not attained" under a 60% threshold reads as a mistake; a printed figure should never read higher than it is | Three functions |
 | **A weighted room outside the window is "not in this report"** | Room weights are named from every room of the class the caller may read, and each carries `inReport`. Only a room the class no longer has reads "since deleted" | `?rooms=` or the dates leaving a room out is not its deletion | None |
@@ -590,3 +796,199 @@ is in use meanwhile.
 13. **Course outcomes to programme outcomes.** Accreditation reports map course
     outcomes to programme outcomes (CO to PO). BloomLoop has no programme outcomes.
     Is that mapping wanted here, or is it done elsewhere from the exported sheet?
+
+### Phase 5 in brief: the three defaults to read first, and what is open
+
+Phase 5 is three parts, each with its own table below (class questions with the
+confidence tap; misconception labels; honest indicators), and the review fixes of
+19 November 2026. Every default is in use and reversible with no data migration.
+Three matter most:
+
+- **Why a class question moves no level.** The ladder moves a student on answers to
+  questions chosen for that student's level (`selectNext`), one at a time and on their
+  own. A class question is the same question for the whole room, chosen by the
+  professor whatever each student's level; its round 2 follows the class's discussion,
+  so it measures what the group talked through, not what one student knew; and a
+  student who answered it on their own earlier has seen its key. Counting any of it
+  would move a level on evidence that is not the student's own work at that level. So
+  no vote touches a profile, round 1 counts in attainment only as one digital answer
+  (and not at all for a student who had seen the key), and round 2 is shown and never
+  counted. Staff see the class's before and after as counts.
+- **The label matching rule.** A misconception report counts each student's final
+  graded answer under the question's **current** label for the option they chose,
+  matched through the option's **words** in the question as that student saw it (the
+  answer's own snapshot), not its place. So a reorder never moves a count, an answer
+  given before a label was written counts under it (the report says "Label added after
+  these answers"), and an answer to an option reworded since matches no label (counted
+  as `otherWording`). Keeping each label's history and the label in force at the time
+  is not built (open question 4 of the labels).
+- **The translation threshold.** A question's answers are split by the language they
+  were given in, and a warning is raised when two languages each have at least **5**
+  counted answers and their shares right are **more than 20 percentage points** apart,
+  compared in whole numbers (80% against 60% is no warning). Five is the item report's
+  own floor for a difficulty band; at five answers one answer is exactly 20 points, so
+  a single answer either way can never raise it. Every answer is English today, so it
+  cannot fire on a live room until the Hub's language switch records another language.
+
+Open, from Phase 5 (each also in `docs/API.md`, "Known open issues"):
+- Confidence stays information only; whether it should ever inform a level estimate
+  is the owner's question (class questions, open question 3).
+- The labels' open questions 1 to 5 and the honest indicators' 1 and 2, below.
+- Closing a room while a class question runs can leave the phones uninformed if the
+  store fails at that moment (a review finding not acted on).
+- Three server asks from the UI session are not built: each phone's own `mine` after a
+  room is resumed, `under18Note` on a class's roster read, and `levelBands` on the
+  dashboard and a professor's analytics.
+
+### Phase 5: confidence taps and class questions (pause, discuss, re-vote)
+
+Built from the directive's Phase 5 words ("Confidence should be informational and must
+not automatically deduct marks"; "First response. Confidence recording. Professor
+pauses the question. Students discuss. Students vote again. Display class-level
+changes."). Server and database only, one migration (`0023`); every screen is the UI
+session's (`docs/API.md`, "Phase 5"). The rules the directive set are built as given:
+confidence never changes a mark, a level, a band, an insight or attainment; a class
+question moves no level; every vote is stored and none is overwritten; round 2 is its
+own evidence type, shown and never counted; once revealed, a question is never served
+on its own in that room again; only the room's owner runs one.
+
+The defaults below were chosen so the work could go ahead. Each is in use, said in
+`docs/API.md`, and reversible with no data migration unless its last column says
+otherwise. **The owner should look at the first two.**
+
+| Default | Why | Cost of changing it |
+|---|---|---|
+| **A question asked to the class leaves the room's bank from the moment it is asked**, not only once its key is revealed (`askedQuestionIds` in `services/classQuestions.js`) | The directive's rule is "once revealed, never served adaptively again". A question discussed without a reveal is no longer a student's own work either (the class has talked it through), and serving it afterwards would move a level on it, which "a class question moves no level" rules out. So the stricter rule, which includes the directive's | One filter (`withoutAsked`); reveal-only would serve a discussed question again |
+| **The professor sees how many have voted, not what, while a round is open**; the distribution, the share right and the taps come when the round closes | "The professor pauses: round 1 closes, and the professor sees the distribution." A console is often on the classroom screen, and a distribution shown while voting is open steers the votes | One condition (`roundView`) |
+| The taps are stored in the spellings `0008`'s check already allows (`sure`, `think`, `guess`); the server sends and reads `sure`, `think_so`, `guessing` | No check is widened, so a database without `0023` still takes every tap; nothing ever wrote the column before | A widening migration and a backfill if the stored spellings should change |
+| A phone may **change its vote while a round is open**; the latest counts and every earlier one is kept with `final` false | Clicker practice; "never discard a response" | None |
+| A vote that arrives **after its round closed is kept, never counted** (`detail` says so), and the phone is told | Every response is stored; counting it would change counts the professor has already seen | None |
+| An answer a phone sends to the question **as its own question** after it was put to the class (a phone that held it on its screen) is kept with the class question, `final` false, never counted; the phone is sent a question of its own | Every response is stored; by then the question may have been discussed or its key shown | None |
+| **Every phone sees the full option list in the same order**, the fewer-choices support not applied | The class discusses options by letter ("I said B"); a shortened list would make the letters differ between neighbours. Rendering supports still apply | Passing the student's supports through `forStudent` and mapping votes back (`toOriginalResponse`) |
+| One class question runs in a room at a time; a question is asked to the class **once per room**; it may be closed from any round (no re-vote, or no pause) | Votes in a second asking would follow the first's discussion | Two checks |
+| A room's **pause** leaves a class question as it is; resuming the room sends it to the phones again. **Closing** the room closes it, without a reveal | A room pause is the professor's; the class question has its own pause | None |
+| **Round 1 is ordinary digital evidence in attainment** (as the directive says). **Changed by the review fixes, 19 Nov 2026:** a round 1 vote from a student who had already given a final answer of their own to the question in the same room is set aside, under either attempts rule, and their own answer counts; the professor is told how many such students there are when the question starts (`answeredAlone`) | That student was shown the key with their own result, so their vote is not evidence of what they knew; their own answer came first and is. Before the fix, under `final`, the vote replaced it | One rule in `chooseAnswers` (`knewKey`) |
+| A **poll** may be a class question: its changes are "kept" and "changed", it has no key to reveal, and a reveal is refused | A class's view before and after discussion is a natural use; it has no right answer | None |
+| The projector shows a class question's counts **only when the professor chooses** (`showCounts`, off by default and after a restart), only for a closed round, and only once **5** have voted in it (the progress screen's floor); the share right and the changes only once revealed (a poll's changes, which tell no key, once round 2 closed) | "If the professor chooses, as counts"; under five votes the counts could be a few students' own; the share right tells the key | Constants |
+| Staff see confidence **as counts only**: per room and per question (`/confidence`), per class-question round, and on the student card. No answer carries its tap on a staff screen (`answerItem` leaves it out); the raw rows and a deleted room's archive keep it | "With no student labelled"; "on the student card, counts only" | One field |
+| A student's own history (the Hub) **leaves out their class-question votes** | A vote's mark would tell the key before the reveal, and a vote is not their own work at a level | Showing them after the reveal needs the class question's state per row |
+| Confidence counts cover the room's **final answers to the students' own questions**; a class question counts its own taps, round by round | The two answer different questions; mixing them would count one student twice for one question | One filter |
+
+**The rules the review fixes chose (19 Nov 2026).** Each is in use, checked by
+`server/scripts/keysafety.mjs`, and reversible with no data migration:
+
+| Rule | Why | Cost of changing it |
+|---|---|---|
+| A phone's class question is **named by the class question's id**, never the bank question's | The bank id was one a phone could send back as its own answer, here or in another room on the chapter, and be marked on, key and all, before the reveal | None |
+| **Nothing kept with a class question is answered back** through `student:answer`: a vote's key sent as an answer is filed under a scoped key and the answer kept, never counted; a resend of an answer sent as the phone's own after the question was asked only moves the phone on | Answering from the stored row told a phone the key one option at a time, before the reveal or after a close without one, and put a vote into the ladder | None |
+| A vote **for a round not yet open** is kept and not counted, and says so ("had not opened"), not "late" | It is no vote in any round there was, and "after this round closed" would be untrue | None |
+| A vote **while the room is paused** is kept and not counted, and the phone is told the room is paused | An answer sent then is refused; the pause holds the class question too | None |
+| Under a roll number a signed-in phone linked, a phone **not signed in as her** is never sent her vote or tap, and its vote stops counting once her phone has voted in the round | Decision 7: a typed roll number proves nothing, and her vote is hers | None |
+| The professor is told **how many phones answered the question on their own** in the room before it was asked (a count and a sentence, never who) | They were shown its key; the professor may want to close the question | None |
+| Refusals a professor can see **name no field** | The directive's rule for people-facing sentences | Sentences |
+
+**Decided under the owner's delegation, 19 Nov 2026 (about 12:50), on the builders'
+open questions:**
+
+1. **Reveal-only exclusion: kept as built.** A question asked to the class leaves that
+   room's adaptive bank at once, not only after the reveal: a discussed question is no
+   longer the student's own work.
+2. **A student's own class votes: kept out** of their own history. Showing them after
+   the reveal needs the class question's state per row; to be revisited with the Hub
+   (Phase 6).
+3. **Confidence in the ladder.** Still an open question for the owner: the research
+   behind Phase 5 suggests a tap can separate a lucky guess from knowledge when
+   estimating a level. It is information only, as the directive says; using it would
+   be a product decision and a change to `services/mastery.js`.
+4. **The contract's socket list: amended.** `CONTRACT.md` section 5 now lists
+   `student:join`'s `token`, `session:accepted`'s `linked`, `linkNote` and `confidence`,
+   `student:answer`'s `confidence`, and `student:vote`, `class:question`, `class:vote`,
+   `class:closed` and `teacher:class-question` (Amendment 5, dated).
+5. **A student's own dashboard and analytics drop `banded`: confirmed** (the directive:
+   no label a student can see).
+6. **Splitting or merging a regenerated draft loses its `replacesId`: a known gap.**
+   The old question keeps serving until it is retired by hand.
+
+### Phase 5: misconception labels on wrong options
+
+Built from the directive's Phase 5 words ("Associate incorrect answer options with
+specific misunderstandings. Generate reports such as: '12 students selected the option
+associated with misunderstanding X.' Allow professors to review and edit misconception
+labels."). Server and database only, one migration (`0024`); every console screen is
+the UI session's (`docs/API.md`, "Phase 5: misconception labels on wrong options"); the
+phone and the projector are never sent a label. The rules the task set are built as
+given: a label (at most 120 characters, no contact details, optional) only on a wrong
+option of a question with options, never on a poll or a right answer; provenance `ai`
+(proposed by the generator, which only a professor's press runs, decision 5) or
+`professor` (written, edited or confirmed); the offline templates propose none; only
+the owner edits; editing a label on an approved question does not send it back to
+draft; the reports are staff-only.
+
+The defaults below were chosen so the work could go ahead. Each is in use, said in
+`docs/API.md`, and reversible with no data migration unless its last column says
+otherwise. **The owner should look at the first three.**
+
+| Default | Why | Cost of changing it |
+|---|---|---|
+| **An answer counts under the question's current label** for the option it chose, matched by the option's words in the answer's own snapshot; a report says "Label added after these answers" (or "after 4 of these 12") and "Label reworded after N of these answers" where that is true | The task's recommendation. A label names what choosing an option means, which does not depend on when the label was written, and matching by words survives the options being reordered. Keeping the label in force at the time would need every label's history | A label history (a table or an array of versions) and a second matching rule |
+| **AI draft labels are counted in the reports**, each sentence marked "(an AI draft label, not yet confirmed by the professor)", with the number of drafts in `counted.aiDrafts` | Leaving them out would hide what the generator proposed until someone confirms it, and the professor reads the report to decide whether a label is right | One filter |
+| **Counts of students, never who.** No report lists the students who chose a labelled option | The directive's report is a count; a list of names under a misunderstanding is a label on students, which the product avoids everywhere a student could be singled out. A professor regrouping for reteaching would want the names (open question 1) | A field per option, staff-only |
+| A label is kept **by the option's text**, not its place. Reordering options keeps every label on its option; rewording or removing a labelled option, or making it a right answer, removes its label with that edit (and a retag that changes the kind removes all), and the reply names each removed label | A label is about what the option says. A label left on a reworded option may no longer fit, and one on what is now a right answer would break the rule; saying so lets the professor add it back | Carrying a label across a rewording by its place, with a rule for telling a rewording from a reorder |
+| **Approving a question does not confirm its labels**, and a label edit never touches the approval, status or checks | A label changes no mark, so it needs no approval gate; and the professor reviews a question and its labels separately, so an AI label stays visibly a draft until they confirm or rewrite it | One line in each approve route |
+| Labelled kinds: **Choose one, Choose all that apply, True or false** (its one wrong answer, `True` or `False`) | The kinds with a list of options and one key over the whole list. Dropdown, match, categorise and grid have options per gap or row (open question 3) | Per-gap and per-row labels and their matching |
+| **Counted answer**: each student's final answer to the question in a room, graded; retried attempts, polls and **a class question's votes** are left out | The item report's own reading, so the counts sit beside its option counts; a class question's votes are counted round by round in its own results (open question 2) | One filter |
+| A **choose-all** answer counts every labelled option the student ticked, even when the answer as a whole passed | The report is about which options were chosen | One rule |
+| Who is one student: **a roll number** in a room and in a class (pooled across the class's rooms, as class analytics pools them); **a roll number in a room** across a chapter's rooms (two classes may share a roll number) | A class's rooms share its roster; a chapter's may not. The attainment reports' attendance-based roll resolver was not used: these are counts, not marks. The cost is that a student whose roll number was corrected between two rooms counts as two students in the class figure | Using `rollResolver` from `services/attainment.js` |
+| Contact details refused: an email address, a web address (`http://`, `https://`, `www.`), an `@handle`, a run of ten or more digits | No misconception about a chapter needs one; ten digits is an Indian mobile | A pattern |
+| Labels are **left out of every answer snapshot**, and so of a deleted room's archive | They are staff commentary that changes without the question changing, and the reports read the current ones from the question | Adding them back to `snapshotOf` |
+| **Not in the live insights.** The item report shows each option's label beside its count instead | The insights are rebuilt from the profiles at most every two seconds; these counts need every answer row and the bank, and would be a second heavy read on the live screen. The task said not to force it | A reader in `roomInsights` |
+| A label the model proposes that breaks a rule (on a right answer, off the list, too long, with contact details, a second for one option) is **dropped, and the question kept** | A label is advice beside the question; refusing the question for it would cost a good item | Refusing the item, as the question's own rules do |
+
+Open questions for the owner (nothing is built that settles them):
+
+1. **Who chose it.** Should the professor be able to see which students chose a
+   labelled option (staff-only), to regroup them for reteaching? Today the reports are
+   counts only.
+2. **Class questions.** Should a class question's rounds show the labelled options'
+   counts before and after discussion ("8 chose the option linked to X; after
+   discussion, 2")? Today a class question's own results count options by letter, and
+   the misconception reports leave its votes out.
+3. **More kinds.** Labels per gap (dropdown) or per row (match, categorise, grid).
+4. **Label history.** Keep every version of a label, and report each answer under the
+   label in force when it was given, as well as under today's.
+5. **The contract's Question document.** `CONTRACT.md` section 3 lists the v1 fields of
+   a question; `misconceptions` is not in it, as no field added since Phase 1 is. The
+   contract was not amended (no decision names it).
+
+### Phase 5: honest indicators
+
+Built from the directive's Phase 5 words ("Show: AI draft labels. Reasons for mastery
+movements. Number of responses supporting an estimate. Uncertain classifications.
+Translation-related difficulty warnings. Do not use stigmatizing labels such as 'slow
+learner' in the student interface. Do not introduce coins, competitive leaderboards or
+punitive streak systems."). Server only, no migration; `docs/API.md`, "Phase 5: honest
+indicators". The defaults below were chosen so the work could go ahead. Each is in use
+and reversible with no data migration. **The owner should look at the first two.**
+
+| Default | Why | Cost of changing it |
+|---|---|---|
+| **The translation warning**: at least 5 counted answers in each of two languages, and the highest and lowest shares right **more than 20 percentage points** apart (`TRANSLATION_WARNING` in `services/honesty.js`) | 5 is the item report's own floor for a difficulty band (the ladder's window). At 5 answers one answer is exactly 20 points, so a single answer either way can never raise it: it takes two. Compared in whole numbers, so 80% against 60% is no warning | Two numbers |
+| **A question's language is taken as English** until one is recorded | No question records its language, and the generator is told to write English. A professor's own question in another language would be misread; none can be told apart today | A `language` on the question (a column), which Phase 6's language switch needs anyway |
+| **What the phone is told about who wrote a question**: "Written by your professor." / "Written with AI help and checked by your professor." / "... and chosen by your professor." (no approval recorded, which a class question's snapshot never keeps) / "Made without AI from your professor's material[, and checked by your professor]." / "Made without AI, by your professor or from their material." (older rows nothing tells apart) | True in each case, in a student's words, never "template", "fallback" or a model's name; "checked" only where an approval is recorded | Six sentences |
+| **A level is provisional** while the ladder has no decision behind it: fewer than 3 answers at it (`MIN_LEVEL_EVIDENCE`) and no move into it. A level reached by a move is firm on that move's answers, however few answers at the new level since. With adapt off the level is the room's, not an estimate, and never provisional | The ladder's own minimum; a move needed 3 answers to happen, so the placement rests on them | One rule in `levelEvidence` |
+| **The moves kept** are promotions, demotions, the move into the below-40% band's Understand, and holds at the top and the floor; not a hold in the middle (every other answer) | The directive's "promote, demote, hold at the edge"; the profile's `reason` already says the latest | One list (`KEPT_RULES`) |
+| **A move's share is kept to four places**; its window is 5, or null for the band (every counted answer) | Enough to tell 2 of 3 from 0.67; never shown without its answers | One rounding |
+| **An uncertain level**: an AI question no professor has approved (approval is the confirmation; an older AI question in use with no approval recorded counts as unconfirmed), or a kind not in its level's set. A poll never | The gap analysis's "a third of model-written items miss the level"; the kinds per level are the product's own rule | Two rules in `levelCheck` |
+| **Mastery sentences carry no percentage and no band**, so the phone and the professor are told the same words ("3 of 4 right at Apply: at or above this room's goal ...") | The phone's rule since decision (a) is no band and no percentage; one set of words cannot drift | Two sets of sentences |
+| **Moves are staff-only**; a student's own dashboard trail is sent without them | The band's sentence names the band (decision (a)); the phone's own reason is `next.why` | A phone-safe sentence per move |
+
+Open questions for the owner (nothing is built that settles them):
+
+1. **Staff lists ordered by score.** The insights' "By band" and "Lowest first" sorts
+   (behind the Support card's "Show them") and a professor's analytics list of
+   students (highest accuracy first) order students by score, on staff screens only.
+   The directive says students are listed in roll order, never ordered by score. Keep,
+   or roll order only? The room CSV's "Slow Learner" column (staff) likewise.
+2. **The question's language.** Record it per question (a column) before the Hub's
+   language switch, so the warning compares with the language a question was written
+   in, not English by default.

@@ -20,15 +20,15 @@ import {
   applyReview,
   REVIEW_MARKS,
 } from '../services/mastery.js';
-import { selectNext, servableFor, inRoomSet } from '../services/selector.js';
+import { selectNext, servableFor, inRoomSet, reasonForPhone } from '../services/selector.js';
 import { needsApproval } from '../services/edits.js';
-import { buildGridRow } from '../routes/session.js';
+import { buildGridRow, phoneRow } from '../routes/session.js';
 import { isRecordId } from '../ids.js';
 import { score, forStudent, countsTowardMastery, shownOptionIndices } from '../questionTypes.js';
-import { verifyTeacherCredentials } from '../auth.js';
+import { verifyAccountToken, verifyTeacherCredentials } from '../auth.js';
 import { canRead, ownerOf } from '../ownership.js';
 import { phoneSupports } from '../accommodations.js';
-import { findStudentForRoll } from '../services/accounts.js';
+import { findStudentForRoll, getAccommodations, rollKey } from '../services/accounts.js';
 import {
   reportFromClient,
   checkLatency,
@@ -39,10 +39,32 @@ import {
 // typo or a probe, and an empty one would collide with every other empty one.
 // ROLL_SHAPE lives with the roster so a class list can never hold a roll number
 // no phone could join with.
-import { ROLL_SHAPE, markJoined, classGrid } from '../services/roster.js';
+import { ROLL_SHAPE, markJoined, classGrid, signalsOff } from '../services/roster.js';
 import { TEACHER_LED_MESSAGE, WAITING_MESSAGE, capReason, roomFeed } from '../services/modes.js';
-import { claimConnection, pushProjector, watchWall } from '../services/projector.js';
+import { claimConnection, pushProjector, screenOf, watchWall } from '../services/projector.js';
 import { roomInsights, sampleFromGrid, scheduleInsights } from '../services/insights.js';
+import { CONFIDENCE_CHOICES, confidenceFrom, storedConfidence } from '../services/confidence.js';
+import { phoneProvenance } from '../services/honesty.js';
+import {
+  CLASS_LOCK,
+  OWN_QUESTION_DETAIL,
+  LATE_DETAIL,
+  EARLY_DETAIL,
+  PAUSED_DETAIL,
+  UNVERIFIED_DETAIL,
+  asQuestion,
+  classQuestionBody,
+  mineNow,
+  phoneClosed,
+  phoneQuestion,
+  phoneVote,
+  roundOf,
+  runningOf,
+  startable,
+  transition,
+  votingRound,
+  withoutAsked,
+} from '../services/classQuestions.js';
 
 const presence = new Map(); // `${code}:${rollNo}` -> socket.id
 const bankCache = new Map(); // sessionId -> Promise<question[]>
@@ -56,6 +78,25 @@ const deletingRooms = new Map(); // sessionId -> how many deletes of it are unde
 const ANSWER_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
 const key = (code, rollNo) => `${String(code).toUpperCase()}:${rollNo}`;
+
+/**
+ * What a phone is told about itself (phoneRow in routes/session.js): the room's
+ * goal and whether it adapts decide the row's `next`. Decision (a) of 19 Nov
+ * 2026: never the teacher's GridRow, which carries the band and the signals.
+ */
+const rowFor = (profile, settings) =>
+  phoneRow(profile, { online: true, goal: settings.masteryGoal, adapt: settings.adapt });
+
+/**
+ * Said to a phone that sent a sign-in the room could not link (decision 7): an
+ * expired token, another kind of account, another roll number, or a room that is
+ * not their professor's. One sentence for all of them; the phone joins as a guest.
+ */
+const NOT_LINKED = 'This room is not linked to your account, so your answers here will not appear in your history. '
+  + 'Check that you are signed in and typed your own roll number.';
+
+/** Did a check just record a signal? `before` is the list as it was, element for element. */
+const recorded = (list, before) => list.length !== before.length || list.at(-1) !== before.at(-1);
 
 /** The grid's online column. Read by the REST grid too, so both agree. */
 export function isOnline(code, rollNo) {
@@ -159,6 +200,8 @@ function logError(event, err) {
   console.error(`[socket] ${event} failed:`, err);
 }
 
+const fail = (message, status) => Object.assign(new Error(message), { status });
+
 /** A payload we chose to drop is not a crash - one line, no stack. */
 function logIgnored(event, detail) {
   console.warn(`[socket] ${event} ignored: ${detail}`);
@@ -197,14 +240,19 @@ async function loadSession(rawCode) {
  * The bank is what the ROOM may serve: active, and inside its question set when
  * it has one (servableFor). Selection, the resumed pin and the bank count a
  * phone is told all read this, so none of them can reach outside the set.
+ *
+ * Nor to a question the room has asked to the class (Phase 5, 0023): once put
+ * to the whole class it is never served to a phone on its own in this room
+ * again (services/classQuestions.js says why). Starting a class question clears
+ * this cache (releaseSession), so the next read leaves it out.
  */
 function loadBank(session) {
   const id = String(session._id);
   let pending = bankCache.get(id);
   if (!pending) {
-    pending = getRepo()
-      .listQuestions(session.contentId)
-      .then((questions) => servableFor(session, questions));
+    const repo = getRepo();
+    pending = Promise.all([repo.listQuestions(session.contentId), repo.listClassQuestions(session._id)])
+      .then(([questions, asked]) => withoutAsked(servableFor(session, questions), asked));
     // A failed read must not poison the cache for the rest of the session.
     pending.catch(() => bankCache.delete(id));
     bankCache.set(id, pending);
@@ -227,9 +275,9 @@ async function gridPayload(session) {
   const repo = getRepo();
   const profiles = await repo.listProfiles(session._id);
   // The room's own mastery goal, so the live grid and the REST grid agree.
-  const { masteryGoal } = sessionSettings(session);
+  const { masteryGoal, adapt } = sessionSettings(session);
   const rows = profiles.map((p) =>
-    buildGridRow(p, { online: isOnline(session.code, p.rollNo), goal: masteryGoal }));
+    buildGridRow(p, { online: isOnline(session.code, p.rollNo), goal: masteryGoal, adapt }));
   const seen = {};
   const { rows: decorated, attendance } = await classGrid(repo, session, rows, seen);
   sampleFromGrid(session, { profiles, ...seen });
@@ -248,7 +296,7 @@ async function gridPayload(session) {
  * what a student was actually asked must not change with them. Teacher-only:
  * this lives in the answers store, which no student route reads.
  */
-function snapshotOf(question, shownOptions = null) {
+export function snapshotOf(question, shownOptions = null) {
   // `checks` is the professor's review advice, not part of what was asked, and
   // at a kilobyte or so it would be copied into every answer row. Who approved
   // the question and when describe the bank's row, not what was asked, and they
@@ -256,7 +304,11 @@ function snapshotOf(question, shownOptions = null) {
   // class): kept here, they split one unchanged question into two versions in
   // the item report and two copies in a room's archive. The model and the slides
   // stay - they say where the question came from, and never change on a row.
-  const { _id, contentId, createdAt, status, checks, approvedBy, approvedAt, ...rest } = question ?? {};
+  // The misconception labels (0024) are staff commentary that changes without
+  // the question changing, and a report reads the question's current ones
+  // (services/misconceptions.js); kept here, a label would ride in every answer
+  // row and its archive, a step nearer a phone than it ever needs to be.
+  const { _id, contentId, createdAt, status, checks, approvedBy, approvedAt, misconceptions, ...rest } = question ?? {};
   // With the fewer-choices support an mcq or multi is shown as a shorter list,
   // and the response is a position in THAT list. Which options were left is
   // derived from the student's supports at the moment of serving, and those can
@@ -306,7 +358,7 @@ async function dispatchNext(socket, { profile, session, bank = null, resume = fa
     // per question finished, so a question still being retried is under it.
     const cap = settings.questionsPerStudent;
     if (cap && profile.history.length >= cap) {
-      socket.emit('server:exhausted', { profile: buildGridRow(profile, { online: true }), reason: capReason(cap) });
+      socket.emit('server:exhausted', { profile: rowFor(profile, settings), reason: capReason(cap) });
       return;
     }
 
@@ -332,7 +384,7 @@ async function dispatchNext(socket, { profile, session, bank = null, resume = fa
     if (!pick) pick = selectNext(profile, items);
 
     if (!pick) {
-      socket.emit('server:exhausted', { profile: buildGridRow(profile, { online: true }) });
+      socket.emit('server:exhausted', { profile: rowFor(profile, settings) });
       return;
     }
 
@@ -356,8 +408,13 @@ async function dispatchNext(socket, { profile, session, bank = null, resume = fa
     const spent = triesSpent(profile, q._id);
 
     socket.emit('server:question', {
-      question: forStudent(q, `${profile.rollNo}:${q._id}`, supports),
-      reason: pick.reason,
+      // `provenance` (Phase 5): who wrote it, in a student's words (never
+      // "template" or a model's name). `q` is always servable here, so never a
+      // draft. `source` stays beside it as it always was.
+      question: { ...forStudent(q, `${profile.rollNo}:${q._id}`, supports), provenance: phoneProvenance(q) },
+      // The phone's own words for the choice (decision (a)): pick.reason, the
+      // professor's, can name the band. It stays on the pin, server-side.
+      reason: reasonForPhone(profile, q.bloom),
       index: profile.history.length + 1,
       bankCount: items.length,
       triesLeft: Math.max(1, allowed + 1 - spent),
@@ -403,39 +460,75 @@ async function handleJoin(io, socket, payload) {
       return;
     }
 
+    // Decision 7 (19 Nov 2026): a room profile is linked to a student account
+    // only when the phone presents that signed-in student's token here,
+    // verified as the student's own routes verify it (verifyAccountToken). It
+    // must be a student account of this room's owner with this roll number. A
+    // typed roll number alone links nothing: it proves nothing about who holds
+    // the phone, and since Phase 1 a link reaches the student's own history.
+    // Checked before the student's lock, so a slow sign-in check holds up no
+    // one else's answer. Never allowed to stop a join: a sign-in that does not
+    // qualify, or a failed check, joins as a guest and is told so.
+    const token = typeof payload?.token === 'string' ? payload.token.trim() : '';
+    let signedIn = null;
+    if (token) {
+      const { account } = await verifyAccountToken(token).catch((err) => {
+        logError('sign-in', err);
+        return { account: null };
+      });
+      if (account?.role === 'student' && session.ownerId && String(account.reportsTo ?? '') === String(session.ownerId)
+        && rollKey(account.rollNo) === rollNo) {
+        signedIn = account;
+      }
+    }
+
     release = await lockProfile(session._id, rollNo);
     const repo = getRepo();
     const name = String(payload?.name ?? '').trim().slice(0, 60);
     const stored = await repo.getProfile(session._id, rollNo);
 
-    // The student account behind this roll number, on the room owner's roster.
-    // Gives the profile a lasting identity (so the answers follow the student
-    // across rooms) and brings the supports their professor set. Only on a live
-    // database, and never allowed to block a join: a failed lookup is a guest.
-    let link = null;
-    if (repo.kind === 'supabase' && session.ownerId) {
-      link = await findStudentForRoll(session.ownerId, rollNo).catch((err) => {
-        logError('account link', err);
+    // The supports the student's professor set. A signed-in student's come
+    // with their account. Without a sign-in they still come from the room
+    // owner's student behind the typed roll number, as before decision 7, on a
+    // live database: supports render the questions, they reveal nothing and
+    // they link nothing. A failed lookup is no supports, never a refused join.
+    let supports = null;
+    if (signedIn) {
+      supports = await getAccommodations(signedIn.id).catch((err) => {
+        logError('supports', err);
         return null;
       });
+    } else if (repo.kind === 'supabase' && session.ownerId) {
+      const found = await findStudentForRoll(session.ownerId, rollNo).catch((err) => {
+        logError('supports', err);
+        return null;
+      });
+      supports = found?.accommodations ?? null;
     }
 
     // TC-07: the same roll number resumes the same profile. Never a second row.
     const profile = stored
       ? hydrate({ ...stored, name: stored.name || name })
       : hydrate(emptyProfile({ sessionId: String(session._id), rollNo, name, startLevel: sessionSettings(session).startLevel }));
-    const linkChanged = Boolean(link) && profile.accountId !== link.id;
-    if (linkChanged) profile.accountId = link.id;
+    // A sign-in links the profile, verified, over whatever link it had (one a
+    // typed roll number made before 0022 included). Without one the profile
+    // keeps its link as it is: an unverified one stays unverified.
+    const linkChanged = Boolean(signedIn) && (profile.accountId !== signedIn.id || !profile.accountVerified);
+    if (linkChanged) {
+      profile.accountId = signedIn.id;
+      profile.accountVerified = true;
+    }
     if (!stored || linkChanged || profile.name !== (stored.name ?? '')) await repo.saveProfile(profile);
-    const supports = link?.accommodations ?? null;
 
     // Two live sockets on one roll number. This is the strongest signal the
     // server has: it is not a browser self-report, devtools cannot switch it
     // off, and the innocent explanation - a phone that dropped and came back -
     // is already excluded, because in that case the old socket is gone and this
-    // lookup finds nothing.
+    // lookup finds nothing. Not recorded for a student marked under 18
+    // (decision 8; signalsOff).
     const heldBy = presence.get(key(session.code, rollNo));
-    if (heldBy && heldBy !== socket.id && io.sockets.sockets.get(heldBy)?.connected) {
+    if (heldBy && heldBy !== socket.id && io.sockets.sockets.get(heldBy)?.connected
+      && !(await signalsOff(repo, session, rollNo))) {
       noteSecondSocket(profile, { other: heldBy });
       await repo.saveProfile(profile).catch((err) => logError('integrity', err));
     }
@@ -463,6 +556,10 @@ async function handleJoin(io, socket, payload) {
       // The full set, for forStudent() and score(). The phone is told only the
       // rendering switches (phoneSupports), never that options were removed.
       supports,
+      // The account this phone proved it is signed in as, when that is the
+      // profile's link (decision 7). Its answers are written as verified, and
+      // only verified answers reach the student's own history.
+      verifiedAccountId: signedIn?.id ?? null,
       // True once this join has told the phone to wait for the start (below);
       // the start serves only such phones (startRoom), so a phone this join
       // served itself is not served a second time.
@@ -473,10 +570,17 @@ async function handleJoin(io, socket, payload) {
     const bank = await loadBank(session);
     const settings = sessionSettings(session);
     socket.emit('session:accepted', {
-      profile: buildGridRow(profile, { online: true, goal: settings.masteryGoal }),
+      profile: rowFor(profile, settings),
       session: { code: session.code, title: session.title ?? '', settings },
       bankCount: bank.length,
       supports: phoneSupports(supports),
+      // Whether this phone's answers go into the signed-in student's history
+      // (decision 7), and, when it sent a sign-in that could not be linked, why not.
+      linked: Boolean(signedIn),
+      ...(token && !signedIn ? { linkNote: NOT_LINKED } : {}),
+      // The three confidence taps a phone may send with any answer (Phase 5).
+      // Optional, and information only: they change no mark and no level.
+      confidence: CONFIDENCE_CHOICES,
     });
 
     await broadcastGrid(io, session);
@@ -513,6 +617,10 @@ async function handleJoin(io, socket, payload) {
     // number finding an existing profile IS the resume case, and a first join
     // simply has no pin to honour.
     await dispatchNext(socket, { profile, session: room, bank, resume: true });
+    // A class question running in the room (Phase 5): a phone that joins or
+    // reconnects mid-question is sent it where it stands, with its own vote in
+    // the current round, after its own question, which it parks.
+    await sendClassState(socket, room, profile);
   } catch (err) {
     logError('student:join', err);
     reject(socket, 'Could not join - try again.');
@@ -538,12 +646,21 @@ async function replayStored(io, socket, { session, profile, prior, settings }) {
   if (String(prior.rollNo) !== String(profile.rollNo)) {
     throw new Error(`answer key ${prior.answerKey} is held by another student's row`);
   }
+  // Nor ever a row kept with a class question (Phase 5): a vote, or an answer
+  // sent as the phone's own after the question was put to the class. Answered
+  // from here, its mark and the key went to the phone before the professor
+  // revealed it, and a vote went into the ladder. handleAnswer never sends one
+  // here; this is the same race as above, and refuses the same way.
+  if (prior.classQuestionId) {
+    throw new Error(`answer key ${prior.answerKey} is held by a row kept with a class question`);
+  }
   const repo = getRepo();
   const question = await repo.getQuestion(prior.questionId).catch(() => null);
   const seed = `${prior.rollNo}:${prior.questionId}`;
 
   if (!prior.final) {
     const allowed = question ? retriesAllowed(question, settings, prior.rollNo, socket.data.student?.supports) : 0;
+    const row = rowFor(profile, settings);
     socket.emit('server:result', {
       retry: true,
       correct: false,
@@ -552,9 +669,9 @@ async function replayStored(io, socket, { session, profile, prior, settings }) {
       kind: prior.kind,
       triesLeft: Math.max(1, allowed + 1 - prior.attempt),
       workingLevel: profile.workingLevel,
-      reason: profile.reason,
+      reason: row.next.why,
       levelChanged: false,
-      profile: buildGridRow(profile, { online: true, goal: settings.masteryGoal }),
+      profile: row,
     });
     return;
   }
@@ -596,6 +713,7 @@ async function replayStored(io, socket, { session, profile, prior, settings }) {
     await broadcastGrid(io, session);
   }
 
+  const row = rowFor(current, settings);
   socket.emit('server:result', {
     correct: prior.ungraded ? false : Boolean(prior.correct),
     score: prior.score,
@@ -609,9 +727,9 @@ async function replayStored(io, socket, { session, profile, prior, settings }) {
     detail: prior.reviewStatus === 'overridden' ? '' : (prior.detail ?? ''),
     kind: prior.kind,
     workingLevel: current.workingLevel,
-    reason: current.reason,
+    reason: row.next.why,
     levelChanged: false,
-    profile: buildGridRow(current, { online: true, goal: settings.masteryGoal }),
+    profile: row,
   });
 }
 
@@ -686,9 +804,24 @@ async function handleAnswer(io, socket, payload) {
     // student with their mark. This attempt is filed under the key scoped to
     // this student instead, which its own resends find again. ANSWER_ID has no
     // '@', so no phone can send a scoped key itself.
-    if (prior && prior.rollNo !== ctx.rollNo) {
+    // A vote's key is not an answer's either (Phase 5), the phone's own vote
+    // included: answering from a vote handed the phone the class question's
+    // key before the reveal, and put the vote into the ladder, which no vote
+    // touches. It is re-keyed the same way (a vote's own scoped keys carry a
+    // ':', so the two never meet).
+    if (prior && (prior.rollNo !== ctx.rollNo || (prior.classQuestionId && prior.detail !== OWN_QUESTION_DETAIL))) {
       answerKey = `${answerKey}@${ctx.rollNo}`;
       prior = await repo.getAnswerByKey(ctx.sessionId, answerKey);
+    }
+    // A resend of an answer this phone sent to a question already put to the
+    // class (kept below with the class question, never counted). The phone is
+    // moved on again, as it was then, and told nothing about the mark: sent
+    // back, the stored mark told any phone the key of a question still being
+    // voted on, one option at a time, and still did after a close without the
+    // key.
+    if (prior?.classQuestionId) {
+      await dispatchNext(socket, { profile, session });
+      return;
     }
     if (prior) {
       await replayStored(io, socket, { session, profile, prior, settings });
@@ -704,11 +837,12 @@ async function handleAnswer(io, socket, payload) {
     // answer that reached the cap is still answered from what was recorded.
     const cap = settings.questionsPerStudent;
     if (!already && cap && profile.history.length >= cap) {
-      socket.emit('server:exhausted', { profile: buildGridRow(profile, { online: true }), reason: capReason(cap) });
+      socket.emit('server:exhausted', { profile: rowFor(profile, settings), reason: capReason(cap) });
       return;
     }
     if (already) {
       const stale = await repo.getQuestion(questionId).catch(() => null);
+      const row = rowFor(profile, settings);
       socket.emit('server:result', {
         correct: already.correct,
         score: already.score ?? (already.correct ? 1 : 0),
@@ -717,9 +851,9 @@ async function handleAnswer(io, socket, payload) {
         solution: stale ? score(stale, response, `${ctx.rollNo}:${stale._id}`, supports).solution : null,
         kind: already.kind ?? stale?.kind ?? 'mcq',
         workingLevel: profile.workingLevel,
-        reason: profile.reason,
+        reason: row.next.why,
         levelChanged: false,
-        profile: buildGridRow(profile, { online: true, goal: settings.masteryGoal }),
+        profile: row,
       });
       return;
     }
@@ -739,8 +873,8 @@ async function handleAnswer(io, socket, payload) {
     // one served id can work out its rejected siblings'.
     // Nor may it be outside the room's question set: the bank above already
     // leaves those out, and this fallback would otherwise take them back in.
-    const found =
-      bank.find((q) => String(q._id) === questionId) ?? (await repo.getQuestion(questionId));
+    const inBank = bank.find((q) => String(q._id) === questionId);
+    const found = inBank ?? (await repo.getQuestion(questionId));
     const question = found && String(found.contentId) === String(session.contentId) && found.status !== 'draft'
       && !needsApproval(found) && inRoomSet(session, found._id)
       ? found
@@ -752,24 +886,84 @@ async function handleAnswer(io, socket, payload) {
       return;
     }
 
+    // A question put to the class in this room (Phase 5): the bank leaves it
+    // out, so a phone gets here when it held the question on its own screen
+    // before it was asked, or sends its id from anywhere else. Its answer is
+    // kept, with the class question and never counted, since the question may
+    // have been discussed or its key shown by now; and the phone is moved on to
+    // a question of its own. It is told nothing about its mark, now or on a
+    // resend (above): that would tell it the key.
+    if (!inBank) {
+      const asked = (await repo.listClassQuestions(session._id))
+        .find((c) => String(c.questionId ?? '').toLowerCase() === questionId.toLowerCase());
+      if (asked) {
+        const seed = `${ctx.rollNo}:${question._id}`;
+        const graded = score(question, response, seed, supports);
+        await repo.recordAnswer({
+          sessionId: ctx.sessionId,
+          answerKey,
+          rollNo: ctx.rollNo,
+          accountId: profile.accountId ?? null,
+          accountVerified: Boolean(ctx.verifiedAccountId) && String(ctx.verifiedAccountId) === String(profile.accountId ?? ''),
+          questionId,
+          contentId: question.contentId ?? session.contentId ?? null,
+          topic: question.topic ?? '',
+          bloom: question.bloom,
+          kind: question.kind ?? 'mcq',
+          questionSnapshot: snapshotOf(question, shownOptionIndices(question, seed, supports)),
+          response,
+          attempt: triesSpent(profile, questionId) + 1,
+          final: false,
+          correct: countsTowardMastery(question) ? graded.correct : null,
+          score: countsTowardMastery(question) ? graded.score : null,
+          ungraded: !countsTowardMastery(question),
+          servedAt: profile.served?.at ?? null,
+          questionSource: question.source ?? 'llm',
+          detail: OWN_QUESTION_DETAIL,
+          autoCorrect: graded.correct,
+          autoScore: graded.score,
+          autoDetail: graded.detail ?? '',
+          reviewStatus: 'auto',
+          confidence: storedConfidence(confidenceFrom(payload?.confidence)),
+          classQuestionId: String(asked._id),
+          round: roundOf(asked),
+        });
+        logIgnored('student:answer', `question ${questionId} was put to the class; kept with it, not counted`);
+        await dispatchNext(socket, { profile, session, bank });
+        return;
+      }
+    }
+
     const spent = triesSpent(profile, questionId);
     // The same answer as the attempt just refused, under a new key: that is a
     // resend, not a new attempt, and must not cost a retry.
     if (spent > 0 && profile.served?.last === print) {
       const allowed = retriesAllowed(question, settings, ctx.rollNo, supports);
+      const row = rowFor(profile, settings);
       socket.emit('server:result', {
         retry: true,
         correct: false,
         kind: question.kind ?? 'mcq',
         triesLeft: Math.max(1, allowed + 1 - spent),
         workingLevel: profile.workingLevel,
-        reason: profile.reason,
+        reason: row.next.why,
         levelChanged: false,
-        profile: buildGridRow(profile, { online: true, goal: settings.masteryGoal }),
+        profile: row,
       });
       return;
     }
     const attempt = spent + 1;
+
+    // Decision 8: a signal this answer records is dropped again, before any
+    // write, for a student their class's roster marks under 18. The roster is
+    // read only when a signal was recorded (signalsOff).
+    const signalsBefore = profile.integrity.slice();
+    const unlessMinor = async (p) => {
+      if (recorded(p.integrity, signalsBefore) && (await signalsOff(repo, session, ctx.rollNo))) {
+        p.integrity = signalsBefore.slice();
+      }
+      return p;
+    };
 
     // Checked on the first attempt only: `served.at` is when the server sent
     // this question, so the gap is real elapsed time and not something the
@@ -790,6 +984,10 @@ async function handleAnswer(io, socket, payload) {
       answerKey,
       rollNo: ctx.rollNo,
       accountId: profile.accountId ?? null,
+      // Decision 7: verified only when THIS phone signed in as the linked
+      // account. Another phone typing the same roll number writes unverified
+      // rows, which never reach the student's own history.
+      accountVerified: Boolean(ctx.verifiedAccountId) && String(ctx.verifiedAccountId) === String(profile.accountId ?? ''),
       questionId,
       contentId: question.contentId ?? session.contentId ?? null,
       topic: question.topic ?? '',
@@ -810,6 +1008,10 @@ async function handleAnswer(io, socket, payload) {
       // reading, not a verdict, so it is stored as provisional for a professor
       // to confirm or override.
       reviewStatus: kind === 'open' ? 'provisional' : 'auto',
+      // The phone's confidence tap (Phase 5), or null for none. Stored and
+      // never read below: the mark, the ladder and the reply are the same with
+      // or without it (services/confidence.js).
+      confidence: storedConfidence(confidenceFrom(payload?.confidence)),
     };
 
     // A poll asks without assessing. It is recorded so it is never served
@@ -826,7 +1028,8 @@ async function handleAnswer(io, socket, payload) {
         questionId, bloom: question.bloom, topic: question.topic ?? '', kind, answerId: answerKey, at: answeredAt,
       });
       next.served = null;
-      await repo.saveProfile(next);
+      await repo.saveProfile(await unlessMinor(next));
+      const row = rowFor(next, settings);
       socket.emit('server:result', {
         ungraded: true,
         correct: false,
@@ -835,9 +1038,9 @@ async function handleAnswer(io, socket, payload) {
         detail: '',
         kind,
         workingLevel: next.workingLevel,
-        reason: next.reason,
+        reason: row.next.why,
         levelChanged: false,
-        profile: buildGridRow(next, { online: true, goal: settings.masteryGoal }),
+        profile: row,
       });
       await broadcastGrid(io, session);
       return;
@@ -862,7 +1065,8 @@ async function handleAnswer(io, socket, payload) {
         tries: attempt,
         last: print,
       };
-      await repo.saveProfile(profile);
+      await repo.saveProfile(await unlessMinor(profile));
+      const row = rowFor(profile, settings);
       socket.emit('server:result', {
         retry: true,
         correct: false,
@@ -871,9 +1075,9 @@ async function handleAnswer(io, socket, payload) {
         kind,
         triesLeft: allowed + 1 - attempt,
         workingLevel: profile.workingLevel,
-        reason: profile.reason,
+        reason: row.next.why,
         levelChanged: false,
-        profile: buildGridRow(profile, { online: true, goal: settings.masteryGoal }),
+        profile: row,
       });
       return;
     }
@@ -905,8 +1109,9 @@ async function handleAnswer(io, socket, payload) {
     // Answered, so the pin is spent. Leaving it set would resume a student onto
     // a question they have already been marked on.
     next.served = null;
-    await repo.saveProfile(next);
+    await repo.saveProfile(await unlessMinor(next));
 
+    const row = rowFor(next, settings);
     socket.emit('server:result', {
       correct: graded.correct,
       score: graded.score,
@@ -919,9 +1124,11 @@ async function handleAnswer(io, socket, payload) {
       attempts: attempt,
       redeemed: redeemed ? redeemed.reason : null,
       workingLevel: next.workingLevel,
-      reason: next.reason,
+      // The phone's own sentence (decision (a)): next.reason is the professor's
+      // and can name the band. It stays on the profile for the teacher's grid.
+      reason: row.next.why,
       levelChanged: Boolean(decision.changed),
-      profile: buildGridRow(next, { online: true, goal: settings.masteryGoal }),
+      profile: row,
     });
 
     await broadcastGrid(io, session);
@@ -1013,6 +1220,391 @@ export async function startRoom(io, session) {
   await pushProjector(io, getRepo(), session);
 }
 
+/* ------------------------------------------------- class questions (Phase 5) --
+ *
+ * One approved question put to every phone in the room, a pause to discuss, a
+ * re-vote (services/classQuestions.js holds the rules and every payload). The
+ * professor's routes (routes/classQuestions.js) call startClassQuestion and
+ * changeClassQuestion; the phones vote with student:vote. The state is in the
+ * store (class_questions, 0023), so a restart loses none of it.
+ *
+ * Votes and changes of state meet under locks, so a round's counts are exact
+ * when the professor sees them: a vote is written under its student's lock,
+ * and reads the class question's state there; a change of state is written
+ * under the room's CLASS_LOCK and then takes and drops every student's lock
+ * once (sweepVotes), which waits out any vote that read the old state. After
+ * that no vote can land in a round that has closed: it reads the new state and
+ * is kept, not counted.
+ */
+
+/** Wait out every vote already under way in a room: each student's lock, taken and dropped once. */
+async function sweepVotes(sessionId) {
+  const profiles = await getRepo().listProfiles(sessionId);
+  for (const rollNo of new Set(profiles.map((p) => String(p.rollNo)))) (await lockProfile(sessionId, rollNo))();
+}
+
+/** The class question running in a room now, or null. */
+async function runningClassQuestion(session) {
+  return runningOf(await getRepo().listClassQuestions(session._id));
+}
+
+/** Is this phone signed in as the account its profile is linked to (decision 7)? */
+const signedInAs = (ctx, profile) => Boolean(ctx?.verifiedAccountId) && String(ctx.verifiedAccountId) === String(profile?.accountId ?? '');
+
+/**
+ * One phone's view of the running class question, with its own vote in the
+ * current round. Under a roll number a signed-in student's phone linked
+ * (decision 7), a phone not signed in as her is sent only votes from phones not
+ * signed in: a typed roll number proves nothing, and her vote and confidence
+ * tap are hers.
+ */
+async function sendClassState(socket, session, profile) {
+  try {
+    const cq = await runningClassQuestion(session);
+    if (!cq) return;
+    const { rollNo } = profile;
+    const rows = await getRepo().listAnswers({ sessionId: session._id, rollNo, classQuestionId: String(cq._id) });
+    const seen = profile.accountVerified && !signedInAs(socket.data.student, profile)
+      ? rows.filter((a) => a.accountVerified !== true)
+      : rows;
+    socket.emit('class:question', phoneQuestion(cq, { mine: mineNow(cq, seen, rollNo) }));
+  } catch (err) {
+    logError('class:question', err);
+  }
+}
+
+/**
+ * The professor's screens and the projector, after a change or a vote:
+ * teacher:class-question (the staff body: counts, never a name), and the
+ * projector's screen when it shows a class question.
+ */
+export async function pushClassQuestion(io, session, cq) {
+  if (!io) return;
+  try {
+    const repo = getRepo();
+    if (io.sockets.adapter.rooms.get(`teacher:${session.code}`)?.size) {
+      io.to(`teacher:${session.code}`).emit('teacher:class-question', await classQuestionBody(repo, session, cq, { isOnline }));
+    }
+    if (screenOf(session).question?.source === 'class') await pushProjector(io, repo, session);
+  } catch (err) {
+    logError('class push', err);
+  }
+}
+
+// After a vote the professor's screens and the wall follow at most once a
+// second per class question: forty phones voting in one breath are one push.
+const CLASS_PUSH_MS = 1000;
+const classPushes = new Map(); // class question id -> { last, timer }
+
+function scheduleClassPush(io, session, cqId) {
+  if (!io) return;
+  const key = String(cqId);
+  const state = classPushes.get(key) ?? { last: 0, timer: null };
+  classPushes.set(key, state);
+  if (state.timer) return;
+  const wait = Math.max(0, state.last + CLASS_PUSH_MS - Date.now());
+  state.timer = setTimeout(async () => {
+    state.timer = null;
+    state.last = Date.now();
+    // Questions no vote has reached for a while drop out, so the map does not
+    // grow for the life of the process.
+    if (classPushes.size > 200) {
+      for (const [k, s] of classPushes) if (!s.timer && s.last + 60000 < state.last) classPushes.delete(k);
+    }
+    const cq = await getRepo().getClassQuestion(key).catch((err) => logError('class push', err));
+    if (cq) await pushClassQuestion(io, session, cq);
+  }, wait);
+  state.timer.unref?.();
+}
+
+/**
+ * A phone's own question again, after a class question closed. A phone parks
+ * its own question while the class question runs and goes back to it; only a
+ * phone whose own question WAS the class question has nothing to go back to
+ * (it is never served on its own in this room again), so it is sent its next
+ * one, under its own lock, as every serve is.
+ */
+async function resumeAfterClass(io, session, cq) {
+  const room = await getRepo().getSession(session._id);
+  if (!room || room.status !== 'open') return;
+  const id = String(room._id);
+  const asked = String(cq.questionId ?? '').toLowerCase();
+  const phones = [...io.sockets.sockets.values()].filter((s) => s.data.student?.sessionId === id && s.connected);
+  await Promise.all(phones.map(async (socket) => {
+    const release = await lockProfile(id, socket.data.student.rollNo);
+    try {
+      if (roomDeleting(id)) return;
+      const stored = await getRepo().getProfile(id, socket.data.student.rollNo);
+      if (stored && String(stored.served?.questionId ?? '').toLowerCase() === asked) {
+        await dispatchNext(socket, { profile: hydrate(stored), session: room, resume: true });
+      }
+    } catch (err) {
+      logError('class resume', err);
+    } finally {
+      release();
+    }
+  }));
+}
+
+/** Every phone, the professor's screens and the wall, after a class question starts or changes. */
+async function announceClassQuestion(io, session, cq) {
+  if (!io) return;
+  const phones = io.to(`session:${session.code}`);
+  if (cq.state === 'closed') phones.emit('class:closed', phoneClosed(cq));
+  else phones.emit('class:question', phoneQuestion(cq));
+  await pushClassQuestion(io, session, cq);
+  if (cq.state === 'closed') await resumeAfterClass(io, session, cq);
+}
+
+/**
+ * The room's owner puts one approved question to every phone (POST
+ * /api/session/:code/class-questions). Under the room's CLASS_LOCK, from the
+ * room as stored now: only while it is open, in a room where phones answer, one
+ * at a time, an approved question of the room whose options every phone can
+ * vote on, never one asked to the class here before (startable). The live
+ * loop's bank is cleared so the question is never served on its own here again.
+ */
+export async function startClassQuestion(io, session, { questionId, by = null }) {
+  const repo = getRepo();
+  const release = await lockProfile(session._id, CLASS_LOCK);
+  let made;
+  let room;
+  try {
+    if (roomDeleting(session._id)) throw fail('That room is being deleted. Nothing was changed.', 409);
+    room = await repo.getSession(session._id);
+    if (!room) throw fail('That room was not found.', 404);
+    const [questions, asked] = await Promise.all([repo.listQuestions(room.contentId), repo.listClassQuestions(room._id)]);
+    const question = startable({
+      room, settings: sessionSettings(room), question: { _id: questionId }, servable: servableFor(room, questions), asked,
+    });
+    made = await repo.addClassQuestion({
+      sessionId: String(room._id),
+      seq: asked.reduce((n, c) => Math.max(n, Number(c.seq) || 0), 0) + 1,
+      questionId: String(question._id),
+      questionSnapshot: snapshotOf(question),
+      state: 'open',
+      startedAt: new Date().toISOString(),
+      startedBy: by,
+    });
+    releaseSession({ sessionId: room._id });
+  } finally {
+    release();
+  }
+  await announceClassQuestion(io, room, made);
+  return made;
+}
+
+/**
+ * pause, revote or close (with `reveal`) a class question of this room, under
+ * the room's CLASS_LOCK; when a round closes, every vote under way is waited
+ * out (sweepVotes) before anyone is told, so the counts the professor then sees
+ * are the round's whole. 404 for a class question of another room.
+ */
+export async function changeClassQuestion(io, session, cqId, action, { by = null, reveal = false } = {}) {
+  const repo = getRepo();
+  const release = await lockProfile(session._id, CLASS_LOCK);
+  let updated;
+  try {
+    if (roomDeleting(session._id)) throw fail('That room is being deleted. Nothing was changed.', 409);
+    const cq = isRecordId(String(cqId ?? '')) ? await repo.getClassQuestion(cqId) : null;
+    if (!cq || String(cq.sessionId) !== String(session._id)) throw fail('That class question was not found.', 404);
+    const patch = transition(cq, action, { by, reveal });
+    updated = (await repo.updateClassQuestion(cq._id, patch)) ?? { ...cq, ...patch };
+    if (votingRound(cq.state) !== null) await sweepVotes(session._id);
+  } finally {
+    release();
+  }
+  await announceClassQuestion(io, session, updated);
+  return updated;
+}
+
+/**
+ * A room closing closes its running class question too, without revealing its
+ * key (routes/session.js, under the room's status lock). The phones are told
+ * the room closed; the professor's screens get the class question as it ended.
+ */
+export async function closeClassQuestionWithRoom(io, session, { by = null } = {}) {
+  const repo = getRepo();
+  const release = await lockProfile(session._id, CLASS_LOCK);
+  let updated = null;
+  try {
+    const cq = runningOf(await repo.listClassQuestions(session._id));
+    if (!cq) return;
+    const patch = transition(cq, 'close', { by, reveal: false });
+    updated = (await repo.updateClassQuestion(cq._id, patch)) ?? { ...cq, ...patch };
+    if (votingRound(cq.state) !== null) await sweepVotes(session._id);
+  } finally {
+    release();
+  }
+  if (updated) await pushClassQuestion(io, session, updated);
+}
+
+/** A room resumed from a pause: its phones are sent the running class question again, which the pause covered. */
+export async function resendClassQuestion(io, session) {
+  if (!io) return;
+  try {
+    const cq = await runningClassQuestion(session);
+    if (cq) io.to(`session:${session.code}`).emit('class:question', phoneQuestion(cq));
+  } catch (err) {
+    logError('class:question', err);
+  }
+}
+
+/**
+ * student:vote { classQuestionId, round, response, confidence?, answerId }.
+ *
+ * Every vote is stored, as an answers row with the class question's id and the
+ * round (never overwritten): one in the round now open counts, and replaces the
+ * same phone's earlier vote in that round, which is kept with `final` false; a
+ * vote for a round that has closed is kept and never counted (LATE_DETAIL), and
+ * so is one for a round not yet open (EARLY_DETAIL), one sent while the room is
+ * paused (PAUSED_DETAIL, as an answer then is refused), and one from a phone not
+ * signed in, under a roll number whose vote in the round came from the
+ * signed-in student's own phone (UNVERIFIED_DETAIL, decision 7). The
+ * vote touches no profile: no level, no history, no band (a class question
+ * moves no level). The phone is told what it sent and whether it counts, never
+ * whether it was right.
+ *
+ * Under the student's lock, like an answer, so a room delete waits it out and a
+ * change of state's sweep finds it.
+ */
+async function handleVote(io, socket, payload) {
+  let release = null;
+  try {
+    const ctx = socket.data.student;
+    if (!ctx) {
+      reject(socket, 'Join a session before voting.');
+      return;
+    }
+    const session = await loadSession(ctx.code);
+    if (!session || session.status === 'closed') {
+      socket.emit('session:closed', {});
+      return;
+    }
+    const cqId = String(payload?.classQuestionId ?? '');
+    const response = payload?.response;
+    if (!isRecordId(cqId) || response === undefined || response === null) {
+      logIgnored('student:vote', `malformed payload from ${ctx.rollNo}`);
+      return;
+    }
+
+    release = await lockProfile(ctx.sessionId, ctx.rollNo);
+    if (roomDeleting(ctx.sessionId)) {
+      reject(socket, 'That vote did not save. Vote again.');
+      return;
+    }
+    const repo = getRepo();
+    const cq = await repo.getClassQuestion(cqId);
+    if (!cq || String(cq.sessionId) !== ctx.sessionId) {
+      // Nothing it could be a vote in: there is no question to store it against.
+      logIgnored('student:vote', `class question ${cqId} is not this room's`);
+      return;
+    }
+    const profile = await repo.getProfile(ctx.sessionId, ctx.rollNo);
+    if (!profile) {
+      reject(socket, 'Your row is gone - rejoin with your roll number.');
+      return;
+    }
+
+    const open = votingRound(cq.state);
+    const sentRound = Number(payload?.round);
+    const round = sentRound === 1 || sentRound === 2 ? sentRound : (open ?? roundOf(cq));
+    const question = asQuestion(cq);
+    const seed = `class:${cq._id}`;
+    const verified = signedInAs(ctx, profile);
+
+    const mine = await repo.listAnswers({ sessionId: ctx.sessionId, rollNo: ctx.rollNo, classQuestionId: String(cq._id) });
+    const inRound = mine.filter((a) => Number(a.round) === round);
+
+    // Why this vote is kept and not counted, or null when it counts. In this
+    // order, so a phone is told the first thing that stopped it.
+    let notCounted = null;
+    if (round > roundOf(cq)) notCounted = EARLY_DETAIL;
+    else if (open === null || round !== open) notCounted = LATE_DETAIL;
+    else if (session.status === 'paused') notCounted = PAUSED_DETAIL;
+    else if (!verified && inRound.some((a) => a.final !== false && a.accountVerified === true)) notCounted = UNVERIFIED_DETAIL;
+    const counted = notCounted === null;
+
+    // The idempotency key, as for an answer: the phone's, or one derived from
+    // the vote and how many this phone has sent in the round (so a phone that
+    // sends none and goes back to an earlier choice is a new vote, not that
+    // one again). A key another row holds that is not this student's vote in
+    // this question and round is filed under a key scoped to it, which no phone
+    // can send ('@' and ':' are outside ANSWER_ID). So is one a signed-in
+    // student's phone wrote, sent by a phone not signed in as her (decision 7):
+    // answered from it, that phone was sent her vote and her confidence tap.
+    const print = answerPrint(response);
+    const sent = String(payload?.answerId ?? '');
+    let answerKey = ANSWER_ID.test(sent) ? sent : `class-${cq._id}-${round}-${ctx.rollNo}-${inRound.length + 1}-${print}`;
+    const theirs = (row) => row && row.rollNo === ctx.rollNo && String(row.classQuestionId ?? '') === String(cq._id)
+      && Number(row.round) === round && (verified || row.accountVerified !== true);
+    let prior = await repo.getAnswerByKey(ctx.sessionId, answerKey);
+    if (prior && !theirs(prior)) {
+      answerKey = `${answerKey}@${ctx.rollNo}:${cq._id}:${round}`;
+      prior = await repo.getAnswerByKey(ctx.sessionId, answerKey);
+    }
+    if (prior) {
+      socket.emit('class:vote', phoneVote(cq, prior, { counted: prior.final !== false }));
+      return;
+    }
+    const graded = score(question, response, seed, null);
+    const ungraded = graded.ungraded === true;
+    const stamped = await repo.recordAnswer({
+      sessionId: ctx.sessionId,
+      answerKey,
+      rollNo: ctx.rollNo,
+      accountId: profile.accountId ?? null,
+      accountVerified: verified,
+      questionId: question._id || null,
+      contentId: session.contentId ?? null,
+      topic: question.topic ?? '',
+      bloom: question.bloom,
+      kind: question.kind ?? 'mcq',
+      questionSnapshot: cq.questionSnapshot ?? {},
+      response,
+      // The n-th vote this phone sent in this round.
+      attempt: inRound.length + 1,
+      final: counted,
+      correct: ungraded ? null : graded.correct,
+      score: ungraded ? null : graded.score,
+      ungraded,
+      servedAt: (round === 2 ? cq.revoteAt : cq.startedAt) ?? null,
+      answeredAt: new Date().toISOString(),
+      language: 'en',
+      questionSource: question.source ?? 'llm',
+      detail: counted ? (graded.detail ?? '') : notCounted,
+      autoCorrect: graded.correct,
+      autoScore: graded.score,
+      autoDetail: graded.detail ?? '',
+      reviewStatus: 'auto',
+      confidence: storedConfidence(confidenceFrom(payload?.confidence)),
+      classQuestionId: String(cq._id),
+      round,
+    });
+    if (stamped.duplicate) {
+      socket.emit('class:vote', phoneVote(cq, stamped.answer, { counted: stamped.answer.final !== false }));
+      return;
+    }
+    // The vote it replaces is kept, with `final` false: the record of a phone
+    // that changed its mind, never counted. A failure here leaves two votes in
+    // force, and the later one is still the one every count reads.
+    if (counted) {
+      for (const old of inRound.filter((a) => a.final !== false)) {
+        await repo.updateAnswer(old._id, { final: false }).catch((err) => logError('vote', err));
+      }
+    }
+    socket.emit('class:vote', phoneVote(cq, stamped.answer, { counted }));
+    // A phone that missed the pause hears it, as an answer sent then would.
+    if (notCounted === PAUSED_DETAIL) socket.emit('session:paused', { code: session.code });
+    scheduleClassPush(io, session, cq._id);
+  } catch (err) {
+    logError('student:vote', err);
+    socket.emit('session:rejected', { reason: 'That vote did not save. Vote again.' });
+  } finally {
+    release?.();
+  }
+}
+
 async function handleWatch(socket, payload) {
   try {
     // Read through the cache: a teacher watching a closed session still gets
@@ -1055,6 +1647,14 @@ async function handleWatch(socket, payload) {
       socket.emit('teacher:insights', await roomInsights(getRepo(), session));
     } catch (err) {
       logError('teacher:insights', err);
+    }
+    // A class question running in the room, as it stands, so a screen opened
+    // mid-question has it at once (Phase 5).
+    try {
+      const cq = await runningClassQuestion(session);
+      if (cq) socket.emit('teacher:class-question', await classQuestionBody(getRepo(), session, cq, { isOnline }));
+    } catch (err) {
+      logError('teacher:class-question', err);
     }
   } catch (err) {
     logError('teacher:watch', err);
@@ -1105,6 +1705,9 @@ async function handleSignal(socket, payload) {
     if (!stored) return;
     const profile = hydrate(stored);
     if (!reportFromClient(profile, String(payload?.kind ?? ''), payload ?? {})) return;
+    // Decision 8: never recorded for a student their class's roster marks
+    // under 18. The phone is told nothing either way, as for any signal.
+    if (await signalsOff(repo, await loadSession(ctx.code), ctx.rollNo)) return;
     await repo.saveProfile(profile);
   } catch (err) {
     logError('student:signal', err);
@@ -1132,6 +1735,7 @@ export function attachSockets(io) {
     socket.on('student:signal', unlessProjector('student:signal', (payload) => handleSignal(socket, payload)));
     socket.on('student:answer', unlessProjector('student:answer', (payload) => handleAnswer(io, socket, payload)));
     socket.on('student:next', unlessProjector('student:next', () => handleNext(socket)));
+    socket.on('student:vote', unlessProjector('student:vote', (payload) => handleVote(io, socket, payload)));
     socket.on('teacher:watch', unlessProjector('teacher:watch', (payload) => handleWatch(socket, payload)));
     socket.on('projector:watch', (payload) => watchWall(io, getRepo(), socket, payload)
       .catch((err) => logError('projector:watch', err)));

@@ -91,7 +91,8 @@ router.get('/:code/projector', requireTeacher, async (req, res, next) => {
 
 /**
  * Change what the wall shows: { mode?, question?, revealed?, diagram?,
- * showNames?, pick? } (services/projector.js screenChangeFrom). Every projector
+ * showNames?, showCounts?, pick? } (services/projector.js screenChangeFrom);
+ * question may be { classQuestionId } since Phase 5. Every projector
  * watching the room gets the new screen at once. 409, and nothing changed, for
  * a bank question's key (or that of a question asked aloud from the bank) in a
  * room whose phones may still be served it: anything but Teacher-led.
@@ -107,13 +108,16 @@ router.patch('/:code/projector', requireTeacher, async (req, res, next) => {
     // The tallies whenever the screen may end up on one: a key the professor
     // reveals is checked against where the tally's question came from.
     const wantsTallies = body.question?.tallyId !== undefined || (body.question === undefined && current.question?.source === 'tally');
-    const [servable, tallies, picks] = await Promise.all([
+    // A class question of this room (Phase 5), when the screen is to show one.
+    const wantsClass = body.question?.classQuestionId !== undefined;
+    const [servable, tallies, picks, classQuestions] = await Promise.all([
       wantsQuestions ? repo.listQuestions(session.contentId).then((qs) => servableFor(session, qs)) : [],
       wantsTallies ? repo.listTallies(session._id) : [],
       body.pick ? repo.listWheelPicks(session._id) : [],
+      wantsClass ? repo.listClassQuestions(session._id) : [],
     ]);
     const { mode } = sessionSettings(session);
-    setScreen(session, screenChangeFrom(body, current, { servable, tallies, picks, mode }));
+    setScreen(session, screenChangeFrom(body, current, { servable, tallies, picks, classQuestions, mode }));
     await pushProjector(req.app.get('io'), repo, session);
     res.json(await projectorBody(req, session));
   } catch (err) {

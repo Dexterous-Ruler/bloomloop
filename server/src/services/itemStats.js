@@ -33,6 +33,16 @@ import { EDITABLE } from './edits.js';
 import { DEFAULT_MASTERY_GOAL, DEMOTE_AT, WINDOW } from './mastery.js';
 import { roomQuestionIds } from './selector.js';
 import { allAnswers } from './evidence.js';
+import { labelFor, misconceptionReport } from './misconceptions.js';
+import {
+  ORIGINAL_LANGUAGE,
+  TRANSLATION_NOTE,
+  TRANSLATION_WARNING,
+  basedOn,
+  languageSplit,
+  levelCheck,
+  questionProvenance,
+} from './honesty.js';
 
 /**
  * The band's cut points: the product's own two numbers rather than new ones, so
@@ -281,6 +291,10 @@ const shapeOf = (kind, rows) => JSON.stringify([kind, rows.map((r) => [r.label, 
  *
  * `select: 'many'` rows (multi, hot text, grid) count every tick, so their counts
  * add up to more than the answers. `unanswered` is how many chose nothing there.
+ *
+ * Each option also carries its misconception label (0024), the bank question's
+ * current one for an option of those words (services/misconceptions.js), or
+ * null: so "4 chose C" can be read as "4 chose the option linked to ...".
  */
 function distributionOf(list, question) {
   const latest = list.length ? { ...snapOf(list[list.length - 1]), kind: kindOf(list[list.length - 1]) } : question;
@@ -290,7 +304,9 @@ function distributionOf(list, question) {
   const rows = base.map((r) => ({
     label: r.label,
     select: r.select,
-    options: r.options.map((o, index) => ({ index, text: o.text, count: 0, key: o.key })),
+    options: r.options.map((o, index) => ({
+      index, text: o.text, count: 0, key: o.key, misconception: question ? labelFor(question, o.text) : null,
+    })),
     unanswered: 0,
   }));
   let counted = 0;
@@ -352,17 +368,37 @@ function itemFor(id, list, question, totals) {
     bloom: question?.bloom ?? latest?.bloom ?? null,
     topic: question?.topic ?? latest?.topic ?? '',
     status: question ? (question.status ?? 'active') : 'deleted',
+    // Who wrote it and where it stands at the gate, and whether its level is
+    // one to check (Phase 5, services/honesty.js). A deleted question is read
+    // off the newest answer's snapshot, which keeps the source and the model;
+    // its level is no longer anyone's to check.
+    provenance: questionProvenance(question ?? {
+      source: snap.source ?? latest?.questionSource ?? 'llm', model: snap.model ?? null, status: 'discarded',
+    }),
+    levelCheck: question ? levelCheck({ ...question, kind }) : null,
     attempts,
     correct,
     proportionCorrect,
     meanScore: attempts && !ALL_OR_NOTHING.includes(kind) ? list.reduce((s, a) => s + markOf(a), 0) / attempts : null,
     band: difficultyBand(proportionCorrect, attempts),
+    // What the difficulty rests on (Phase 5): the answers counted, and whether
+    // they are too few for a band at all.
+    basis: {
+      answers: attempts,
+      provisional: attempts < MIN_ANSWERS_FOR_BAND,
+      sentence: attempts && attempts < MIN_ANSWERS_FOR_BAND
+        ? `${basedOn(attempts).slice(0, -1)}: too few for a difficulty band (${MIN_ANSWERS_FOR_BAND} needed).`
+        : basedOn(attempts),
+    },
     pointBiserial: pb.r,
     pointBiserialN: pb.n,
     pointBiserialNote: pb.note,
     flags: pb.r !== null && pb.r < 0 ? [{ ...NEGATIVE_POINT_BISERIAL }] : [],
     distribution: distributionOf(list, question ? { ...question, kind } : null),
     versions: new Set(list.map(versionOf)).size,
+    // The same answers by the language each was given in, with a warning when
+    // two languages' shares right are far apart (Phase 5, languageSplit).
+    languages: languageSplit(list),
   };
 }
 
@@ -406,7 +442,19 @@ export function itemAnalysis({ answers = [], questions = [], include = [] } = {}
     || String(a.text).localeCompare(String(b.text))
     || a.questionId.localeCompare(b.questionId));
 
-  return { counted: { answers: rows.length, students: totals.size }, thresholds: THRESHOLDS, items };
+  return {
+    counted: { answers: rows.length, students: totals.size },
+    thresholds: THRESHOLDS,
+    items,
+    // When a question's answers in two languages are worth a warning, and how
+    // many questions have one (Phase 5).
+    translation: {
+      original: ORIGINAL_LANGUAGE,
+      ...TRANSLATION_WARNING,
+      warnings: items.filter((i) => i.languages.warning).length,
+      note: TRANSLATION_NOTE,
+    },
+  };
 }
 
 /* --------------------------------------------------------------- readers -- */
@@ -414,10 +462,15 @@ export function itemAnalysis({ answers = [], questions = [], include = [] } = {}
 /**
  * One room the caller may read: every question answered in it, and every
  * question of its set (sessions.question_ids) even if nobody has reached it yet.
+ *
+ * A class question's votes (Phase 5) are left out here and below: a question
+ * put to the whole class, then discussed and voted on again, did not meet each
+ * student on their own, and its own results count its two rounds apart
+ * (services/classQuestions.js).
  */
 export async function roomItemStats(repo, session) {
   const [answers, questions] = await Promise.all([
-    allAnswers(repo, { sessionId: session._id, final: true }),
+    allAnswers(repo, { sessionId: session._id, final: true, classVotes: false }),
     repo.listQuestions(session.contentId, { includeDiscarded: true }),
   ]);
   return itemAnalysis({ answers, questions, include: roomQuestionIds(session) ?? [] });
@@ -431,9 +484,56 @@ export async function roomItemStats(repo, session) {
 export async function contentItemStats(repo, content, rooms = []) {
   const sessionIds = rooms.map((r) => String(r._id));
   const [answers, questions] = await Promise.all([
-    sessionIds.length ? allAnswers(repo, { sessionIds, final: true }) : [],
+    sessionIds.length ? allAnswers(repo, { sessionIds, final: true, classVotes: false }) : [],
     repo.listQuestions(content._id, { includeDiscarded: true }),
   ]);
   const approved = questions.filter((q) => q.status === 'active').map((q) => q._id);
   return itemAnalysis({ answers, questions, include: approved });
+}
+
+/* ------------------------------------------------- misconception counts --
+
+   How many students chose each labelled wrong option (services/misconceptions.js),
+   from the same counted answers as the item report above: final, graded, one per
+   student per question per room, a class question's votes left out. */
+
+/**
+ * One room the caller may read: every labelled question answered in it, and
+ * every labelled question of its set, answered or not.
+ */
+export async function roomMisconceptions(repo, session) {
+  const [answers, questions] = await Promise.all([
+    allAnswers(repo, { sessionId: session._id, final: true, classVotes: false }),
+    repo.listQuestions(session.contentId, { includeDiscarded: true }),
+  ]);
+  return misconceptionReport({ rows: gradedAnswers(answers), questions, include: roomQuestionIds(session) ?? [], pool: 'roll' });
+}
+
+/**
+ * A class's rooms, already filtered to those the caller may read: a student is
+ * a roll number, pooled across the rooms as class analytics pools them (a
+ * class's rooms share its roster), so one who chose an option in two rooms is
+ * one student and two answers.
+ */
+export async function classMisconceptions(repo, rooms = []) {
+  const sessionIds = rooms.map((r) => String(r._id));
+  const contentIds = [...new Set(rooms.map((r) => String(r.contentId)))];
+  const [answers, banks] = await Promise.all([
+    sessionIds.length ? allAnswers(repo, { sessionIds, final: true, classVotes: false }) : [],
+    Promise.all(contentIds.map((id) => repo.listQuestions(id, { includeDiscarded: true }))),
+  ]);
+  return misconceptionReport({ rows: gradedAnswers(answers), questions: banks.flat(), pool: 'roll' });
+}
+
+/**
+ * One question across `rooms`, the rooms on its chapter the caller may read. A
+ * student is a roll number in a room: a chapter's rooms may be different
+ * classes, and two sections may both have a 21CS01.
+ */
+export async function questionMisconceptions(repo, question, rooms = []) {
+  const sessionIds = rooms.map((r) => String(r._id));
+  const answers = sessionIds.length ? await allAnswers(repo, { sessionIds, final: true, classVotes: false }) : [];
+  const id = String(question._id).toLowerCase();
+  const mine = gradedAnswers(answers).filter((a) => questionKey(a) === id);
+  return misconceptionReport({ rows: mine, questions: [question], include: [question._id], pool: 'room' });
 }

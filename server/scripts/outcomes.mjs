@@ -230,8 +230,8 @@ const CSV = [
     && b.read?.rows === 8 && b.read?.blankLines === 1, JSON.stringify(b.read));
   check('exactly what would be added, with lines: tidied, quoted commas and quotes kept',
     JSON.stringify(b.wouldAdd) === JSON.stringify([
-      { line: 4, rollNo: '21CS03', name: 'Rao, Chitra' }, { line: 5, rollNo: '21CS04', name: 'Dev Patel' },
-      { line: 10, rollNo: '21CS05', name: 'Esha "E" Nair' }]), JSON.stringify(b.wouldAdd));
+      { line: 4, rollNo: '21CS03', name: 'Rao, Chitra', under18: false }, { line: 5, rollNo: '21CS04', name: 'Dev Patel', under18: false },
+      { line: 10, rollNo: '21CS05', name: 'Esha "E" Nair', under18: false }]), JSON.stringify(b.wouldAdd));
   check('every refused row with its line, code and reason',
     JSON.stringify(b.refused?.map((r) => [r.line, r.code])) === JSON.stringify([
       [2, 'on-roster'], [3, 'removed'], [7, 'repeated'], [8, 'no-roll'], [9, 'bad-name']])
@@ -257,8 +257,9 @@ const CSV = [
     `HTTP ${real.status} ${b.error ?? JSON.stringify(b.added)}`);
   check('and refuses the same rows', JSON.stringify(b.refused?.map((r) => r.line)) === '[2,3,7,8,9]' && b.size === 4);
   const stored = await studentsNow();
-  check('the store holds a roll number and a name per student and nothing from the other columns',
-    stored.every((s) => JSON.stringify(Object.keys(s).sort()) === '["_id","addedAt","classId","name","removedAt","rollNo"]')
+  check('the store holds a roll number and a name per student (and the under-18 mark, no) and nothing from the other columns',
+    stored.every((s) => JSON.stringify(Object.keys(s).sort()) === '["_id","addedAt","classId","name","removedAt","rollNo","under18"]'
+      && s.under18 === false)
     && !JSON.stringify(stored).includes('9845012345') && !JSON.stringify(stored).includes('asha@example.com'));
   check('the removed student was not restored', stored.find((s) => s.rollNo === '21CS02')?.removedAt !== null);
 }

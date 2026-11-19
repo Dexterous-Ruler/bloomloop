@@ -4,7 +4,7 @@
 import {
   Content, Question, Session, Profile, Answer, RoomArchive, AnswerReview, Media, Class, ClassStudent, Attendance,
   Observation, WheelRound, WheelPick, HandTally, RoomActivity, InsightAction, ProjectorLink,
-  CourseOutcome, OutcomeTopic, QuestionOutcomeOverride, AttainmentConfig,
+  CourseOutcome, OutcomeTopic, QuestionOutcomeOverride, AttainmentConfig, ClassQuestion,
 } from '../models/index.js';
 
 const lean = (d) => (d ? JSON.parse(JSON.stringify(d)) : null);
@@ -93,6 +93,8 @@ export function createMongoRepo() {
       }
       // Its projector links (0018), which are not evidence and are not archived.
       await ProjectorLink.deleteMany({ sessionId: String(id) });
+      // Its class questions (0023), archived with it first.
+      await ClassQuestion.deleteMany({ sessionId: String(id) });
       await Answer.deleteMany({ sessionId: id });
       await Profile.deleteMany({ sessionId: id });
       await Session.findByIdAndDelete(id);
@@ -151,10 +153,11 @@ export function createMongoRepo() {
     async getAnswer(id) {
       return lean(await Answer.findById(id).lean());
     },
-    // `student` and `before`: see memoryRepo. `accountId: null` also matches a missing field.
+    // `student`, `before`, `classQuestionId` and `classVotes`: see memoryRepo.
+    // `accountId: null` also matches a missing field, as `classQuestionId: null` does.
     async listAnswers({
       sessionId, sessionIds, rollNo, accountId, student, topic, bloom, reviewStatus, kind, final, before,
-      order = 'asc', limit = 2000, offset = 0,
+      classQuestionId, classVotes, order = 'asc', limit = 2000, offset = 0,
     } = {}) {
       const q = {};
       if (sessionId) q.sessionId = sessionId;
@@ -162,7 +165,11 @@ export function createMongoRepo() {
       if (rollNo) q.rollNo = String(rollNo);
       if (accountId) q.accountId = accountId;
       const anyOf = [];
-      if (student) {
+      if (student?.verifiedOnly) {
+        // The student reading themself (decision 7): linked AND verified, never a roll number.
+        if (!student.accountId) return [];
+        anyOf.push([{ accountId: String(student.accountId), accountVerified: true }]);
+      } else if (student) {
         const either = [];
         if (student.accountId) either.push({ accountId: String(student.accountId) });
         if (student.rollNo) either.push({ rollNo: String(student.rollNo), accountId: null });
@@ -184,6 +191,8 @@ export function createMongoRepo() {
       if (reviewStatus) q.reviewStatus = reviewStatus;
       if (kind) q.kind = kind;
       if (final !== undefined) q.final = final === true;
+      if (classQuestionId) q.classQuestionId = String(classQuestionId);
+      else if (classVotes === false) q.classQuestionId = null;
       const dir = order === 'desc' ? -1 : 1;
       return lean(await Answer.find(q).sort({ answeredAt: dir, _id: dir }).skip(offset).limit(limit).lean());
     },
@@ -273,7 +282,7 @@ export function createMongoRepo() {
       return made;
     },
     async updateClassStudent(id, patch) {
-      const allowed = ['name', 'rollNo', 'removedAt'];
+      const allowed = ['name', 'rollNo', 'removedAt', 'under18'];
       const set = Object.fromEntries(Object.entries(patch).filter(([k, v]) => allowed.includes(k) && v !== undefined));
       try {
         return lean(await ClassStudent.findByIdAndUpdate(id, { $set: set }, { new: true }).lean());
@@ -468,6 +477,23 @@ export function createMongoRepo() {
         }
         throw err;
       }
+    },
+
+    // -- class questions (0023; see memoryRepo for the contract) --
+    async addClassQuestion(doc) {
+      if (await ClassQuestion.exists({ sessionId: String(doc.sessionId), state: { $ne: 'closed' } })) {
+        throw Object.assign(new Error('Another class question is still running in this room. Close it first.'), { status: 409 });
+      }
+      return placed('place in the room\'s class questions', () => ClassQuestion.create({ ...doc, sessionId: String(doc.sessionId) }));
+    },
+    async getClassQuestion(id) {
+      return lean(await ClassQuestion.findById(id).lean().catch(() => null));
+    },
+    async listClassQuestions(sessionId) {
+      return lean(await ClassQuestion.find({ sessionId: String(sessionId) }).sort({ seq: 1 }).lean()) ?? [];
+    },
+    async updateClassQuestion(id, patch) {
+      return patchOne(ClassQuestion, id, patch, ['state', 'revealed', 'pausedAt', 'revoteAt', 'closedAt', 'closedBy']);
     },
   };
 }

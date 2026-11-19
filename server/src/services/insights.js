@@ -35,11 +35,16 @@ import {
   isSlowLearner,
   eligibleLevels,
   sessionSettings,
+  levelEvidence,
+  levelMoves,
+  masteryBasis,
   SLOW_LEARNER_BAND,
   MIN_EVIDENCE,
 } from './mastery.js';
+import { basedOn, studentLanguages } from './honesty.js';
 import { selectSet, servableFor } from './selector.js';
-import { answerItem, rollKey } from './evidence.js';
+import { allAnswers, answerItem, rollKey } from './evidence.js';
+import { CONFIDENCE_CHOICES, CONFIDENCE_NOTE, confidenceCounts } from './confidence.js';
 import { ROLL_SHAPE } from './roster.js';
 import {
   OBSERVATION_KINDS,
@@ -181,6 +186,12 @@ export function bandReason({ correct, answers, band }) {
   }
   return `${correct} of ${answers} graded answers right (${Math.round((correct / answers) * 100)}%): ${bandLabel(band)}.`;
 }
+
+/**
+ * What a band rests on (Phase 5): the graded answers, and whether they are too
+ * few for a band at all, which is provisional and never a firm state.
+ */
+export const bandBasis = (s) => ({ answers: s.answers, provisional: s.answers < MIN_BAND_ANSWERS, sentence: bandReason(s) });
 
 /* ---------------------------------------------------------------- figures -- */
 
@@ -380,6 +391,7 @@ export function focusCard(figures, levels) {
       evidence: 'Working levels of students with at least one graded answer.',
       action: null,
       figures: { level: null, students: 0, answers: 0, correct: 0 },
+      basis: { students: 0, answers: 0, sentence: 'No graded answers yet.' },
     };
   }
   const level = LEVELS.find((l) => counts[l] === most);
@@ -395,6 +407,14 @@ export function focusCard(figures, levels) {
     evidence: 'Working levels of students with at least one graded answer; graded answers in this room.',
     action: { label: `Ask ${LABEL[level]}`, do: 'ask', level },
     figures: { level, students: most, answers: cell.answers, correct: cell.correct },
+    // What the card rests on (Phase 5): every student with a graded answer, and
+    // this level's answers in the room.
+    basis: {
+      students: figures.graded,
+      answers: cell.answers,
+      sentence: `Based on ${plural(figures.graded, 'student', 'students')} with a graded answer, and `
+        + `${plural(cell.answers, `${LABEL[level]} answer`, `${LABEL[level]} answers`)} in this room.`,
+    },
   };
 }
 
@@ -413,6 +433,7 @@ export function supportCard(figures, start = null) {
       ...base,
       text: `Nobody has ${MIN_BAND_ANSWERS} graded answers yet, so nobody is placed in a band.`,
       figures: { now: null, start: null, change: null, banded: 0 },
+      basis: { students: 0, sentence: `Nobody has ${MIN_BAND_ANSWERS} graded answers yet.` },
     };
   }
   const was = start?.value ?? null;
@@ -424,7 +445,15 @@ export function supportCard(figures, start = null) {
   const text = now
     ? `${plural(now, 'student is', 'students are')} below 40% overall${compared}.`
     : `No student is below 40% overall (${plural(figures.banded, 'student has', 'students have')} ${MIN_BAND_ANSWERS} or more graded answers)${compared}.`;
-  return { ...base, text, figures: { now, start: was, change, banded: figures.banded } };
+  return {
+    ...base,
+    text,
+    figures: { now, start: was, change, banded: figures.banded },
+    basis: {
+      students: figures.banded,
+      sentence: `Based on ${plural(figures.banded, 'student', 'students')} with at least ${MIN_BAND_ANSWERS} graded answers each.`,
+    },
+  };
 }
 
 /** Participation: who is present and has not answered yet. */
@@ -443,6 +472,7 @@ export function participationCard(figures, session) {
       flagId: 'participation:nobody-present',
       text: session.classId ? 'Nobody is marked present yet.' : 'No phone has joined this room yet.',
       figures: { present: 0, answered: 0, notAnswered: 0 },
+      basis: { students: 0, sentence: 'Nobody present yet.' },
     };
   }
   return {
@@ -452,6 +482,7 @@ export function participationCard(figures, session) {
       ? `${plural(silent, 'present student', 'present students')} ${haveOrHas(silent)} not answered yet in this room.`
       : 'Every present student has answered at least once.',
     figures: { present: figures.present, answered: figures.answered, notAnswered: silent },
+    basis: { students: figures.present, sentence: `Based on ${plural(figures.present, 'present student', 'present students')}.` },
   };
 }
 
@@ -574,6 +605,8 @@ export async function roomInsights(repo, session) {
 
   const names = new Map(roster.filter((s) => !s.removedAt).map((s) => [s.rollNo, s.name]));
   const present = new Set(figures.presentRolls);
+  const byRoll = new Map(profiles.map((p) => [hydrate(p).rollNo, p]));
+  const { adapt } = sessionSettings(session);
   const students = figures.students.map((s) => ({
     rollNo: s.rollNo,
     name: s.name,
@@ -587,6 +620,10 @@ export async function roomInsights(repo, session) {
     band: s.band,
     bandLabel: bandLabel(s.band),
     reason: bandReason(s),
+    // What the band and the level rest on (Phase 5): each a count and a
+    // sentence, provisional below the engine's own minimum.
+    bandBasis: bandBasis(s),
+    levelBasis: levelEvidence(byRoll.get(s.rollNo), { adapt }),
     answered: s.answered,
   }));
   const count = (id) => students.filter((s) => s.band === id).length;
@@ -621,13 +658,22 @@ export async function roomInsights(repo, session) {
     cards,
     ...(figures.teacherLed
       ? { cardsNote: 'A Teacher-led room takes no answers on phones, so it has no band, card or digital figure. '
-          + 'Its teacher records are counted under teacherRecords.' }
+          + 'Its teacher records are counted on their own, beside this.' }
       : {}),
     kpis: {
-      accuracy: kpi('Class accuracy', figures.accuracy, held.start.accuracy, { answers: figures.answers, students: figures.graded }),
-      support: kpi('Needs support', figures.support, held.start.support, { banded: figures.banded }),
+      accuracy: kpi('Class accuracy', figures.accuracy, held.start.accuracy, {
+        answers: figures.answers, students: figures.graded,
+        sentence: basedOn(figures.answers, { students: figures.graded, unit: 'graded answer' }),
+      }),
+      support: kpi('Needs support', figures.support, held.start.support, {
+        banded: figures.banded,
+        sentence: figures.banded
+          ? `Based on ${plural(figures.banded, 'student', 'students')} with at least ${MIN_BAND_ANSWERS} graded answers each.`
+          : `Nobody has ${MIN_BAND_ANSWERS} graded answers yet.`,
+      }),
       participation: kpi('Participation', figures.participation, held.start.participation, {
         answered: figures.answered, present: figures.present,
+        sentence: figures.present ? `Based on ${plural(figures.present, 'present student', 'present students')}.` : 'Nobody present yet.',
       }),
     },
     series: { since: held.since, interval: held.interval, points: held.points },
@@ -775,8 +821,11 @@ export async function studentCard(repo, session, rawRoll) {
   if (!raw && !onRoster) throw fail('That student was not found.', 404);
 
   const day = roomDay(session);
-  const [answers, bank, events, picks] = await Promise.all([
-    repo.listAnswers({ sessionId: session._id, rollNo, final: true, order: 'desc', limit: LAST_ANSWERS }),
+  const [own, bank, events, picks] = await Promise.all([
+    // Every final answer to this student's own questions here, oldest first:
+    // the last ten, and the confidence counts. A class question's votes are not
+    // theirs alone (Phase 5), so neither reads them.
+    allAnswers(repo, { sessionId: session._id, rollNo, final: true, classVotes: false }),
     raw && settings.mode !== 'teacher-led' && session.status !== 'closed'
       ? repo.listQuestions(session.contentId).then((qs) => servableFor(session, qs))
       : [],
@@ -826,6 +875,8 @@ export async function studentCard(repo, session, rawRoll) {
       answers: standing.answers,
       correct: standing.correct,
       reason: bandReason(standing),
+      // Below the minimum there is no band, and that is provisional, not a state.
+      provisional: standing.answers < MIN_BAND_ANSWERS,
     },
     serving: profile ? {
       level: profile.workingLevel,
@@ -835,7 +886,14 @@ export async function studentCard(repo, session, rawRoll) {
       // The engine's below-40% band: Remember and Understand only, whatever the level.
       ceiling: isSlowLearner(profile),
       adapt: settings.adapt,
+      // What the level rests on, and every move the ladder made, newest first,
+      // each with its rule, window, share and answers (Phase 5: the history
+      // keeps them, so they survive a reload).
+      basis: levelEvidence(profile, { adapt: settings.adapt }),
+      moves: levelMoves(profile),
     } : null,
+    // Per level answered at, what its mastery rests on, against this room's goal.
+    mastery: profile ? masteryBasis(profile, { goal: settings.masteryGoal }) : [],
     levels: LEVELS.map((level) => {
       const c = classCells[level];
       const answersAt = mine ? mine[level].seen : 0;
@@ -851,12 +909,19 @@ export async function studentCard(repo, session, rawRoll) {
       };
     }),
     lastAnswers: {
-      items: answers.map((a) => answerItem(a, session, { name })),
+      items: own.slice(-LAST_ANSWERS).reverse().map((a) => answerItem(a, session, { name })),
       limit: LAST_ANSWERS,
       // Final answers only: an attempt followed by a retry never counted. Every
       // attempt is in GET /api/session/:code/answers?rollNo=.
       final: true,
     },
+    // How sure this student said they were, as counts by tap and by right and
+    // wrong, over the answers above (Phase 5). Counts only: never per answer,
+    // and never a label. It moves nothing on this card or anywhere else.
+    confidence: { counts: confidenceCounts(own), choices: CONFIDENCE_CHOICES, note: CONFIDENCE_NOTE },
+    // Which of these answers were in a language other than the question's own
+    // (Phase 5); each of lastAnswers carries its own `language` too.
+    languages: studentLanguages(own),
     nextSet: profile && settings.mode !== 'teacher-led' && session.status !== 'closed'
       ? plannedNextSet(profile, bank, { cap: settings.questionsPerStudent })
       : null,

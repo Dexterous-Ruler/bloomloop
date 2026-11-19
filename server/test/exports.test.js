@@ -194,7 +194,7 @@ describe('the sheets are the JSON report', () => {
     // The share's counted marks again by who wrote the question: every question here is the model's.
     assert.deepEqual([co['Counted answers behind the share on AI-generated questions'], co['Marks obtained behind the share on AI-generated questions'],
       co['Counted answers behind the share on professor-written questions'],
-      co['Counted answers behind the share on offline-template or professor-written questions']], ['3', '2', '0', '0']);
+      co['Counted answers behind the share on offline-template questions (and professor-written before 19 Nov 2026)']], ['3', '2', '0', '0']);
     assert.equal(meta.get('Question sources'), REPORT.questionSources.map((x) => `${x.label}: ${x.description}`).join(' '));
     assert.equal(meta.get('Roll numbers'), ROLL_NUMBERS_AS_TEXT);
     assert.match(meta.get('Roll numbers'), /Data > From Text\/CSV, then set the Roll No column's type to Text/);

@@ -225,10 +225,10 @@ describe('slide-only-reference with an uploaded image', () => {
     assert.equal(check(mcq({ text: 'In the figure shown above, which layer is X?', stimulus: image })).ok, true);
   });
 
-  test('a passage clears "as shown above", not a picture only the slide has', () => {
+  test('a passage clears "as shown above", and since 19 Nov 2026 a figure reference too', () => {
     const passage = { kind: 'passage', text: 'The palisade layer lies under the upper epidermis.' };
     assert.equal(check(mcq({ text: 'As shown above, which layer lies under the epidermis?', stimulus: passage })).ok, true);
-    assert.equal(check(mcq({ text: 'Which layer does the diagram label X?', stimulus: passage })).ok, false);
+    assert.equal(check(mcq({ text: 'Which layer does the diagram label X?', stimulus: passage })).ok, true);
   });
 });
 

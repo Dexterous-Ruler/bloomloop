@@ -158,6 +158,22 @@ export async function verifyTeacherCredentials({ key = '', token = '' } = {}) {
   return { ok: false, role: null, accountId: null, reason: 'Teacher credentials required.' };
 }
 
+/**
+ * The account behind a bearer token, for a caller with no Express request: the
+ * phone's `student:join`, which presents a signed-in student's token so the room
+ * profile can be linked to their account (decision 7, 19 Nov 2026). Verified
+ * exactly as requireAuth verifies the token on a student's own routes: Supabase
+ * Auth says whose it is, and the account must exist and be active. Who may be
+ * linked to what is the caller's rule.
+ *
+ * @returns {Promise<{account: object|null, error: Error|null}>}
+ */
+export async function verifyAccountToken(token = '') {
+  const value = String(token ?? '').trim();
+  if (!value) return { account: null, error: deny('Sign in to continue.', 401) };
+  return verify({ headers: { authorization: `Bearer ${value}` }, get: () => `Bearer ${value}` });
+}
+
 async function resolve(req) {
   if (req[RESOLVED]) return req[RESOLVED];
   const outcome = await verify(req);

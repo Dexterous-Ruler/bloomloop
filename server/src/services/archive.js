@@ -38,6 +38,14 @@
  *              when the room has any. A roster student's name is copied in, as
  *              for attendance. An archive without them had none, so the version
  *              is unchanged. They count towards the 1 MiB like everything else.
+ *   class      the room's class questions (Phase 5, 0023), each with where it
+ *   questions  ended, whether its key was revealed and its times, pointing at
+ *              the question as it was asked by position (`q`), like an answer.
+ *              Their votes are answer rows like any other, each keeping its
+ *              class question's id and its round, and every one of them is kept:
+ *              changed votes and late ones included. Only when the room has
+ *              any; an archive without the table had none, so the version is
+ *              unchanged.
  *   times      milliseconds after `timeBase`, not ISO strings.
  *
  * Not archived with a room: course outcomes and their mappings (Phase 4, 0019).
@@ -54,6 +62,7 @@
  */
 
 import { sessionSettings } from './mastery.js';
+import { minorRolls } from './roster.js';
 
 export const ARCHIVE_FORMAT = 'bloomloop.room-archive';
 export const ARCHIVE_VERSION = 1;
@@ -66,6 +75,7 @@ const ANSWER_TIMES = ['servedAt', 'answeredAt', 'reviewedAt'];
 const HISTORY_TIMES = ['at'];
 const REVIEW_TIMES = ['reviewedAt'];
 const ATTENDANCE_TIMES = ['markedAt'];
+const CLASS_TIMES = ['startedAt', 'pausedAt', 'revoteAt', 'closedAt'];
 const TIME_FIELDS = new Set([...ANSWER_TIMES, ...HISTORY_TIMES, ...REVIEW_TIMES, ...ATTENDANCE_TIMES]);
 
 // The teacher-record tables (0017): the repo read behind each, and its times.
@@ -199,12 +209,13 @@ async function allAnswers(repo, sessionId) {
  */
 export async function buildRoomArchive(repo, session, { archivedBy = null, now = new Date() } = {}) {
   const sessionId = session._id;
-  const [profiles, answers, reviews, marks, roster, ...recordLists] = await Promise.all([
+  const [profiles, answers, reviews, marks, roster, classQuestions, ...recordLists] = await Promise.all([
     repo.listProfiles(sessionId),
     allAnswers(repo, sessionId),
     repo.listAnswerReviews({ sessionId }),
     session.classId ? repo.listAttendance(sessionId) : [],
     session.classId ? repo.listClassStudents(session.classId) : [],
+    repo.listClassQuestions(sessionId),
     ...Object.values(RECORDS).map((r) => r.read(repo, sessionId)),
   ]);
 
@@ -239,9 +250,22 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
     }
   }
 
+  // ------------------------------------------------------ class questions --
+  // Not kept: the session id (the archive's own). The row id is: every vote
+  // names its class question by it. The question as asked goes in `questions`.
+  const classRows = classQuestions.map(({ _id, sessionId: _s, questionSnapshot, ...rest }) => withTimes({
+    id: String(_id),
+    ...rest,
+    q: snapOf(questionSnapshot ?? {}),
+  }, CLASS_TIMES, (v) => toOffset(v, timeBase)));
+
   // ------------------------------------------------------------- students --
   const studentIndex = new Map(profiles.map((p, i) => [String(p.rollNo), i]));
-  const studentRows = profiles.map(({ _id, sessionId: _s, history, ...rest }) => rest);
+  // Decision 8: a student their class roster marks under 18 leaves no signal in
+  // the archive either, even one recorded before the mark was set.
+  const minors = minorRolls(roster, marks);
+  const studentRows = profiles.map(({ _id, sessionId: _s, history, ...rest }) => (
+    minors.has(String(rest.rollNo)) ? { ...rest, integrity: [] } : rest));
 
   // -------------------------------------------------------------- answers --
   // Not kept: the row id and session id (the archive's own), the account id
@@ -351,6 +375,7 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
       reviews: reviews.length,
       ...(session.classId ? { attendance: attendanceRows.length } : {}),
       ...Object.fromEntries(Object.entries(recordTables).map(([name, t]) => [name, t.rows.length])),
+      ...(classRows.length ? { classQuestions: classRows.length } : {}),
     },
     derived: { answers: answerDerived, history: historyDerived },
     questions,
@@ -362,6 +387,7 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
       ? { attendance: toTable(attendanceRows.map((m) => withTimes(m, ATTENDANCE_TIMES, (v) => toOffset(v, timeBase)))) }
       : {}),
     ...recordTables,
+    ...(classRows.length ? { classQuestions: toTable(classRows) } : {}),
   };
 
   const json = JSON.stringify(data);
@@ -378,6 +404,36 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
       archivedAt: data.archivedAt,
       bytes,
       data,
+    },
+  };
+}
+
+/**
+ * An archive as it is served (decision 8): no integrity signal of a student the
+ * class's roster marks under 18 NOW. buildRoomArchive leaves out the signals of
+ * a student marked when the room is deleted; a student marked afterwards, or an
+ * archive written before 0022, still held theirs. Read from the roster as it
+ * stands and the archive's own attendance marks (the roll number each was made
+ * under, and the roster's at the time), as minorRolls reads a live room. The
+ * stored archive is not rewritten: what was recorded stays recorded, and is
+ * shown nowhere.
+ */
+export function servedArchive(data, roster = []) {
+  const table = data?.students;
+  if (!data?.room?.classId || !table?.cols) return data;
+  const marks = fromTable(data.attendance).flatMap((m) => [
+    { rollNo: m.markedRollNo, classStudentId: m.classStudentId },
+    { rollNo: m.rollNo, classStudentId: m.classStudentId },
+  ]);
+  const minors = minorRolls(roster, marks);
+  const roll = table.cols.indexOf('rollNo');
+  const signals = table.cols.indexOf('integrity');
+  if (!minors.size || roll < 0 || signals < 0) return data;
+  return {
+    ...data,
+    students: {
+      ...table,
+      rows: table.rows.map((r) => (minors.has(String(r[roll])) ? r.map((v, i) => (i === signals ? [] : v)) : r)),
     },
   };
 }
@@ -437,5 +493,12 @@ export function decodeRoomArchive(data) {
     name,
     fromTable(data[name]).map((row) => withTimes(row, times, (v) => fromOffset(v, base))),
   ]));
-  return { room: { ...data.room, classId: data.room?.classId ?? null }, students, answers, reviews, attendance, ...records };
+  // A room with no class question, or archived before them, has none.
+  const classQuestions = fromTable(data.classQuestions).map((row) => {
+    const { q, ...rest } = withTimes(row, CLASS_TIMES, (v) => fromOffset(v, base));
+    return { ...rest, questionSnapshot: questions[q] ?? {} };
+  });
+  return {
+    room: { ...data.room, classId: data.room?.classId ?? null }, students, answers, reviews, attendance, ...records, classQuestions,
+  };
 }

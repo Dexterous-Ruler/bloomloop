@@ -360,7 +360,7 @@ const first = await reportOf();
   // Every question here was written by the model (source 'llm'), so every answer is on an AI-generated question.
   check('the answer totals: 28 counted, 25 digital, 2 provisional, 1 reviewed; 24 mapped, 4 unmapped, adding up; all 28 on AI-generated questions',
     same(b.answers, { rows: 28, setAside: 0, chosen: 28, ungraded: 0, graded: 28,
-      byType: { digital: 25, aiProvisional: 2, humanReviewed: 1 }, mapped: 24, excluded: 0, unmapped: 4,
+      byType: { digital: 25, aiProvisional: 2, humanReviewed: 1, revote: 0 }, mapped: 24, excluded: 0, unmapped: 4,
       bySource: { aiGenerated: 28, professorWritten: 0, offlineTemplate: 0 } }), JSON.stringify(b.answers));
   check('what reaches no outcome is named: Memory, 4 answers', b.unmapped?.length === 1 && b.unmapped[0].topic === 'Memory' && b.unmapped[0].answers === 4);
 

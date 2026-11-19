@@ -85,6 +85,10 @@ const outQuestion = (r) =>
     createdBy: r.created_by ?? null,
     approvedBy: r.approved_by ?? null,
     approvedAt: r.approved_at ?? null,
+    // 0022: the active question a regenerated draft would replace.
+    replacesId: r.replaces_id ?? null,
+    // 0024: misconception labels on its wrong options.
+    misconceptions: Array.isArray(r.misconceptions) ? r.misconceptions : [],
     ...(r.payload && typeof r.payload === 'object' ? r.payload : {}),
   };
 
@@ -109,6 +113,8 @@ const inQuestion = (d) => {
     created_by: d.createdBy ?? null,
     approved_by: d.approvedBy ?? null,
     approved_at: d.approvedAt ?? null,
+    replaces_id: d.replacesId ?? null,
+    misconceptions: Array.isArray(d.misconceptions) ? d.misconceptions : [],
   };
 };
 
@@ -168,9 +174,10 @@ const outProfile = (r) =>
         }
       : null,
     integrity: Array.isArray(r.integrity) ? r.integrity : [],
-    // The student account this room profile belongs to, when the room owner's
-    // roster maps the roll number to one. Null for a guest roll number.
+    // The student account this room profile is linked to, or null.
     accountId: r.account_id ?? null,
+    // 0022 (decision 7): true only for a link the signed-in student's token made.
+    accountVerified: r.account_verified === true,
   };
 
 /**
@@ -210,6 +217,11 @@ const outAnswer = (r) =>
     reviewedAt: r.reviewed_at ?? null,
     reviewNote: r.review_note ?? '',
     confidence: r.confidence ?? null,
+    // 0022 (decision 7): sent by a phone signed in as the linked account.
+    accountVerified: r.account_verified === true,
+    // 0023: the class question and round of a vote; null on every other answer.
+    classQuestionId: r.class_question_id ?? null,
+    round: r.round == null ? null : Number(r.round),
   };
 
 const outArchive = (r) =>
@@ -280,6 +292,8 @@ const outClassStudent = (r) =>
     name: r.name,
     addedAt: r.added_at,
     removedAt: r.removed_at ?? null,
+    // 0022 (decision 8): the owner's optional mark.
+    under18: r.under_18 === true,
   };
 
 const outAttendance = (r) =>
@@ -446,6 +460,24 @@ const outOverride = (r) =>
     updatedBy: r.updated_by ?? null,
   };
 
+// 0023: a class question, where it stands, and the question as it was asked.
+const outClassQuestion = (r) =>
+  r && {
+    _id: r.id,
+    sessionId: r.session_id,
+    seq: Number(r.seq),
+    questionId: r.question_id ?? null,
+    questionSnapshot: r.question_snapshot ?? {},
+    state: r.state,
+    revealed: r.revealed === true,
+    startedAt: r.started_at,
+    startedBy: r.started_by ?? null,
+    pausedAt: r.paused_at ?? null,
+    revoteAt: r.revote_at ?? null,
+    closedAt: r.closed_at ?? null,
+    closedBy: r.closed_by ?? null,
+  };
+
 // 0020: a class's attainment formula, one row per saved version.
 const outAttainmentConfig = (r) =>
   r && {
@@ -487,6 +519,9 @@ const inAnswer = (d) => ({
   auto_score: d.autoScore ?? null,
   auto_detail: d.autoDetail ?? '',
   confidence: d.confidence ?? null,
+  account_verified: d.accountVerified === true,
+  class_question_id: d.classQuestionId ?? null,
+  round: d.round ?? null,
 });
 
 /** Only the fields the caller actually sent, so a PATCH never blanks a column. */
@@ -615,6 +650,8 @@ export function createSupabaseRepo() {
         checks: 'checks',
         approvedBy: 'approved_by',
         approvedAt: 'approved_at',
+        // 0024: its own column, so a label write leaves the payload alone.
+        misconceptions: 'misconceptions',
       });
       const payload = {};
       for (const k of PAYLOAD_KEYS) if (patch[k] !== undefined) payload[k] = patch[k];
@@ -784,6 +821,7 @@ export function createSupabaseRepo() {
               served_last: profile.served?.last || null,
               integrity: profile.integrity ?? [],
               account_id: profile.accountId ?? null,
+              account_verified: profile.accountVerified === true,
               updated_at: new Date().toISOString(),
             },
             { onConflict: 'session_id,roll_no' },
@@ -846,17 +884,22 @@ export function createSupabaseRepo() {
      * Oldest first, or newest first with `order: 'desc'`. Filters are ANDed; at least one is expected.
      * `student`: see memoryRepo - account_id = theirs, or their roll number with no account.
      * `before`: see memoryRepo - a page cursor in (answered_at, id) order.
+     * `classQuestionId`, `classVotes: false`: see memoryRepo (0023).
      */
     async listAnswers({
       sessionId, sessionIds, rollNo, accountId, student, topic, bloom, reviewStatus, kind, final, before,
-      order = 'asc', limit = 2000, offset = 0,
+      classQuestionId, classVotes, order = 'asc', limit = 2000, offset = 0,
     } = {}) {
       let q = db.from('answers').select('*');
       if (sessionId) q = q.eq('session_id', sessionId);
       if (Array.isArray(sessionIds)) q = q.in('session_id', sessionIds.length ? sessionIds : ['00000000-0000-0000-0000-000000000000']);
       if (rollNo) q = q.eq('roll_no', String(rollNo));
       if (accountId) q = q.eq('account_id', accountId);
-      if (student) {
+      if (student?.verifiedOnly) {
+        // The student reading themself (decision 7): linked AND verified, never a roll number.
+        if (!student.accountId) return [];
+        q = q.eq('account_id', student.accountId).eq('account_verified', true);
+      } else if (student) {
         // A PostgREST `or` filter is one string, so both values are quoted: a roll
         // number may hold '.', which the filter grammar reserves.
         const either = [];
@@ -877,6 +920,10 @@ export function createSupabaseRepo() {
       if (reviewStatus) q = q.eq('review_status', reviewStatus);
       if (kind) q = q.eq('kind', kind);
       if (final !== undefined) q = q.eq('final', final === true);
+      if (classQuestionId) {
+        if (!isUuid(classQuestionId)) return [];
+        q = q.eq('class_question_id', classQuestionId);
+      } else if (classVotes === false) q = q.is('class_question_id', null);
       // Ordered on id as well, so pages never overlap or skip a row when two
       // answers share a timestamp. PostgREST caps a request at its max-rows
       // setting (1000 by default) whatever `limit` says: page with `offset`.
@@ -1082,7 +1129,7 @@ export function createSupabaseRepo() {
         const rows = unwrap('addClassStudents', await db
           .from('class_students')
           .upsert(
-            docs.slice(i, i + CHUNK).map((d) => ({ class_id: classId, roll_no: d.rollNo, name: d.name })),
+            docs.slice(i, i + CHUNK).map((d) => ({ class_id: classId, roll_no: d.rollNo, name: d.name, under_18: d.under18 === true })),
             { onConflict: 'class_id,roll_no', ignoreDuplicates: true },
           )
           .select());
@@ -1093,7 +1140,7 @@ export function createSupabaseRepo() {
 
     async updateClassStudent(id, patch) {
       if (!isUuid(id)) return null;
-      const set = pick(patch, { name: 'name', rollNo: 'roll_no', removedAt: 'removed_at' });
+      const set = pick(patch, { name: 'name', rollNo: 'roll_no', removedAt: 'removed_at', under18: 'under_18' });
       if (Object.keys(set).length === 0) return this.getClassStudent(id);
       const { data, error } = await db.from('class_students').update(set).eq('id', id).select().maybeSingle();
       if (error?.code === '23505') throw conflict(`Roll number ${patch.rollNo} is already on this class's roster.`);
@@ -1485,51 +1532,160 @@ export function createSupabaseRepo() {
       if (error) fail('addAttainmentConfig')(error);
       return outAttainmentConfig(data);
     },
+
+    // -- class questions (0023; see memoryRepo for the contract) --
+    // 23505 on class_questions_one_running (another is not closed) or on
+    // class_questions_session_seq_key (another request took the number).
+    async addClassQuestion(doc) {
+      const { data, error } = await db.from('class_questions').insert({
+        session_id: doc.sessionId,
+        seq: doc.seq,
+        question_id: doc.questionId ?? null,
+        question_snapshot: doc.questionSnapshot ?? {},
+        state: doc.state ?? 'open',
+        started_at: doc.startedAt ?? new Date().toISOString(),
+        started_by: doc.startedBy ?? null,
+      }).select().single();
+      if (error?.code === '23505') {
+        throw /one_running/.test(error.message ?? '')
+          ? conflict('Another class question is still running in this room. Close it first.')
+          : placeTaken('place in the room\'s class questions');
+      }
+      if (error) fail('addClassQuestion')(error);
+      return outClassQuestion(data);
+    },
+
+    async getClassQuestion(id) {
+      if (!isUuid(id)) return null;
+      const { data, error } = await db.from('class_questions').select('*').eq('id', id).maybeSingle();
+      if (error) fail('getClassQuestion')(error);
+      return outClassQuestion(data);
+    },
+
+    async listClassQuestions(sessionId) {
+      if (!isUuid(sessionId)) return [];
+      return allRecords('listClassQuestions', 'class_questions', (q) => q.eq('session_id', sessionId), ['seq'], outClassQuestion);
+    },
+
+    async updateClassQuestion(id, patch) {
+      if (!isUuid(id)) return null;
+      const set = pick(patch, {
+        state: 'state', revealed: 'revealed', pausedAt: 'paused_at', revoteAt: 'revote_at', closedAt: 'closed_at', closedBy: 'closed_by',
+      });
+      if (Object.keys(set).length === 0) return this.getClassQuestion(id);
+      const { data, error } = await db.from('class_questions').update(set).eq('id', id).select().maybeSingle();
+      if (error) fail('updateClassQuestion')(error);
+      return outClassQuestion(data);
+    },
   };
 }
 
-/** Cheap connectivity + schema probe, run once at boot so failures are loud. */
+/*
+ * The schema the boot probe checks: every table the server writes, and every
+ * column a later file added to a table that already existed, each with the
+ * migration file that makes it, so a missing piece is named with the file to
+ * apply rather than failing write by write.
+ *
+ * ROOM_SCHEMA is what rooms need: a join, an answer, a room opening, a question
+ * saved. Missing any of it, Supabase is not used at all (the store falls back,
+ * and says so), because a room on a half-built database fails mid-class.
+ *
+ * ROUTE_SCHEMA is what only some routes need. Missing it, Supabase is still used
+ * and every room runs; the boot log names each missing piece, the file to apply
+ * and what fails until it is. Falling back to the in-process store for these
+ * would lose every room's data instead. Since the owner's decisions of 19 Nov
+ * 2026 this covers 0019 to 0021, which the probe did not check before: without
+ * 0021 every attendance mark failed to save, and nothing at boot said why.
+ *
+ * Each entry: [table, columns or null for the table itself, migration file, what
+ * fails without it (ROUTE_SCHEMA only)].
+ */
+export const ROOM_SCHEMA = Object.freeze([
+  ['contents', null, '0000_core_tables.sql'],
+  ['questions', null, '0000_core_tables.sql'],
+  ['sessions', null, '0000_core_tables.sql'],
+  ['profiles', null, '0000_core_tables.sql'],
+  ['accounts', null, '0001_accounts_ownership_question_kinds.sql'],
+  ['invites', null, '0002_invites.sql'],
+  ['answers', null, '0008_answers.sql'],
+  ['room_archives', null, '0009_room_archives.sql'],
+  ['answer_reviews', null, '0010_answer_reviews.sql'],
+  // Without these every generated question fails to save (no model column),
+  // which a table probe would not notice until a professor pressed Generate.
+  ['questions', 'model, source_ref, checks, created_by, approved_by, approved_at', '0013_question_provenance_and_approval.sql'],
+  ['contents', 'topic_slides', '0013_question_provenance_and_approval.sql'],
+  ['media', null, '0014_media.sql'],
+  // createSession writes these on every room.
+  ['sessions', 'question_ids', '0015_room_question_sets.sql'],
+  ['sessions', 'class_id', '0016_classes_roster_attendance.sql'],
+  ['classes', null, '0016_classes_roster_attendance.sql'],
+  ['class_students', null, '0016_classes_roster_attendance.sql'],
+  ['attendance', null, '0016_classes_roster_attendance.sql'],
+  ['observations', null, '0017_teacher_records.sql'],
+  ['wheel_rounds', null, '0017_teacher_records.sql'],
+  ['wheel_picks', null, '0017_teacher_records.sql'],
+  ['hand_tallies', null, '0017_teacher_records.sql'],
+  ['room_activities', null, '0017_teacher_records.sql'],
+  ['insight_actions', null, '0017_teacher_records.sql'],
+  ['sessions', 'mode, adapt, start_level, questions_per_student, time_per_question', '0018_room_modes_and_projector.sql'],
+  ['projector_links', null, '0018_room_modes_and_projector.sql'],
+  // Written on every join (saveProfile) and every answer (recordAnswer), on
+  // every question saved (insertQuestions) and every roster row added.
+  ['profiles', 'account_verified', '0022_owner_decisions.sql'],
+  ['answers', 'account_verified', '0022_owner_decisions.sql'],
+  ['questions', 'replaces_id', '0022_owner_decisions.sql'],
+  ['class_students', 'under_18', '0022_owner_decisions.sql'],
+  // Written on every answer (recordAnswer) and read with every room's bank
+  // (the live loop leaves out what was asked to the class): without them every
+  // answer fails to save and no room can serve.
+  ['answers', 'class_question_id, round', '0023_class_questions.sql'],
+  ['class_questions', null, '0023_class_questions.sql'],
+  // Written with every question saved (insertQuestions), generated or written
+  // by a professor: without it no question can be saved.
+  ['questions', 'misconceptions', '0024_misconception_labels.sql'],
+]);
+
+export const ROUTE_SCHEMA = Object.freeze([
+  ['course_outcomes', null, '0019_course_outcomes.sql', 'course outcomes and their mappings cannot be read or saved'],
+  ['outcome_topics', null, '0019_course_outcomes.sql', 'course outcomes and their mappings cannot be read or saved'],
+  ['question_outcome_overrides', null, '0019_course_outcomes.sql', 'course outcomes and their mappings cannot be read or saved'],
+  ['attainment_configs', null, '0020_attainment_configs.sql', 'attainment reports and the marks register fail, and no formula can be saved'],
+  ['attendance', 'roll_no', '0021_attendance_roll.sql',
+    'every attendance mark fails to save: a phone joining a class room marks nobody present, and a professor\'s marks are refused'],
+]);
+
+/** One missing piece, as a sentence naming the file to apply. */
+const missingPiece = ([table, cols, file], error) =>
+  `${cols ? `${table}.${cols.replace(/,\s*/g, `, ${table}.`)}` : `the ${table} table`} is missing: apply supabase/migrations/${file}`
+  + `${error?.message ? ` (${error.message})` : ''}`;
+
+/**
+ * Cheap connectivity + schema probe, run once at boot so failures are loud.
+ * Throws, naming every missing piece of ROOM_SCHEMA with its file; otherwise
+ * returns { warnings }, one sentence per missing piece of ROUTE_SCHEMA, naming
+ * the file to apply and what fails until it is.
+ *
+ * @returns {Promise<{ warnings: string[] }>}
+ */
 export async function probeSupabase() {
   const db = createClient(config.supabase.url, config.supabase.serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  // Every table the server writes to. One missing table would otherwise boot as
-  // "connected" and fail on the first join or answer, mid-class; this names it
-  // at boot instead, with the migration that creates it.
-  const tables = [
-    ['contents', '0000'], ['questions', '0000'], ['sessions', '0000'], ['profiles', '0000'],
-    ['accounts', '0001'], ['invites', '0002'], ['answers', '0008'], ['room_archives', '0009'],
-    ['answer_reviews', '0010'], ['media', '0014'],
-    ['classes', '0016'], ['class_students', '0016'], ['attendance', '0016'],
-    ['observations', '0017'], ['wheel_rounds', '0017'], ['wheel_picks', '0017'], ['hand_tallies', '0017'],
-    ['room_activities', '0017'], ['insight_actions', '0017'], ['projector_links', '0018'],
-    // Not 0019's course-outcome tables, on purpose: no room needs them, so a
-    // server deployed before 0019 is applied should keep every room running on
-    // Supabase and answer only the outcome routes with an error naming the table,
-    // not fall back to the in-process store, where nothing is saved. The same
-    // for 0020's attainment_configs and the attainment routes.
-  ];
+  // A GET for no rows, not a HEAD: a HEAD response has no body, and the client
+  // reads a 404 with an empty body as "no content", so a missing TABLE probed
+  // with HEAD came back as no error at all. A GET's 404 carries PostgREST's
+  // error, and a missing column is a 400 either way.
+  const probe = async ([table, cols]) => (await db.from(table).select(cols ?? '*').limit(0)).error;
   const missing = [];
-  for (const [table, file] of tables) {
-    const { error } = await db.from(table).select('*', { count: 'exact', head: true });
-    if (error) missing.push(`${table} (${file}): ${error.message}`);
-  }
-  // Columns, not tables: without 0013 every generated question fails to save
-  // (no model column), which a table probe would not notice until a professor
-  // pressed Generate.
-  const columns = [
-    ['questions', 'model, source_ref, checks, created_by, approved_by, approved_at', '0013'],
-    ['contents', 'topic_slides', '0013'],
-    // Without it every room fails to open: createSession writes the column.
-    ['sessions', 'question_ids', '0015'],
-    // Likewise: createSession writes class_id on every room.
-    ['sessions', 'class_id', '0016'],
-    // And these five, on every room.
-    ['sessions', 'mode, adapt, start_level, questions_per_student, time_per_question', '0018'],
-  ];
-  for (const [table, cols, file] of columns) {
-    const { error } = await db.from(table).select(cols, { count: 'exact', head: true });
-    if (error) missing.push(`${table} columns (${file}): ${error.message}`);
+  for (const entry of ROOM_SCHEMA) {
+    const error = await probe(entry);
+    if (error) missing.push(missingPiece(entry, error));
   }
   if (missing.length) throw new Error(`not ready - ${missing.join('; ')}`);
+  const warnings = [];
+  for (const entry of ROUTE_SCHEMA) {
+    const error = await probe(entry);
+    if (error) warnings.push(`${missingPiece(entry, error)}. Until it is applied, ${entry[3]}.`);
+  }
+  return { warnings };
 }
