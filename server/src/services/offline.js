@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto';
 import { LABEL, LEVELS } from '../bloom.js';
 import { forStudent } from '../questionTypes.js';
 import { phoneProvenance } from './honesty.js';
+import { phoneRichSync } from './richText.js';
 import { isSlowLearner } from './mastery.js';
 import { reasonForPhone } from './selector.js';
 
@@ -294,10 +295,15 @@ export function packPayload({ pack, chosen, profile, supports = null, settings =
     // carries them: the phone keeps the time offline too, and never enforces it.
     ...(settings.timePerQuestion ? { timePerQuestion: settings.timePerQuestion } : {}),
     // In the order the phone works through them.
-    questions: chosen.map(({ question: q }) => ({
-      question: { ...forStudent(q, `${profile.rollNo}:${q._id}`, supports), provenance: phoneProvenance(q) },
-      reason: packReason(profile, q.bloom),
-    })),
+    // `rich` as server:question carries it (Phase 6, H15): formulas and code
+    // rendered on the server, so a packed question reads the same offline.
+    questions: chosen.map(({ question: q }) => {
+      const shown = forStudent(q, `${profile.rollNo}:${q._id}`, supports);
+      return {
+        question: { ...shown, provenance: phoneProvenance(q), rich: phoneRichSync(shown) },
+        reason: packReason(profile, q.bloom),
+      };
+    }),
     note: PACK_NOTE,
   };
 }

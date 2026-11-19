@@ -541,8 +541,8 @@ From Phase 6 (the Learning Hub):
 - **Phone events have no general rate limit** (Phase 7 review, open). Pack requests are
   folded and kept answers capped at 100 per student per room; answers, joins and
   `student:next` are not limited per socket.
-- **A packed question carries no `rich`** (found in the Phase 7 docs pass): a formula or
-  code block in a packed question reaches the phone as plain text.
+- **A packed question carries no `rich`** (found in the Phase 7 docs pass): fixed on 19 Nov
+  2026, packs now carry `rich` as live questions do.
 - **The shared question bank** (Phase 6 review, owner's call decided for batch 8).
   Practice shows the key of every approved question after one try, so a student can
   collect the keys of questions a graded room will ask later. Only questions a room is

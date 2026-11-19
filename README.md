@@ -183,6 +183,16 @@ is in — at boot, on `/api/health`, and in the teacher console's top bar.
 | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Falls through to `MONGO_URI`, then to an in-process store. Everything works; nothing survives a restart. A *configured but unreachable* Supabase also falls through, and says so at boot rather than failing on the first student join. |
 | `GOOGLE_CLIENT_ID` / `SECRET` | F6 Tier 1 (CSV) only. The Classroom button stays visible and explains why it is disabled. |
 
+### A classroom with no internet (laptop mode)
+
+`npm --workspace server run laptop` runs the same server on a professor's laptop for
+phones on its hotspot or a travel router. It refuses a teacher key shorter than 16
+characters, saves each room to a local folder as it runs, and the room files are
+imported back once online. Sign-in, the Learning Hub and AI generation are not
+available in this mode. The step-by-step guide is
+[docs/TRAVEL_ROUTER.md](docs/TRAVEL_ROUTER.md); the trade-offs of questions held on a
+phone are in [docs/OFFLINE_SELECTION.md](docs/OFFLINE_SELECTION.md).
+
 ## Demo runbook
 
 1. `npm run demo`, then read the LAN URL off the console.

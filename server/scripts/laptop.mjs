@@ -185,9 +185,16 @@ async function startLaptop({ dir, seconds, key = KEY }) {
   child.stdout.on('data', (d) => { output += d; });
   child.stderr.on('data', (d) => { output += d; });
   const exited = new Promise((r) => child.once('exit', r));
-  for (let i = 0; i < 100 && !/LAPTOP MODE/.test(output) && child.exitCode === null; i += 1) await wait(100);
+  // Up to 30 s for the banner: a loaded machine (other suites running beside this
+  // one) can take well over 10 s to load the server. Then wait until the port
+  // actually answers, so the first request never races the listen.
+  for (let i = 0; i < 300 && !/LAPTOP MODE/.test(output) && child.exitCode === null; i += 1) await wait(100);
   if (!/={10,}\s*$/m.test(output)) await wait(200);
-  return { child, port, base: `http://127.0.0.1:${port}`, output: () => output, exited };
+  const base = `http://127.0.0.1:${port}`;
+  for (let i = 0; i < 100 && child.exitCode === null; i += 1) {
+    try { await fetch(`${base}/api/health`); break; } catch { await wait(100); }
+  }
+  return { child, port, base, output: () => output, exited };
 }
 
 async function stopLaptop(laptop) {

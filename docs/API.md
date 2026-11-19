@@ -6296,8 +6296,8 @@ sent, skipping and reordering none, until the pack is used up or `expiresAt`. On
 each; the label is "saved, will be marked when you reconnect". Show each question's
 `reason` and `provenance.text`; keep `timePerQuestion`, never enforce it. While online,
 let the service worker cache each packed question's image (`/api/media/<id>` serves a
-phone only while the room runs). Render packed questions from the plain fields (they
-carry no `rich`). **Never** a mark, a key, a solution or "right"/"wrong" for an answer
+phone only while the room runs). Render packed questions as live ones: `rich` first,
+the plain fields otherwise. **Never** a mark, a key, a solution or "right"/"wrong" for an answer
 made offline.
 
 **Phone: replies.** Match every reply by `answerId` (and `questionId`), not by order.
@@ -6380,10 +6380,9 @@ owner's call (`docs/PRODUCT_DECISIONS.md`, Phase 7):
   prompts, how many phones a hotspot holds, a normal stop with Ctrl+C on Windows, an
   address appearing after the start, and the built client served in laptop mode were not
   run.
-- **A packed question carries no `rich`** (found while writing these docs, traced in
-  `packPayload` and seen in the captured pack): a formula or a code block in a packed
-  question reaches the phone as plain text, while the same question served live is
-  rendered.
+- **A packed question carries no `rich`: fixed, 19 Nov 2026.** `packPayload` now adds
+  `rich` exactly as `server:question` does (`phoneRichSync`), so a formula or a code
+  block reads the same offline as live (unit test in `test/offline.test.js`).
 - **The import's `needs` never reaches the console** (found while writing these docs):
   the app's error handler sends `{ error }` only. Tell the chapter and class 400s apart
   by what was sent.

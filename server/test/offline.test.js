@@ -225,6 +225,17 @@ describe('what a phone is sent with a pack', () => {
     }
   });
 
+  test('a formula in a packed question carries the same rich field server:question would', () => {
+    const withMaths = { ...EVERY_KIND[0], text: 'Solve $x^2 = 4$ for x.' };
+    const body = packPayload({ pack, chosen: [{ question: withMaths }], profile });
+    const q = body.questions[0].question;
+    assert.equal(typeof q.rich, 'object');
+    assert.match(String(q.rich.text ?? ''), /<math/, JSON.stringify(q.rich));
+    const plain = packPayload({ pack, chosen: [{ question: EVERY_KIND[0] }], profile }).questions[0].question;
+    assert.deepEqual(plain.rich, {}, 'no formula, no rich fields');
+    assert.deepEqual(keysIn(body), []);
+  });
+
   test('with the fewer-choices support, the same shortened list the live question would show', () => {
     const mcq = EVERY_KIND[0];
     const supports = { fewerChoices: true };
