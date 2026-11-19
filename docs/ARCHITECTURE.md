@@ -1154,7 +1154,7 @@ page (`routes/figures.js`) has no answers.
 - `services/bankShare.js` (rooms-only, the practised set), `services/selector.js`
   (`selectNext(..., { avoid })`, used for signed-in students; the set is read when a
   phone joins), `services/serveTokens.js` (an HMAC over account, question and mode, 7
-  days; secret `HUB_SERVE_TOKEN_SECRET`, which deployments must set) and
+  days; secret derived from `SERVER_SECRET` (set it for any deployment)) and
   `services/hubGetReady.js` (`endCheck`, `pathWhy`).
 - `services/hubConcept.js` checks the model's concept sections against the lesson's
   parts (a piece without a cite is dropped) and builds `visual` from the lesson's own

@@ -6625,7 +6625,7 @@ template switch is `writer`, under "Figure generation".
   /api/hub/lessons/:lessonId/questions/:questionId/attempts` now **need** it: missing, for
   another account, question or mode, or older than 7 days, is a 409 with a sentence and
   nothing stored. A resend of an attempt already stored needs none. A deployment must set
-  `HUB_SERVE_TOKEN_SECRET` (it defaults to a fixed dev value); `HUB_SERVE_TOKEN_HOURS`
+  `SERVER_SECRET` (without it the server derives one from its service-role key, so set it for any deployment); `HUB_SERVE_TOKEN_HOURS`
   sets the expiry (default 168).
 - A signed-in student's room avoids, at the level it chose, a question they practised in
   the hub while another of that level is left. Staff `GET

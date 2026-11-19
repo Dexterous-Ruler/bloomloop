@@ -66,7 +66,7 @@ no test made a Gemini call.
 - Without `0036`, a hub answer sent without its serve token returns an error.
 - None has run against the hosted project: they ran on PGlite only.
 
-**Deploy settings:** set `HUB_SERVE_TOKEN_SECRET` (or `SERVER_SECRET`). A laptop-mode teacher key
+**Deploy settings:** set `SERVER_SECRET`. A laptop-mode teacher key
 must be at least 16 characters.
 
 ## Tests executed (offline runner, every suite)

@@ -2341,7 +2341,7 @@ Fixed on 19 Nov 2026 (the test reconnects the phone after its clock jump; 6 of 6
 (`docs/TESTING.md`, "Batch 8").
 
 **Deploying.** Rooms need none of `0033` to `0035`: all three are route-only. Apply
-`0000` to `0035` in order, and set `HUB_SERVE_TOKEN_SECRET` on the server.
+`0000` to `0036` in order, and set `SERVER_SECRET` on the server.
 
 Figures
 - [x] The figure stimulus: nine spec types checked at save, refused with one sentence,

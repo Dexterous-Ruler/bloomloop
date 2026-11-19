@@ -40,7 +40,7 @@ phone.
 - **Design-zip gaps, material and hub (`0035`).** Topic slide ranges, supported levels,
   a template-writer switch, last used; rooms-only questions; rooms avoid questions a
   student practised; **serve tokens: hub practice and lesson answers are now refused
-  without the token their serving reply carried** (set `HUB_SERVE_TOKEN_SECRET` in a
+  without the token their serving reply carried** (set `SERVER_SECRET` in a
   deployment); ending a Get Ready check early; "why this path"; the lesson concept panel
   (introduction, facts, explanation, code example, mistakes, and a Visual pointing at
   the professor's own figure).

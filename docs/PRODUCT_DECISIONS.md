@@ -2002,7 +2002,7 @@ a phone.
 - **Serve tokens**, chosen over a table of served questions: practice and lesson answers
   are taken only with the server's signed token from the serving reply. A 7-day expiry,
   because offline outboxes replay late; a resend of a stored answer needs none. The
-  secret is `HUB_SERVE_TOKEN_SECRET`; its fixed dev default means a restart does not
+  secret is `SERVER_SECRET`; its fixed dev default means a restart does not
   refuse answers waiting on phones, so **a deployment must set its own**.
 - **A student can end a Get Ready check.** Undecided prerequisites become Not sure yet
   and the question it was asking is released. Ending a check already complete settles it
@@ -2034,7 +2034,7 @@ a phone.
 
 - **Maps:** a lawyer must confirm before any generated map, and a compliant boundary
   source is needed.
-- **`HUB_SERVE_TOKEN_SECRET`** must be set on the deployed server.
+- **`SERVER_SECRET`** must be set on the deployed server.
 - **The reviewers' fixes** were not in `ba0f59d`.
 - Regenerating a rooms-only question does not copy the switch; regenerating a lesson
   drops a figure the professor added; concept sections are approved or discarded only

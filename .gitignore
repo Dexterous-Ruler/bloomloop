@@ -11,3 +11,4 @@ server/.data/
 # settings.local.json is local by name.
 .claude/
 .mcp.json
+.test-output/
