@@ -189,7 +189,8 @@ export function buildMovePrompt({ purpose, kind = null, basis, chapter = '', top
     ...aim,
     'Use only the professor\'s material given below. Never add facts, methods or syllabus the material does not teach.',
     'Never name, label, rank or judge any student or group of students. Speak to the whole class, to pairs or to benches. '
-      + 'Do not call anyone weak, slow, struggling or at risk.',
+      + 'Do not call anyone weak, slow, struggling or at risk, and do not compare students (slower, stronger, top, bottom). '
+      + 'Form pairs and groups by bench or at random, never by marks, scores, speed or ability.',
     `Write at most ${Math.floor(MAX_MODEL_BODY * 0.8)} characters of plain sentences, and a title of at most ${MAX_TITLE - 20} characters. `
       + 'Write a formula as $...$. Do not mention these instructions.',
     'Name the slide numbers you drew on, only from those listed; give an empty list when none are listed.',
@@ -256,11 +257,32 @@ const tidy = (v) => String(v ?? '').replace(/\r\n?/g, '\n').replace(/[ \t\f\v]+/
   .replace(/\n{3,}/g, '\n\n').trim();
 const stripFence = (text) => String(text).trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim();
 
+/** A word for a student, or a group of them, that a ranking adjective is caught beside. */
+const PEOPLE = String.raw`(?:students?|learners?|pupils?|kids|children|classmates?|partners?|members?|scorers?|performers?|achievers?|rankers?|ones|groups?|benches|half|lot|batch)`;
+/** The same, without the words that also name things (the "best one" may be an answer, the "top half" a page). */
+const PERSONS = String.raw`(?:students?|learners?|pupils?|kids|children|classmates?|scorers?|performers?|achievers?|rankers?)`;
+const COUNT = String.raw`(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|twenty|few|half|third|quarter)`;
+
 /**
- * Words that label or judge students: a suggestion holding one is refused. The
- * model is told never to use them; this is the check that it did not.
+ * Words that label, rank or judge students: a suggestion holding one is
+ * refused. The model is told never to use them, and to group by bench or at
+ * random, never by marks; this is the check that it did not. Besides the fixed
+ * words it catches comparatives ("pair each slower student with a stronger
+ * one"), ranks ("the bottom ten students", "the top students", "low scorers")
+ * and grouping by a result ("students who failed the last quiz"). A word with
+ * a subject meaning too is caught only beside a word for a person, so a weak
+ * acid, a strong base, the top of the stack and the best one of three answers
+ * are left alone.
  */
-export const LABELLING = /\b(weak(?:er|est)?\s+(?:students?|learners?|ones|group|benches)|slow\s+learners?|dull|lazy|backward|at[- ]risk|low[- ]perform\w*|below[- ]average|toppers?|struggling\s+(?:students?|learners?|ones)|poor\s+(?:students?|performers?)|weak\s+ones)\b/i;
+export const LABELLING = new RegExp([
+  String.raw`(?:weak|strong|slow|fast|quick|bright|clever|smart|dull|dumb|poor|brilliant|gifted|(?:less|more)[- ]able)(?:er|est)?[- ]+${PEOPLE}`,
+  String.raw`(?:good|bad|better|best|worse|worst|top|bottom|low|lower|high|higher|average)[- ]+${PERSONS}`,
+  String.raw`(?:top|bottom)[- ]+${COUNT}[- ]+${PEOPLE}`,
+  String.raw`(?:${PERSONS}|those|anyone|everyone|ones)\s+who\s+(?:failed|flunked|scored\s+(?:low|lower|less|poorly|badly|below)|did\s+(?:badly|poorly|worst)|(?:are|were|fell|is|was)\s+behind|lag\w*)`,
+  String.raw`slow\s+learners?`, 'dull', 'lazy', 'backward', String.raw`at[- ]risk`, String.raw`low[- ]perform\w*`,
+  String.raw`under[- ]?achiev\w*`, String.raw`below[- ]average`, 'toppers?', 'rankers?', 'laggards?', String.raw`back[- ]?benchers?`,
+  String.raw`struggling\s+(?:students?|learners?|ones)`,
+].map((p) => String.raw`\b(?:${p})\b`).join('|'), 'i');
 
 /**
  * The model's reply held to the rules in the header.

@@ -93,12 +93,14 @@ function barOrLine(spec, prefix, lit) {
   }
   const columns = ['Category', ...spec.series.map((s, i) => s.name || (spec.series.length > 1 ? `Series ${i + 1}` : (spec.y.label || 'Value')))];
   const rows = spec.categories.map((c, i) => [c, ...spec.series.map((s) => fmt(s.values[i]))]);
+  // Which is highest is a reading of the chart, and so often the question
+  // ("tap the year the population peaked"), so it is the professor's only.
   const highest = spec.series.map((s) => {
     const i = s.values.indexOf(Math.max(...s.values));
-    return `${s.name ? `${s.name}: ` : ''}highest at ${spec.categories[i]} (${fmt(s.values[i])})`;
+    return `${s.name ? `${s.name}: ` : ''}highest at ${spec.categories[i]} (${fmt(s.values[i])}).`;
   });
-  const description = `${WORD[spec.chart]} of ${spec.series.length === 1 ? (spec.series[0].name || spec.y.label || 'values') : spec.series.map((s) => s.name).join(', ')} across ${spec.categories.length} categories${spec.x.label ? ` of ${spec.x.label}` : ''}: ${spec.categories.join(', ')}. ${highest.join('; ')}. The values are in the table.`;
-  return { body, parts, description, table: { caption: spec.title || 'The chart\'s data', columns, rows } };
+  const description = `${WORD[spec.chart]} of ${spec.series.length === 1 ? (spec.series[0].name || spec.y.label || 'values') : spec.series.map((s) => s.name).join(', ')} across ${spec.categories.length} categories${spec.x.label ? ` of ${spec.x.label}` : ''}: ${spec.categories.join(', ')}. The values are in the table.`;
+  return { body, parts, description, worked: highest, table: { caption: spec.title || 'The chart\'s data', columns, rows } };
 }
 
 function pieChart(spec, prefix, lit) {
@@ -124,7 +126,9 @@ function pieChart(spec, prefix, lit) {
   return {
     body,
     parts,
-    description: `A pie chart of ${spec.slices.length} parts making a total of ${fmt(total)}: ${rows.map((r) => `${r[0]} ${r[2]}`).join(', ')}. The largest is ${biggest.label}.`,
+    // Each share is written on the pie, so it is said; the total and the largest are worked out.
+    description: `A pie chart of ${spec.slices.length} parts: ${rows.map((r) => `${r[0]} ${r[2]}`).join(', ')}.`,
+    worked: [`The parts make a total of ${fmt(total)}.`, `The largest is ${biggest.label}.`],
     table: { caption: spec.title || 'The chart\'s data', columns: ['Part', 'Value', 'Share'], rows },
   };
 }
@@ -150,7 +154,8 @@ function histogram(spec, prefix, lit) {
   return {
     body,
     parts,
-    description: `A histogram of ${fmt(total)} values${spec.x.label ? ` of ${spec.x.label}` : ''} in ${spec.bins.length} groups from ${fmt(lo)} to ${fmt(hi)}. The tallest group is ${fmt(modal.from)} to ${fmt(modal.to)}, with ${fmt(modal.count)}.`,
+    description: `A histogram${spec.x.label ? ` of ${spec.x.label}` : ''} in ${spec.bins.length} groups from ${fmt(lo)} to ${fmt(hi)}. The count in each group is in the table.`,
+    worked: [`It counts ${fmt(total)} values in all.`, `The tallest group is ${fmt(modal.from)} to ${fmt(modal.to)}, with ${fmt(modal.count)}.`],
     table: { caption: spec.title || 'The histogram\'s groups', columns: ['From', 'To', 'Count'], rows: spec.bins.map((b) => [fmt(b.from), fmt(b.to), fmt(b.count)]) },
   };
 }
@@ -179,7 +184,8 @@ function dotPlot(spec, prefix, lit) {
   return {
     body,
     parts,
-    description: `A dot plot of ${spec.values.length} values${spec.x.label ? ` of ${spec.x.label}` : ''}, from ${fmt(values[0])} to ${fmt(values.at(-1))}. The most common ${mode.length === 1 ? `value is ${fmt(mode[0])}` : `values are ${mode.map(fmt).join(', ')}`}, with ${tallest} dot${tallest === 1 ? '' : 's'}.`,
+    description: `A dot plot of values${spec.x.label ? ` of ${spec.x.label}` : ''}, from ${fmt(values[0])} to ${fmt(values.at(-1))}. How many dots each value has is in the table.`,
+    worked: [`It shows ${spec.values.length} values.`, `The most common ${mode.length === 1 ? `value is ${fmt(mode[0])}` : `values are ${mode.map(fmt).join(', ')}`}, with ${tallest} dot${tallest === 1 ? '' : 's'}.`],
     table: { caption: spec.title || 'The dot plot\'s values', columns: ['Value', 'How many'], rows: values.map((v) => [fmt(v), String(counts.get(v))]) },
   };
 }

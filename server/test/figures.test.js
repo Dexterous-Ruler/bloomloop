@@ -380,7 +380,9 @@ describe('pictures kept from a deck', () => {
         { n: 9, text: 'No pictures', media: [] },
       ],
       {
-        'leaf.png': PNG_WITH_TEXT, 'chart.emf': EMF, 'logo.jpeg': JPEG, 'big.png': bigPng(600 * 1024), 'icon.svg': SVG_PICTURE, 'cell.png': PNG,
+        // cell.png is a picture of its own: the leaf's PNG without its text chunk
+        // is the same bytes, and the same picture under two names is kept once.
+        'leaf.png': PNG_WITH_TEXT, 'chart.emf': EMF, 'logo.jpeg': JPEG, 'big.png': bigPng(600 * 1024), 'icon.svg': SVG_PICTURE, 'cell.png': bigPng(2000),
       },
     );
     const { pictures, summary } = slidePictures(deck, { maxBytes: 500 * 1024 });

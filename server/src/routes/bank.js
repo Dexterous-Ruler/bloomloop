@@ -596,6 +596,9 @@ router.post('/question/:id/regenerate', async (req, res, next) => {
       sourceRef: old.sourceRef ?? sourceRefFor(content, old.topic || item.topic),
       createdBy: actor(req),
       ...(replaces ? { replacesId: replaces } : {}),
+      // The owner's "rooms only" switch stays with the question's replacement
+      // (Batch 8, 0035): approving it must not start serving it in the hub.
+      ...(old.roomsOnly === true ? { roomsOnly: true } : {}),
     };
     if (Array.isArray(item.options)) row.options = item.options;
     if (Number.isInteger(item.answerIdx)) row.answerIdx = item.answerIdx;

@@ -43,7 +43,7 @@
 
 import { isRecordId } from '../ids.js';
 import { levelIndex } from '../bloom.js';
-import { forStudent, score } from '../questionTypes.js';
+import { FIGURES_NOT_READY, forStudent, readyToMark, score } from '../questionTypes.js';
 import { snapshotOf } from '../sockets/index.js';
 import { needsApproval } from './edits.js';
 import { phoneProvenance } from './honesty.js';
@@ -62,7 +62,7 @@ import {
 import { countedAttempts } from './hubHeld.js';
 import { closedError, closedQuestions } from './hubClosed.js';
 import { isRoomsOnly } from './bankShare.js';
-import { assertServed, serveToken } from './serveTokens.js';
+import { UNPROVEN_NOTE, checkServeToken, serveToken } from './serveTokens.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -118,8 +118,11 @@ export const wasApproved = (q) => Boolean(q) && ((q.status ?? 'active') === 'act
 /**
  * May an answer to this question be stored? Anything practice could have
  * served: a question once approved (wasApproved), not a poll, no uploaded image.
+ * A question kept for rooms only is included: practice may have served it
+ * before the switch, and its answer is kept (never discarded); what the hub no
+ * longer does is serve it, show its key or explain it (feedbackFor).
  */
-export const onceServable = (q) => wasApproved(q) && (q.kind ?? 'mcq') !== 'poll' && q.stimulus?.kind !== 'image' && !isRoomsOnly(q);
+export const onceServable = (q) => wasApproved(q) && (q.kind ?? 'mcq') !== 'poll' && q.stimulus?.kind !== 'image';
 
 /* ---------------------------------------------------------------- scope -- */
 
@@ -397,10 +400,10 @@ export async function recordAttempt(repo, account, body = {}, {
   // an answer already kept is never refused later for any reason.
   const held = await repo.getHubAttemptByKey(who, attemptId);
   if (held) return { attempt: held, duplicate: true, entry: null };
-  // Batch 8: practice takes an answer only to a question it served to this
+  // Batch 8: practice counts an answer only to a question it served to this
   // student, proved by the token its reply carried (services/serveTokens.js).
-  // Refused before anything is stored; the device keeps the answer.
-  if (requireServed) assertServed(body.serveToken, { accountId: who, questionId: body.questionId, mode, now });
+  // Without that proof it is kept as unproven: counted nowhere, told no mark.
+  const unproven = requireServed && !checkServeToken(body.serveToken, { accountId: who, questionId: body.questionId, mode }).ok;
 
   let responseText;
   try {
@@ -422,6 +425,9 @@ export async function recordAttempt(repo, account, body = {}, {
     if (why) throw closedError(why);
   }
 
+  // A tap or label answer on a diagram or molecule needs the drawing engines to
+  // be marked; until they are up it is not taken, and the device sends it again.
+  if (!(await readyToMark(q))) throw fail(FIGURES_NOT_READY, 503);
   // Marked here, from the stored question, with the seed it was shown with.
   const graded = score(q, body.response, hubSeed(who, q._id), null);
   const kind = q.kind ?? 'mcq';
@@ -453,6 +459,7 @@ export async function recordAttempt(repo, account, body = {}, {
     hintsUsed: Math.max(0, Math.min(3, Number(hintsUsed) || 0)),
     timeTakenMs: timeTaken(body.timeTakenMs),
     ...(runId ? { runId: String(runId) } : {}),
+    ...(unproven ? { unproven: true } : {}),
     createdAt: now.toISOString(),
   });
   return { attempt, duplicate, entry };
@@ -467,16 +474,38 @@ export async function recordAttempt(repo, account, body = {}, {
  */
 export async function feedbackFor(repo, account, attempt, { now = new Date(), entry = null, duplicate = false } = {}) {
   const qid = itemKeyOf(attempt);
+  const head = {
+    id: String(attempt._id),
+    attemptId: attempt.clientAttemptId,
+    mode: attempt.mode,
+    createdAt: attempt.createdAt,
+    language: attempt.language ?? 'en',
+    hintsUsed: attempt.hintsUsed ?? 0,
+  };
+  // Batch 8: an answer kept without proof the hub served its question
+  // (services/serveTokens.js) is told it is saved, and nothing else: its mark,
+  // key, explanation or option feedback would let a student read the key of any
+  // question one id at a time. The same on every resend.
+  if (attempt.unproven) {
+    return {
+      attempt: head, duplicate, counted: false, unproven: true, note: UNPROVEN_NOTE,
+      correct: null, score: null, detail: '', solution: null, explanation: null, optionFeedback: [], topic: null,
+    };
+  }
+  // A question kept for rooms only since it was served: the answer is kept and
+  // marked, but the hub neither shows its key nor explains it (Batch 8, 0035).
+  const current = await repo.getQuestion(qid).catch(() => null);
+  const roomsOnly = isRoomsOnly(current);
   const snap = attempt.questionSnapshot && typeof attempt.questionSnapshot === 'object' ? attempt.questionSnapshot : {};
   let solution = null;
   try {
-    solution = score({ ...snap, _id: qid, kind: attempt.kind ?? snap.kind ?? 'mcq' }, attempt.response, hubSeed(attempt.accountId, qid)).solution ?? null;
+    if (!roomsOnly) solution = score({ ...snap, _id: qid, kind: attempt.kind ?? snap.kind ?? 'mcq' }, attempt.response, hubSeed(attempt.accountId, qid)).solution ?? null;
   } catch {
     solution = null;
   }
   let explanation = null;
   try {
-    explanation = await explanationForStudent(repo, qid, await languageChoice(repo, account));
+    if (!roomsOnly) explanation = await explanationForStudent(repo, qid, await languageChoice(repo, account));
   } catch (err) {
     // Without 0026's explanations table the answer is still marked and kept.
     console.error('[hub] an explanation could not be read:', err.message);
@@ -493,16 +522,9 @@ export async function feedbackFor(repo, account, attempt, { now = new Date(), en
   }
   const provisional = attempt.reviewStatus === 'provisional';
   // HINT HOOK (H13): the professor's approved feedback on the wrong option(s) chosen, after the attempt only.
-  const optionFeedback = await feedbackAfter(repo, { account, attempt });
+  const optionFeedback = roomsOnly ? [] : await feedbackAfter(repo, { account, attempt });
   return {
-    attempt: {
-      id: String(attempt._id),
-      attemptId: attempt.clientAttemptId,
-      mode: attempt.mode,
-      createdAt: attempt.createdAt,
-      language: attempt.language ?? 'en',
-      hintsUsed: attempt.hintsUsed ?? 0,
-    },
+    attempt: head,
     duplicate,
     correct: attempt.correct,
     score: attempt.score,

@@ -158,7 +158,7 @@ router.post('/', readUpload, async (req, res, next) => {
       });
       // Said only when the deck had pictures at all, so a deck without any is
       // answered exactly as before.
-      const hadPictures = pictures && pictures.kept + pictures.skippedType + pictures.skippedLarge + pictures.skippedOver > 0;
+      const hadPictures = pictures && pictures.kept + pictures.skippedType + pictures.skippedLarge + pictures.skippedOver + (pictures.skippedMissing ?? 0) > 0;
       res.status(201).json({
         contentId: content._id,
         title: content.title,

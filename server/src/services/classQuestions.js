@@ -65,6 +65,7 @@ import { SOURCE_LABEL, phoneProvenance, sourceOf } from './honesty.js';
 // Phase 6 (decision H15): formulas and code as HTML, an additive field.
 import { phoneRichSync } from './richText.js';
 import { figureForStudent } from '../figures/index.js';
+import { safeSvg } from '../figures/common.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -257,12 +258,16 @@ function stimulusView(s) {
   if (!s || typeof s !== 'object') return null;
   if (s.kind === 'image') return { kind: 'image', url: String(s.url ?? ''), alt: String(s.alt ?? '') };
   if (s.kind === 'passage') return { kind: 'passage', text: String(s.text ?? '') };
-  // A figure (Batch 8): already drawn when it comes through forStudent(), drawn
-  // here from its spec when it comes from a stored snapshot. Either way only the
-  // drawing, its description and its table.
+  // A figure (Batch 8): drawn here from its spec whenever it has one (a stored
+  // snapshot always does), so a drawing kept in a snapshot is never passed on:
+  // a room archive is unsigned and imported as written, and its "drawing" could
+  // be any markup. Without a spec it is forStudent()'s drawing, and even that
+  // goes only if it passes the same check as every figure (safeSvg). Either way
+  // only the drawing, its description and its table.
   if (s.kind === 'figure') {
-    const f = 'svg' in s ? s : figureForStudent(s.spec);
-    return { kind: 'figure', type: f.type ?? null, title: f.title ?? '', svg: f.svg ?? null, description: f.description ?? '', table: f.table ?? null };
+    const f = s.spec !== undefined ? figureForStudent(s.spec) : s;
+    const svg = typeof f.svg === 'string' && safeSvg(f.svg) ? f.svg : null;
+    return { kind: 'figure', type: f.type ?? null, title: String(f.title ?? ''), svg, description: String(f.description ?? ''), table: f.table ?? null };
   }
   return null;
 }

@@ -33,9 +33,13 @@
 // does not have.
 //
 // Everything in this file is pure: no I/O, no framework, fully unit-testable,
-// and the live loop calls it on every answer.
+// and the live loop calls it on every answer. The one exception is
+// readyToMark() (Batch 8), which waits for the drawing engines to load.
+
+import crypto from 'node:crypto';
 
 import { LEVELS } from './bloom.js';
+import { secretFor } from './secrets.js';
 // One string, imported rather than retyped. A misspelling of this key would not
 // throw anywhere at all - it would simply stop reducing, silently, for every
 // student who had been given the support.
@@ -43,7 +47,9 @@ import { FEWER_CHOICES } from './accommodations.js';
 // Figures (Batch 8): the spec check is pure; the drawing is synchronous once the
 // engines have loaded, which the server does before it listens.
 import { specReason, normaliseSpec, emptyGraph, EMPTY_GRAPH } from './figures/spec.js';
-import { engineReason, figureForStudent } from './figures/index.js';
+import {
+  engineReason, enginesReady, figureForStudent, loadFigureEngines, needsEngine,
+} from './figures/index.js';
 // The five interaction kinds (Batch 8) read their figure through this: the parts
 // to tap or label under per-student tokens, the grids, and the marking.
 import {
@@ -680,7 +686,7 @@ export function invalidReason(q) {
       for (const p of q.placements) {
         if (!idOn(board, p.target)) return `label names a part the ${board.kind === 'image' ? 'picture' : 'figure'} does not have`;
         // The drawing would be showing the answer it asks for.
-        if (board.kind === 'figure' && drawnLabel(board.spec, p.target)) return 'the figure already labels a part the student is asked to label';
+        if (board.kind === 'figure' && drawnLabel(board, p.target)) return 'the figure already labels a part the student is asked to label';
       }
       return null;
     }
@@ -694,7 +700,7 @@ export function invalidReason(q) {
     case 'numberline': {
       const spec = figureSpec(q.stimulus, 'numberline');
       if (!spec) return 'numberline needs a number line to mark: a number-line figure as its stimulus';
-      return toleranceReason('numberline', q.tolerance) ?? lineKeyReason(q.lineKey, spec);
+      return toleranceReason('numberline', q.tolerance) ?? lineKeyReason(q.lineKey, spec, q.tolerance ?? null);
     }
 
     case 'chart': {
@@ -1167,7 +1173,7 @@ function scoreOne(q, response, seed = '', keep = null) {
       if (!board) return { score: 0, correct: false, solution: null, detail: 'the figure could not be read' };
       const { tokenOf } = tokensFor(board, zoneShuffle(seed));
       const all = labelsOf(q);
-      const perm = permFor(all.length, `${seed}:lb`);
+      const perm = permFor(all.length, labelSeed(seed));
       const posOf = [];
       perm.forEach((orig, pos) => { posOf[orig] = pos; });
       const raw = response && typeof response === 'object' && !Array.isArray(response) ? response : {};
@@ -1215,8 +1221,45 @@ function scoreOne(q, response, seed = '', keep = null) {
   }
 }
 
+/**
+ * The seed a tap or label question deals from: the student's seed under the
+ * server's secret (src/secrets.js). The plain seed is a roll number and a
+ * question id, which the phone knows, and permFor() is public, so a phone could
+ * deal itself the same cards and read off which zone is which part and which
+ * labels are the extra ones: the key. Still recomputable by the server alone,
+ * at marking time, so nothing is stored.
+ *
+ * Only these two kinds (new in Batch 8, never yet served): the older kinds'
+ * shuffles keep their plain seeds, because re-dealing them would mis-read every
+ * answer still waiting in a phone's outbox.
+ */
+const dealSeed = (seed) => crypto.createHmac('sha256', secretFor('deal')).update(String(seed), 'utf8').digest('base64url');
 /** The seeded order a student's zone tokens are dealt in (figures/interact.js tokensFor). */
-const zoneShuffle = (seed) => (n) => permFor(n, `${seed}:z`);
+const zoneShuffle = (seed) => (n) => permFor(n, `${dealSeed(seed)}:z`);
+/** The seed a label question's labels are shuffled with. */
+const labelSeed = (seed) => `${dealSeed(seed)}:lb`;
+
+/** Said when an answer arrives before the drawing engines can mark it; the device sends it again. */
+export const FIGURES_NOT_READY = 'This question\'s drawing is still being prepared, so your answer was not taken yet. '
+  + 'It is still on your device and will be sent again.';
+
+/**
+ * Can this question be marked now? A tap or label answer on a diagram or a
+ * molecule is turned back into parts from the drawing's own parts, which exist
+ * only once Graphviz and RDKit have loaded; marked before then, every tap was
+ * dropped and the answer stored as wrong, moving the ladder. So every path
+ * that stores an answer asks here first: the engines are waited for (they load
+ * at boot, so this is nearly always at once), and when they cannot load the
+ * answer is refused the way a failed save is, for the device to send again.
+ */
+export async function readyToMark(q) {
+  const kind = q?.kind ?? 'mcq';
+  if ((kind !== 'hotspot' && kind !== 'label') || q.stimulus?.kind !== 'figure') return true;
+  if (!needsEngine(q.stimulus.spec) || enginesReady()) return true;
+  const wait = new Promise((resolve) => { setTimeout(resolve, 20000).unref?.(); });
+  await Promise.race([loadFigureEngines().catch(() => {}), wait]);
+  return enginesReady();
+}
 const byToken = (a, b) => Number(String(a).slice(1)) - Number(String(b).slice(1));
 /** A label question's labels in stored order: the placements', then the ones that belong nowhere. */
 const labelsOf = (q) => [...q.placements.map((p) => p.label), ...(Array.isArray(q.distractors) ? q.distractors : [])];
@@ -1401,7 +1444,7 @@ export function toOriginalResponse(q, response, seed = '', keep = null) {
       if (!board) return placements.map(() => null);
       const { tokenOf } = tokensFor(board, zoneShuffle(seed));
       const n = labelsOf(q).length;
-      const perm = permFor(n, `${seed}:lb`);
+      const perm = permFor(n, labelSeed(seed));
       const raw = response && typeof response === 'object' && !Array.isArray(response) ? response : {};
       return placements.map((p) => {
         const pos = Number(raw[tokenOf.get(low(p.target))]);
@@ -1563,7 +1606,7 @@ export function forStudent(q, seed = '', accommodations = null) {
       if (kind === 'hotspot') return { ...base, stimulus, zones };
       // The labels shuffled, the extra ones among them; named `labels`, never
       // `placements`, which is the stored key.
-      return { ...base, stimulus, zones, labels: shown(labelsOf(q), `${seed}:lb`) };
+      return { ...base, stimulus, zones, labels: shown(labelsOf(q), labelSeed(seed)) };
     }
     case 'plot': {
       // The graph and where it sits in its picture, so a tap becomes x and y;

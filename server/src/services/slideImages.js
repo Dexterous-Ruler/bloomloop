@@ -13,10 +13,16 @@
 // an editor wrote into the file is taken out before it is kept.
 //
 // Each picture is kept once, at the first slide that shows it: a logo on every
-// slide is one picture, not forty. Pictures are linked to slides through each
+// slide is one picture, not forty, and the same bytes stored under two names in
+// the deck are one picture too. Pictures are linked to slides through each
 // slide's relationship file, because ppt/media is shared and de-duplicated and
-// its order says nothing about which slide shows what.
+// its order says nothing about which slide shows what. A relationship's target
+// is read as the package format allows it to be written: relative to the slide
+// ("../media/image1.png") or absolute from the package's root
+// ("/ppt/media/image1.png"), with its attributes in either quote. A picture a
+// slide names that the deck does not hold is counted, so the professor is told.
 
+import path from 'node:path';
 import crypto from 'node:crypto';
 import AdmZip from 'adm-zip';
 
@@ -28,7 +34,29 @@ export const MAX_SLIDE_PICTURES = 60;
 const SLIDE = /^ppt\/slides\/slide(\d+)\.xml$/i;
 const RELS = /^ppt\/slides\/_rels\/slide(\d+)\.xml\.rels$/i;
 const REL = /<Relationship\b([^>]*)\/?>/g;
-const attr = (s, name) => new RegExp(`\\b${name}="([^"]*)"`).exec(s)?.[1] ?? null;
+const attr = (s, name) => {
+  const m = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`).exec(s);
+  return m ? (m[1] ?? m[2]) : null;
+};
+
+/**
+ * The package part a slide's relationship points at, as a key into the deck's
+ * entries (lower case), or null when it leaves the package. Relative targets
+ * are read from the slide's own folder (ppt/slides); absolute ones from the root.
+ */
+function partOf(target) {
+  let t = String(target ?? '').trim().replace(/\\/g, '/');
+  if (!t || /^[a-z][a-z0-9+.-]*:/i.test(t)) return null;
+  // Part names in a target are written as a URI ("my%20chart.png").
+  try {
+    t = decodeURIComponent(t);
+  } catch {
+    // Not percent-encoded after all: read as written.
+  }
+  const resolved = t.startsWith('/') ? path.posix.normalize(t).slice(1) : path.posix.join('ppt/slides', t);
+  if (!resolved || resolved.startsWith('..') || resolved.startsWith('/')) return null;
+  return resolved.toLowerCase();
+}
 
 /** The alt text a kept picture starts with, until a professor describes it on a question. */
 export const slideAlt = (n) => `Picture from slide ${n} (not yet described)`;
@@ -38,10 +66,10 @@ export const slideAlt = (n) => `Picture from slide ${n} (not yet described)`;
  * cannot be read keeps no pictures, and says so in the summary.
  *
  * @returns {{ pictures: { slideNo: number, mime: string, data: Buffer, bytes: number, sha256: string }[],
- *   summary: { kept: number, skippedType: number, skippedLarge: number, skippedOver: number, slides: number[] } }}
+ *   summary: { kept: number, skippedType: number, skippedLarge: number, skippedOver: number, skippedMissing: number, slides: number[] } }}
  */
 export function slidePictures(buffer, { maxBytes }) {
-  const summary = { kept: 0, skippedType: 0, skippedLarge: 0, skippedOver: 0, slides: [] };
+  const summary = { kept: 0, skippedType: 0, skippedLarge: 0, skippedOver: 0, skippedMissing: 0, slides: [] };
   let entries;
   try {
     entries = new AdmZip(buffer).getEntries();
@@ -58,6 +86,7 @@ export function slidePictures(buffer, { maxBytes }) {
     .sort((a, b) => Number(a.m[1]) - Number(b.m[1]));
 
   const seen = new Set();
+  const sameBytes = new Set();
   const pictures = [];
   for (const { e, m } of rels) {
     const slideNo = position.get(Number(m[1]));
@@ -71,12 +100,14 @@ export function slidePictures(buffer, { maxBytes }) {
       const type = attr(rel[1], 'Type') ?? '';
       const target = attr(rel[1], 'Target') ?? '';
       if (!/\/image$/i.test(type) || attr(rel[1], 'TargetMode') === 'External') continue;
-      if (!/^\.\.\/media\/[^/]+$/i.test(target)) continue;
-      const key = `ppt/${target.replace(/^\.\.\//, '')}`.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const entry = byName.get(key);
-      if (!entry) continue;
+      const key = partOf(target);
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
+      const entry = key ? byName.get(key) : null;
+      if (!entry || entry.isDirectory) {
+        summary.skippedMissing += 1;
+        continue;
+      }
       let data;
       try {
         data = entry.getData();
@@ -94,11 +125,15 @@ export function slidePictures(buffer, { maxBytes }) {
         summary.skippedLarge += 1;
         continue;
       }
+      // The same picture under a second name in the deck: kept once, at its first slide.
+      const sha256 = crypto.createHash('sha256').update(kept).digest('hex');
+      if (sameBytes.has(sha256)) continue;
+      sameBytes.add(sha256);
       if (pictures.length >= MAX_SLIDE_PICTURES) {
         summary.skippedOver += 1;
         continue;
       }
-      pictures.push({ slideNo, mime, data: kept, bytes: kept.length, sha256: crypto.createHash('sha256').update(kept).digest('hex') });
+      pictures.push({ slideNo, mime, data: kept, bytes: kept.length, sha256 });
     }
   }
   summary.kept = pictures.length;
@@ -136,6 +171,7 @@ export function slidePicturesNote(summary, count) {
   if (summary.skippedType) skipped.push(`${summary.skippedType} of a kind phones are not sent (only PNG, JPEG and WebP are)`);
   if (summary.skippedLarge) skipped.push(`${summary.skippedLarge} too large to send to every phone`);
   if (summary.skippedOver) skipped.push(`${summary.skippedOver} past the first ${MAX_SLIDE_PICTURES}`);
+  if (summary.skippedMissing) skipped.push(`${summary.skippedMissing} that a slide names but the file does not hold`);
   const kept = count === 0 ? 'No pictures were kept from this deck\'s slides.' : `${count} picture${count === 1 ? '' : 's'} kept from this deck's slides.`;
   return `${kept}${skipped.length ? ` Left out: ${skipped.join('; ')}.` : ''} Describe a picture when you put it on a question: students who cannot see it get only that description.`;
 }

@@ -32,7 +32,7 @@ import express from 'express';
 import { getRepo } from '../repo/index.js';
 import { isRecordId } from '../ids.js';
 import { hasGemini } from '../config.js';
-import { score } from '../questionTypes.js';
+import { FIGURES_NOT_READY, readyToMark, score } from '../questionTypes.js';
 import { snapshotOf } from '../sockets/index.js';
 import { hubGate } from './hub.js';
 import { READ_ONLY, assertStaff, hubChapter, hubTopic } from '../services/hubAccess.js';
@@ -46,7 +46,8 @@ import { attemptStoreConnected, recordHubAttempt } from '../services/hubAttemptB
 import { hubSeed } from '../services/hubPractice.js';
 import { feedbackAfter, hintsUsedOn } from '../services/hubHintHook.js';
 import { closedError, closedQuestions } from '../services/hubClosed.js';
-import { assertServed } from '../services/serveTokens.js';
+import { isRoomsOnly } from '../services/bankShare.js';
+import { UNPROVEN_NOTE, checkServeToken } from '../services/serveTokens.js';
 
 const router = express.Router();
 router.use(hubGate);
@@ -273,8 +274,11 @@ router.post('/lessons/:lessonId/questions/:questionId/attempts', async (req, res
       throw err;
     }
     const bank = await repo.listQuestions(lesson.contentId, { includeDiscarded: true });
-    const q = lessonQuestion(lesson, req.params.questionId, bank);
+    // An answer to a question kept for rooms only since the lesson showed it is
+    // still kept (never discarded); its reply shows no key (lessonReply).
+    const q = lessonQuestion(lesson, req.params.questionId, bank, { answered: true });
     if (!q) throw fail(QUESTION_NOT_FOUND, 404);
+    const hidden = isRoomsOnly(q);
 
     const body = req.body ?? {};
     const attemptId = cleanAttemptId(body.attemptId);
@@ -287,12 +291,13 @@ router.post('/lessons/:lessonId/questions/:questionId/attempts', async (req, res
     // and only when that row is this question's answer in a lesson.
     const held = attemptStoreConnected() ? await repo.getHubAttemptByKey(String(req.viewer.id), attemptId) : null;
     if (held) {
-      res.status(200).json(await lessonReply(repo, req.viewer, held, { duplicate: true, questionId: q._id }));
+      res.status(200).json(await lessonReply(repo, req.viewer, held, { duplicate: true, questionId: q._id, hidden }));
       return;
     }
-    // Batch 8: only an answer to a question the lesson served this student, with
-    // the token its reading carried (services/serveTokens.js). Nothing is stored.
-    assertServed(body.serveToken, { accountId: String(req.viewer.id), questionId: String(q._id), mode: 'lesson' });
+    // Batch 8: counted only as an answer to a question the lesson served this
+    // student, with the token its reading carried (services/serveTokens.js);
+    // without one it is kept as unproven, counted nowhere and told no mark.
+    const unproven = !checkServeToken(body.serveToken, { accountId: String(req.viewer.id), questionId: String(q._id), mode: 'lesson' }).ok;
     // Its reply shows the answer: never on a question closed to this student now
     // (being asked in a room, on an open self-test, or asked by an open Get Ready
     // check). Refused before anything is stored; the device keeps it.
@@ -302,6 +307,7 @@ router.post('/lessons/:lessonId/questions/:questionId/attempts', async (req, res
     // Marked here, from the stored question, with the shuffle the student was
     // shown: the hub's one seed, so practice's error log redraws it the same way.
     const seed = hubSeed(req.viewer.id, q._id);
+    if (!(await readyToMark(q))) throw fail(FIGURES_NOT_READY, 503);
     const graded = score(q, body.response, seed);
     const shown = await attemptLanguage(repo, {
       kind: 'question', item: q, claim: body.shown ?? null, wanted: await languageChoice(repo, req.viewer),
@@ -332,9 +338,10 @@ router.post('/lessons/:lessonId/questions/:questionId/attempts', async (req, res
       translationId: shown.translationId,
       hintsUsed,
       timeMs,
+      ...(unproven ? { unproven: true } : {}),
       answeredAt: new Date().toISOString(),
     });
-    res.status(duplicate ? 200 : 201).json(await lessonReply(repo, req.viewer, attempt, { duplicate: Boolean(duplicate), questionId: q._id }));
+    res.status(duplicate ? 200 : 201).json(await lessonReply(repo, req.viewer, attempt, { duplicate: Boolean(duplicate), questionId: q._id, hidden }));
   } catch (err) {
     next(err);
   }
@@ -351,12 +358,29 @@ export const ID_TAKEN = 'That attempt id was used for another answer. Send this 
  * id kept for anything else (a self-test's answer, practice's, another
  * question's) is refused, so its mark and key are never shown here.
  */
-async function lessonReply(repo, viewer, attempt, { duplicate, questionId }) {
+async function lessonReply(repo, viewer, attempt, { duplicate, questionId, hidden = false }) {
   const sameQuestion = String(attempt.questionId ?? '').toLowerCase() === String(questionId ?? '').toLowerCase();
   if (duplicate && (attempt.mode !== 'lesson' || !sameQuestion)) throw fail(ID_TAKEN, 409);
+  // Kept without proof the lesson served it (Batch 8): saved, and nothing else,
+  // or its mark and key would be one id away for any question.
+  if (attempt.unproven) {
+    return {
+      attemptId: attempt.clientAttemptId ?? attempt.attemptId,
+      duplicate,
+      counted: false,
+      unproven: true,
+      note: UNPROVEN_NOTE,
+      correct: null,
+      score: null,
+      solution: null,
+      optionFeedback: [],
+      language: attempt.language,
+    };
+  }
   // The lesson's reload shows its earlier answers through the same helper, so
-  // the key it shows is the one this reply showed.
-  const solution = attemptSolution(attempt, viewer.id);
+  // the key it shows is the one this reply showed. Kept for rooms only (Batch 8,
+  // 0035): the hub shows no key for it.
+  const solution = hidden ? null : attemptSolution(attempt, viewer.id);
   return {
     attemptId: attempt.clientAttemptId ?? attempt.attemptId,
     duplicate,
@@ -364,7 +388,7 @@ async function lessonReply(repo, viewer, attempt, { duplicate, questionId }) {
     score: attempt.score,
     solution,
     // After the attempt only: the professor's feedback on the wrong option(s) chosen.
-    optionFeedback: await feedbackAfter(repo, { account: viewer, attempt }),
+    optionFeedback: hidden ? [] : await feedbackAfter(repo, { account: viewer, attempt }),
     language: attempt.language,
     ...(duplicate ? { note: 'This answer was already saved; nothing was added.' } : {}),
   };

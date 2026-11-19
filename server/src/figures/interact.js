@@ -14,19 +14,36 @@
 // afterwards. The server can always work the tokens back out from the seed, so
 // it never has to remember them, and the phone never learns a real name.
 //
+// The figure is drawn once under stand-in names (not once per student, which
+// laid out a 25-box diagram sixty times for one room and churned the render
+// cache), and each student's copy is that drawing with the stand-ins swapped
+// for their own tokens, as text.
+//
 // Pure apart from rendering, which is synchronous once the engines are loaded.
 
 import { scaleLinear } from 'd3-scale';
 
 import { safeSvg, fmt } from './common.js';
 import { normaliseSpec, FAMILIES } from './spec.js';
-import { renderFigure, figureForStudent } from './index.js';
+import { renderFigure, figureForStudent, specHash } from './index.js';
 import { plotFrame, axisStep, evaluate, equation } from './plot.js';
 import { numberlineFrame } from './numberline.js';
 
 const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const finite = (v) => typeof v === 'number' && Number.isFinite(v);
 const low = (v) => String(v ?? '').toLowerCase();
+
+/**
+ * A number a phone sent: a number, or text that is one ("3,000" too). Never a
+ * blank, null or true, which Number() reads as 0 or 1: a bar left empty, or a
+ * mark with no place, is no answer, not an answer of 0.
+ */
+export function numberOf(v) {
+  if (typeof v === 'number') return v;
+  if (typeof v !== 'string') return NaN;
+  const t = v.replace(/[\s,]/g, '');
+  return t === '' ? NaN : Number(t);
+}
 
 /**
  * "Within a grid step" means closer than the next grid line: a placed point one
@@ -64,7 +81,9 @@ export function boardOf(stimulus) {
     const { spec } = normaliseSpec(stimulus.spec);
     if (!spec) return null;
     const r = renderFigure(spec);
-    return { kind: 'figure', spec, ids: r.ok ? r.parts.map((p) => p.part) : [], pending: Boolean(r.pending) };
+    return {
+      kind: 'figure', spec, ids: r.ok ? r.parts.map((p) => p.part) : [], parts: r.ok ? r.parts : [], pending: Boolean(r.pending),
+    };
   }
   return null;
 }
@@ -72,20 +91,16 @@ export function boardOf(stimulus) {
 /** Find an id on a board, ignoring case as the figure checks do; the board's own spelling, or null. */
 export const idOn = (board, id) => board.ids.find((b) => low(b) === low(id)) ?? null;
 
-/** Where a label a figure draws beside a part lives in the spec. */
-const LABELLED = ['functions', 'points', 'segments', 'shade', 'intervals', 'rays', 'polygons', 'circles', 'angles', 'vectors'];
-
 /**
- * The words a figure draws beside a part, or ''. A label question's target must
- * have none: the drawing would be showing the answer it asks for.
+ * The words a figure shows for a part, or '': what its renderer wrote beside it
+ * or named it by in the description (each part's `drawn`), which is more than
+ * the spec's own label: an unlabelled curve has its equation written beside it,
+ * and a ray diagram always writes "Object" and "Image". A label question's
+ * target must have none: the drawing would be showing the answer it asks for.
  */
-export function drawnLabel(spec, id) {
-  for (const key of LABELLED) {
-    for (const p of Array.isArray(spec?.[key]) ? spec[key] : []) {
-      if (low(p?.id) === low(id)) return String(p.label ?? '');
-    }
-  }
-  return '';
+export function drawnLabel(board, id) {
+  const part = (board?.parts ?? []).find((p) => low(p.part) === low(id));
+  return String(part?.drawn ?? '');
 }
 
 /** The figure types a label question may be asked on: their parts can be drawn without words. */
@@ -114,6 +129,19 @@ function idsIn(value, out = []) {
  * @returns {{ tokenOf: Map<string,string>, idOf: Map<string,string> }} keyed by lower-case name / by token
  */
 export function tokensFor(board, shuffle) {
+  const names = namesOn(board);
+  const perm = shuffle(names.length);
+  const tokenOf = new Map();
+  const idOf = new Map();
+  perm.forEach((orig, pos) => {
+    tokenOf.set(low(names[orig]), `z${pos}`);
+    idOf.set(`z${pos}`, names[orig]);
+  });
+  return { tokenOf, idOf };
+}
+
+/** Every name on a board, each once, in reading order: the spec's ids, then the parts the drawing made up. */
+function namesOn(board) {
   const names = [];
   const seen = new Set();
   const add = (n) => {
@@ -123,14 +151,7 @@ export function tokensFor(board, shuffle) {
   };
   if (board.kind === 'figure') idsIn(board.spec).forEach(add);
   board.ids.forEach(add);
-  const perm = shuffle(names.length);
-  const tokenOf = new Map();
-  const idOf = new Map();
-  perm.forEach((orig, pos) => {
-    tokenOf.set(low(names[orig]), `z${pos}`);
-    idOf.set(`z${pos}`, names[orig]);
-  });
-  return { tokenOf, idOf };
+  return names;
 }
 
 /** The keys that hold a reference to another part's id. */
@@ -158,10 +179,11 @@ function renamed(value, key, tokenOf) {
  * Names the drawing made up itself (a bar, a molecule's group, a lens) are still
  * in the picture after renaming; each is retagged here, in its data-part and the
  * id beside it. A name with no token loses the attribute rather than keep it.
+ * `isToken` says which parts already carry a token (or a stand-in).
  */
-function retag(svg, tokenOf) {
+function retag(svg, tokenOf, isToken = (part) => /^z\d+$/.test(part)) {
   return svg.replace(/<[A-Za-z][^<>]*\sdata-part="([^"]*)"[^<>]*>/g, (tag, part) => {
-    if (/^z\d+$/.test(part)) return tag;
+    if (isToken(part)) return tag;
     const tok = tokenOf.get(low(part));
     return tag
       .replace(` data-part="${part}"`, tok ? ` data-part="${tok}"` : '')
@@ -193,13 +215,71 @@ export function zonesFor(stimulus, board, shuffle, only = null) {
       zones: tokens.map((zone) => ({ zone, points: byToken.get(zone).points.map(([x, y]) => [x, y]) })),
     };
   }
-  const view = figureForStudent(renamed(board.spec, null, tokenOf));
-  const svg = view.svg ? retag(view.svg, tokenOf) : view.svg;
+  const once = drawnOnce(board);
+  let view;
+  let svg;
+  if (once) {
+    // The one drawing, its stand-ins swapped for this student's tokens.
+    const tokenAt = once.names.map((n) => tokenOf.get(low(n)) ?? '');
+    const swap = (text) => String(text ?? '').replace(once.pattern, (_, i) => tokenAt[Number(i)] ?? '');
+    const t = once.view.table;
+    view = {
+      ...once.view,
+      title: swap(once.view.title),
+      description: swap(once.view.description),
+      table: t ? { caption: swap(t.caption), columns: t.columns.map(swap), rows: t.rows.map((r) => r.map(swap)) } : t,
+    };
+    svg = once.view.svg ? swap(once.view.svg) : once.view.svg;
+  } else {
+    // No stand-in is free of the figure's own words (a professor wrote one in a
+    // label): drawn for this student, as it always could be.
+    view = figureForStudent(renamed(board.spec, null, tokenOf));
+    svg = view.svg ? retag(view.svg, tokenOf) : view.svg;
+  }
   return {
     // A retagged picture that somehow failed the check goes without its picture rather than unchecked.
     stimulus: { ...view, svg: svg && safeSvg(svg) ? svg : null },
     zones: tokens.map((zone) => ({ zone })),
   };
+}
+
+/** Letter pairs no English word and no number holds, for the stand-in names a figure is drawn under. */
+const STAND_INS = ['zq', 'qz', 'xq', 'qx', 'jq', 'qj', 'vq', 'qv'];
+const DRAWN_ONCE = 200;
+const drawnCache = new Map();
+
+/**
+ * A tap or label figure drawn once for every student: every name swapped for a
+ * stand-in (zq0, zq1, ... in reading order), made-up parts retagged the same
+ * way. Null when every stand-in already appears in the figure's own words, so a
+ * swap could not tell the two apart. Cached by the spec.
+ *
+ * @returns {{ names: string[], pattern: RegExp, view: object } | null}
+ */
+function drawnOnce(board) {
+  const key = specHash(board.spec);
+  if (drawnCache.has(key)) return drawnCache.get(key);
+  const names = namesOn(board);
+  const plain = renderFigure(board.spec);
+  const words = low(`${JSON.stringify(board.spec)} ${plain.svg ?? ''} ${plain.title} ${plain.description} ${JSON.stringify(plain.table)}`);
+  const stem = STAND_INS.find((x) => !words.includes(x));
+  let out = null;
+  if (stem) {
+    const standIn = new Map(names.map((n, i) => [low(n), `${stem}${i}`]));
+    const isStandIn = (part) => new RegExp(`^${stem}\\d+$`).test(part);
+    const view = figureForStudent(renamed(board.spec, null, standIn));
+    out = {
+      names,
+      pattern: new RegExp(`${stem}(\\d+)(?!\\d)`, 'g'),
+      view: { ...view, svg: view.svg ? retag(view.svg, standIn, isStandIn) : view.svg },
+    };
+  }
+  // A drawing that could not be made yet (the engines still loading) is not kept.
+  if (!plain.pending) {
+    if (drawnCache.size >= DRAWN_ONCE) drawnCache.delete(drawnCache.keys().next().value);
+    drawnCache.set(key, out);
+  }
+  return out;
 }
 
 /** A token a phone sent, back to the id it stands for; null for anything else. */
@@ -267,6 +347,18 @@ function keyFunction(f) {
   }
   if ((f.family === 'exponential' || f.family === 'logarithmic') && (out.base <= 0 || out.base === 1)) return { reason: 'a plot function\'s base must be positive and not 1' };
   return { fn: { family: f.family, params: out } };
+}
+
+/**
+ * A plot key with its function's numbers filled in from the family's defaults,
+ * as the validator reads it (keyFunction): `{ family: 'linear', params: { m: 2 } }`
+ * is y = 2x, and is stored and marked as { m: 2, c: 0 }. Anything that is not a
+ * readable function form comes back as it was, for the validator to refuse.
+ */
+export function normalisePlotKey(key) {
+  if (!isObj(key) || !isObj(key.function)) return key;
+  const { fn } = keyFunction(key.function);
+  return fn ? { ...key, function: fn } : key;
 }
 
 /**
@@ -407,13 +499,19 @@ function onLine(line, p, step) {
 function meets(line, c, step) {
   if (c.rule === 'through') return onLine(line, pairOf(c.point), step);
   if (c.rule === 'intercept') return !line.vertical && near(line.c, c.value, step.y);
+  // A slope, or its sign, is judged only on two points at least a grid step
+  // apart across. The rise is allowed a grid step either way, and over a
+  // shorter run that allows almost any slope: (0, 0) to (0.01, 1) "had a slope
+  // of 2". Over a run of a step or more it allows at most one grid unit of
+  // slope. A line snapped to the grid always has that run unless it is vertical.
+  if (line.vertical || Math.abs(line.dx) < step.x * UNDER) return false;
   if (c.sign) {
     if (c.sign === 'zero') return Math.abs(line.dy) < step.y * UNDER;
-    if (line.vertical || Math.abs(line.dy) < step.y * UNDER) return false;
+    if (Math.abs(line.dy) < step.y * UNDER) return false;
     return c.sign === 'positive' ? line.m > 0 : line.m < 0;
   }
   // A stated slope: the rise across the line's own run must be within a grid step of it.
-  return !line.vertical && near(line.dy, c.value * line.dx, step.y);
+  return near(line.dy, c.value * line.dx, step.y);
 }
 
 /** Bipartite matching of placed points to wanted ones, within a grid step on both axes. */
@@ -457,9 +555,13 @@ export function conditionWords(c) {
 export function gradePlot(key, spec, response) {
   const step = { x: axisStep(spec.x), y: axisStep(spec.y) };
   const got = (Array.isArray(response) ? response : []).map(pairOf)
-    .filter((p) => p && finite(Number(p[0])) && finite(Number(p[1])))
-    .map((p) => [Number(p[0]), Number(p[1])])
+    .filter((p) => p && finite(numberOf(p[0])) && finite(numberOf(p[1])))
+    .map((p) => [numberOf(p[0]), numberOf(p[1])])
     .slice(0, MAX_PLOT_POINTS * 2);
+  // The function as the validator read it: a number left out is the family's
+  // default (y = 2x has c = 0), never NaN, which marked every answer wrong.
+  const fn = key.function ? keyFunction(key.function).fn ?? null : null;
+  if (key.function && !fn) return { score: 0, detail: 'the key could not be read' };
   const clamp = (v) => Math.max(0, Math.min(1, v));
 
   if (key.place === 'line') {
@@ -470,7 +572,7 @@ export function gradePlot(key, spec, response) {
       const met = key.conditions.filter((c) => meets(line, c, step)).length;
       return { score: met / key.conditions.length, detail: `${met}/${key.conditions.length} conditions met` };
     }
-    const { m, c } = key.function?.params ?? {};
+    const { m, c } = fn?.params ?? {};
     const target = key.points ? lineThrough(key.points.map(pairOf)) : lineThrough([[0, c], [1, m + c]]);
     const on = got.filter((p) => onLine(target, p, step)).length;
     return { score: on / 2, detail: `${on}/2 points on the line` };
@@ -487,7 +589,6 @@ export function gradePlot(key, spec, response) {
   }
   // On the function: each placed point on the curve counts once, and two that
   // share a grid column count as one, so one right point placed twice is not two.
-  const fn = { family: key.function.family, params: key.function.params };
   const on = [];
   let off = 0;
   for (const p of got) {
@@ -501,7 +602,7 @@ export function gradePlot(key, spec, response) {
 /** The plot key as a phone may see it once the answer is in. */
 export function plotSolution(key) {
   if (key.points) return { place: key.place, points: key.points.map(pairOf) };
-  if (key.function) return { place: key.place, equation: equation(key.function) };
+  if (key.function) return { place: key.place, equation: equation(keyFunction(key.function).fn ?? key.function) };
   return { place: key.place, conditions: key.conditions.map(conditionWords) };
 }
 
@@ -509,8 +610,8 @@ export function plotSolution(key) {
 
 export const MAX_LINE_MARKS = 6;
 
-/** Is this a number-line key that can be marked on this line? */
-export function lineKeyReason(key, spec) {
+/** Is this a number-line key that can be marked on this line (with the question's tolerance, if it has one)? */
+export function lineKeyReason(key, spec, tolerance = null) {
   if (!isObj(key)) return 'numberline needs a key: the points, or the intervals and rays, to mark';
   for (const k of Object.keys(key)) if (!['points', 'intervals', 'rays'].includes(k)) return `a number-line key has no field called ${k}`;
   const points = key.points ?? [];
@@ -531,6 +632,13 @@ export function lineKeyReason(key, spec) {
     if (!isObj(r) || !on(r.from) || !['left', 'right'].includes(r.direction)) return 'each ray in the key starts on the line and points left or right';
     if (r.open !== undefined && typeof r.open !== 'boolean') return 'a ray\'s end is open or closed';
   }
+  // As on a plot: marks are told apart only to a tick (or the tolerance), and
+  // two marks that close are taken as one, so key points must be further apart.
+  for (let i = 0; i < points.length; i += 1) {
+    for (let j = i + 1; j < points.length; j += 1) {
+      if (near(points[i], points[j], spec.step, tolerance)) return `two points in the number-line key are closer than ${tolerance === null || tolerance === undefined ? 'a tick' : 'the tolerance'}, so one mark would answer both`;
+    }
+  }
   if (points.some((v) => spec.points.some((p) => Math.abs(p.value - v) < 1e-9))) return 'the figure already shows a point the student is asked to mark';
   const same = (a, b) => Math.abs(a - b) < 1e-9;
   if (intervals.some((iv) => spec.intervals.some((s) => same(s.from, iv.from) && same(s.to, iv.to)))) return 'the figure already shows an interval the student is asked to mark';
@@ -550,11 +658,15 @@ export function lineKeyReason(key, spec) {
  */
 export function gradeNumberline(key, spec, response, tolerance = null) {
   const r = isObj(response) ? response : {};
-  const close = (a, b) => near(Number(a), b, spec.step, tolerance);
+  const close = (a, b) => near(numberOf(a), b, spec.step, tolerance);
   // Capped: a phone sends a handful of marks, and the matching below is a
   // product of what was wanted and what came.
   const listOf = (v) => (Array.isArray(v) ? v.slice(0, MAX_LINE_MARKS * 4) : []);
-  const gotPoints = listOf(r.points).map(Number).filter(finite);
+  // One place marked twice is one mark, as on a plot: the second tap neither
+  // earns nor costs anything (before, it counted as a mark beyond the key and
+  // cancelled the right one).
+  const gotPoints = listOf(r.points).map(numberOf).filter(finite)
+    .filter((v, i, all) => !all.slice(0, i).some((w) => close(v, w)));
   const gotIntervals = listOf(r.intervals).filter(isObj);
   const gotRays = listOf(r.rays).filter(isObj);
   const want = { points: key.points ?? [], intervals: key.intervals ?? [], rays: key.rays ?? [] };
@@ -626,8 +738,8 @@ export function gradeChart(bars, values, response, tolerance = null) {
   const got = Array.isArray(response) ? response : [];
   let hits = 0;
   values.forEach((v, i) => {
-    const g = typeof got[i] === 'string' ? Number(got[i].replace(/[\s,]/g, '')) : got[i];
-    if (near(g, v, bars.step, tolerance)) hits += 1;
+    // A bar left empty is no answer, even where the right height is 0.
+    if (near(numberOf(got[i]), v, bars.step, tolerance)) hits += 1;
   });
   return { score: values.length ? hits / values.length : 0, detail: `${hits}/${values.length} bars` };
 }

@@ -115,9 +115,40 @@ function oneOf(v, allowed, what, dflt) {
   return v;
 }
 
-/** Ids a part is addressed by: given, or made from its kind and position. Unique across the figure. */
+/**
+ * The set each check collects its part names in, knowing beforehand every name
+ * the spec gives a part anywhere (any `id`, at any depth). An automatic name
+ * steps past those, so a box the professor called "e1" and an arrow they left
+ * unnamed are not refused for a clash with a name they never wrote.
+ */
+function namesFor(raw) {
+  const given = new Set();
+  const walk = (v) => {
+    if (Array.isArray(v)) v.forEach(walk);
+    else if (isObj(v)) {
+      for (const [k, x] of Object.entries(v)) {
+        if (k === 'id' && typeof x === 'string') given.add(x.toLowerCase());
+        else walk(x);
+      }
+    }
+  };
+  walk(raw);
+  return Object.assign(new Set(), { given });
+}
+
+/**
+ * Ids a part is addressed by: given, or made from its kind and position (the
+ * next free number when that one is taken or given elsewhere). Unique across
+ * the figure.
+ */
 function idOf(v, what, fallback, used) {
-  const id = v === undefined || v === null || v === '' ? fallback : v;
+  const auto = v === undefined || v === null || v === '';
+  let id = auto ? fallback : v;
+  if (auto) {
+    const [, stem, n] = /^(.*?)(\d+)$/.exec(fallback);
+    const taken = (name) => used.has(name.toLowerCase()) || Boolean(used.given?.has(name.toLowerCase()));
+    for (let k = Number(n) + 1; taken(id); k += 1) id = `${stem}${k}`;
+  }
   need(typeof id === 'string' && ID.test(id), `${cap(what)} needs a short name made of letters, digits, - or _, starting with a letter.`);
   need(!used.has(id.toLowerCase()), `Two parts of the figure are both called "${id}": each needs its own name.`);
   used.add(id.toLowerCase());
@@ -208,7 +239,7 @@ function pair(v, what) {
 
 function plotSpec(s) {
   keys(s, ['type', 'title', 'x', 'y', 'grid', 'functions', 'points', 'segments', 'shade', 'steps'], 'the graph');
-  const used = new Set();
+  const used = namesFor(s);
   const out = {
     type: 'plot',
     title: titleOf(s.title),
@@ -268,7 +299,7 @@ function chartSpec(s) {
   };
   out.x = axisLabel(s.x, 'the horizontal axis');
   out.y = axisLabel(s.y, 'the vertical axis');
-  const used = new Set();
+  const used = namesFor(s);
   const others = (allowed) => {
     for (const k of ['categories', 'series', 'slices', 'bins', 'values', 'boxes']) {
       need(allowed.includes(k) || s[k] === undefined, `A ${chart} chart does not use ${k}.`);
@@ -331,7 +362,7 @@ function numberlineSpec(s) {
   need(max > min, 'The number line must end to the right of where it starts.');
   const step = num(s.step ?? 1, 'the gap between ticks', { min: 1e-9 });
   need((max - min) / step <= LIMITS.numberTicks, `The number line would have more than ${LIMITS.numberTicks} ticks: use a wider gap between them.`);
-  const used = new Set();
+  const used = namesFor(s);
   const inRange = (v, what) => {
     num(v, what);
     need(v >= min && v <= max, `${cap(what)} is off the number line, which runs from ${fmt(min)} to ${fmt(max)}.`);
@@ -373,7 +404,7 @@ export const OPTICS = ['convex-lens', 'concave-lens', 'concave-mirror', 'convex-
 
 function geometrySpec(s) {
   keys(s, ['type', 'title', 'view', 'grid', 'axes', 'points', 'segments', 'rays', 'polygons', 'circles', 'angles', 'vectors', 'optics', 'steps'], 'the drawing');
-  const used = new Set();
+  const used = namesFor(s);
   const out = { type: 'geometry', title: titleOf(s.title), grid: bool(s.grid, 'the grid'), axes: bool(s.axes, 'the axes') };
   if (s.view !== undefined && s.view !== null) {
     keys(s.view, ['xMin', 'xMax', 'yMin', 'yMax'], 'the drawing\'s frame');
@@ -483,7 +514,7 @@ export function readDate(v, what) {
 
 function timelineSpec(s) {
   keys(s, ['type', 'title', 'events'], 'the timeline');
-  const used = new Set();
+  const used = namesFor(s);
   const events = list(s.events, 'events', LIMITS.events, { min: 2 }).map((e, i) => {
     const what = nth('event', i);
     keys(e, ['id', 'date', 'label'], what);
@@ -504,7 +535,7 @@ export const ARROWS = ['forward', 'back', 'both', 'none'];
 function diagramSpec(s) {
   keys(s, ['type', 'title', 'layout', 'direction', 'nodes', 'edges', 'steps'], 'the diagram');
   const layout = oneOf(s.layout, LAYOUTS, 'the kind of diagram', 'flowchart');
-  const used = new Set();
+  const used = namesFor(s);
   const nodes = list(s.nodes, 'boxes', LIMITS.nodes, { min: 1 }).map((n, i) => {
     const what = nth('box', i);
     keys(n, ['id', 'label', 'shape'], what);

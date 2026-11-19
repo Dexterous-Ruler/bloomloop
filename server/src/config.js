@@ -73,16 +73,11 @@ export const config = {
     maxBytes: Number(process.env.MEDIA_MAX_BYTES) || 500 * 1024,
   },
 
-  // Batch 8: the hub's serve tokens (services/serveTokens.js). Practice and a
-  // lesson accept an answer only to a question they served to that account, and
-  // the proof is this server's signature on what was served. The default is
-  // fixed rather than random at boot, so a restart (or a second instance) does
-  // not refuse every answer still waiting on a phone; a deployment sets its own.
-  hub: {
-    serveTokenSecret: process.env.HUB_SERVE_TOKEN_SECRET || 'bloomloop-dev-serve-token-secret',
-    // Long, because a phone may hold an answer offline for days (Phase 7's outbox).
-    serveTokenHours: Number(process.env.HUB_SERVE_TOKEN_HOURS) || 24 * 7,
-  },
+  // Batch 8: the server's own secret, for the hub's serve tokens and the deal of
+  // a tap or label question (src/secrets.js). Optional: without it the secret
+  // is derived from the Supabase service-role key (or the MongoDB URI), never a
+  // fixed string anyone could read here. Set it once and keep it.
+  serverSecret: process.env.SERVER_SECRET || '',
 
   uploadsDir: path.join(ROOT, 'server', 'uploads'),
   clientDist: path.join(ROOT, 'client', 'dist'),

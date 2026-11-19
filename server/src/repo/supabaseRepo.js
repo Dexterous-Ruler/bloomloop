@@ -1834,6 +1834,9 @@ export function createSupabaseRepo() {
         timeTakenMs: r.time_taken_ms == null ? null : Number(r.time_taken_ms),
         // 0028's column; a database without it reads as no run.
         runId: r.run_id ?? null,
+        // 0036 (Batch 8): kept without proof the hub served the question. A
+        // database without the column reads as proven, as every answer was before.
+        unproven: r.unproven === true,
         createdAt: r.created_at,
       };
       const outExplanation = (r) => r && {
@@ -1880,6 +1883,8 @@ export function createSupabaseRepo() {
             time_taken_ms: doc.timeTakenMs ?? null,
             // Sent only when there is one, so practice still saves on a database without 0028.
             ...(doc.runId ? { run_id: doc.runId } : {}),
+            // Sent only when set, so a proven answer still saves on a database without 0036.
+            ...(doc.unproven ? { unproven: true } : {}),
             created_at: doc.createdAt ?? new Date().toISOString(),
           }).select().single();
           if (!error) return { attempt: outAttempt(data), duplicate: false };
@@ -2920,6 +2925,12 @@ export const ROUTE_SCHEMA = Object.freeze([
     'no question can be kept for rooms only, so the Learning Hub may offer every approved question'],
   ['topic_lessons', 'sections', '0035_bank_share_and_concept_panel.sql',
     'a lesson written with AI help cannot be saved when it has an introduction, facts, explanation, code example or common mistakes'],
+  // Batch 8, the review's fixes (0036). Without it every practice and lesson
+  // answer that carries its serve token saves as before; one without proof the
+  // hub served its question cannot be kept, so the phone holds it and sends it
+  // again once the file is applied.
+  ['hub_attempts', 'unproven', '0036_hub_attempt_proof.sql',
+    'a practice or lesson answer sent without proof that the hub served its question is not saved, and the phone keeps it to send again'],
 ]);
 
 /** One missing piece, as a sentence naming the file to apply. */

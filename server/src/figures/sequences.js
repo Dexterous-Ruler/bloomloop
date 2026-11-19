@@ -10,8 +10,10 @@ import { readDate } from './spec.js';
 /**
  * Labels are laid out in lanes above and below the line, each label taking the
  * first lane where it clears the one before it, so close years never print on
- * top of each other (the prototype's flaw). Only past eight lanes would a label
- * overlap, and thirty events is the cap.
+ * top of each other (the prototype's flaw). When every lane so far is taken at
+ * that point, a new lane is opened on the side with fewer, so a cluster of
+ * events makes the timeline taller rather than its labels overlap; thirty
+ * events (the cap) is at most fifteen lanes a side.
  */
 export function renderTimeline(spec, { prefix, hl }) {
   const lit = (id) => hl.has(String(id).toLowerCase());
@@ -30,16 +32,17 @@ export function renderTimeline(spec, { prefix, hl }) {
     const cx = Math.min(Math.max(x(e.d.value), w / 2 + 4), W - w / 2 - 4);
     const order = i % 2 === 0 ? ['above', 'below'] : ['below', 'above'];
     let spot = null;
-    for (let lane = 0; lane < LANES && !spot; lane += 1) {
+    const most = Math.max(ends.above.length, ends.below.length);
+    for (let lane = 0; lane < most && !spot; lane += 1) {
       for (const side of order) {
-        if (!spot && ends[side][lane] + 6 < cx - w / 2) spot = { side, lane };
+        if (!spot && lane < ends[side].length && ends[side][lane] + 6 < cx - w / 2) spot = { side, lane };
       }
     }
-    // Every lane is full here: take the one that frees soonest.
+    // Every lane is taken here: open a new one, on the side with fewer.
     if (!spot) {
-      let best = { side: 'above', lane: 0, end: Infinity };
-      for (const side of ['above', 'below']) ends[side].forEach((end, lane) => { if (end < best.end) best = { side, lane, end }; });
-      spot = best;
+      const side = ends.above.length <= ends.below.length ? 'above' : 'below';
+      ends[side].push(-Infinity);
+      spot = { side, lane: ends[side].length - 1 };
     }
     ends[spot.side][spot.lane] = cx + w / 2;
     return { ...e, cx, w, textLines, ...spot };

@@ -123,8 +123,12 @@ export function renderMolecule(spec, { prefix, rdkit }) {
       parts: parts.map((p) => ({ part: p, label: label(p) })),
       formula,
       title: spec.title || spec.name || 'Molecule',
-      description: `The structure of ${named}a molecule with formula ${formula} (written as SMILES ${spec.smiles}). It has ${atoms.length} atom${atoms.length === 1 ? '' : 's'} besides its hydrogens.`,
-      table: { caption: `Atoms in ${spec.name || 'the molecule'} (formula ${formula})`, columns: ['Element', 'Count'], rows },
+      // The formula and the atom counts are worked out (hydrogens are not even
+      // drawn), and "what is its formula?" is a common question: the professor's
+      // only. A student gets the structure itself, as SMILES.
+      description: `The structure of ${named}a molecule, written as SMILES ${spec.smiles}.`,
+      worked: [`Its formula is ${formula}.`, `Atoms: ${rows.map(([el, n]) => `${el} ${n}`).join(', ')}.`],
+      table: { caption: `The structure of ${spec.name || 'the molecule'}`, columns: ['Part', 'Value'], rows: [...(spec.name ? [['Name', spec.name]] : []), ['Structure (SMILES)', spec.smiles]] },
     };
   } finally {
     mol.delete();

@@ -67,7 +67,7 @@ import { figureWithSteps } from '../figures/index.js';
 // ---- Batch 8: the concept panel, rooms-only questions and serve tokens ----
 import { cleanConcept, conceptOfReply, conceptPrompt, sectionsView } from './hubConcept.js';
 import { isRoomsOnly } from './bankShare.js';
-import { serveToken } from './serveTokens.js';
+import { UNPROVEN_NOTE, serveToken } from './serveTokens.js';
 
 /** One chunk: at most this many characters, and this many slides. */
 export const MAX_CHUNK_CHARS = 900;
@@ -647,17 +647,21 @@ export const lessonQuestionIds = (lesson) => (Array.isArray(lesson?.steps) ? les
  * lists, or the active question that replaced one of them. Null when it is
  * not the lesson's. A question never approved (a draft, or an AI draft the
  * professor rejected) is never one a student was shown (wasApproved).
+ *
+ * A question kept for rooms only is never one a lesson asks (Batch 8), so it
+ * is null here, except with `answered`: an answer to it, given while the
+ * lesson still showed it, is kept (never discarded), with no key shown.
  */
-export function lessonQuestion(lesson, questionId, bank) {
+export function lessonQuestion(lesson, questionId, bank, { answered = false } = {}) {
   const want = String(questionId ?? '').toLowerCase();
+  const asked = (q) => answered || !isRoomsOnly(q);
   for (const id of lessonQuestionIds(lesson)) {
     if (String(id).toLowerCase() === want) {
       const q = bank.find((x) => String(x._id).toLowerCase() === want) ?? null;
-      // Batch 8: a question kept for rooms only is never one a lesson asks.
-      return wasApproved(q) && !isRoomsOnly(q) ? q : null;
+      return wasApproved(q) && asked(q) ? q : null;
     }
     const served = servedFor(id, bank);
-    if (served && !isRoomsOnly(served) && String(served._id).toLowerCase() === want) return served;
+    if (served && asked(served) && String(served._id).toLowerCase() === want) return served;
   }
   return null;
 }
@@ -720,6 +724,9 @@ async function lastAnswerView(repo, { account, attempt, closedWhy, language }) {
     language: attempt.language ?? ORIGINAL,
   };
   if (closedWhy) return { ...view, solution: null, explanation: null, optionFeedback: [], held: true, heldNote: ANSWER_HELD[closedWhy] ?? ROOM_HELD_NOTE };
+  // Kept without proof the lesson served it (Batch 8): no mark, key or feedback on a
+  // reload either, as the answer's own reply gave none.
+  if (attempt.unproven) return { ...view, correct: null, score: null, solution: null, explanation: null, optionFeedback: [], unproven: true, note: UNPROVEN_NOTE };
   const explanation = await explanationForStudent(repo, attempt.questionId, language).catch((err) => {
     console.error('[hub] an explanation could not be read:', err.message);
     return null;

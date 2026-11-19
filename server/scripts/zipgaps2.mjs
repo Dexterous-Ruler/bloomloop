@@ -19,8 +19,11 @@
 //                 question they have not practised in the hub first; the
 //                 student card and their attainment note the answer to one
 //                 they had; an unverified phone is not noted
-//   serve tokens  practice and a lesson take an answer only with the token the
-//                 reply that served it carried; a resend needs none
+//   serve tokens  practice and a lesson count an answer (mark it, show its key)
+//                 only with the token the reply that served it carried; one
+//                 without is kept as unproven, counted nowhere and told no
+//                 mark or key, on every resend too; a resend of a counted
+//                 answer needs no token
 //   Get Ready     a student ends a check early: its undecided prerequisites are
 //                 Not sure yet and its question is open again; "why this path"
 //                 names what the evidence changed (Ready and skipped, on the
@@ -53,7 +56,7 @@ const { config } = await import(`${SRC}config.js`);
 const { writeLessonDraft } = await import(`${SRC}services/hubLessons.js`);
 const { connectAttemptStore, PRACTICE_STORE } = await import(`${SRC}services/hubAttemptBridge.js`);
 const { closedQuestions } = await import(`${SRC}services/hubClosed.js`);
-const { TOKEN_MISSING } = await import(`${SRC}services/serveTokens.js`);
+const { UNPROVEN_NOTE } = await import(`${SRC}services/serveTokens.js`);
 const { PRACTISED_NOTE, ROOMS_ONLY_SENTENCE } = await import(`${SRC}services/bankShare.js`);
 
 // The in-process store and no model, whatever .env says.
@@ -299,26 +302,39 @@ check('a confirmed link: Basics before Target', (await post('/api/hub/links', { 
 
 // ------------------------------------------------- serve tokens (practice) --
 
-console.log('\npractice takes an answer only to a question it served to that student (serve tokens)');
+console.log('\npractice counts an answer only to a question it served to that student (serve tokens)');
 let hubPractised = null;
 {
   const served = await get(`/api/hub/practice/next?topicId=${T.Hubbed}`, 'asha');
   const q = served.body.question;
   check('the next question carries a serve token, and no key', served.status === 200 && q?._id === String(Q_HUB._id)
     && /^\d+\.[A-Za-z0-9_-]{43}$/.test(served.body.serveToken ?? '') && !/answerIdx/.test(JSON.stringify(served.body)), JSON.stringify(served.body).slice(0, 200));
-  const before = (await repo.listHubAttempts({ accountId: ID.asha })).length;
   const body = { attemptId: 'zg2-hub-0001', questionId: q._id, topicId: T.Hubbed, response: 1 };
-  const bare = await post('/api/hub/practice/attempts', body, 'asha');
-  check('without it: 409, saying so, nothing stored', bare.status === 409 && bare.body.error === TOKEN_MISSING
-    && (await repo.listHubAttempts({ accountId: ID.asha })).length === before, JSON.stringify(bare.body));
+  // Review fix: nothing a student sends is discarded. An answer without the
+  // token (a phone that queued it before tokens, or one that never got one) is
+  // kept, counted nowhere, and told nothing that could be the key.
+  const told = (r) => r.body.unproven === true && r.body.counted === false && r.body.note === UNPROVEN_NOTE
+    && r.body.correct === null && r.body.score === null && r.body.solution === null && r.body.explanation === null;
+  const keptAs = async (id) => (await repo.listHubAttempts({ accountId: ID.asha })).find((a) => a.clientAttemptId === id) ?? null;
+  const bare = await post('/api/hub/practice/attempts', { ...body, attemptId: 'zg2-hub-0000' }, 'asha');
+  check('without it: 201, kept as unproven, no mark, key or explanation', bare.status === 201 && told(bare)
+    && (await keptAs('zg2-hub-0000'))?.unproven === true, JSON.stringify(bare.body));
+  const bareAgain = await post('/api/hub/practice/attempts', { ...body, attemptId: 'zg2-hub-0000', serveToken: served.body.serveToken }, 'asha');
+  check('sent again with a token: still the stored, unproven answer, still no key', bareAgain.status === 200 && bareAgain.body.duplicate === true
+    && told(bareAgain), JSON.stringify(bareAgain.body));
   const theirs = await post('/api/hub/practice/attempts', { ...body, attemptId: 'zg2-bil-0001', serveToken: served.body.serveToken }, 'bilal');
-  check('another student sending it: 409', theirs.status === 409, JSON.stringify(theirs.body));
-  const otherQ = await post('/api/hub/practice/attempts', { ...body, questionId: String(Q_SHARED._id), topicId: T.Shared, serveToken: served.body.serveToken }, 'asha');
-  check('for another question: 409', otherQ.status === 409, JSON.stringify(otherQ.body));
+  check('another student sending it: kept for them as unproven, no key', theirs.status === 201 && told(theirs), JSON.stringify(theirs.body));
+  const otherQ = await post('/api/hub/practice/attempts', { ...body, attemptId: 'zg2-hub-0002', questionId: String(Q_SHARED._id), topicId: T.Shared, serveToken: served.body.serveToken }, 'asha');
+  check('for another question: kept as unproven, no key', otherQ.status === 201 && told(otherQ), JSON.stringify(otherQ.body));
   const ok = await post('/api/hub/practice/attempts', { ...body, serveToken: served.body.serveToken }, 'asha');
   check('with it: 201, marked on the server, the key after', ok.status === 201 && ok.body.correct === true && ok.body.solution !== undefined, JSON.stringify(ok.body).slice(0, 200));
   const again = await post('/api/hub/practice/attempts', body, 'asha');
-  check('a resend of the same answer needs no token: 200, the stored result', again.status === 200 && again.body.duplicate === true, JSON.stringify(again.body).slice(0, 200));
+  check('a resend of the same answer needs no token: 200, the stored result', again.status === 200 && again.body.duplicate === true
+    && again.body.correct === true, JSON.stringify(again.body).slice(0, 200));
+  const progress = await get('/api/hub/progress', 'asha');
+  const hubbed = progress.body.topics?.find((t) => t.id === T.Hubbed);
+  check('the unproven answer counts nowhere: her topic reads the one counted answer', progress.status === 200
+    && hubbed?.state?.answers === 1 && (await keptAs('zg2-hub-0001'))?.unproven === false, JSON.stringify(hubbed?.state ?? progress.body).slice(0, 300));
   hubPractised = String(Q_HUB._id);
 }
 
@@ -388,11 +404,17 @@ check('before the switch, the student\'s error log has the room\'s wrong answer'
   check('a room still serves it', (await got).payload.question?._id === String(Q_ROOM._id));
   guest.disconnect();
   await post(`/api/session/${roomB.body.code}/close`, {});
+  // Review fix: its replacement stays rooms only, so approving it never starts
+  // serving the question in the hub.
+  const regen = await post(`/api/bank/question/${Q_ROOM._id}/regenerate`, {});
+  check('a regenerated replacement is kept for rooms too', regen.status === 200 && regen.body.question?.roomsOnly === true
+    && (await repo.getQuestion(regen.body.question._id))?.roomsOnly === true, JSON.stringify(regen.body).slice(0, 300));
+  if (regen.body.question?._id) await repo.updateQuestion(regen.body.question._id, { status: 'discarded' });
 }
 
 // --------------------------------------------------- serve tokens (lesson) --
 
-console.log('\na lesson takes an answer only to a question it served to that student');
+console.log('\na lesson counts an answer only to a question it served to that student');
 {
   const draft = (await get(`/api/hub/topics/${T.Shared}/lessons`)).body.drafts?.[0];
   await post(`/api/hub/lessons/${draft.id}/approve`, {});
@@ -402,9 +424,10 @@ console.log('\na lesson takes an answer only to a question it served to that stu
   check('each question the lesson shows carries its serve token; the rooms-only one is not shown',
     Boolean(q?.serveToken) && !qs.some((x) => x._id === String(Q_ROOM._id)), JSON.stringify(qs).slice(0, 300));
   const path = `/api/hub/lessons/${draft.id}/questions/${q._id}/attempts`;
-  const bare = await post(path, { attemptId: 'zg2-lsn-0001', response: 1 }, 'asha');
-  check('without it: 409, nothing stored', bare.status === 409 && bare.body.error === TOKEN_MISSING
-    && !(await repo.listHubAttempts({ accountId: ID.asha })).some((a) => a.clientAttemptId === 'zg2-lsn-0001'), JSON.stringify(bare.body));
+  const bare = await post(path, { attemptId: 'zg2-lsn-0000', response: 1 }, 'asha');
+  check('without it: 201, kept as unproven, no mark or key', bare.status === 201 && bare.body.unproven === true && bare.body.counted === false
+    && bare.body.solution === null && bare.body.correct === null
+    && (await repo.listHubAttempts({ accountId: ID.asha })).find((a) => a.clientAttemptId === 'zg2-lsn-0000')?.unproven === true, JSON.stringify(bare.body));
   const ok = await post(path, { attemptId: 'zg2-lsn-0001', response: 1, serveToken: q.serveToken }, 'asha');
   check('with it: 201, and the key after', ok.status === 201 && ok.body.correct === true, JSON.stringify(ok.body));
   const roomOnly = await post(`/api/hub/lessons/${draft.id}/questions/${Q_ROOM._id}/attempts`, { attemptId: 'zg2-lsn-0002', response: 1, serveToken: q.serveToken }, 'asha');

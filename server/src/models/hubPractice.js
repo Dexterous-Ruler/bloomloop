@@ -39,6 +39,8 @@ const hubAttemptSchema = new Schema(
     timeTakenMs: { type: Number, default: null, min: 0, max: 86400000 },
     // The Get Ready check or self-test it was given in (0028), or none.
     runId: { type: String, default: null, index: true },
+    // 0036 (Batch 8): kept without proof the hub served the question; counted nowhere.
+    unproven: { type: Boolean, default: false },
     createdAt: { type: String, default: nowIso },
   },
   // `minimize: false` keeps an empty snapshot or response object as written.

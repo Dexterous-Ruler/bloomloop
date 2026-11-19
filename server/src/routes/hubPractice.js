@@ -101,7 +101,8 @@ router.post('/practice/attempts', async (req, res, next) => {
     if (!PRACTICE_MODES.includes(mode)) throw fail('Practice keeps practice and review answers; a self-test is handed in with the self-test.', 400);
     // HINT HOOK: the hints this student opened on this question (0 until the tutor's hints exist).
     const hintsUsed = await hintsUsedOn(repo, { account: req.viewer, questionId: body.questionId, attemptId: body.attemptId, mode });
-    // Batch 8: only with the serve token the next-question reply carried.
+    // Batch 8: counted (and marked, and its key shown) only with the serve token
+    // the next-question reply carried; without it, kept as unproven.
     const { attempt, duplicate, entry } = await recordAttempt(repo, req.viewer, { ...body, mode }, { hintsUsed, requireServed: true });
     // An attempt kept in a self-test is answered only with the self-test: a
     // resend of its id here must not show its answer early.

@@ -78,6 +78,8 @@ export const PRACTICE_STORE = Object.freeze({
       language: a.language ?? 'en',
       hintsUsed: a.hintsUsed ?? 0,
       timeTakenMs: timeTaken(a.timeMs),
+      // Batch 8 (0036): kept without proof the lesson served the question; counted nowhere.
+      ...(a.unproven ? { unproven: true } : {}),
       ...(a.answeredAt ? { createdAt: a.answeredAt } : {}),
     });
   },

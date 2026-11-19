@@ -25,7 +25,8 @@ import { practisedQuestionIds } from '../services/bankShare.js';
 import { needsApproval } from '../services/edits.js';
 import { buildGridRow, phoneRow } from '../routes/session.js';
 import { isRecordId } from '../ids.js';
-import { score, forStudent, countsTowardMastery, shownOptionIndices } from '../questionTypes.js';
+import { score, forStudent, countsTowardMastery, shownOptionIndices, readyToMark } from '../questionTypes.js';
+import { enginesReady } from '../figures/index.js';
 import { verifyAccountToken, verifyTeacherCredentials } from '../auth.js';
 import { canRead, ownerOf } from '../ownership.js';
 import { phoneSupports } from '../accommodations.js';
@@ -1060,6 +1061,19 @@ async function handleAnswer(io, socket, payload) {
       await replayStored(io, socket, { session, profile, prior, settings, ids });
       closedNote();
       return;
+    }
+
+    // Batch 8: a tap or label answer on a diagram or molecule is marked from the
+    // parts the drawing engines find. Arriving before they are up (an outbox
+    // replayed straight after a restart), it is refused the way a failed save
+    // is, so the phone keeps it and sends it again, rather than marked wrong.
+    // The engines load at boot, so this costs nothing once they are up.
+    if (!enginesReady()) {
+      const asked = await repo.getQuestion(questionId).catch(() => null);
+      if (asked && !(await readyToMark(asked))) {
+        reject(socket, 'That answer did not save. Tap Next question to carry on.', echo);
+        return;
+      }
     }
 
     // 2. A question this student has already been marked on, arriving under a

@@ -259,6 +259,9 @@ const inherit = (q) => ({
   sourceRef: q.sourceRef ?? null,
   approvedBy: unreviewed(q) ? null : (q.approvedBy ?? null),
   approvedAt: unreviewed(q) ? null : (q.approvedAt ?? null),
+  // The owner's "rooms only" switch (Batch 8, 0035) is the owner's choice about
+  // the question, and an edit is not a reason to start serving it in the hub.
+  roomsOnly: q.roomsOnly === true,
 });
 
 // ----------------------------------------------------------------- split --
@@ -466,6 +469,9 @@ export function mergeQuestions(a, b) {
   }
   merged.model = a.model ?? b.model ?? null;
   merged.sourceRef = a.sourceRef ?? b.sourceRef ?? null;
+  // Either parent kept for rooms only keeps the result there: the hub never
+  // starts serving something its owner held back.
+  merged.roomsOnly = a.roomsOnly === true || b.roomsOnly === true;
 
   // What the two came to between them. Said back in a refusal, because "match
   // needs 3-5 pairs" over two questions the teacher cannot see at once leaves

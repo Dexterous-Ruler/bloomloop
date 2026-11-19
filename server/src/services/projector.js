@@ -412,6 +412,18 @@ function stimulusForWall(s, step = 0) {
   return null;
 }
 
+/** The kinds whose figure a phone gets drawn under tokens (questionTypes.js forStudent). */
+const TOKENISED_KINDS = ['hotspot', 'label'];
+
+/** forStudent()'s own copy of a stimulus, as the wall carries it: a figure as drawn, at no step. */
+function tokenisedForWall(s) {
+  if (s?.kind !== 'figure') return stimulusForWall(s);
+  return {
+    kind: 'figure', type: s.type ?? null, title: s.title ?? '', svg: s.svg ?? null, description: s.description ?? '',
+    table: s.table ?? null, step: 0, stepCount: 0, caption: '',
+  };
+}
+
 /**
  * A bank question for the wall, through forStudent(), the one place that
  * decides what a student may see, so no answer field is ever in reach. Options
@@ -441,7 +453,13 @@ function bankQuestionForWall(q, revealed, step = 0) {
     options,
     // A figure from the stored question, so it can be drawn at the wall's step;
     // a stimulus holds no answer, and forStudent() has already built the rest.
-    stimulus: q.stimulus?.kind === 'figure' ? stimulusForWall(q.stimulus, step) : stimulusForWall(seen.stimulus),
+    // Except on a tap or label question before its answer is revealed, where
+    // the parts' own names are the answer: the wall then shows the copy
+    // forStudent() drew under tokens (dealt for the projector), unstepped,
+    // since a step lights a part up by name.
+    stimulus: q.stimulus?.kind === 'figure' && (revealed === true || !TOKENISED_KINDS.includes(kind))
+      ? stimulusForWall(q.stimulus, step)
+      : tokenisedForWall(seen.stimulus),
     revealed: revealed === true,
     correct,
   };

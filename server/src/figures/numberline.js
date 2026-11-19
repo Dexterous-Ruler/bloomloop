@@ -28,6 +28,9 @@ export function renderNumberline(spec, { prefix, hl }) {
   }
   const parts = [];
   const said = [];
+  // The inequality an interval or a ray stands for: a reading of the drawing,
+  // and often what is asked, so the professor's only (figures/index.js).
+  const worked = [];
   const end = (v, y, open, colour) => `<circle cx="${px(x(v))}" cy="${px(y)}" r="5" fill="${open ? '#FFFFFF' : colour}" stroke="${colour}" stroke-width="2"/>`;
   let lane = 0;
   spec.intervals.forEach((iv, i) => {
@@ -38,8 +41,9 @@ export function renderNumberline(spec, { prefix, hl }) {
       + `${end(iv.from, y, iv.fromOpen, colour)}${end(iv.to, y, iv.toOpen, colour)}</g>`;
     if (iv.label) body += text((x(iv.from) + x(iv.to)) / 2, y - 11, iv.label, { size: 11 });
     const words = `${fmt(iv.from)} ${iv.fromOpen ? '<' : '≤'} x ${iv.toOpen ? '<' : '≤'} ${fmt(iv.to)}`;
-    parts.push({ part: iv.id, label: iv.label ? `${iv.label}: ${words}` : words });
-    said.push(`the interval ${words}${iv.label ? ` (labelled ${iv.label})` : ''}`);
+    parts.push({ part: iv.id, label: iv.label ? `${iv.label}: ${words}` : words, drawn: iv.label });
+    said.push(`${iv.label ? `the interval ${iv.label}` : 'an interval'} from ${fmt(iv.from)} to ${fmt(iv.to)}, ${iv.fromOpen ? 'open' : 'closed'} at ${fmt(iv.from)} and ${iv.toOpen ? 'open' : 'closed'} at ${fmt(iv.to)}`);
+    worked.push(`${iv.label ? `The interval ${iv.label}` : 'An interval'} stands for ${words}.`);
   });
   spec.rays.forEach((r, i) => {
     const y = top - lane * 22 - 4;
@@ -50,15 +54,16 @@ export function renderNumberline(spec, { prefix, hl }) {
       + `${end(r.from, y, r.open, colour)}</g>`;
     if (r.label) body += text(x(r.from) + (r.direction === 'right' ? 40 : -40), y - 11, r.label, { size: 11 });
     const words = `x ${r.direction === 'right' ? (r.open ? '>' : '≥') : (r.open ? '<' : '≤')} ${fmt(r.from)}`;
-    parts.push({ part: r.id, label: r.label ? `${r.label}: ${words}` : words });
-    said.push(`the ray ${words}${r.label ? ` (labelled ${r.label})` : ''}`);
+    parts.push({ part: r.id, label: r.label ? `${r.label}: ${words}` : words, drawn: r.label });
+    said.push(`${r.label ? `the ray ${r.label}` : 'a ray'} from ${fmt(r.from)} to the ${r.direction}, ${r.open ? 'open' : 'closed'} at ${fmt(r.from)}`);
+    worked.push(`${r.label ? `The ray ${r.label}` : 'A ray'} stands for ${words}.`);
   });
   for (const p of spec.points) {
     const colour = lit(p.id) ? HIGHLIGHT : ACCENT;
     body += `<g ${partAttrs(prefix, p.id)}><circle cx="${px(x(p.value))}" cy="${px(axisY)}" r="${lit(p.id) ? 7 : 5.5}" fill="${p.open ? '#FFFFFF' : colour}" stroke="${colour}" stroke-width="2"/>`
       + (p.label ? text(x(p.value), axisY + 36, p.label, { size: 12, weight: '600', fill: INK }) : '')
       + '</g>';
-    parts.push({ part: p.id, label: p.label ? `${p.label} at ${fmt(p.value)}` : fmt(p.value) });
+    parts.push({ part: p.id, label: p.label ? `${p.label} at ${fmt(p.value)}` : fmt(p.value), drawn: p.label });
     said.push(`${p.label ? `point ${p.label}` : 'a point'} at ${fmt(p.value)}${p.open ? ', hollow' : ''}`);
   }
   const description = `A number line from ${fmt(spec.min)} to ${fmt(spec.max)} with ticks every ${fmt(spec.step)}.${said.length ? ` It marks ${said.join('; ')}.` : ''}`;
@@ -75,6 +80,7 @@ export function renderNumberline(spec, { prefix, hl }) {
     body,
     parts,
     description,
+    worked,
     table: { caption: 'What the number line marks', columns: ['Part', 'Label', 'Where'], rows },
   };
 }

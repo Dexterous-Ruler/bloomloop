@@ -22,7 +22,7 @@ import { Type } from '@google/genai';
 import { scaleLinear } from 'd3-scale';
 
 import { normaliseSpec, engineReason } from '../figures/index.js';
-import { readFigure, READINGS, near, niceAxis } from '../figures/interact.js';
+import { readFigure, READINGS, near, niceAxis, normalisePlotKey } from '../figures/interact.js';
 import { axisStep, evaluate, equation } from '../figures/plot.js';
 import { fmt } from '../figures/common.js';
 import { generationFlag, runChecks } from './checks.js';
@@ -97,7 +97,9 @@ export function figureFromModel(f) {
 export function plotKeyFromModel(k) {
   if (!isObj(k)) return k;
   const pt = (p) => (isObj(p) ? [p.x, p.y] : p);
-  return drop({
+  // Stored with the family's defaults filled in (y = 2x keeps c = 0), as it is
+  // checked and marked: a number the model left out is never stored as missing.
+  return normalisePlotKey(drop({
     place: k.place,
     points: list(k.points, pt),
     function: isObj(k.function) ? drop({ family: k.function.family, params: isObj(k.function.params) ? drop(k.function.params) : k.function.params }) : k.function,
@@ -105,7 +107,7 @@ export function plotKeyFromModel(k) {
     conditions: list(k.conditions, (c) => (isObj(c)
       ? drop({ rule: c.rule, sign: c.sign, value: c.value, point: c.rule === 'through' ? [c.x, c.y] : undefined })
       : c)),
-  });
+  }));
 }
 
 /** numberline's key from the model. */

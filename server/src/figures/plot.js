@@ -109,6 +109,9 @@ export function renderPlot(spec, { prefix, hl }) {
   const yt = ticks(spec.y, y);
   const clip = `${prefix}-clip`;
   const parts = [];
+  // A labelled function's equation: worked out from its numbers and not drawn
+  // (the label is drawn instead, often to hide it), so the professor's only.
+  const worked = [];
   let body = '';
 
   if (spec.title) body += text(W / 2, 20, spec.title, { size: 15, weight: '600' });
@@ -154,7 +157,7 @@ export function renderPlot(spec, { prefix, hl }) {
     }
     body += `<path ${partAttrs(prefix, s.id)} d="${d || 'M0,0'}" fill="${lit(s.id) ? HIGHLIGHT : ACCENT}" fill-opacity="${lit(s.id) ? 0.35 : 0.16}" stroke="none" clip-path="url(#${clip})"/>`;
     if (s.label && b > a) body += text(x((a + b) / 2), m.t + 14, s.label, { size: 11, fill: INK });
-    parts.push({ part: s.id, label: s.label || `shaded from ${fmt(s.from)} to ${fmt(s.to)}` });
+    parts.push({ part: s.id, label: s.label || `shaded from ${fmt(s.from)} to ${fmt(s.to)}`, drawn: s.label });
     plotted.push(`a region shaded from x = ${fmt(s.from)} to x = ${fmt(s.to)}${f ? ` under ${f.label || equation(f)}` : ''}${s.label ? ` (labelled ${s.label})` : ''}`);
   }
 
@@ -189,15 +192,19 @@ export function renderPlot(spec, { prefix, hl }) {
     if (Number.isFinite(ly) && ly >= spec.y.min && ly <= spec.y.max) {
       body += text(Math.min(x(lx), W - m.r - 4), Math.max(m.t + 8, y(ly) - 10), name, { size: 12, anchor: 'end', fill: colour, weight: '600' });
     }
-    parts.push({ part: f.id, label: f.label ? `${f.label}: ${equation(f)}` : equation(f) });
-    plotted.push(`${KIND_WORD[f.family]} ${f.family === 'step' ? `with ${f.pieces.length} piece${f.pieces.length === 1 ? '' : 's'}` : equation(f)}${f.label ? ` (labelled ${f.label})` : ''}${f.domain ? ` for x from ${fmt(f.domain[0])} to ${fmt(f.domain[1])}` : ''}`);
+    // An unlabelled curve has its equation written beside it, so that is what
+    // the description says; a labelled one shows only its label.
+    parts.push({ part: f.id, label: f.label ? `${f.label}: ${equation(f)}` : equation(f), drawn: name });
+    const what = f.family === 'step' ? `with ${f.pieces.length} piece${f.pieces.length === 1 ? '' : 's'}` : (f.label ? `labelled ${f.label}` : equation(f));
+    plotted.push(`${KIND_WORD[f.family]} ${what}${f.domain ? ` for x from ${fmt(f.domain[0])} to ${fmt(f.domain[1])}` : ''}`);
+    if (f.label && f.family !== 'step') worked.push(`${f.label} is ${equation(f)}.`);
   });
 
   for (const s of spec.segments) {
     const colour = lit(s.id) ? HIGHLIGHT : INK;
     body += `<line ${partAttrs(prefix, s.id)} x1="${px(x(s.from[0]))}" y1="${px(y(s.from[1]))}" x2="${px(x(s.to[0]))}" y2="${px(y(s.to[1]))}" stroke="${colour}" stroke-width="${lit(s.id) ? 3.2 : 2}"${s.dashed ? ' stroke-dasharray="6 4"' : ''}${s.arrow ? ` marker-end="url(#${prefix}-arrow)"` : ''} clip-path="url(#${clip})"/>`;
     if (s.label) body += text(x((s.from[0] + s.to[0]) / 2) + 6, y((s.from[1] + s.to[1]) / 2) - 8, s.label, { size: 12, anchor: 'start' });
-    parts.push({ part: s.id, label: s.label || `segment from (${fmt(s.from[0])}, ${fmt(s.from[1])}) to (${fmt(s.to[0])}, ${fmt(s.to[1])})` });
+    parts.push({ part: s.id, label: s.label || `segment from (${fmt(s.from[0])}, ${fmt(s.from[1])}) to (${fmt(s.to[0])}, ${fmt(s.to[1])})`, drawn: s.label });
     plotted.push(`a ${s.arrow ? 'arrow' : 'segment'} from (${fmt(s.from[0])}, ${fmt(s.from[1])}) to (${fmt(s.to[0])}, ${fmt(s.to[1])})${s.label ? ` labelled ${s.label}` : ''}`);
   }
 
@@ -207,7 +214,7 @@ export function renderPlot(spec, { prefix, hl }) {
     body += `<g ${partAttrs(prefix, p.id)}><circle cx="${px(x(p.x))}" cy="${px(y(p.y))}" r="${lit(p.id) ? 6 : 4.5}" fill="${p.open ? '#FFFFFF' : colour}" stroke="${colour}" stroke-width="1.8"/>`
       + (p.label && inView ? text(x(p.x) + 8, y(p.y) - 10, p.label, { size: 12, anchor: 'start', weight: '600' }) : '')
       + '</g>';
-    parts.push({ part: p.id, label: p.label ? `${p.label} (${fmt(p.x)}, ${fmt(p.y)})` : `(${fmt(p.x)}, ${fmt(p.y)})` });
+    parts.push({ part: p.id, label: p.label ? `${p.label} (${fmt(p.x)}, ${fmt(p.y)})` : `(${fmt(p.x)}, ${fmt(p.y)})`, drawn: p.label });
     plotted.push(`${p.label ? `point ${p.label}` : 'a point'} at (${fmt(p.x)}, ${fmt(p.y)})${p.open ? ', drawn open' : ''}`);
   }
 
@@ -217,13 +224,15 @@ export function renderPlot(spec, { prefix, hl }) {
   const description = `A graph with ${axes}. It shows ${plotted.length ? plotted.join('; ') : 'nothing yet'}.`;
 
   const rows = [
-    ...spec.functions.map((f) => [f.label || 'Function', f.family === 'step' ? f.pieces.map((q) => `y = ${fmt(q.y)} for x from ${fmt(q.from)} to ${fmt(q.to)}`).join('; ') : equation(f)]),
+    ...spec.functions.map((f) => [f.label || 'Function', f.family === 'step'
+      ? f.pieces.map((q) => `y = ${fmt(q.y)} for x from ${fmt(q.from)} to ${fmt(q.to)}`).join('; ')
+      : (f.label ? KIND_WORD[f.family].replace(/^the /, '') : equation(f))]),
     ...spec.points.map((p) => [p.label || 'Point', `(${fmt(p.x)}, ${fmt(p.y)})`]),
     ...spec.segments.map((s) => [s.label || 'Segment', `(${fmt(s.from[0])}, ${fmt(s.from[1])}) to (${fmt(s.to[0])}, ${fmt(s.to[1])})`]),
     ...spec.shade.map((s) => [s.label || 'Shaded', `x from ${fmt(s.from)} to ${fmt(s.to)}`]),
   ];
   return {
-    width: W, height: H, defs, body, parts, description,
+    width: W, height: H, defs, body, parts, description, worked,
     title: spec.title || 'Graph',
     table: { caption: 'What the graph shows', columns: ['Part', 'Value'], rows },
   };

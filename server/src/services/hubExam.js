@@ -54,6 +54,10 @@ import { feedbackAfter } from './hubHintHook.js';
 import { EXAM_GRACE_SECONDS, finalAnswers, runEnd } from './hubHeld.js';
 import { NO_HINTS, RUN_NOT_FOUND, cleanRunId, hashOf, questionsWord, shownQuestions } from './hubRuns.js';
 import { ROOM_HELD_NOTE, roomLiveQuestions } from './hubClosed.js';
+import { isRoomsOnly } from './bankShare.js';
+
+/** A question its professor has kept for rooms only since the self-test began (Batch 8, 0035). */
+export const KEPT_FOR_ROOMS = 'Your professor now keeps this question for class, so the hub does not show it or its answer here.';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 const lower = (v) => String(v ?? '').trim().toLowerCase();
@@ -292,7 +296,12 @@ const head = (run, now) => ({
     : {}),
 });
 
-/** The questions of the list as they stand in the bank now, by id (lower case); a question gone or no longer answerable is missing. */
+/**
+ * The questions of the list as they stand in the bank now, by id (lower case); a
+ * question gone or no longer answerable is missing. One kept for rooms only is
+ * listed (its answer is kept and handed in), and the views below neither ask
+ * it nor show its key.
+ */
 async function listedQuestions(repo, run) {
   const out = new Map();
   for (const x of run.spec?.questions ?? []) {
@@ -320,7 +329,7 @@ export const OUT_OF_REACH = 'This question\'s chapter is no longer on your class
 async function openView(repo, account, run, attempts, now, scope) {
   const reach = (x) => scope.topics.has(lower(x.topicId));
   const questions = await listedQuestions(repo, { ...run, spec: { ...run.spec, questions: (run.spec?.questions ?? []).filter(reach) } });
-  const shown = await shownQuestions(repo, account, [...questions.values()]);
+  const shown = await shownQuestions(repo, account, [...questions.values()].filter((q) => !isRoomsOnly(q)));
   const latest = latestAnswers(attempts);
   const names = new Map((run.spec?.topics ?? []).map((t) => [lower(t.id), t.name]));
   const items = (run.spec?.questions ?? []).map((x, i) => {
@@ -331,6 +340,7 @@ async function openView(repo, account, run, attempts, now, scope) {
     if (!questions.has(key)) {
       return { ...base, removed: true, sentence: 'Your professor took this question out of the bank after your self-test began, so it is not asked.' };
     }
+    if (isRoomsOnly(questions.get(key))) return { ...base, removed: true, sentence: KEPT_FOR_ROOMS };
     return {
       ...base,
       ...shown.get(key),
@@ -374,6 +384,9 @@ async function resultView(repo, account, run, attempts, now, scope) {
     const q = a || scope.topics.has(lower(x.topicId)) ? questions.get(key) ?? null : null;
     const outOfReach = !a && !scope.topics.has(lower(x.topicId));
     const held = Boolean(a) && live.has(key);
+    // Kept for rooms only since: the answer stays handed in and marked, but the
+    // question, its key and its explanation are not shown.
+    const forRooms = isRoomsOnly(questions.get(key));
     const seed = hubSeed(account.id, x.questionId);
     // As it was shown: the attempt's own snapshot when there is one, else the bank's question now.
     const source = a?.questionSnapshot && typeof a.questionSnapshot === 'object' && Object.keys(a.questionSnapshot).length
@@ -381,7 +394,7 @@ async function resultView(repo, account, run, attempts, now, scope) {
       : q;
     let question = null;
     let solution = null;
-    if (source) {
+    if (source && !forRooms) {
       try {
         const { _id, ...shown } = forStudent(source, seed);
         question = { ...shown, rich: await phoneRich(shown) };
@@ -395,7 +408,7 @@ async function resultView(repo, account, run, attempts, now, scope) {
     }
     const mark = !a ? 'unmarked' : a.reviewStatus === 'provisional' ? 'provisional' : 'auto';
     let explanation = null;
-    if (a && !held) {
+    if (a && !held && !forRooms) {
       explanation = await explanationForStudent(repo, x.questionId, wanted).catch((err) => {
         console.error('[hub] an explanation could not be read:', err.message);
         return null;
@@ -422,8 +435,9 @@ async function resultView(repo, account, run, attempts, now, scope) {
       explanation,
       // The professor's approved feedback on the wrong option(s) chosen (H13), as
       // practice gives it after an answer: here only once the self-test has ended.
-      optionFeedback: a && !held ? await feedbackAfter(repo, { account, attempt: a }) : [],
+      optionFeedback: a && !held && !forRooms ? await feedbackAfter(repo, { account, attempt: a }) : [],
       ...(held ? { held: true, heldNote: ROOM_HELD_NOTE } : {}),
+      ...(forRooms ? { keptForRooms: true, keptForRoomsNote: KEPT_FOR_ROOMS } : {}),
     });
   }
   const summary = summarise(items.map((it) => ({ ...it, topicName: it.topic.name, bloom: it.bloom ?? 'unknown' })), run.spec?.topics ?? []);

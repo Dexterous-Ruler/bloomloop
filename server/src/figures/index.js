@@ -4,7 +4,10 @@
 // room's archive, the professor's own preview - comes through renderFigure(), so
 // they all show the same picture. The description and the data table are built
 // from the spec by the same code that draws it, never by a model, so they always
-// say what the picture shows.
+// say what the picture shows. They say only what is drawn: a value the engine
+// worked out (a length, an angle, where an image forms, a formula, the largest
+// bar) is so often what a question asks that it goes to the professor alone
+// (`worked`, figureForStaff), never to a student before they answer.
 //
 // Two engines are WebAssembly and load once (about 0.2 s): Graphviz for
 // diagrams and RDKit for molecules. After that every render is synchronous,
@@ -52,13 +55,34 @@ export function loadFigureEngines() {
 
 export const enginesReady = () => Boolean(graphviz && rdkit);
 const NEEDS_ENGINE = new Set(['diagram', 'molecule']);
+/** Does drawing this (normalised or raw) spec need Graphviz or RDKit? */
+export const needsEngine = (spec) => NEEDS_ENGINE.has(spec?.type);
+
+/**
+ * The largest picture the server sends. Every phone in a room downloads it, and
+ * it is drawn synchronously, so a spec that would make more (a grid, a frame in
+ * real-world units) is refused rather than drawn. The largest figures the caps
+ * in spec.js allow (a 120-atom molecule, 25 boxes, 200 dots) stay far under it.
+ */
+export const MAX_SVG_BYTES = 300 * 1024;
 
 const CACHE_SIZE = 400;
+/** What the cache may hold in all, so a run of unusual figures cannot fill the process's memory. */
+const CACHE_BYTES = 32 * 1024 * 1024;
 const cache = new Map();
+let cachedBytes = 0;
+
+const sizeOf = (value) => (value.svg?.length ?? 0) + (value.description?.length ?? 0) + 512;
 
 function remember(key, value) {
-  if (cache.size >= CACHE_SIZE) cache.delete(cache.keys().next().value);
+  const size = sizeOf(value);
+  while (cache.size && (cache.size >= CACHE_SIZE || cachedBytes + size > CACHE_BYTES)) {
+    const oldest = cache.keys().next().value;
+    cachedBytes -= sizeOf(cache.get(oldest));
+    cache.delete(oldest);
+  }
   cache.set(key, value);
+  cachedBytes += size;
   return value;
 }
 
@@ -119,6 +143,9 @@ export function renderFigure(raw, { step = 0 } = {}) {
   const caption = s?.caption ?? '';
   const description = `${out.description}${caption && spec.type !== 'stack' ? ` Step ${at} of ${steps}: ${caption}` : ''}`;
   const svg = wrapSvg({ prefix, width: out.width, height: out.height, title: out.title, description, body: out.body, defs: out.defs });
+  if (svg.length > MAX_SVG_BYTES) {
+    return remember(key, refused('This figure has too much in it to send to every phone: show a smaller part of it, or fewer things.', spec.type));
+  }
   // The last line of defence: whatever an engine wrote, only drawing leaves.
   if (!safeSvg(svg)) {
     console.error('[figures] a rendered figure failed the safety check:', spec.type);
@@ -133,6 +160,11 @@ export function renderFigure(raw, { step = 0 } = {}) {
     description,
     table: out.table,
     parts: out.parts,
+    // What the engine worked out from the spec rather than drew (a length, an
+    // angle, where an image forms, a formula, the largest bar): the professor's
+    // to see, never in what a student is sent before answering, because it is
+    // so often exactly what the question asks for.
+    worked: out.worked ?? [],
     step: at,
     stepCount: steps,
     caption,
@@ -242,6 +274,7 @@ export function figureForStaff(spec) {
     ok: r.ok,
     ...(r.ok ? {} : { reason: r.reason }),
     parts: r.parts,
+    worked: r.worked ?? [],
     stepCount: r.stepCount,
     steps: r.ok ? (spec.steps ?? []).map((s, i) => ({ caption: s.caption, highlight: s.highlight ?? null, frames: s.frames ?? null, index: i + 1 })) : [],
     ...(r.formula ? { formula: r.formula } : {}),
@@ -249,4 +282,10 @@ export function figureForStaff(spec) {
 }
 
 /** For tests: forget every cached render. */
-export const clearFigureCache = () => cache.clear();
+export const clearFigureCache = () => {
+  cache.clear();
+  cachedBytes = 0;
+};
+
+/** For tests: how many renders are cached (each is one drawing the server made). */
+export const figureCacheSize = () => cache.size;

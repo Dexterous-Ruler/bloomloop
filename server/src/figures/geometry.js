@@ -11,6 +11,20 @@ import { fmt, px, text, partAttrs, arrowMarker, esc, INK, MUTED, GRID, AXIS, ACC
 const MAX_W = 520;
 const MAX_H = 400;
 const PAD = 28;
+/** The most grid lines drawn across (or up) a frame. */
+const GRID_LINES = 60;
+
+/**
+ * The gap between grid lines: one unit, or a rounder step (2, 5, 10, 20, ...)
+ * when the frame is wider than GRID_LINES units. A frame in real-world units (a
+ * field 500 m across) then gets a readable grid in a picture of bounded size,
+ * rather than one line per metre drawn on the server and sent to every phone.
+ */
+export function gridStep(span) {
+  let step = 1;
+  for (let i = 0; span / step > GRID_LINES; i += 1) step *= i % 3 === 1 ? 2.5 : 2;
+  return step;
+}
 
 /** Where the image forms, by the lens or mirror formula (Cartesian signs, light from the left, element at x = 0). */
 export function opticsImage(o) {
@@ -27,6 +41,15 @@ export function opticsImage(o) {
   return { v, hi: mag * h, real: lens ? v > 0 : v < 0, infinite: false, f };
 }
 
+/** What the ray diagram is drawn from: the professor's own numbers, nothing worked out. */
+function opticsGiven(o, imageShown) {
+  const name = o.element.replace('-', ' ');
+  const focal = o.element === 'plane-mirror' ? '' : ` of focal length ${fmt(o.focal)}`;
+  return `A ray diagram for a ${name}${focal}. The object stands ${fmt(o.objectDistance)} from it and is ${fmt(Math.abs(o.objectHeight))} tall. `
+    + `Two rays from the top of the object are drawn${imageShown ? ', and the image is marked' : ''}.`;
+}
+
+/** Where the image forms and what it is like: worked out by the lens or mirror formula, so the professor's only. */
 function opticsWords(o, img) {
   const name = o.element.replace('-', ' ');
   const focal = o.element === 'plane-mirror' ? '' : ` of focal length ${fmt(o.focal)}`;
@@ -65,12 +88,19 @@ export function renderGeometry(spec, { prefix, hl }) {
   const far = (view.xMax - view.xMin + view.yMax - view.yMin) * 2;
   const parts = [];
   const said = [];
+  // Sentences about what the engine worked out (a length, an angle, the image):
+  // for the professor (figures/index.js), never in a student's description.
+  const worked = [];
+  /** A corner or an end as a reader names it: the point's label (or name), or its coordinates. */
+  const named = (r) => (typeof r === 'string' ? (pts.get(r).label || r) : `(${fmt(r[0])}, ${fmt(r[1])})`);
   let body = spec.title ? text(W / 2, 20, spec.title, { size: 15, weight: '600' }) : '';
 
   if (spec.grid) {
+    const gx = gridStep(view.xMax - view.xMin);
+    const gy = gridStep(view.yMax - view.yMin);
     body += `<g stroke="${GRID}">`;
-    for (let x = Math.ceil(view.xMin); x <= view.xMax; x += 1) body += `<line x1="${px(sx(x))}" y1="${px(sy(view.yMin))}" x2="${px(sx(x))}" y2="${px(sy(view.yMax))}"/>`;
-    for (let y = Math.ceil(view.yMin); y <= view.yMax; y += 1) body += `<line x1="${px(sx(view.xMin))}" y1="${px(sy(y))}" x2="${px(sx(view.xMax))}" y2="${px(sy(y))}"/>`;
+    for (let k = Math.ceil(view.xMin / gx); k * gx <= view.xMax; k += 1) body += `<line x1="${px(sx(k * gx))}" y1="${px(sy(view.yMin))}" x2="${px(sx(k * gx))}" y2="${px(sy(view.yMax))}"/>`;
+    for (let k = Math.ceil(view.yMin / gy); k * gy <= view.yMax; k += 1) body += `<line x1="${px(sx(view.xMin))}" y1="${px(sy(k * gy))}" x2="${px(sx(view.xMax))}" y2="${px(sy(k * gy))}"/>`;
     body += '</g>';
   }
   if (spec.axes) {
@@ -87,7 +117,7 @@ export function renderGeometry(spec, { prefix, hl }) {
       body += text(sx(c[0]), sy(c[1]), g.label, { size: 12, weight: '600' });
     }
     const names = g.points.map((r) => (typeof r === 'string' ? (pts.get(r).label || r) : `(${fmt(r[0])}, ${fmt(r[1])})`));
-    parts.push({ part: g.id, label: g.label || `shape ${names.join('')}` });
+    parts.push({ part: g.id, label: g.label || `shape ${names.join('')}`, drawn: g.label });
     said.push(`${g.label ? `the shape ${g.label}` : 'a shape'} with corners ${names.join(', ')}`);
   });
 
@@ -96,7 +126,7 @@ export function renderGeometry(spec, { prefix, hl }) {
     body += `<circle ${partAttrs(prefix, c.id)} cx="${px(cx)}" cy="${px(cy)}" r="${px(c.radius * unit)}" fill="none" stroke="${lit(c.id) ? HIGHLIGHT : INK}" stroke-width="${lit(c.id) ? 3 : 1.8}" clip-path="url(#${clip})"/>`;
     if (c.label) body += text(cx + c.radius * unit * 0.72 + 6, cy - c.radius * unit * 0.72 - 6, c.label, { size: 12, anchor: 'start' });
     const centre = typeof c.centre === 'string' ? (pts.get(c.centre).label || c.centre) : `(${fmt(c.centre[0])}, ${fmt(c.centre[1])})`;
-    parts.push({ part: c.id, label: c.label || `circle centre ${centre}` });
+    parts.push({ part: c.id, label: c.label || `circle centre ${centre}`, drawn: c.label });
     said.push(`${c.label ? `the circle ${c.label}` : 'a circle'} with centre ${centre} and radius ${fmt(c.radius)}`);
   }
 
@@ -117,8 +147,9 @@ export function renderGeometry(spec, { prefix, hl }) {
     body += `<g ${partAttrs(prefix, s.id)}><line x1="${px(a[0])}" y1="${px(a[1])}" x2="${px(b[0])}" y2="${px(b[1])}" stroke="${lit(s.id) ? HIGHLIGHT : INK}" stroke-width="${lit(s.id) ? 3.2 : 2}"${s.dashed ? ' stroke-dasharray="6 4"' : ''} clip-path="url(#${clip})"/>${marks}</g>`;
     if (s.label) body += text((a[0] + b[0]) / 2 + 8, (a[1] + b[1]) / 2 - 8, s.label, { size: 12, anchor: 'start' });
     const [p, q] = [at(s.from), at(s.to)];
-    parts.push({ part: s.id, label: s.label || 'segment' });
-    said.push(`${s.label ? `the segment ${s.label}` : 'a segment'} of length ${fmt(Math.hypot(q[0] - p[0], q[1] - p[1]))}`);
+    parts.push({ part: s.id, label: s.label || 'segment', drawn: s.label });
+    said.push(`${s.label ? `the segment ${s.label}` : 'a segment'} from ${named(s.from)} to ${named(s.to)}`);
+    worked.push(`${s.label ? `The segment ${s.label}` : `The segment from ${named(s.from)} to ${named(s.to)}`} is ${fmt(Math.hypot(q[0] - p[0], q[1] - p[1]))} long.`);
   }
 
   for (const r of spec.rays) {
@@ -128,7 +159,7 @@ export function renderGeometry(spec, { prefix, hl }) {
     const [a, b] = [S(p), S(end)];
     body += `<line ${partAttrs(prefix, r.id)} x1="${px(a[0])}" y1="${px(a[1])}" x2="${px(b[0])}" y2="${px(b[1])}" stroke="${lit(r.id) ? HIGHLIGHT : INK}" stroke-width="${lit(r.id) ? 3.2 : 2}" clip-path="url(#${clip})"/>`;
     if (r.label) body += text(S(q)[0] + 8, S(q)[1] - 8, r.label, { size: 12, anchor: 'start' });
-    parts.push({ part: r.id, label: r.label || 'ray' });
+    parts.push({ part: r.id, label: r.label || 'ray', drawn: r.label });
     said.push(`${r.label ? `the ray ${r.label}` : 'a ray'} from (${fmt(p[0])}, ${fmt(p[1])}) through (${fmt(q[0])}, ${fmt(q[1])})`);
   }
 
@@ -156,8 +187,9 @@ export function renderGeometry(spec, { prefix, hl }) {
     const mid = s1 + delta / 2;
     if (a.label) body += text(v[0] + Math.cos(mid) * (r + 14), v[1] + Math.sin(mid) * (r + 14), a.label, { size: 12, fill: colour, weight: '600' });
     const name = [a.from, a.at, a.to].map((x) => (typeof x === 'string' ? (pts.get(x).label || x) : '')).join('');
-    parts.push({ part: a.id, label: a.label || `angle ${name}` });
-    said.push(`${a.label ? `the angle ${a.label}` : 'an angle'}${name.length === 3 ? ` (${name})` : ''} of ${fmt(Math.round(degrees * 10) / 10)} degrees${a.right ? ', marked as a right angle' : ''}`);
+    parts.push({ part: a.id, label: a.label || `angle ${name}`, drawn: a.label });
+    said.push(`${a.label ? `the angle ${a.label}` : 'an angle'}${name.length === 3 ? ` (${name})` : ''}${a.right ? ', marked as a right angle' : ''}`);
+    worked.push(`${a.label ? `The angle ${a.label}` : 'An angle'}${name.length === 3 ? ` (${name})` : ''} measures ${fmt(Math.round(degrees * 10) / 10)} degrees.`);
   }
 
   for (const v of spec.vectors) {
@@ -171,8 +203,9 @@ export function renderGeometry(spec, { prefix, hl }) {
     }
     const size = Math.hypot(v.dx, v.dy);
     const dir = Math.round(((Math.atan2(v.dy, v.dx) * 180) / Math.PI + 360) % 360);
-    parts.push({ part: v.id, label: v.label || 'arrow' });
-    said.push(`${v.label ? `the arrow ${v.label}` : 'an arrow'} of length ${fmt(size)} pointing ${dir === 90 ? 'up' : dir === 270 ? 'down' : dir === 0 ? 'right' : dir === 180 ? 'left' : `at ${dir} degrees from the right`}`);
+    parts.push({ part: v.id, label: v.label || 'arrow', drawn: v.label });
+    said.push(`${v.label ? `the arrow ${v.label}` : 'an arrow'} from ${named(v.from)}, going ${fmt(v.dx)} across and ${fmt(v.dy)} up`);
+    worked.push(`${v.label ? `The arrow ${v.label}` : 'An arrow'} has length ${fmt(size)} and points ${dir === 90 ? 'up' : dir === 270 ? 'down' : dir === 0 ? 'right' : dir === 180 ? 'left' : `at ${dir} degrees from the right`}.`);
   }
 
   if (spec.optics) {
@@ -226,12 +259,21 @@ export function renderGeometry(spec, { prefix, hl }) {
       body += `<g ${partAttrs(prefix, id)} clip-path="url(#${clip})">${g}</g>`;
       parts.push({ part: id, label: i === 0 ? 'the ray parallel to the axis' : (mirror ? 'the ray to the pole' : 'the ray through the centre') });
     });
-    if (!img.infinite && img.v >= view.xMin && img.v <= view.xMax) {
+    const imageShown = !img.infinite && img.v >= view.xMin && img.v <= view.xMax;
+    if (imageShown) {
       body += `<line ${partAttrs(prefix, 'image')} x1="${px(sx(img.v))}" y1="${px(axisY)}" x2="${px(sx(img.v))}" y2="${px(sy(img.hi))}" stroke="${lit('image') ? HIGHLIGHT : SERIES[2]}" stroke-width="3"${img.real ? '' : ' stroke-dasharray="6 4"'} marker-end="url(#${prefix}-vec)" clip-path="url(#${clip})"/>`;
       body += text(sx(img.v), sy(img.hi) + (img.hi > 0 ? -12 : 14), 'Image', { size: 11 });
     }
-    parts.push({ part: 'element', label: o.element.replace('-', ' ') }, { part: 'object', label: 'the object' }, { part: 'image', label: 'the image' }, { part: 'axis', label: 'the principal axis' });
-    said.push(opticsWords(o, img));
+    // The object and the image are written beside them and the element is named
+    // in the description, so none of the three can be a label question's target.
+    parts.push(
+      { part: 'element', label: o.element.replace('-', ' '), drawn: o.element.replace('-', ' ') },
+      { part: 'object', label: 'the object', drawn: 'Object' },
+      { part: 'image', label: 'the image', drawn: 'Image' },
+      { part: 'axis', label: 'the principal axis' },
+    );
+    said.push(opticsGiven(o, imageShown));
+    worked.push(opticsWords(o, img));
   }
 
   for (const p of spec.points) {
@@ -240,7 +282,7 @@ export function renderGeometry(spec, { prefix, hl }) {
     body += `<g ${partAttrs(prefix, p.id)}><circle cx="${px(x)}" cy="${px(y)}" r="${lit(p.id) ? 5.5 : 3.8}" fill="${lit(p.id) ? HIGHLIGHT : INK}"/>`
       + (p.label ? text(x + 7, y - 9, p.label, { size: 13, anchor: 'start', weight: '600' }) : '')
       + '</g>';
-    parts.push({ part: p.id, label: p.label || p.id });
+    parts.push({ part: p.id, label: p.label || p.id, drawn: p.label });
   }
 
   const visible = spec.points.filter((p) => !p.hidden);
@@ -253,20 +295,18 @@ export function renderGeometry(spec, { prefix, hl }) {
 
   const rows = [
     ...visible.map((p) => ['Point', p.label || p.id, `(${fmt(p.x)}, ${fmt(p.y)})`]),
-    ...spec.vectors.map((v) => ['Arrow', v.label || v.id, `${fmt(v.dx)} across, ${fmt(v.dy)} up (length ${fmt(Math.hypot(v.dx, v.dy))})`]),
+    ...spec.vectors.map((v) => ['Arrow', v.label || v.id, `${fmt(v.dx)} across, ${fmt(v.dy)} up`]),
   ];
   if (spec.optics) {
     const o = spec.optics;
     if (o.element !== 'plane-mirror') rows.push(['Focal length', '', fmt(o.focal)]);
     rows.push(['Object distance', '', fmt(o.objectDistance)], ['Object height', '', fmt(o.objectHeight)]);
-    if (img.infinite) rows.push(['Image', '', 'at infinity']);
-    else rows.push(['Image distance', '', fmt(Math.abs(img.v))], ['Image height', '', fmt(img.hi)], ['Image', '', img.real ? 'real' : 'virtual']);
   }
 
   const defs = `<clipPath id="${esc(clip)}"><rect x="${px(PAD - 6)}" y="${px(titleH + PAD - 6)}" width="${px(W - 2 * PAD + 12)}" height="${px(H - titleH - 2 * PAD + 12)}"/></clipPath>`
     + arrowMarker(prefix, 'vec', ACCENT) + arrowMarker(prefix, 'hl', HIGHLIGHT);
   return {
-    width: W, height: H, defs, body, parts, description,
+    width: W, height: H, defs, body, parts, description, worked,
     title: spec.title || (spec.optics ? 'Ray diagram' : 'Geometry drawing'),
     table: { caption: 'What the drawing shows', columns: ['Part', 'Name', 'Value'], rows },
   };

@@ -12,7 +12,9 @@
 //   - once the self-test has ended (handed in, or its time is up), the answer
 //     each question ended with counts, from the moment it was given;
 //   - an answer the student changed before handing in, and one that reached
-//     the server after the end, are kept (never discarded) and never counted.
+//     the server after the end, are kept (never discarded) and never counted;
+//   - an answer kept as unproven (Batch 8, 0036: practice or a lesson took it
+//     without proof the hub served its question) is never counted.
 //
 // An exam-mode attempt that belongs to no self-test (one a caller wrote through
 // recordAttempt() itself) is counted as it always was. Get Ready answers are
@@ -78,6 +80,7 @@ export function countable(attempts = [], runs = [], now = new Date()) {
   const byId = new Map(runs.map((r) => [String(r._id), r]));
   const kept = new Map(); // run id -> the ids of its counted attempts
   const counts = (a) => {
+    if (a.unproven === true) return false;
     if (a.mode !== 'exam' || !a.runId) return true;
     const run = byId.get(String(a.runId));
     // A run that cannot be read: its answers are counted as if it had none.
@@ -98,7 +101,7 @@ export function countable(attempts = [], runs = [], now = new Date()) {
  */
 export async function countedAttempts(repo, attempts = [], now = new Date()) {
   const runIds = [...new Set(attempts.filter((a) => a.mode === 'exam' && a.runId).map((a) => String(a.runId)))];
-  if (!runIds.length) return attempts;
+  if (!runIds.length) return attempts.filter((a) => a.unproven !== true);
   return countable(attempts, await repo.listHubRuns({ ids: runIds }), now);
 }
 

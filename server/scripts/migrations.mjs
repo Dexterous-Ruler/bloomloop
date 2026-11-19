@@ -2933,6 +2933,27 @@ const kept35 = {};
   // Left in place: the re-run below runs over them.
 }
 
+// ---- Batch 8: fixes from the review (0036) ----
+section('a hub answer kept without proof that its question was served (0036)');
+
+// Kept by the re-run section below, which checks they survive it.
+const kept36 = {};
+{
+  const attempt36 = (key, extra = '', values = []) => db.query(
+    `insert into public.hub_attempts (account_id, client_attempt_id, bloom, correct, score, mode${extra ? `, ${extra}` : ''})
+     values ($1, $2, 'remember', false, 0, 'practice'${values.map((_, i) => `, $${i + 3}`).join('')}) returning *`, [STUDENT, key, ...values]);
+  const [proven] = (await accepts('an answer saved as addHubAttempt writes a proven one, naming no unproven', () => attempt36('attempt-0036-a'))) ?? [];
+  check('it is proven by default (unproven false)', proven?.unproven === false, JSON.stringify(proven?.unproven));
+  const [kept] = (await accepts('an answer kept as unproven (no serve token)', () => attempt36('attempt-0036-b', 'unproven', [true]))) ?? [];
+  check('and it reads back unproven', kept?.unproven === true);
+  await rejects('unproven cannot be null', () => attempt36('attempt-0036-c', 'unproven', [null]), { code: '23502' });
+  await rejects('an answer\'s proof is written once, like the rest of it (0026\'s guard)', () => db.query(
+    'update public.hub_attempts set unproven = false where id = $1', [kept?.id]), { code: '23001', match: /hub_attempts/ });
+  kept36.proven = proven?.id;
+  kept36.unproven = kept?.id;
+  // Left in place: the re-run below runs over them.
+}
+
 section('deleting');
 
 await rejects('deleting the sign-in of a professor who owns material and students', () =>
@@ -3125,6 +3146,11 @@ sameSnapshot('the re-run left the schema exactly as it was', shapeBeforeRerun, a
     `insert into public.hub_runs (account_id, client_run_id, kind, spec, started_at, ended_at, end_reason)
      values ($1, 'run-0035-after', 'exam', '{}', '2026-11-19T05:00:00Z', '2026-11-19T05:01:00Z', 'ended')`, [STUDENT]),
   { code: '23514', match: /hub_runs_end_check/ });
+  // 0036 (Batch 8): a proven and an unproven answer keep what they were.
+  const a36 = await db.query('select id, unproven from public.hub_attempts where id = any($1::uuid[]) order by client_attempt_id',
+    [[kept36.proven, kept36.unproven]]);
+  check('a proven and an unproven hub answer survive the re-run as they were (0036)',
+    JSON.stringify(a36.rows.map((r) => r.unproven)) === '[false,true]', JSON.stringify(a36.rows));
 }
 
 await db.close();
@@ -3504,8 +3530,9 @@ section('0028 on a database that already holds hub attempts, topic records, ques
     Object.fromEntries(Object.entries(await rowCounts(before28)).filter(([t]) => t in counts))));
   const changed = [];
   for (const table of Object.keys(kept)) {
-    // The new column aside, every value is as it was (and 0035's rooms_only, a later file's).
-    const now = (await read(table)).map(({ run_id: _run, rooms_only: _r35, ...rest }) => rest);
+    // The new column aside, every value is as it was (and 0035's rooms_only and
+    // 0036's unproven, later files' columns, each checked over data in its own section).
+    const now = (await read(table)).map(({ run_id: _run, rooms_only: _r35, unproven: _u36, ...rest }) => rest);
     if (JSON.stringify(now) !== JSON.stringify(kept[table])) changed.push(table);
   }
   check('no hub attempt, question, topic record or link is touched', changed.length === 0, changed.join(', '));
@@ -3764,6 +3791,42 @@ section('0035 on a database that already holds questions, lessons and Get Ready 
     && asBefore(without(now.topic_lessons, 'sections'), kept.topic_lessons) === JSON.stringify(kept.topic_lessons));
   check('every check ended as it was', asBefore(now.hub_runs, kept.hub_runs) === JSON.stringify(kept.hub_runs));
   await before35.close();
+}
+
+// ---------------------------------------- 0036 over hub answers already kept --
+
+section('0036 on a database that already holds hub answers');
+
+{
+  const before36 = await freshDatabase();
+  await applyAll(before36, files.filter((f) => f.name < '0036'), 'up to the file before 0036');
+  const [H, P, S] = [randomUUID(), randomUUID(), randomUUID()];
+  await before36.query('insert into auth.users (id) values ($1), ($2), ($3)', [H, P, S]);
+  const add = (id, role, code, reportsTo, rollNo) => before36.query(
+    `insert into public.accounts (id, role, code, department, reports_to, roll_no) values ($1, $2, $3, 'CSE', $4, $5)`,
+    [id, role, code, reportsTo, rollNo]);
+  await add(H, 'hod', 'BL-HD3602', null, null);
+  await add(P, 'professor', 'BL-PR3602', H, null);
+  await add(S, 'student', 'BL-ST3602', P, '21CS01');
+  await before36.exec(`
+    insert into public.hub_attempts (account_id, client_attempt_id, bloom, correct, score, mode, created_at) values
+      ('${S}', 'before-36-practice', 'remember', true, 1, 'practice', '2026-11-19T05:00:00Z'),
+      ('${S}', 'before-36-lesson', 'apply', false, 0, 'lesson', '2026-11-19T05:01:00Z'),
+      ('${S}', 'before-36-review', 'apply', true, 0.5, 'review', '2026-11-19T05:02:00Z');
+  `);
+  const counts = await rowCounts(before36);
+  const read = async () => (await before36.query('select * from public.hub_attempts order by id')).rows;
+  const kept = await read();
+  const ok = await applyAll(before36, files.filter((f) => f.name >= '0036'), 'over existing hub answers');
+  check('0036 applies over existing hub answers, adding and removing no row', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before36)).filter(([t]) => t in counts))));
+  const now = await read();
+  const without = (rows) => rows.map(({ unproven: _drop, ...rest }) => rest);
+  check('every answer already kept is proven (unproven false), so it counts as it always did, and nothing else on it changed',
+    now.length === 3 && now.every((r) => r.unproven === false) && asBefore(without(now), kept) === JSON.stringify(kept));
+  const again = await applyAll(before36, files.filter((f) => f.name >= '0036'), 'a second time');
+  check('and running it again changes nothing', again && JSON.stringify(await read()) === JSON.stringify(now));
+  await before36.close();
 }
 
 // ------------------------------------- 0011 over accounts that already clash --

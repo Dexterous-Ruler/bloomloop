@@ -259,7 +259,8 @@ router.get('/chapters/:contentId/languages', async (req, res, next) => {
     const repo = getRepo();
     const ctx = await hubChapter(repo, req.viewer, req.params.contentId);
     const questions = (await repo.listQuestions(ctx.content._id, { includeDiscarded: true })).filter((q) => q.status !== 'draft');
-    const attempts = await listHubAttempts(repo, { contentId: String(ctx.content._id) });
+    // An answer kept as unproven (Batch 8, 0036) counts nowhere, these figures included.
+    const attempts = (await listHubAttempts(repo, { contentId: String(ctx.content._id) })).filter((a) => a.unproven !== true);
     const items = languageItemStats(attempts, questions);
     res.json({
       chapter: { id: String(ctx.content._id), title: ctx.content.title ?? '' },

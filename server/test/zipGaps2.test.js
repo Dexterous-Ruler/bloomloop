@@ -22,7 +22,7 @@ import { syncTopics } from '../src/services/hubTopics.js';
 import { selectNext } from '../src/services/selector.js';
 import { hydrate } from '../src/services/mastery.js';
 import { emptyLevels } from '../src/bloom.js';
-import { checkServeToken, serveToken, TOKEN_EXPIRED, TOKEN_MISSING } from '../src/services/serveTokens.js';
+import { checkServeToken, serveToken } from '../src/services/serveTokens.js';
 import { isRoomsOnly, practisedBefore, PRACTISED_NOTE } from '../src/services/bankShare.js';
 import { lastUsedOf, levelSupport, slideLabel, topicSource, topicSources } from '../src/services/materialInfo.js';
 import { generateForTopic } from '../src/services/generate.js';
@@ -309,10 +309,11 @@ describe('a lesson with its concept panel', () => {
     assert.equal(staff.steps[1].questions.find((q) => q.id === String(kept._id)).roomsOnly, true);
   });
 
-  test('practice never serves or takes an answer to a rooms-only question', () => {
+  test('practice never serves a rooms-only question, but keeps an answer to one it served before the switch', () => {
     const q = { _id: 'q1', status: 'active', kind: 'mcq', roomsOnly: true };
     assert.equal(practisable(q), false);
-    assert.equal(onceServable(q), false);
+    // Review fix: an answer already on its way (an outbox, a self-test) is never discarded.
+    assert.equal(onceServable(q), true);
     assert.equal(practisable({ ...q, roomsOnly: false }), true);
   });
 });
@@ -327,20 +328,17 @@ describe('serve tokens', () => {
     assert.ok(checkServeToken(token, { ...who, questionId: 'q-1' }).ok, 'ids compare in lower case');
     assert.ok(checkServeToken(token, { ...who, mode: 'review' }).ok, 'practice and review are one loop');
     for (const other of [{ accountId: 'someone-else' }, { questionId: 'Q-2' }, { mode: 'lesson' }]) {
-      const v = checkServeToken(token, { ...who, ...other });
-      assert.deepEqual([v.ok, v.message], [false, TOKEN_MISSING]);
+      assert.equal(checkServeToken(token, { ...who, ...other }).ok, false);
     }
     assert.equal(checkServeToken('', who).ok, false);
     assert.equal(checkServeToken(`${token.slice(0, -1)}A`, who).ok, token.endsWith('A'));
   });
 
-  test('an old token is refused as expired; a forged expiry breaks the signature', () => {
-    const then = new Date('2026-11-01T00:00:00Z');
-    const token = serveToken({ ...who, now: then });
-    const late = checkServeToken(token, { ...who, now: new Date('2026-11-19T00:00:00Z') });
-    assert.deepEqual([late.ok, late.why, late.message], [false, 'expired', TOKEN_EXPIRED]);
+  test('an old token still proves the question was served (an outbox may hold it for weeks); a forged time breaks the signature', () => {
+    const token = serveToken({ ...who, now: new Date('2026-11-01T00:00:00Z') });
+    assert.equal(checkServeToken(token, who).ok, true);
     const [, sig] = token.split('.');
-    assert.equal(checkServeToken(`9999999999.${sig}`, who).why, 'missing');
+    assert.equal(checkServeToken(`9999999999.${sig}`, who).ok, false);
   });
 });
 

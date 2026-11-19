@@ -1113,6 +1113,8 @@ export function createMemoryRepo() {
             timeTakenMs: null,
             // The Get Ready check or self-test it was given in (0028), or none.
             runId: null,
+            // 0036 (Batch 8): kept without proof the hub served the question.
+            unproven: false,
             createdAt: new Date().toISOString(),
             ...clone(doc),
             accountId: String(doc.accountId),

@@ -50,12 +50,13 @@ Full detail: `docs/DATABASE_SCHEMA.md`.
 | `0033_figures.sql` | Batch 8: `media.slide_no` and `contents.slide_pictures`, the pictures kept from a deck's slides (a figure itself needs no column: it is JSON in a question's stimulus or a lesson's chunk step) | Warns: a deck uploaded keeps none of its slide pictures; every figure is still drawn |
 | `0034_zip_gaps_live_wheel.sql` | Batch 8: `teaching_moves` (suggested activities), `wheel_question_draws`, `room_activities.suggestion_id`; a verbal question as a wheel ask | Warns: suggestions, drawing a question with a student and recording a suggestion as an activity fail; everything else works |
 | `0035_bank_share_and_concept_panel.sql` | Batch 8: `questions.rooms_only`, `topic_lessons.sections` (the concept panel); a Get Ready check may end early (`hub_runs` end `ended`) | Warns: keeping a question for rooms only, and saving an AI lesson that has sections, fail; everything else works |
+| `0036_hub_attempt_proof.sql` | Batch 8 (fixes from the review): `hub_attempts.unproven`, a practice or lesson answer kept without proof the hub served its question (counted nowhere, no mark or key shown) | Warns: such an answer is not saved and stays on the phone; every answer that carries its serve token saves as before |
 
 The next new file takes `0036`.
 
 ## Applying
 
-Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0035`).
+Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0036`).
 
 `0013` must be in place before the Phase 2 server is deployed: every generated
 question is saved with columns it adds, and the server's boot probe falls back to
