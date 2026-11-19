@@ -156,6 +156,8 @@ const outSession = (r) =>
     startLevel: r.start_level ?? 'understand',
     questionsPerStudent: r.questions_per_student ?? null,
     timePerQuestion: r.time_per_question ?? null,
+    // 0038 (Batch 9): the room's exam mode, or null (none, or no column yet).
+    examMode: r.exam_mode ?? null,
   };
 
 const outProfile = (r) =>
@@ -773,6 +775,9 @@ export function createSupabaseRepo() {
             start_level: doc.startLevel ?? 'understand',
             questions_per_student: doc.questionsPerStudent ?? null,
             time_per_question: doc.timePerQuestion ?? null,
+            // 0038 (Batch 9): only when the room was opened in exam mode, so every
+            // other room still opens on a database without the column.
+            ...(doc.examMode ? { exam_mode: doc.examMode } : {}),
           })
           .select()
           .single(),
@@ -2790,6 +2795,14 @@ export function createSupabaseRepo() {
       if (error) fail('listDrawings')(error);
       return (data ?? []).map(outDrawing);
     },
+
+    // ---- Batch 9: exam integrity (0038; see memoryRepo for the contract) ----
+    async setSessionExamMode(id, examMode) {
+      if (!isUuid(id)) return null;
+      const { data, error } = await db.from('sessions').update({ exam_mode: examMode ?? null }).eq('id', id).select().maybeSingle();
+      if (error) fail('setSessionExamMode')(error);
+      return outSession(data);
+    },
   };
 }
 
@@ -3012,6 +3025,11 @@ export const ROUTE_SCHEMA = Object.freeze([
   // lets a hub drawing's attempt carry no mark, which a probe cannot see.
   ['media', 'drawing, session_id, roll_no, account_id, question_id, answer_key', '0037_answer_kinds.sql',
     'no drawing answer can be kept, in a room or in the hub, so drawing questions cannot be answered (every other kind works as before)'],
+  // Batch 9, exam integrity (0038). Written only for a room opened or changed in
+  // exam mode: every other room opens and runs as before without it. Screen
+  // pictures need no table: they are held in memory only.
+  ['sessions', 'exam_mode', '0038_exam_integrity.sql',
+    'no room can be opened in exam mode or have its exam mode changed (every other room opens and runs as before)'],
 ]);
 
 /** One missing piece, as a sentence naming the file to apply. */

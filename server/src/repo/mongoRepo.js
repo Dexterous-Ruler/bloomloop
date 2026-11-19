@@ -1144,6 +1144,12 @@ export function createMongoRepo() {
       if (questionId) q.questionId = { $regex: `^${String(questionId).replace(/[^A-Za-z0-9-]/g, '')}$`, $options: 'i' };
       return lean(await Media.find(q).select('-data').sort({ createdAt: 1, _id: 1 }).lean()) ?? [];
     },
+
+    // ---- Batch 9: exam integrity (0038; see memoryRepo for the contract) ----
+    async setSessionExamMode(id, examMode) {
+      return lean(await Session.findByIdAndUpdate(id, { $set: { examMode: examMode ?? null } }, { new: true }).lean()
+        .catch((err) => { if (err?.name === 'CastError') return null; throw err; }));
+    },
   };
 }
 

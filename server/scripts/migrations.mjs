@@ -158,7 +158,9 @@ const COLUMNS_THE_SERVER_USES = {
     'rooms_only'],
   sessions: ['id', 'code', 'content_id', 'title', 'status', 'owner_id', 'started_at', 'closed_at', 'paused_at',
     'mastery_goal', 'reattempts', 'redemption', 'question_ids', 'class_id', 'mode', 'adapt', 'start_level',
-    'questions_per_student', 'time_per_question'],
+    'questions_per_student', 'time_per_question',
+    // Batch 9, a room's exam mode (0038).
+    'exam_mode'],
   profiles: ['id', 'session_id', 'roll_no', 'name', 'levels', 'working_level', 'reason', 'history', 'served_id',
     'served_at', 'served_why', 'served_tries', 'served_last', 'integrity', 'account_id', 'updated_at', 'account_verified',
     'served_log'],
@@ -3031,6 +3033,39 @@ const kept37 = {};
   // Left in place: the re-run below runs over them.
 }
 
+// ---- Batch 9: exam integrity (0038) ----
+section('a room\'s exam mode (0038)');
+
+// Kept by the re-run section below, which checks it survives it.
+const kept38 = {};
+{
+  const EXAM = {
+    on: true, fullscreen: true, screenShare: true, snapshotSeconds: 30,
+    seb: { required: true, configKeyHashes: ['a'.repeat(64)] },
+  };
+  const open38 = (code, value) => db.query(
+    `insert into public.sessions (code, content_id, owner_id${value === undefined ? '' : ', exam_mode'})
+     values ($1, $2, $3${value === undefined ? '' : ', $4'}) returning *`,
+    value === undefined ? [code, content?.id, PROF] : [code, content?.id, PROF, value]);
+  const [plain] = (await accepts('a room opened as createSession writes one without exam mode, naming no exam_mode',
+    () => open38('EX3801'))) ?? [];
+  check('it has none (exam_mode null), as every room before 0038', plain?.exam_mode === null, JSON.stringify(plain?.exam_mode));
+  const [exam] = (await accepts('a room opened in exam mode', () => open38('EX3802', JSON.stringify(EXAM)))) ?? [];
+  // jsonb keeps its own key order, so compared key by key.
+  const sorted = (v) => (v && typeof v === 'object' && !Array.isArray(v)
+    ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted(v[k])])) : v);
+  check('and it reads back as it was written', JSON.stringify(sorted(exam?.exam_mode)) === JSON.stringify(sorted(EXAM)),
+    JSON.stringify(exam?.exam_mode));
+  await accepts('the owner changes it (setSessionExamMode)', () => db.query(
+    'update public.sessions set exam_mode = $2 where id = $1', [exam?.id, JSON.stringify({ ...EXAM, snapshotSeconds: 60 })]));
+  await accepts('and may turn it off again (null)', () => db.query('update public.sessions set exam_mode = null where id = $1', [plain?.id]));
+  for (const [n, what, value] of [[3, 'a list', '[1, 2]'], [4, 'a string', '"on"'], [5, 'a number', '1'], [6, 'true', 'true']]) {
+    await rejects(`exam_mode cannot be ${what}`, () => open38(`EX380${n}`, value), { code: '23514', match: /sessions_exam_mode_check/ });
+  }
+  kept38.room = exam?.id;
+  // Left in place: the re-run below runs over it.
+}
+
 section('deleting');
 
 await rejects('deleting the sign-in of a professor who owns material and students', () =>
@@ -3239,6 +3274,13 @@ sameSnapshot('the re-run left the schema exactly as it was', shapeBeforeRerun, a
   await rejects('and a hub attempt of another kind still needs its mark after it', () => db.query(
     `insert into public.hub_attempts (account_id, client_attempt_id, bloom, kind, correct, score, mode)
      values ($1, 'attempt-0037-after', 'remember', 'mcq', null, null, 'practice')`, [STUDENT]), { code: '23514', match: /hub_attempts_mark_check/ });
+  // 0038 (Batch 9): a room's exam mode survives, and the check still holds after it.
+  const s38 = await db.query('select exam_mode from public.sessions where id = $1', [kept38.room]);
+  check('a room\'s exam mode survives the re-run as it was (0038)',
+    s38.rows[0]?.exam_mode?.snapshotSeconds === 60 && s38.rows[0]?.exam_mode?.seb?.configKeyHashes?.[0] === 'a'.repeat(64),
+    JSON.stringify(s38.rows));
+  await rejects('and exam_mode still cannot be a list after it', () => db.query(
+    `update public.sessions set exam_mode = '[1]' where id = $1`, [kept38.room]), { code: '23514', match: /sessions_exam_mode_check/ });
 }
 
 await db.close();
@@ -3738,16 +3780,19 @@ section('0031 on a database that already holds rooms, answers and archives');
       values ('74444444-4444-4444-8444-444444444444', 'GONE31', 10, '{"format": "bloomloop.room-archive"}');
   `);
   const counts = await rowCounts(before31);
-  const kept = async () => JSON.stringify([
+  const kept = async () => [
     (await before31.query('select * from public.sessions order by id')).rows,
     (await before31.query('select * from public.answers order by id')).rows,
     (await before31.query('select * from public.room_archives order by id')).rows,
-  ]);
+  ];
   const rowsBefore = await kept();
   const ok = await applyAll(before31, files.filter((f) => f.name >= '0031'), 'over existing rooms');
   check('0031 applies over existing rooms, answers and archives, adding and removing none', ok && JSON.stringify(counts) === JSON.stringify(
     Object.fromEntries(Object.entries(await rowCounts(before31)).filter(([t]) => t in counts))));
-  check('no room, answer or archive is touched', (await kept()) === rowsBefore);
+  // Compared column by column as each row stood before: a later file's new
+  // column (0038's sessions.exam_mode, null on every room) is not a touched row.
+  check('no room, answer or archive is touched',
+    (await kept()).every((rows, i) => asBefore(rows, rowsBefore[i]) === JSON.stringify(rowsBefore[i])));
   const { rows } = await before31.query('select count(*)::int as n from public.room_imports');
   check('and there is no import yet', rows[0].n === 0);
   await before31.close();
@@ -3915,6 +3960,43 @@ section('0036 on a database that already holds hub answers');
   const again = await applyAll(before36, files.filter((f) => f.name >= '0036'), 'a second time');
   check('and running it again changes nothing', again && JSON.stringify(await read()) === JSON.stringify(now));
   await before36.close();
+}
+
+// ------------------------------------------ 0038 over rooms already kept --
+
+section('0038 on a database that already holds rooms, open, closed and waiting, with their settings');
+
+{
+  const before38 = await freshDatabase();
+  await applyAll(before38, files.filter((f) => f.name < '0038'), 'up to the file before 0038');
+  const P = randomUUID();
+  const H = randomUUID();
+  await before38.query('insert into auth.users (id) values ($1), ($2)', [H, P]);
+  await before38.query(`insert into public.accounts (id, role, code, department) values ($1, 'hod', 'BL-HD3801', 'CSE')`, [H]);
+  await before38.query(`insert into public.accounts (id, role, code, department, reports_to) values ($1, 'professor', 'BL-PR3801', 'CSE', $2)`, [P, H]);
+  await before38.query(`insert into public.contents (id, title, kind, owner_id) values ('a1111111-1111-4111-8111-111111111111', 'deck', 'pptx', $1)`, [P]);
+  await before38.exec(`
+    insert into public.sessions (code, content_id, owner_id, status, mastery_goal, reattempts, redemption, mode, adapt, start_level,
+                                 questions_per_student, time_per_question, started_at, closed_at) values
+      ('OLD381', 'a1111111-1111-4111-8111-111111111111', '${P}', 'open', 0.9, 1, true, 'mixed', false, 'apply', 20, 60,
+       '2026-11-19T05:00:00Z', null),
+      ('OLD382', 'a1111111-1111-4111-8111-111111111111', '${P}', 'closed', 0.8, 0, false, 'devices', true, 'understand', null, null,
+       '2026-11-19T04:00:00Z', '2026-11-19T04:30:00Z'),
+      ('OLD383', 'a1111111-1111-4111-8111-111111111111', '${P}', 'waiting', 1.0, 2, false, 'devices', true, 'remember', null, null,
+       '2026-11-19T06:00:00Z', null);
+  `);
+  const counts = await rowCounts(before38);
+  const read = async () => (await before38.query('select * from public.sessions order by code')).rows;
+  const kept = await read();
+  const ok = await applyAll(before38, files.filter((f) => f.name >= '0038'), 'over existing rooms');
+  check('0038 applies over existing rooms, adding and removing no row', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before38)).filter(([t]) => t in counts))));
+  const now = await read();
+  check('every room already kept has no exam mode (null), so it runs as it always did, and nothing else on it changed',
+    now.length === 3 && now.every((r) => r.exam_mode === null) && asBefore(now, kept) === JSON.stringify(kept));
+  const again = await applyAll(before38, files.filter((f) => f.name >= '0038'), 'a second time');
+  check('and running it again changes nothing', again && JSON.stringify(await read()) === JSON.stringify(now));
+  await before38.close();
 }
 
 // ------------------------------------- 0011 over accounts that already clash --

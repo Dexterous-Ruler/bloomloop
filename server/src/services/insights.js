@@ -45,7 +45,7 @@ import { basedOn, studentLanguages } from './honesty.js';
 import { selectSet, servableFor } from './selector.js';
 import { allAnswers, answerItem, rollKey } from './evidence.js';
 import { CONFIDENCE_CHOICES, CONFIDENCE_NOTE, confidenceCounts } from './confidence.js';
-import { ROLL_SHAPE } from './roster.js';
+import { ROLL_SHAPE, minorRolls } from './roster.js';
 import {
   OBSERVATION_KINDS,
   STAFF_ONLY,
@@ -58,6 +58,9 @@ import {
 import { pickView } from './wheel.js';
 import { roomClass } from './roomClass.js';
 import { PRACTISED_NOTE, practisedAnswers } from './bankShare.js';
+// Batch 9 (E5): the card's signals and the newest screen picture's time.
+import { HONESTY, summarise } from './integrity.js';
+import { examModeOf, snapshots } from './examGuard.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -990,6 +993,9 @@ export async function studentCard(repo, session, rawRoll) {
   for (const id of new Set(events.map((e) => String(e.sessionId)))) {
     if (!rooms.has(id)) rooms.set(id, (await repo.getSession(id))?.code ?? null);
   }
+  // Batch 9 (E5): nothing about signals or pictures for a student marked under 18.
+  const minor = minorRolls(roster, marks).has(rollNo);
+  const shot = minor ? null : snapshots.latest(session._id, rollNo);
 
   return {
     room: {
@@ -1066,6 +1072,14 @@ export async function studentCard(repo, session, rawRoll) {
     // Which of these answers were in a language other than the question's own
     // (Phase 5); each of lastAnswers carries its own `language` too.
     languages: studentLanguages(own),
+    // Batch 9 (E5): this student's signals as the grid sums them (counts and the
+    // latest included), with the honesty sentence beside them; null for a student
+    // the roster marks under 18 (decision 8) or one who never joined. In an exam
+    // room, when their newest screen picture arrived (the picture itself is a
+    // staff route of its own), or null.
+    integrity: profile && !minor ? summarise(profile) : null,
+    integrityNote: HONESTY,
+    ...(examModeOf(session).on ? { exam: { snapshotAt: shot ? new Date(shot.at).toISOString() : null } } : {}),
     nextSet: profile && settings.mode !== 'teacher-led' && session.status !== 'closed'
       ? plannedNextSet(profile, bank, { cap: settings.questionsPerStudent })
       : null,

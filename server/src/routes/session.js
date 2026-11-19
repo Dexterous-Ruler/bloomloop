@@ -68,6 +68,8 @@ import { importedRooms } from '../services/roomImport.js';
 import { forgetInsights } from '../services/insights.js';
 import { CLASS_LOCK } from '../services/classQuestions.js';
 import { roomClass as classOfRoom, roomClasses } from '../services/roomClass.js';
+// Batch 9 (E5): exam mode on a room.
+import { EXAM_HELP, examModeFrom, examModeOf, examSummary, publicExamMode, snapshots } from '../services/examGuard.js';
 
 const router = express.Router();
 
@@ -442,6 +444,12 @@ router.post('/', requireTeacher, async (req, res, next) => {
     // professor starts it (POST /:code/start). Left out, the room opens as always.
     const lobby = req.body?.lobby;
     if (lobby !== undefined && lobby !== null && typeof lobby !== 'boolean') throw fail('lobby must be true or false.', 400);
+    // Batch 9 (E5): exam mode, off unless sent. Stored only when sent, so a room
+    // without it is written exactly as before (and on a database without 0038).
+    const examMode = examModeFrom(req.body?.examMode);
+    if (examMode?.on && settings.mode === 'teacher-led') {
+      throw fail('Exam mode needs phones, and no phone joins a Teacher-led room. Open it for Student devices or Mixed.', 400);
+    }
     const session = await repo.createSession({
       code,
       contentId,
@@ -451,6 +459,7 @@ router.post('/', requireTeacher, async (req, res, next) => {
       ...settings,
       questionIds,
       classId,
+      ...(examMode ? { examMode } : {}),
     });
 
     // Read back off the stored row rather than echoed from the request, so the
@@ -467,6 +476,10 @@ router.post('/', requireTeacher, async (req, res, next) => {
       classId: session.classId ?? null,
       // 'open', or 'waiting' for a room opened with a waiting room.
       status: session.status,
+      // Batch 9 (E5): the room's exam mode as stored (off for a room without one),
+      // with the help each part of it carries.
+      examMode: examModeOf(session),
+      examHelp: EXAM_HELP,
     });
   } catch (err) {
     next(err);
@@ -551,6 +564,10 @@ router.get('/:code', async (req, res, next) => {
       content: { title: content?.title ?? session.title ?? '' },
       bankCount,
       studentCount: profiles.length,
+      // Batch 9 (E5): only in an exam room, what it asks of a phone and the
+      // consent notice, so both can be read before joining. Never the Safe Exam
+      // Browser keys, and nothing about any one student.
+      ...(examModeOf(session).on ? { exam: publicExamMode(session) } : {}),
     });
   } catch (err) {
     next(err);
@@ -878,6 +895,9 @@ router.get('/', requireTeacher, async (req, res, next) => {
           // Non-zero only in a room running redemption, and listed beside the
           // accuracy it moved so the two are never read apart.
           withdrawn,
+          // Batch 9 (E5): whether the room runs in exam mode and what it asks,
+          // without the Safe Exam Browser keys.
+          examMode: examSummary(session),
           startedAt: session.startedAt ?? null,
           pausedAt: session.pausedAt ?? null,
           closedAt: session.closedAt ?? null,
@@ -1068,6 +1088,8 @@ router.delete('/:code', requireTeacher, async (req, res, next) => {
     forgetScreen(session._id);
     // Its live insights' series (held in memory) goes with it.
     forgetInsights(session._id);
+    // Batch 9 (E5): and its screen pictures, at once, not two hours on.
+    snapshots.purgeRoom(session._id);
 
     res.json({
       ok: true,

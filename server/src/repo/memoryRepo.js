@@ -1891,6 +1891,23 @@ export function createMemoryRepo() {
         .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
         .map(clone);
     },
+
+    // ---- Batch 9: exam integrity (0038; services/examGuard.js, routes/examGuard.js) ----
+
+    /**
+     * A room's exam mode (sessions.exam_mode, 0038), as services/examGuard.js
+     * examModeFrom checked it, or null for none. Set at the opening through
+     * createSession, and changed here by the owner while the room is not closed.
+     * The room as stored now, or null when there is no such room. Screen
+     * pictures are never written to any store: they are held in memory by
+     * services/examGuard.js alone.
+     */
+    async setSessionExamMode(id, examMode) {
+      const rec = sessions.get(String(id));
+      if (!rec) return null;
+      rec.examMode = examMode ? clone(examMode) : null;
+      return clone(rec);
+    },
   };
 
   /** The drawing a device's key names, as stored, or undefined. */

@@ -37,6 +37,43 @@ export const REPORTED = ['hidden', 'returned', 'blurred', 'fullscreen-exit', 'pa
 /** What the server works out for itself. A client may never claim one of these. */
 export const OBSERVED = ['too-fast', 'second-socket', 'level-jump'];
 
+/*
+ * Batch 9 (decision E5, and E7 for screenshot shortcuts): the kinds an exam room
+ * adds. Only a room whose `examMode` is on takes them; in any other room a phone
+ * sending one is dropped like any unknown kind, so nothing changes there.
+ *
+ * Reported (the browser says so, cheap to fake, as REPORTED above):
+ *   fullscreen_exit         a laptop left fullscreen
+ *   copy_attempt            a copy or cut on the question was blocked
+ *   context_menu            the right-click or long-press menu was blocked
+ *   focus_lost              the window lost focus with the page still showing
+ *                           (on a phone: Google Lens, Circle to Search, the
+ *                           assistant or the app switcher, among others)
+ *   visibility_hidden       the page was hidden (another tab or app)
+ *   screenshare_stopped     the shared screen stopped being shared
+ *   screenshot_attempt      a screenshot shortcut was pressed, with its method;
+ *                           the page sees the key, not whether a picture was taken
+ *   screenshare_not_started the student did not start sharing. Recorded once per
+ *                           join and nothing more (no level, no mark): it is the
+ *                           only record a declined share leaves.
+ * Observed (the server worked it out, as OBSERVED above):
+ *   snapshot_missing        screen pictures were due and none arrived
+ *   second_device           two live connections on one roll number in one room
+ *   timing_anomaly          an answer sooner than the question could be read
+ *                           (examMinPlausibleMs below says how)
+ * In an exam room the server records second_device and timing_anomaly where any
+ * other room records second-socket and too-fast, so one event is never counted
+ * under two names.
+ */
+export const EXAM_REPORTED = [
+  'fullscreen_exit', 'copy_attempt', 'context_menu', 'focus_lost', 'visibility_hidden',
+  'screenshare_stopped', 'screenshot_attempt', 'screenshare_not_started',
+];
+export const EXAM_OBSERVED = ['snapshot_missing', 'second_device', 'timing_anomaly'];
+
+/** How a screenshot shortcut was seen (E7). Anything else is stored as 'other'. */
+export const SCREENSHOT_METHODS = ['printscreen', 'snip_shortcut', 'mac_shortcut'];
+
 /** Cap per profile. An event list is evidence, not telemetry - it stays readable. */
 const MAX_EVENTS = 200;
 
@@ -88,14 +125,75 @@ export function record(profile, kind, meta = {}) {
  * arrives over a socket the student's own devtools can send on.
  * @returns {boolean} whether it was accepted
  */
-export function reportFromClient(profile, kind, meta = {}) {
-  if (!REPORTED.includes(kind)) return false;
+export function reportFromClient(profile, kind, meta = {}, { exam = false } = {}) {
+  if (!reportable(kind, { exam })) return false;
   // Only the fields we understand, and nothing long enough to be a payload.
   const clean = {};
   if (Number.isFinite(Number(meta.awayMs))) clean.awayMs = Math.min(Number(meta.awayMs), 86400000);
   if (typeof meta.questionId === 'string') clean.questionId = meta.questionId.slice(0, 64);
+  // E7: which shortcut, from a closed list, so the field can never carry a payload.
+  if (kind === 'screenshot_attempt') clean.method = SCREENSHOT_METHODS.includes(meta.method) ? meta.method : 'other';
   record(profile, kind, { ...clean, src: 'reported' });
   return true;
+}
+
+/**
+ * Would reportFromClient take this kind? Asked before the store is read. A phone
+ * may report screenshare_not_started only through its screen event, never here
+ * (services/examGuard.js), so the one record a declined share leaves is the
+ * server's and is made once.
+ */
+export const reportable = (kind, { exam = false } = {}) => REPORTED.includes(kind)
+  || (exam && EXAM_REPORTED.includes(kind) && kind !== 'screenshare_not_started');
+
+/**
+ * A signal the server records about an exam room's phone from what the phone did
+ * on its screen event: the share it stopped, or did not start. Reported, because
+ * the phone said so; only these two kinds.
+ */
+export function noteScreen(profile, kind) {
+  if (kind !== 'screenshare_stopped' && kind !== 'screenshare_not_started') return false;
+  record(profile, kind, { src: 'reported' });
+  return true;
+}
+
+/**
+ * The exam room's reading rule (timing_anomaly), written down because a signal
+ * nobody can check is an accusation.
+ *
+ * The answer arrived, by the server's clock from when the server served the
+ * question, sooner than the question could be read: its text, options, pairs,
+ * items and, in an exam room, the passage it hangs off, at 25 characters a
+ * second (about 300 words a minute, fast for unfamiliar technical material and
+ * meant to be generous), and never under 0.9 seconds. First attempts only, and
+ * never for an answer kept and not counted. A figure's drawing is not counted as
+ * reading, so a question about a picture is held to its words alone, which can
+ * only make the rule fire less.
+ */
+export function examMinPlausibleMs(question) {
+  const passage = question?.stimulus?.kind === 'passage' ? String(question.stimulus.text ?? '') : '';
+  return minPlausibleMs(question) + Math.round((passage.length / CHARS_PER_SECOND) * 1000);
+}
+
+/** checkLatency for an exam room: the same check with the passage counted, recorded as timing_anomaly. */
+export function checkTiming(profile, question, servedAt, now = Date.now()) {
+  if (!servedAt) return null;
+  const took = now - new Date(servedAt).getTime();
+  if (!Number.isFinite(took) || took < 0) return null;
+  const floor = examMinPlausibleMs(question);
+  if (took >= floor) return null;
+  record(profile, 'timing_anomaly', { src: 'observed', tookMs: took, expectedMs: floor, questionId: String(question._id) });
+  return { tookMs: took, expectedMs: floor };
+}
+
+/** noteSecondSocket for an exam room. */
+export function noteSecondDevice(profile, meta = {}) {
+  record(profile, 'second_device', { src: 'observed', ...meta });
+}
+
+/** Screen pictures were due and none arrived (the rule: services/examGuard.js snapshotOverdue). */
+export function noteSnapshotMissing(profile, meta = {}) {
+  record(profile, 'snapshot_missing', { src: 'observed', ...meta });
 }
 
 /**
@@ -175,7 +273,8 @@ export function summarise(profile) {
   const events = Array.isArray(profile?.integrity) ? profile.integrity : [];
   const count = (k) => events.filter((e) => e.kind === k).length;
 
-  const away = events.filter((e) => e.kind === 'hidden').length;
+  // An exam room's visibility_hidden is the same absence as `hidden` elsewhere.
+  const away = events.filter((e) => e.kind === 'hidden' || e.kind === 'visibility_hidden').length;
   const awayMs = events.reduce((n, e) => n + (Number(e.awayMs) || 0), 0);
   const observed = events.filter((e) => e.src === 'observed');
 
@@ -189,6 +288,15 @@ export function summarise(profile) {
   if (count('level-jump')) {
     notes.push(`${count('level-jump') === 1 ? 'Once' : `${count('level-jump')} times`}, ${JUMP_WINDOW} right in a row straight after a run of mostly wrong answers. Students do turn corners; this is a prompt to look, not a finding.`);
   }
+  notes.push(...examNotes(count));
+
+  // Batch 9: the exam kinds that, three or more together, are worth a glance.
+  // A screenshot shortcut is a deliberate key combination, so one is enough. A
+  // share that was never started raises nothing: declining is the student's
+  // choice, and it is recorded and nothing more (decision E5).
+  const examReported = ['fullscreen_exit', 'copy_attempt', 'context_menu', 'focus_lost', 'screenshare_stopped']
+    .reduce((n, k) => n + count(k), 0);
+  const noted = away >= NOTABLE || count('paste') > 0 || count('screenshot_attempt') > 0 || examReported >= NOTABLE;
 
   return {
     events: events.length,
@@ -201,7 +309,47 @@ export function summarise(profile) {
     // The only three-way judgement this module makes, and it is about ATTENTION,
     // not honesty. 'watch' means a teacher might want to look, never that a
     // student did anything wrong.
-    level: observed.length > 0 ? 'watch' : away >= NOTABLE || count('paste') > 0 ? 'note' : 'clear',
+    level: observed.length > 0 ? 'watch' : noted ? 'note' : 'clear',
+    // Batch 9: how many of each kind, and the newest event with only the fields
+    // a screen needs, so the live console shows counts and the latest signal
+    // without the whole trail.
+    counts: Object.fromEntries([...new Set(events.map((e) => e.kind))].map((k) => [k, count(k)])),
+    latest: latestOf(events),
+  };
+}
+
+const times = (n) => `${n} time${n === 1 ? '' : 's'}`;
+
+/** The exam kinds in words: what was seen, never what it means (decision E5). */
+function examNotes(count) {
+  const notes = [];
+  const add = (kind, sentence) => { if (count(kind)) notes.push(sentence(count(kind))); };
+  add('focus_lost', (n) => `The window lost focus ${times(n)} with the page still showing.`);
+  if (count('visibility_hidden') || count('focus_lost')) {
+    notes.push('Page left: possibly Google Lens, a screenshot tool or another app. A notification or a message does the same.');
+  }
+  add('fullscreen_exit', (n) => `Left fullscreen ${times(n)}.`);
+  add('copy_attempt', (n) => `Copying was blocked ${times(n)}.`);
+  add('context_menu', (n) => `The right-click or long-press menu was blocked ${times(n)}.`);
+  add('screenshot_attempt', (n) => `A screenshot shortcut was pressed ${times(n)}. The page sees the key, not whether a picture was taken.`);
+  add('screenshare_stopped', (n) => `Screen sharing stopped ${times(n)}.`);
+  add('screenshare_not_started', () => 'Screen sharing was not started.');
+  add('snapshot_missing', (n) => `${n} expected screen picture${n === 1 ? '' : 's'} did not arrive. A dropped connection or a laptop going to sleep does the same.`);
+  add('second_device', (n) => `Joined from a second connection while the first was still live, ${times(n)}.`);
+  add('timing_anomaly', (n) => `${n} answer${n === 1 ? '' : 's'} arrived faster than the question could be read.`);
+  return notes;
+}
+
+/** The newest event, with only what a screen shows: never another socket's id or a payload. */
+function latestOf(events) {
+  const e = events.at(-1);
+  if (!e) return null;
+  return {
+    kind: e.kind,
+    at: e.at ?? null,
+    src: e.src ?? null,
+    ...(e.method ? { method: e.method } : {}),
+    ...(e.questionId ? { questionId: e.questionId } : {}),
   };
 }
 
