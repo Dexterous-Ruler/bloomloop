@@ -31,7 +31,7 @@
 // socket, never here.
 
 import { LABEL as LEVEL_LABEL } from '../bloom.js';
-import { KINDS_FOR_LEVEL, LABEL as KIND_LABEL, isUngraded, kindSuitsLevel } from '../questionTypes.js';
+import { KINDS_FOR_LEVEL, LABEL as KIND_LABEL, isUngraded, kindLabel, kindSuitsLevel } from '../questionTypes.js';
 import { runChecks } from './checks.js';
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -214,8 +214,12 @@ export function levelCheck(q) {
   };
 }
 
-/** A bank question as staff are sent it: the row, its provenance and its level check. */
-export const staffQuestion = (q) => (q ? { ...q, provenance: questionProvenance(q), levelCheck: levelCheck(q) } : q);
+/**
+ * A bank question as staff are sent it: the row, its provenance, its level check
+ * and its kind as a person reads it (Batch 9: "Short answer" or "Long answer"
+ * for a written one; kindLabel in questionTypes.js).
+ */
+export const staffQuestion = (q) => (q ? { ...q, provenance: questionProvenance(q), levelCheck: levelCheck(q), kindLabel: kindLabel(q) } : q);
 
 /* ----------------------------------------------------------------- counts -- */
 

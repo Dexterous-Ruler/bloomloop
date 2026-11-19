@@ -285,6 +285,10 @@ check('a room opens for the class', room.status === 201 || room.status === 200, 
   phone.disconnect();
   await new Promise((r) => setTimeout(r, 200));
 }
+// Closed before the hub is used (Batch 9, E1): a room still running keeps every
+// question of its set closed in the hub, and this suite's checks and self-tests
+// use the Sets questions it holds.
+check('the room is closed', (await post(`/api/session/${room.body.code}/close`, {})).status === 200);
 tick();
 
 const roster = await repo.listClassStudents(classId);

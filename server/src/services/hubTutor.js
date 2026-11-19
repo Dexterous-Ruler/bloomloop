@@ -78,7 +78,7 @@
 import { GoogleGenAI, Type } from '@google/genai';
 
 import { config, hasGemini } from '../config.js';
-import { LABEL as KIND_LABEL, toOriginalResponse } from '../questionTypes.js';
+import { kindLabel, toOriginalResponse } from '../questionTypes.js';
 import { holdsContact } from './roster.js';
 import { labelHtml, richText } from './richText.js';
 import { slidesOfTopic } from './hubTopics.js';
@@ -348,7 +348,10 @@ export function answerLeak(q, raw) {
       const keys = list(q.answerIdxs).map((i) => list(q.tokens)[i]).filter((t) => norm(t).length >= 3);
       return keys.length && keys.every((t) => holds(hay, t)) ? leak('tokens', 'it names the words to pick.') : null;
     }
-    case 'open': {
+    // A drawing's points (Batch 9) are the reviewer's, and a hint quoting one
+    // hands the student what the professor will look for.
+    case 'open':
+    case 'drawing': {
       const point = list(q.rubric).find((p) => norm(p).length >= 12 && holds(hay, p));
       return point === undefined ? null : leak('rubric', `it quotes a point the answer is marked on, ${quote(point)}.`);
     }
@@ -912,7 +915,7 @@ export async function staffQuestionTutor(question, { hints = [], feedback = [], 
     topicHtml: labelHtml(question.topic ?? ''),
     bloom: question.bloom,
     kind,
-    kindLabel: KIND_LABEL[kind] ?? kind,
+    kindLabel: kindLabel(question),
     status: question.status ?? 'active',
     hints: ladder,
     missingSteps: [1, 2, 3].filter((s) => !hints.some((h) => h.step === s)),

@@ -19,6 +19,7 @@
 
 import { LEVELS } from '../bloom.js';
 import { forStudent, toOriginalResponse } from '../questionTypes.js';
+import { awaitingMark } from './drawings.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 
@@ -235,6 +236,8 @@ export function gradedEvidence({ answers = [], profiles = [] } = {}) {
   const counted = { answers: 0, history: 0 };
   for (const a of answers) {
     if (a?.final === false || a?.ungraded || !LEVELS.includes(a?.bloom)) continue;
+    // A drawing still waiting for its professor (Batch 9) is neither right nor wrong yet.
+    if (awaitingMark(a)) continue;
     rows.push({ topic: a.topic, level: a.bloom, correct: a.correct === true, rollNo: a.rollNo });
     counted.answers += 1;
   }

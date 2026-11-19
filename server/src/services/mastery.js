@@ -18,7 +18,7 @@ import {
 } from '../bloom.js';
 // Only the predicate, and only to answer one question: is there anything here to
 // be right about? A poll is not a question a student can retry or redeem.
-import { countsTowardMastery } from '../questionTypes.js';
+import { awaitsReview, countsTowardMastery } from '../questionTypes.js';
 
 /** No history -> start at Understand, not Remember. [completion.md F3] */
 export const COLD_START_LEVEL = 'understand';
@@ -126,6 +126,9 @@ const CLOSED_CHOICE_KINDS = ['mcq', 'truefalse'];
 export function retriesFor(question, reattempts) {
   const asked = Math.max(0, Math.min(MAX_REATTEMPTS, Math.trunc(Number(reattempts)) || 0));
   if (!countsTowardMastery(question)) return 0;
+  // A drawing (Batch 9) has no machine mark to be wrong by, so nothing to retry
+  // on: it goes to the professor as it was first sent.
+  if (awaitsReview(question)) return 0;
   const kind = question?.kind ?? 'mcq';
   if (!CLOSED_CHOICE_KINDS.includes(kind)) return asked;
   // truefalse carries no options array - the two are the kind itself.
@@ -902,6 +905,24 @@ export function recordUngraded(profile, { questionId, bloom, at = null, topic = 
   return { profile: next };
 }
 
+/**
+ * Record an answer that waits for a professor's mark (Batch 9: a drawing). Pure.
+ *
+ * Like a poll's entry it is in the history, so the selector does not serve the
+ * question again, and it is read by nothing that reasons about ability: it is
+ * marked `ungraded`, which every such reader already leaves out (the tallies,
+ * the rolling window, redemption, the below-40% band), and `awaitingReview`,
+ * which says why. Unlike a poll it does assess its level: once a professor
+ * marks it, applyReview() turns it into a graded entry and the tallies take it.
+ * The working level is not recomputed now, since nothing has been learnt yet.
+ */
+export function recordAwaiting(profile, { questionId, bloom, at = null, topic = '', kind = 'drawing', answerId = '' }) {
+  const { profile: next } = recordUngraded(profile, { questionId, bloom, at, topic, kind, answerId });
+  const last = next.history.length - 1;
+  next.history[last] = { ...next.history[last], awaitingReview: true };
+  return { profile: next };
+}
+
 /* ---------------------------------------------------------------- reviews --
 
    A professor's review of a written answer, applied after the fact. The answer
@@ -983,6 +1004,24 @@ export function applyReview(profile, { answerId, correct, score = null, review, 
   if (i < 0) return { profile: next, found: false, changed: false };
 
   const entry = next.history[i];
+  // An answer that waited for this mark (Batch 9, recordAwaiting): it becomes a
+  // graded entry where it stands in the history, and its level counts it now,
+  // seen and, if right, correct. As for any review, the working level is not
+  // rewound or recomputed; the ladder's next decision reads the entry.
+  if (entry.awaitingReview && LEVELS.includes(entry.bloom)) {
+    const { awaitingReview: _waited, ungraded: _none, ...rest } = entry;
+    const now = Boolean(correct);
+    next.history = next.history.map((h, k) => (k === i ? {
+      ...rest,
+      correct: now,
+      ...(score === null || score === undefined ? {} : { score: Math.round(Number(score) * 100) / 100 }),
+      review,
+    } : h));
+    const { seen, correct: right } = next.levels[entry.bloom];
+    next.levels[entry.bloom] = { seen: seen + 1, correct: right + (now ? 1 : 0) };
+    if (redemption) next.history = repairRedemption(next.history, entry.bloom);
+    return { profile: next, found: true, changed: true };
+  }
   // A poll has no mark to review. Nothing to change, and nothing to count.
   if (entry.ungraded || !LEVELS.includes(entry.bloom)) return { profile: next, found: true, changed: false };
 

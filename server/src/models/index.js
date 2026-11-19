@@ -79,6 +79,9 @@ const questionSchema = new Schema(
     lineKey: { type: Schema.Types.Mixed, default: undefined }, // numberline
     bars: { type: Schema.Types.Mixed, default: undefined },    // chart: the empty chart
     values: { type: [Number], default: undefined },      // chart: the heights
+    // Batch 9: an open question's length, and whether a drawing takes words.
+    length: { type: String, enum: ['short', 'long'], default: undefined },
+    allowText: { type: Boolean, default: undefined },
     bloom: { type: String, enum: LEVELS, required: true },
     // 'draft': generated and not yet approved, never served (supabase/migrations/0013).
     status: { type: String, enum: ['active', 'discarded', 'draft'], default: 'active' },
@@ -361,9 +364,23 @@ const mediaSchema = new Schema(
     // Batch 8 (0033): the slide of the deck this picture was kept from; null for
     // a picture uploaded on its own.
     slideNo: { type: Number, default: null, min: 1 },
+    // Batch 9 (0037): a student's drawing given as an answer, whose it is (a
+    // room's phone, or a hub student), the question it answers and the
+    // device's own id for it. False and null on every other upload.
+    drawing: { type: Boolean, default: false },
+    sessionId: { type: String, default: null },
+    rollNo: { type: String, default: null },
+    accountId: { type: String, default: null },
+    questionId: { type: String, default: null },
+    answerKey: { type: String, default: null },
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: false }, versionKey: false },
 );
+// One drawing per device id, as 0037's unique indexes.
+mediaSchema.index({ sessionId: 1, rollNo: 1, answerKey: 1 },
+  { unique: true, partialFilterExpression: { drawing: true, sessionId: { $type: 'string' } } });
+mediaSchema.index({ accountId: 1, answerKey: 1 },
+  { unique: true, partialFilterExpression: { drawing: true, accountId: { $type: 'string' } } });
 export const Media = model('Media', mediaSchema);
 
 // A professor's class and its roster (supabase/migrations/0016). Ids are kept as

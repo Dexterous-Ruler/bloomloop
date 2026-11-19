@@ -62,6 +62,7 @@ import { notFound } from './hubAccess.js';
 import { labelHtml } from './richText.js';
 import { NO_HINTS, RUN_NOT_FOUND, answersWord, cleanRunId, hashOf, questionsWord, shownQuestions } from './hubRuns.js';
 import { closedError, closedToCheck } from './hubClosed.js';
+import { awaitsReview } from '../questionTypes.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 const lower = (v) => String(v ?? '').trim().toLowerCase();
@@ -88,7 +89,7 @@ export const COMPLETE = 'This Get Ready check is complete. Start a new one to ch
 export const ENDED_EARLY = 'You ended this check early. The topics it had not decided are Not sure yet, and the question it was '
   + 'asking is open again in practice.';
 const ENDED_EARLY_STAFF = 'The student ended this check early. The topics it had not decided are Not sure yet.';
-export const CHECK_WAITS = 'The questions left on this topic are closed for now: being asked in class, or on a self-test you have not '
+export const CHECK_WAITS = 'The questions left on this topic are closed for now: part of a class that is still running, or on a self-test you have not '
   + 'handed in. The check carries on once one of them opens again.';
 
 /* ------------------------------------------------------------------ pure -- */
@@ -384,7 +385,8 @@ function availableIn(scope, prerequisites) {
   const out = new Map();
   for (const p of prerequisites) {
     const entry = scope.topics.get(lower(p.topicId));
-    if (entry) out.set(lower(p.topicId), entry.questions.map((q) => lower(q._id)));
+    // A drawing (Batch 9) is never asked: the hub has nobody to mark it.
+    if (entry) out.set(lower(p.topicId), entry.questions.filter((q) => !awaitsReview(q)).map((q) => lower(q._id)));
   }
   return out;
 }
@@ -410,7 +412,7 @@ async function questionToAsk(repo, account, run, read, closed = new Map()) {
   const current = read.state.items[read.state.current];
   const entry = read.scope.topics.get(lower(current.topicId));
   const mine = await repo.listHubAttempts({ accountId: String(account.id), topicIds: [String(current.topicId)] });
-  return nextCheckQuestion(entry.questions.filter((q) => !closed.has(lower(q._id))), {
+  return nextCheckQuestion(entry.questions.filter((q) => !closed.has(lower(q._id)) && !awaitsReview(q)), {
     asked: read.state.askedIds, met: new Set(mine.map((a) => lower(itemKeyOf(a)))), seed: String(run._id),
   });
 }

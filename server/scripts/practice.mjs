@@ -603,11 +603,12 @@ console.log('\na question a room is asking now stays closed in the hub (review f
     && (await repo.getProfile(other.body.sessionId, '21CS77'))?.served?.questionId === pinned, String(pinned));
   const kept = (await repo.listHubAttempts({})).length;
   const tried = await post('/api/hub/practice/attempts', { attemptId: 'asha-live-0001', questionId: pinned, topicId, response: live?.answerIdx }, 'asha');
-  check('practising it: 409, saying it is being asked in class, with no key or mark, nothing stored', tried.status === 409
-    && /being asked in class/.test(tried.body.error) && !KEYS_BEFORE.test(tried.text) && !/correct/.test(tried.text)
+  // Batch 9 (E1): the sentence says it is part of a class still running.
+  check('practising it: 409, saying it is part of a class still running, with no key or mark, nothing stored', tried.status === 409
+    && /part of a class that is still running/.test(tried.body.error) && !KEYS_BEFORE.test(tried.text) && !/correct/.test(tried.text)
     && (await repo.listHubAttempts({})).length === kept, tried.text);
   const hint = await post('/api/hub/practice/hints', { attemptId: 'asha-live-0002', questionId: pinned, topicId }, 'asha');
-  check('a hint on it: 409, nothing recorded', hint.status === 409 && /being asked in class/.test(hint.body.error)
+  check('a hint on it: 409, nothing recorded', hint.status === 409 && /part of a class that is still running/.test(hint.body.error)
     && (await repo.listHintViews({ clientAttemptId: 'asha-live-0002' })).length === 0, hint.text);
   // A phone in a room may be anyone's (decision 7): closed to every student, whoever it was served to.
   const bilal = await post('/api/hub/practice/attempts', { attemptId: 'bilal-live-0001', questionId: pinned, topicId, response: live?.answerIdx }, 'bilal');

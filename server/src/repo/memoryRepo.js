@@ -238,6 +238,9 @@ export function createMemoryRepo() {
       for (const map of [wheelRounds, wheelPicks, tallies, activities, projectorLinks, classQuestions, recordWrites]) {
         for (const [id, rec] of map) if (rec.sessionId === key) map.delete(id);
       }
+      // Batch 9 (0037): the room's drawings go with it, as ON DELETE CASCADE has
+      // it; the archive keeps each answer's reference, never the bytes.
+      for (const [mid, held] of media) if (held.rec.drawing && held.rec.sessionId === key) media.delete(mid);
       return sessions.delete(key);
     },
 
@@ -334,6 +337,9 @@ export function createMemoryRepo() {
     // `order: 'desc'` is newest first, for the review queue. Ties are ordered by
     // id, as Postgres and Mongo order them, so pages never overlap.
     //
+    // `kind` is one kind, or a list of kinds (Batch 9: the review queue holds
+    // written answers and drawings).
+    //
     // `student: { accountId, rollNo }` is one person across rooms: rows linked to
     // their account, plus rows under their roll number that are linked to no
     // account. A row linked to a DIFFERENT account is that account's answer,
@@ -369,7 +375,7 @@ export function createMemoryRepo() {
           && (!topic || a.topic === topic)
           && (!bloom || a.bloom === bloom)
           && (!reviewStatus || a.reviewStatus === reviewStatus)
-          && (!kind || a.kind === kind)
+          && (!kind || (Array.isArray(kind) ? kind.includes(a.kind) : a.kind === kind))
           && (final === undefined || a.final === final)
           && (!classQuestionId || String(a.classQuestionId ?? '') === String(classQuestionId))
           && (classVotes !== false || a.classQuestionId == null)
@@ -1823,5 +1829,76 @@ export function createMemoryRepo() {
       rec.roomsOnly = roomsOnly === true;
       return clone(rec);
     },
+
+    // ---- Batch 9: answer kinds (a student's drawing, 0037; services/drawings.js) ----
+
+    /**
+     * Keep a student's drawing: an upload like any other (createMedia) marked
+     * `drawing`, with whose it is - a room's phone (`sessionId`, `rollNo`) or a
+     * hub student (`accountId`) - the question it answers and the device's own
+     * id for it (`answerKey`). One per (room, roll number, key) or (account,
+     * key), as 0037's unique indexes: a key already held comes back as it is,
+     * with `duplicate: true`. Returns the row without its bytes.
+     *
+     * @returns {Promise<{ media: object, duplicate: boolean }>}
+     */
+    async createDrawing(doc) {
+      const held = findDrawing(doc);
+      if (held) return { media: clone(held), duplicate: true };
+      const { data, ...meta } = doc;
+      const _id = oid();
+      const rec = {
+        _id,
+        ownerId: null,
+        createdAt: new Date().toISOString(),
+        ...clone(meta),
+        contentId: String(doc.contentId),
+        drawing: true,
+        sessionId: doc.sessionId ? String(doc.sessionId) : null,
+        rollNo: doc.sessionId ? String(doc.rollNo) : null,
+        accountId: doc.sessionId ? null : String(doc.accountId),
+        questionId: String(doc.questionId),
+        answerKey: String(doc.answerKey),
+      };
+      media.set(_id, { rec, data: Buffer.from(data) });
+      return { media: clone(rec), duplicate: false };
+    },
+
+    /** A drawing by its id, without its bytes; null for anything that is not a drawing. */
+    async getDrawing(id) {
+      const held = media.get(String(id));
+      return held?.rec.drawing ? clone(held.rec) : null;
+    },
+
+    /** The drawing kept under a device's key: { sessionId, rollNo, answerKey } or { accountId, answerKey }; or null. */
+    async getDrawingByKey(key) {
+      const held = findDrawing(key);
+      return held ? clone(held) : null;
+    },
+
+    /**
+     * Drawings without their bytes, oldest first: a room's (`sessionId`, and
+     * `rollNo` for one phone's) or a hub student's (`accountId`), and with
+     * `questionId` only that question's.
+     */
+    async listDrawings({ sessionId = null, rollNo = null, accountId = null, questionId = null } = {}) {
+      return [...media.values()].map((h) => h.rec)
+        .filter((r) => r.drawing
+          && (sessionId ? r.sessionId === String(sessionId) : true)
+          && (rollNo ? r.rollNo === String(rollNo) : true)
+          && (accountId ? r.accountId === String(accountId) : true)
+          && (questionId ? r.questionId.toLowerCase() === String(questionId).toLowerCase() : true))
+        .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+        .map(clone);
+    },
   };
+
+  /** The drawing a device's key names, as stored, or undefined. */
+  function findDrawing({ sessionId = null, rollNo = null, accountId = null, answerKey = '' } = {}) {
+    for (const { rec } of media.values()) {
+      if (!rec.drawing || rec.answerKey !== String(answerKey)) continue;
+      if (sessionId ? rec.sessionId === String(sessionId) && rec.rollNo === String(rollNo) : rec.accountId === String(accountId)) return rec;
+    }
+    return undefined;
+  }
 }

@@ -33,10 +33,10 @@ export const CHECK_IDS = [
 ];
 
 /**
- * Kinds where the student writes or types the answer rather than picking it out
+ * Kinds where the student writes, types or draws the answer rather than picking it out
  * of what the screen offers. Everything else is selected response.
  */
-export const PRODUCED_KINDS = ['blank', 'cloze', 'numeric', 'open', 'table', 'plot', 'numberline', 'chart'];
+export const PRODUCED_KINDS = ['blank', 'cloze', 'numeric', 'open', 'table', 'plot', 'numberline', 'chart', 'drawing'];
 
 /** Does the screen offer the answer to be picked out? */
 export const isSelectedResponse = (kind) => !PRODUCED_KINDS.includes(kind ?? 'mcq');
@@ -354,10 +354,17 @@ const sortedJson = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object
  */
 const basisOf = (v) => (v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0) ? null : v);
 
+/**
+ * Payload fields no answer depends on (Batch 9): how long a written answer may
+ * be, and whether a drawing takes words. Left out of the fingerprint, so adding
+ * them changed no question's fingerprint and no check kept against one.
+ */
+const NOT_THE_KEY = new Set(['length', 'allowText']);
+
 /** A fingerprint of everything the answer depends on: the key fields and the stimulus. */
 export function keyBasis(q) {
   const parts = { options: basisOf(q.options), answerIdx: basisOf(q.answerIdx) };
-  for (const f of PAYLOAD_FIELDS) parts[f] = basisOf(q[f]);
+  for (const f of PAYLOAD_FIELDS) if (!NOT_THE_KEY.has(f)) parts[f] = basisOf(q[f]);
   return crypto.createHash('sha256').update(sortedJson(parts)).digest('hex').slice(0, 16);
 }
 

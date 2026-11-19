@@ -16,7 +16,7 @@ import multer from 'multer';
 
 import { config } from '../config.js';
 import { getRepo } from '../repo/index.js';
-import { requireTeacher } from '../auth.js';
+import { requireTeacher, verifyAccountToken } from '../auth.js';
 import { assertCanWrite, canRead, ownerOf } from '../ownership.js';
 import { isRecordId } from '../ids.js';
 import { MAX_ALT_CHARS, looksLikeSvg, mediaUrl, servedToPhones, sniffImage, withoutMetadata } from '../services/media.js';
@@ -139,6 +139,32 @@ async function teacherMayRead(req, repo, media) {
 }
 
 /**
+ * May this request read a student's drawing (Batch 9, E4)? Staff only, with a
+ * credential: a room's drawing to whoever may read the room, a hub drawing to
+ * whoever may read its chapter (its professor, their HOD), and a hub drawing to
+ * the signed-in student who drew it. Never a phone's <img>, which carries
+ * nothing, and never the image rule that serves a professor's pictures.
+ */
+async function mayReadDrawing(req, repo, drawing) {
+  if (drawing.accountId) {
+    const bearer = String(req.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim();
+    if (bearer) {
+      const { account } = await verifyAccountToken(bearer).catch(() => ({ account: null }));
+      if (account?.role === 'student') return String(account.id) === String(drawing.accountId);
+    }
+    return teacherMayRead(req, repo, drawing);
+  }
+  const carries = Boolean(req.get('authorization') || req.get('x-teacher-key') || typeof req.query?.key === 'string');
+  if (!carries) return false;
+  const admitted = await new Promise((resolve) => {
+    requireTeacher(req, null, (err) => resolve(!err));
+  });
+  if (!admitted) return false;
+  const room = await repo.getSession(drawing.sessionId).catch(() => null);
+  return Boolean(room) && canRead(req.viewer, ownerOf(room));
+}
+
+/**
  * GET /api/media/:id: the image's bytes.
  *
  * Open at the mount, because the phone's <img> sends no credential. Each request
@@ -146,6 +172,9 @@ async function teacherMayRead(req, repo, media) {
  * or the phone rule in services/media.js (a running room on the chapter, and an
  * approved question there showing the image). Anything else, an id that does not
  * exist included, is the same 404.
+ *
+ * A student's drawing (Batch 9) is read by its own rule instead (mayReadDrawing):
+ * staff of its room or chapter, or the hub student who drew it, never a phone.
  */
 router.get('/:id', async (req, res, next) => {
   // Refusals must not be cached: the same url answers 404 before the room opens
@@ -155,7 +184,11 @@ router.get('/:id', async (req, res, next) => {
     const repo = getRepo();
     const id = String(req.params.id ?? '').trim().toLowerCase();
     const media = isRecordId(id) ? await repo.getMedia(id).catch(() => null) : null;
-    const allowed = Boolean(media) && ((await teacherMayRead(req, repo, media)) || (await servedToPhones(repo, media)));
+    // A database without 0037 holds no drawing, and its read fails: no drawing.
+    const drawing = media ? await repo.getDrawing(id).catch(() => null) : null;
+    const allowed = Boolean(media) && (drawing
+      ? await mayReadDrawing(req, repo, drawing)
+      : (await teacherMayRead(req, repo, media)) || (await servedToPhones(repo, media)));
     if (!allowed) throw fail('That image was not found.', 404);
 
     const full = await repo.getMedia(media._id, { withData: true });

@@ -17,6 +17,7 @@
 // uses the tap's own id: sure, think_so, guessing.
 
 import { allAnswers } from './evidence.js';
+import { awaitingMark } from './drawings.js';
 
 export const CONFIDENCE = Object.freeze(['sure', 'think_so', 'guessing']);
 
@@ -60,6 +61,8 @@ const emptyCell = () => ({ answers: 0, correct: 0, wrong: 0, ungraded: 0 });
 export function confidenceCounts(rows = []) {
   const out = Object.fromEntries([...CONFIDENCE, 'none'].map((k) => [k, emptyCell()]));
   for (const a of rows) {
+    // A drawing with no mark yet (Batch 9) is neither right nor wrong: left out until marked.
+    if (awaitingMark(a)) continue;
     const cell = out[confidenceOf(a) ?? 'none'];
     cell.answers += 1;
     if (a?.ungraded) cell.ungraded += 1;

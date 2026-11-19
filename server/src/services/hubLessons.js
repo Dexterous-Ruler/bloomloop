@@ -45,7 +45,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 
 import { config, hasGemini } from '../config.js';
 import { LEVELS } from '../bloom.js';
-import { PAYLOAD_FIELDS, forStudent, isUngraded, score } from '../questionTypes.js';
+import { PAYLOAD_FIELDS, awaitsReview, forStudent, isUngraded, score } from '../questionTypes.js';
 import { contextForTopic, questionTopicFor, validateItems } from './generate.js';
 import { runChecks } from './checks.js';
 import { holdsContact } from './roster.js';
@@ -480,11 +480,12 @@ export async function topicQuestions(repo, content, topic) {
 
 /**
  * Approved questions a slides-only lesson may ask: answered at once (not a poll,
- * not a written answer waiting for review), lowest level first.
+ * not a written answer waiting for review, not a drawing, which only a
+ * professor marks: Batch 9), lowest level first.
  */
 export function retrievalPool(questions = []) {
   return questions
-    .filter((q) => q.status === 'active' && !isUngraded(q.kind ?? 'mcq') && (q.kind ?? 'mcq') !== 'open' && !isRoomsOnly(q))
+    .filter((q) => q.status === 'active' && !isUngraded(q.kind ?? 'mcq') && (q.kind ?? 'mcq') !== 'open' && !awaitsReview(q) && !isRoomsOnly(q))
     .sort((a, b) => levelOrder(a) - levelOrder(b) || String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')));
 }
 

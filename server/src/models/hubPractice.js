@@ -29,8 +29,9 @@ const hubAttemptSchema = new Schema(
     questionSnapshot: { type: Schema.Types.Mixed, default: {} },
     questionSource: { type: String, default: 'llm' },
     response: { type: Schema.Types.Mixed, default: null },
-    correct: { type: Boolean, required: true },
-    score: { type: Number, required: true, min: 0, max: 1 },
+    // Required, except on a drawing (Batch 9, 0037), which nobody marks in the hub.
+    correct: { type: Boolean, default: null, required() { return this.kind !== 'drawing'; } },
+    score: { type: Number, default: null, min: 0, max: 1, required() { return this.kind !== 'drawing'; } },
     detail: { type: String, default: '' },
     reviewStatus: { type: String, enum: ['auto', 'provisional'], default: 'auto' },
     mode: { type: String, enum: ['practice', 'exam', 'getready', 'review', 'lesson'], required: true },

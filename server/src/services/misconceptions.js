@@ -43,7 +43,7 @@
 // routes in routes/bank.js and routes/misconceptions.js decide who may ask.
 
 import { levelIndex } from '../bloom.js';
-import { LABEL as KIND_LABEL, isUngraded, toOriginalResponse } from '../questionTypes.js';
+import { LABEL as KIND_LABEL, isUngraded, kindLabel, toOriginalResponse } from '../questionTypes.js';
 import { rollKey } from './evidence.js';
 import { questionProvenance } from './honesty.js';
 
@@ -402,7 +402,7 @@ function questionItem(question, labels, list, studentOf) {
     questionId: String(question._id),
     text: question.text ?? '',
     kind,
-    kindLabel: KIND_LABEL[kind] ?? kind,
+    kindLabel: kindLabel(question),
     bloom: question.bloom ?? null,
     topic: question.topic ?? '',
     status: question.status ?? 'active',

@@ -80,6 +80,8 @@ export const KINDS = [
   'plot',       // place points, or a line, on a graph
   'numberline', // mark points, intervals or rays on a number line
   'chart',      // set the height of each bar
+  // Batch 9 (decision E4): a whiteboard answer, never marked by the machine.
+  'drawing',    // draw the answer, and perhaps add words to it
 ];
 
 /**
@@ -110,6 +112,11 @@ export const PAYLOAD_FIELDS = [
   // stored with them: label's `distractors` and the empty chart in `bars`.
   // numberline and chart reuse numeric's `tolerance`, for the same idea.
   'answerIds', 'placements', 'distractors', 'plotKey', 'lineKey', 'bars', 'values',
+  // Batch 9. Not answer-bearing: an open question's `length` (short or long,
+  // OPEN_LENGTHS) and whether a drawing question takes words beside the
+  // drawing (`allowText`). A drawing's optional `rubric` is the reviewer's,
+  // and reuses the open kind's field for the same idea.
+  'length', 'allowText',
 ];
 
 /**
@@ -133,7 +140,13 @@ export const KINDS_FOR_LEVEL = {
   // "execute". A given cell shows the rule; the blank ones demand it be used.
   // plot, numberline, chart (Batch 8): placing points, marking a solution set or
   // drawing the bars from a table is using a procedure on given values - Apply.
-  apply: ['blank', 'cloze', 'numeric', 'dropdown', 'table', 'plot', 'numberline', 'chart'],
+  // drawing (Batch 9, E4), last at each level it is in, so no level's default
+  // changes: drawing a circuit, a structure or a flow from what was taught is
+  // using it (Apply); drawing what relates to what is analysing it; marking up
+  // a design with what is wrong in it is judging it (Evaluate); a drawing the
+  // student designs is Create, where it belongs most. Never at Remember or
+  // Understand: a picture copied from memory is recall through a slower screen.
+  apply: ['blank', 'cloze', 'numeric', 'dropdown', 'table', 'plot', 'numberline', 'chart', 'drawing'],
   // hottext: picking out which words in a sentence do the work is
   // differentiation - separating the load-bearing parts from the surrounding
   // material. The student is not recalling the words, they are already on the
@@ -144,12 +157,12 @@ export const KINDS_FOR_LEVEL = {
   // marked differently from multi, though, and scoreOne() says why: the same
   // move over a whole matrix makes leaving a cell alone a judgement too.
   // hotspot: tap the step, point or part that does not fit - finding the error.
-  analyse: ['multi', 'categorise', 'hottext', 'grid', 'hotspot'],
-  evaluate: ['order', 'rank'],
+  analyse: ['multi', 'categorise', 'hottext', 'grid', 'hotspot', 'drawing'],
+  evaluate: ['order', 'rank', 'drawing'],
   // plot at Create is a line drawn to conditions ("any line with a negative
   // slope through (1, 1)"): the student makes one of many right answers and the
   // server checks it by rule. The validator refuses a single right answer here.
-  create: ['open', 'plot'],
+  create: ['open', 'plot', 'drawing'],
 };
 
 /**
@@ -236,6 +249,9 @@ export const KIND_FOR_LEVEL = Object.fromEntries(
  * (FIGURE_ASKED_KINDS). A chapter with no graph, chart or picture in it would
  * push the model into drawing one for its own sake. So Create, whose set now
  * also holds plot, is still spread over the written answer alone by default.
+ *
+ * Left out too: the drawing (Batch 9). Every one waits for a professor to mark
+ * it, so how many a bank holds is the professor's choice, never a default.
  */
 export const DEFAULT_KIND_MIX = {
   remember: { mcq: 2, truefalse: 1 },
@@ -268,7 +284,50 @@ export const LABEL = {
   plot: 'Plot on the graph',
   numberline: 'Mark the number line',
   chart: 'Draw the bars',
+  drawing: 'Draw your answer',
 };
+
+/**
+ * The two lengths of a written answer (Batch 9, decision E3): a short answer in
+ * a small box, a long one in a large editor with a word count. A question with
+ * no `length` is a short answer, which is every question written before the two
+ * existed: none of them is rewritten, and none is marked differently, because
+ * the rubric matcher reads the words and not the box.
+ */
+export const OPEN_LENGTHS = Object.freeze({
+  short: Object.freeze({ maxWords: 60, label: 'Short answer' }),
+  long: Object.freeze({ maxWords: 600, label: 'Long answer' }),
+});
+export const DEFAULT_OPEN_LENGTH = 'short';
+
+/** An open question's length: 'short' unless it says 'long'. */
+export const openLength = (q) => (q?.length === 'long' ? 'long' : DEFAULT_OPEN_LENGTH);
+
+/** The most words a drawing's added text may hold: a long answer's, since words beside a drawing elaborate it. */
+export const DRAWING_TEXT_WORDS = OPEN_LENGTHS.long.maxWords;
+
+/**
+ * A question's kind as a person reads it: the kind's label, and for a written
+ * answer which of the two lengths it is. Every staff payload that labels a
+ * question's kind uses this, so the editor, the bank, the label routes and the
+ * tutor all say "Short answer" or "Long answer" alike.
+ */
+export const kindLabel = (q) => {
+  const kind = q?.kind ?? 'mcq';
+  if (kind === 'open') return OPEN_LENGTHS[openLength(q)].label;
+  return LABEL[kind] ?? kind;
+};
+
+/** Words, as a person counts them: runs of anything but white space. */
+export const wordCount = (text) => (String(text ?? '').match(/\S+/g) ?? []).length;
+
+/**
+ * Kinds the machine never marks (Batch 9): every answer waits for a professor's
+ * review, and counts for nothing until it has one. Unlike a poll, such a
+ * question does assess its level - the assessment is a person's.
+ */
+export const REVIEWED_KINDS = ['drawing'];
+export const awaitsReview = (q) => REVIEWED_KINDS.includes(q?.kind ?? 'mcq');
 
 /** The kinds asked on a figure or a picture (Batch 8): none is in DEFAULT_KIND_MIX, on purpose. */
 export const FIGURE_ASKED_KINDS = ['hotspot', 'label', 'plot', 'numberline', 'chart'];
@@ -546,6 +605,25 @@ export function invalidReason(q) {
     case 'open': {
       if (!Array.isArray(q.rubric) || q.rubric.length < 2 || q.rubric.length > 5) return 'open needs 2-5 rubric points';
       if (!q.rubric.every(str)) return 'open has an empty rubric point';
+      // Absent is a short answer (Batch 9, E3), as every question before it.
+      if (q.length !== undefined && q.length !== null && !Object.hasOwn(OPEN_LENGTHS, q.length)) {
+        return `open length must be ${Object.keys(OPEN_LENGTHS).join(' or ')}`;
+      }
+      return null;
+    }
+
+    case 'drawing': {
+      // The rubric is the reviewer's guide, never matched by the machine, so it
+      // is optional; when given it is held to the open kind's shape.
+      if (q.rubric !== undefined && q.rubric !== null) {
+        if (!Array.isArray(q.rubric) || q.rubric.length > 5) return 'a drawing rubric is a list of up to 5 points for the reviewer';
+        if (!q.rubric.every(str)) return 'a drawing has an empty rubric point';
+      }
+      if (q.allowText !== undefined && q.allowText !== null && typeof q.allowText !== 'boolean') {
+        return 'a drawing allowText is true or false';
+      }
+      // A stimulus is optional, as on every kind: "draw the circuit in the
+      // figure with the switch closed" carries one, "draw a cell" does not.
       return null;
     }
 
@@ -720,6 +798,58 @@ export function invalidReason(q) {
 }
 
 export const isValid = (q) => invalidReason(q) === null;
+
+// ------------------------------------------------- what an answer may hold
+
+/** An answer over a written question's word limit (Batch 9, E3), in the student's words. */
+export const tooManyWords = (limit, got) => `Your answer has ${got} words, and this question takes at most ${limit}. `
+  + 'Shorten it and send it again; nothing was saved.';
+
+/** A drawing's answer that is not a drawing (Batch 9, E4). */
+export const NOT_A_DRAWING = 'This question is answered with a drawing. Draw your answer and send it; nothing was saved.';
+/** Words sent with a drawing on a question that takes the drawing alone. */
+export const DRAWING_ONLY = 'This question asks for a drawing only, without words. Send the drawing on its own; nothing was saved.';
+
+/**
+ * Why this response may not be taken for this question, before anything is
+ * marked or stored, or null. Only the Batch 9 kinds' limits: every other kind
+ * takes whatever it is sent and marks it, as it always has.
+ *
+ *   open     at most the length's word limit (OPEN_LENGTHS)
+ *   drawing  { mediaId, text? }: a media id, and words only when the question
+ *            allows them, within DRAWING_TEXT_WORDS. Whether the media id is
+ *            this sender's drawing for this question needs the store, and is
+ *            asked by the caller (services/drawings.js drawingRefusal).
+ */
+export function responseProblem(q, response) {
+  const kind = q?.kind ?? 'mcq';
+  if (kind === 'open') {
+    const limit = OPEN_LENGTHS[openLength(q)].maxWords;
+    const got = wordCount(typeof response === 'string' ? response : '');
+    return got > limit ? tooManyWords(limit, got) : null;
+  }
+  if (kind === 'drawing') {
+    if (!response || typeof response !== 'object' || Array.isArray(response)) return NOT_A_DRAWING;
+    if (typeof response.mediaId !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(response.mediaId.trim())) return NOT_A_DRAWING;
+    for (const k of Object.keys(response)) if (k !== 'mediaId' && k !== 'text') return NOT_A_DRAWING;
+    return drawingTextProblem(q, response.text);
+  }
+  return null;
+}
+
+/**
+ * Why the words sent with a drawing may not be taken, or null: none at all is
+ * always fine; words only where the question allows them, within
+ * DRAWING_TEXT_WORDS.
+ */
+export function drawingTextProblem(q, text) {
+  if (text === undefined || text === null) return null;
+  if (typeof text !== 'string') return NOT_A_DRAWING;
+  const got = wordCount(text);
+  if (!got) return null;
+  if (q?.allowText !== true) return DRAWING_ONLY;
+  return got > DRAWING_TEXT_WORDS ? tooManyWords(DRAWING_TEXT_WORDS, got) : null;
+}
 
 // ---------------------------------------------------------- reduced choices
 
@@ -1216,6 +1346,12 @@ function scoreOne(q, response, seed = '', keep = null) {
       return { score: s, correct: s >= PASS_MARK, solution: q.values, detail };
     }
 
+    case 'drawing':
+      // Never marked by the machine (Batch 9, E4): no score, no verdict and no
+      // solution, only the note that it waits. The caller stores it as
+      // provisional for the professor's review queue (awaitsReview).
+      return { score: null, correct: null, solution: null, detail: 'waits for your professor', awaitingReview: true };
+
     default:
       return { score: 0, correct: false, solution: null, detail: `unhandled kind ${kind}` };
   }
@@ -1591,8 +1727,17 @@ export function forStudent(q, seed = '', accommodations = null) {
       // "Strongly agree / Agree / Neutral / Disagree" turns a reading of the
       // room into noise, and makes the teacher's bar chart unreadable.
       return { ...base, options: q.options };
-    case 'open':
-      return { ...base, hint: `${q.rubric.length} points to cover` };
+    case 'open': {
+      // The length and its word limit (Batch 9, E3): the phone sizes the box
+      // and counts words from these; the server refuses an answer over the
+      // limit before marking (responseProblem). Never the rubric.
+      const length = openLength(q);
+      return { ...base, hint: `${q.rubric.length} points to cover`, length, maxWords: OPEN_LENGTHS[length].maxWords };
+    }
+    case 'drawing':
+      // The question, its stimulus on the base, and whether words may go with
+      // the drawing. Never the reviewer's rubric.
+      return { ...base, allowText: q.allowText === true, ...(q.allowText === true ? { maxWords: DRAWING_TEXT_WORDS } : {}) };
     case 'hotspot':
     case 'label': {
       // The figure is drawn again under this student's tokens, replacing the

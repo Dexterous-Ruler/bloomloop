@@ -62,6 +62,14 @@
  * `figuresLeftOut` counts them, and each can be drawn again from its spec. An
  * archive without either had no figures, so the version is unchanged.
  *
+ * Drawings (Batch 9, E4): a whiteboard answer's row keeps its response as it was
+ * given, { mediaId, text }, and nothing else of the picture. The picture's bytes
+ * are not copied in: a room of drawings would pass the 1 MiB on its own, and
+ * deleting the room deletes its drawings with it. `drawings` then says how many
+ * answers named one and that their pictures are not kept here (DRAWINGS_NOTE).
+ * Only when the room has any; an archive without it had none, so the version is
+ * unchanged.
+ *
  * A field is only ever left out of a table as a whole column, and only when
  * every row rebuilds it exactly from what it points at; `derived` lists those
  * columns. So decodeRoomArchive() never guesses row by row, and gives back
@@ -71,6 +79,11 @@
 import { sessionSettings } from './mastery.js';
 import { minorRolls } from './roster.js';
 import { figureForStudent, specHash, normaliseSpec } from '../figures/index.js';
+
+/** What an archive says about its drawings (Batch 9): the references are kept, the pictures are not. */
+export const DRAWINGS_NOTE = 'The answers that are drawings keep the id of their picture and the student\'s words. '
+  + 'The pictures themselves are not in this archive (each one is up to 400 KB, and the archive holds at most 1 MiB), '
+  + 'and they were deleted with the room.';
 
 /**
  * The figures in a room's question snapshots, drawn as a phone was shown them,
@@ -421,6 +434,11 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
     ...recordTables,
     ...(classRows.length ? { classQuestions: toTable(classRows) } : {}),
   };
+
+  // Batch 9: the room's drawing answers keep { mediaId, text } and no bytes; the
+  // archive says so, and how many there are.
+  const drawingAnswers = answers.filter((a) => a?.kind === 'drawing' && typeof a?.response?.mediaId === 'string').length;
+  if (drawingAnswers) data.drawings = { answers: drawingAnswers, picturesKept: false, note: DRAWINGS_NOTE };
 
   // Batch 8: each figure the room's questions showed, drawn once as the phones
   // saw it, keyed by its spec's hash (the snapshot keeps the spec itself). Only

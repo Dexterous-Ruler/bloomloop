@@ -49,6 +49,12 @@ export function sniffImage(buf) {
   return null;
 }
 
+/**
+ * Is this upload a student's drawing (Batch 9, 0037)? Asked of the store's
+ * drawing read, so a database without 0037, which holds no drawing, answers no.
+ */
+export const isDrawing = async (repo, id) => Boolean(await repo.getDrawing(String(id)).catch(() => null));
+
 /** Is this an SVG? Asked only to word the refusal: it is refused either way. */
 export const looksLikeSvg = (buf) => Buffer.isBuffer(buf) && /<svg[\s>]/i.test(buf.toString('utf8', 0, 4096));
 
@@ -360,6 +366,10 @@ export async function withUpload(repo, stimulus, contentId) {
   const id = mediaIdFromUrl(stimulus.url);
   const media = id ? await repo.getMedia(id).catch(() => null) : null;
   if (!media || String(media.contentId) !== String(contentId)) throw notFound();
+  // A student's drawing (Batch 9) is an upload of the chapter too, and is never
+  // a question's picture: every phone in a room would be shown a classmate's
+  // answer. The same 404, so a drawing's id says nothing it did not before.
+  if (await isDrawing(repo, media._id)) throw notFound();
   const alt = typeof stimulus.alt === 'string' && stimulus.alt.trim() ? stimulus.alt : media.alt;
   // A picture kept from a deck's slide (Batch 8) has no description yet, only
   // a placeholder naming its slide: it is described when it goes on a question.
@@ -401,6 +411,9 @@ const RUNNING = ['waiting', 'open', 'paused'];
  * for an image that fails to load.
  */
 export async function servedToPhones(repo, media) {
+  // A student's drawing (Batch 9) is staff-only: never shown to a phone or the
+  // projector, whatever a question's url says.
+  if (media.drawing || await isDrawing(repo, media._id)) return false;
   const running = (await repo.listSessionsForContent(media.contentId)).filter((s) => RUNNING.includes(s.status));
   if (!running.length) return false;
   const url = mediaUrl(media._id);

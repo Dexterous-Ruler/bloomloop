@@ -33,7 +33,7 @@ import { runChecks, failedChecks, isSelectedResponse } from '../services/checks.
 import { withUpload } from '../services/media.js';
 import { checkFigure, figureForStaff } from '../figures/index.js';
 import { draftChecks } from '../services/figureDrafts.js';
-import { KINDS_FOR_LEVEL, LABEL as KIND_LABEL, PAYLOAD_FIELDS, isUngraded } from '../questionTypes.js';
+import { KINDS_FOR_LEVEL, LABEL as KIND_LABEL, OPEN_LENGTHS, PAYLOAD_FIELDS, isUngraded, kindLabel } from '../questionTypes.js';
 import { contentItemStats, questionMisconceptions } from '../services/itemStats.js';
 import {
   LABELLED_KINDS,
@@ -161,7 +161,7 @@ const labelsBody = (question, canEdit) => {
       _id: String(question._id),
       text: question.text ?? '',
       kind,
-      kindLabel: KIND_LABEL[kind] ?? kind,
+      kindLabel: kindLabel(question),
       bloom: question.bloom ?? null,
       topic: question.topic ?? '',
       status: question.status ?? 'active',
@@ -218,7 +218,9 @@ router.get('/:contentId', async (req, res, next) => {
       // contract. The editor offers exactly this and nothing else, so the list
       // a teacher sees and the list the server accepts cannot drift apart -
       // and the client is never the thing deciding what a question may be.
-      kinds: { forLevel: KINDS_FOR_LEVEL, label: KIND_LABEL },
+      // Batch 9 (E3): the two lengths of a written answer, each with its label and
+      // word limit, so the editor offers what the validator accepts.
+      kinds: { forLevel: KINDS_FOR_LEVEL, label: KIND_LABEL, openLengths: OPEN_LENGTHS },
       // Which kinds take a misconception label on their wrong options, and how
       // long one may be (services/misconceptions.js), so the editor offers what
       // the label route accepts.

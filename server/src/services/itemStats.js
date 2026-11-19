@@ -33,6 +33,7 @@ import { EDITABLE } from './edits.js';
 import { DEFAULT_MASTERY_GOAL, DEMOTE_AT, WINDOW } from './mastery.js';
 import { roomQuestionIds } from './selector.js';
 import { allAnswers } from './evidence.js';
+import { awaitingMark } from './drawings.js';
 import { labelFor, misconceptionReport } from './misconceptions.js';
 import {
   ORIGINAL_LANGUAGE,
@@ -191,6 +192,8 @@ export function gradedAnswers(answers = []) {
   const latest = new Map();
   for (const a of answers) {
     if (!a || a.final === false || a.ungraded || !LEVELS.includes(a.bloom)) continue;
+    // A drawing with no mark yet (Batch 9) is no evidence of right or wrong.
+    if (awaitingMark(a)) continue;
     const q = questionKey(a);
     if (q) latest.set(`${studentOf(a)}|${q}`, a);
   }

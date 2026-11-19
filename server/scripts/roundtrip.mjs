@@ -1,11 +1,16 @@
-// Round-trip check for every question kind (sixteen, and Batch 8's five asked on a figure).
+// Round-trip check for every question kind (sixteen, Batch 8's five asked on a figure,
+// and Batch 9's drawing).
 // invalidReason -> null, score(correct) -> 1, score(wrong) -> 0, forStudent -> no answer fields.
+//
+// A drawing is never marked by the machine (Batch 9, E4): for it, both scores
+// must come back with no mark at all and the flag that it waits for review, so
+// that row reads "review" where the others read PASS.
 //
 // A poll has no wrong answer to give. Its "wrong" response here is one that is
 // not an answer at all - a position off the end of its list - which records
 // nothing and scores 0, the nearest honest thing to a wrong answer it has.
 
-import { KINDS, invalidReason, score, forStudent } from '../src/questionTypes.js';
+import { KINDS, invalidReason, score, forStudent, awaitsReview } from '../src/questionTypes.js';
 
 // `answers` is a grid's whole key. A table's key is `accept` inside its cells,
 // already listed, and the deep scan below finds it at any depth.
@@ -154,6 +159,14 @@ const Q = {
     bars: { categories: ['Red cells', 'White cells', 'Platelets'], max: 50, step: 5, label: 'Count' },
     values: [45, 30, 10],
   },
+  // Batch 9: a whiteboard answer. Its rubric is the reviewer's and must never
+  // reach a phone ('rubric' is FORBIDDEN).
+  drawing: {
+    _id: 'q-draw', bloom: 'create', kind: 'drawing', topic: 'Cells',
+    text: 'Draw a plant cell and label its wall, membrane and nucleus.',
+    rubric: ['cell wall outside the membrane', 'nucleus labelled'],
+    allowText: true,
+  },
 };
 
 // The names of the parts on hotspot and label: none may reach a phone anywhere.
@@ -181,6 +194,8 @@ const RIGHT = {
   plot: [[0, 1], [2, 5]],
   numberline: { intervals: [{ from: -2, to: 3, fromOpen: true }] },
   chart: [45, 30, 10],
+  // A drawing has no right answer the machine could know: any response is unmarked.
+  drawing: { mediaId: 'a3f1c2d4e5f60718', text: 'Wall outside, nucleus in the middle.' },
 };
 
 const WRONG = {
@@ -202,6 +217,7 @@ const WRONG = {
   plot: [[0, 4], [2, -3]],   // neither point on the line
   numberline: { rays: [{ from: 4, direction: 'left' }] }, // a ray, where an interval was wanted
   chart: [10, 45, 30],       // every bar a whole step or more out
+  drawing: { mediaId: 'b3f1c2d4e5f60718' },
 };
 
 // deep scan: a forbidden key nested inside an item is still a leak
@@ -293,8 +309,21 @@ function wrongFor(kind, q) {
     row.notes.push(`invalid: ${reason}`);
   }
 
+  // 2 and 3 for a drawing: never a mark, either way, and the flag that it waits.
+  if (awaitsReview(q)) {
+    for (const [slot, response] of [['right', RIGHT[kind]], ['wrong', WRONG[kind]]]) {
+      const s = score(q, response, SEED);
+      const unmarked = s.score === null && s.correct === null && s.solution === null && s.awaitingReview === true;
+      row[slot] = unmarked ? 'review' : 'FAIL';
+      if (!unmarked) {
+        failures += 1;
+        row.notes.push(`a drawing was given a mark: ${JSON.stringify(s)}`);
+      }
+    }
+  }
+
   // 2. score(correct) -> 1
-  try {
+  if (!awaitsReview(q)) try {
     const s = score(q, rightFor(kind, q), SEED);
     row.right = s.score === 1 ? 'PASS' : `FAIL ${s.score}`;
     if (s.score !== 1) {
@@ -308,7 +337,7 @@ function wrongFor(kind, q) {
   }
 
   // 3. score(wrong) -> 0
-  try {
+  if (!awaitsReview(q)) try {
     const s = score(q, wrongFor(kind, q), SEED);
     row.wrong = s.score === 0 ? 'PASS' : `FAIL ${s.score}`;
     if (s.score !== 0) {

@@ -177,7 +177,9 @@ const COLUMNS_THE_SERVER_USES = {
     'reviewed_at'],
   media: ['id', 'owner_id', 'content_id', 'mime', 'bytes', 'sha256', 'data', 'alt', 'created_at',
     // Batch 8, the slide a deck's picture was kept from (0033).
-    'slide_no'],
+    'slide_no',
+    // Batch 9, a student's drawing given as an answer (0037).
+    'drawing', 'session_id', 'roll_no', 'account_id', 'question_id', 'answer_key'],
   classes: ['id', 'owner_id', 'course_name', 'section', 'term_label', 'created_at', 'updated_at'],
   class_students: ['id', 'class_id', 'roll_no', 'name', 'added_at', 'removed_at', 'under_18'],
   attendance: ['id', 'session_id', 'class_student_id', 'status', 'source', 'marked_at', 'marked_by', 'roll_no'],
@@ -2954,6 +2956,81 @@ const kept36 = {};
   // Left in place: the re-run below runs over them.
 }
 
+// ---- Batch 9: answer kinds (0037) ----
+section('whiteboard answers: a student\'s drawing in a room or in the hub, and a hub drawing with no mark (0037)');
+
+// Kept by the re-run section below, which checks they survive it.
+const kept37 = {};
+{
+  const CHECK = { code: '23514' };
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  const sha = (await import('node:crypto')).createHash('sha256').update(png).digest('hex');
+  // The insert createDrawing() sends, for a room's phone or a hub student.
+  const drawing = (m = {}) => db.query(
+    `insert into public.media (owner_id, content_id, mime, bytes, sha256, data, alt, drawing, session_id, roll_no, account_id, question_id, answer_key)
+     values (null, $1, $2, $3, $4, $5::text::bytea, 'A drawing a student made as their answer.', $6, $7, $8, $9, $10, $11)
+     returning id, drawing, session_id, roll_no, account_id, question_id, answer_key`,
+    [content?.id, given(m, 'mime', 'image/png'), png.length, sha, `\\x${png.toString('hex')}`, given(m, 'drawing', true),
+      given(m, 'sessionId', session?.id), given(m, 'rollNo', '21CS01'), given(m, 'accountId', null),
+      given(m, 'questionId', mcq?.id), given(m, 'answerKey', 'draw-0037-room1')]);
+  const [roomDrawing] = (await accepts('a phone\'s drawing in a room, as createDrawing writes it', () => drawing())) ?? [];
+  check('it reads back as a drawing of that room, roll number, question and device id',
+    roomDrawing?.drawing === true && roomDrawing.session_id === session?.id && roomDrawing.roll_no === '21CS01'
+    && roomDrawing.question_id === mcq?.id && roomDrawing.answer_key === 'draw-0037-room1', JSON.stringify(roomDrawing));
+  await rejects('the same device id twice in one room for one roll number', () => drawing(), { code: '23505', match: /media_room_drawing_key/ });
+  await accepts('the same device id from another roll number', () => drawing({ rollNo: '21CS02' }));
+  const [hubDrawing] = (await accepts('a hub student\'s practice drawing, in WebP, with no room', () => drawing({
+    mime: 'image/webp', sessionId: null, rollNo: null, accountId: STUDENT, answerKey: 'draw-0037-hub1',
+  }))) ?? [];
+  await rejects('the same device id twice for one student', () => drawing({
+    sessionId: null, rollNo: null, accountId: STUDENT, answerKey: 'draw-0037-hub1',
+  }), { code: '23505', match: /media_hub_drawing_key/ });
+  await rejects('a drawing as a JPEG', () => drawing({ mime: 'image/jpeg', answerKey: 'draw-0037-jpeg' }), { ...CHECK, match: /media_drawing_check/ });
+  await rejects('a drawing of a room and a student account at once', () => drawing({ accountId: STUDENT, answerKey: 'draw-0037-both' }),
+    { ...CHECK, match: /media_drawing_check/ });
+  await rejects('a drawing of neither a room nor a student', () => drawing({ sessionId: null, rollNo: null, answerKey: 'draw-0037-none' }),
+    { ...CHECK, match: /media_drawing_check/ });
+  await rejects('a room\'s drawing with no roll number', () => drawing({ rollNo: null, answerKey: 'draw-0037-noroll' }),
+    { ...CHECK, match: /media_drawing_check/ });
+  await rejects('a drawing for no question', () => drawing({ questionId: null, answerKey: 'draw-0037-noq' }), { ...CHECK, match: /media_drawing_check/ });
+  await rejects('a drawing with a device id that is not one', () => drawing({ answerKey: 'no' }), { ...CHECK, match: /media_drawing_check/ });
+  await rejects('drawing columns on an upload that is not a drawing', () => drawing({ drawing: false, answerKey: 'draw-0037-notone' }),
+    { ...CHECK, match: /media_drawing_check/ });
+  await rejects('who drew it is written once', () => db.query(
+    `update public.media set roll_no = '21CS09' where id = $1`, [roomDrawing?.id]), { code: '23001', match: /written once/ });
+  await rejects('and what it was drawn for', () => db.query(
+    `update public.media set question_id = $2 where id = $1`, [roomDrawing?.id, match?.id]), { code: '23001' });
+  await accepts('its description may still change, as any upload\'s', () => db.query(
+    `update public.media set alt = 'A plant cell, drawn' where id = $1`, [roomDrawing?.id]));
+  await rejects('its bytes, as any upload\'s, are written once (0014)', () => db.query(
+    `update public.media set mime = 'image/webp' where id = $1`, [roomDrawing?.id]), { code: '23001' });
+
+  // A room deleted takes its drawings with it.
+  const [gone] = (await db.query(`insert into public.sessions (code, content_id, owner_id) values ('ROOM37', $1, $2) returning id`,
+    [content?.id, PROF])).rows;
+  await accepts('a drawing in a room about to be deleted', () => drawing({ sessionId: gone?.id, answerKey: 'draw-0037-gone' }));
+  await accepts('deleting that room', () => db.query('delete from public.sessions where id = $1', [gone?.id]));
+  const left = await db.query(`select count(*)::int as n from public.media where answer_key = 'draw-0037-gone'`);
+  check('its drawing went with it (on delete cascade)', left.rows[0].n === 0);
+
+  // A hub attempt with no mark: only a drawing.
+  const attempt37 = (key, kind, correct, score) => db.query(
+    `insert into public.hub_attempts (account_id, client_attempt_id, bloom, kind, correct, score, mode, response)
+     values ($1, $2, 'create', $3, $4, $5, 'practice', $6) returning *`,
+    [STUDENT, key, kind, correct, score, JSON.stringify({ mediaId: hubDrawing?.id ?? null })]);
+  const [unmarked] = (await accepts('a practice drawing kept with no mark, as recordAttempt writes it', () =>
+    attempt37('attempt-0037-draw', 'drawing', null, null))) ?? [];
+  check('it reads back with no mark', unmarked?.correct === null && unmarked?.score === null, JSON.stringify(unmarked));
+  await rejects('any other kind with no mark', () => attempt37('attempt-0037-mcq', 'mcq', null, null), { ...CHECK, match: /hub_attempts_mark_check/ });
+  await rejects('a mark with no score', () => attempt37('attempt-0037-half', 'mcq', true, null), { ...CHECK, match: /hub_attempts_mark_check/ });
+  await rejects('a practice drawing given a mark', () => attempt37('attempt-0037-marked', 'drawing', true, 1), { ...CHECK, match: /hub_attempts_mark_check/ });
+  await accepts('an mcq marked as before', () => attempt37('attempt-0037-ok', 'mcq', true, 1));
+  kept37.roomDrawing = roomDrawing?.id;
+  kept37.hubDrawing = hubDrawing?.id;
+  kept37.unmarked = unmarked?.id;
+  // Left in place: the re-run below runs over them.
+}
+
 section('deleting');
 
 await rejects('deleting the sign-in of a professor who owns material and students', () =>
@@ -3151,6 +3228,17 @@ sameSnapshot('the re-run left the schema exactly as it was', shapeBeforeRerun, a
     [[kept36.proven, kept36.unproven]]);
   check('a proven and an unproven hub answer survive the re-run as they were (0036)',
     JSON.stringify(a36.rows.map((r) => r.unproven)) === '[false,true]', JSON.stringify(a36.rows));
+  // 0037 (Batch 9): a room's drawing, a hub drawing and a hub drawing's unmarked attempt keep what they were.
+  const m37 = await db.query(`select id, drawing, session_id is not null as in_room, account_id is not null as for_student
+    from public.media where id = any($1::uuid[]) order by answer_key`, [[kept37.hubDrawing, kept37.roomDrawing]]);
+  const a37 = await db.query('select correct, score, kind from public.hub_attempts where id = $1', [kept37.unmarked]);
+  check('a room\'s drawing, a hub drawing and an unmarked hub drawing survive the re-run as they were (0037)',
+    JSON.stringify(m37.rows.map((r) => [r.drawing, r.in_room, r.for_student])) === '[[true,false,true],[true,true,false]]'
+    && a37.rows[0]?.correct === null && a37.rows[0]?.score === null && a37.rows[0]?.kind === 'drawing',
+    JSON.stringify({ m: m37.rows, a: a37.rows }));
+  await rejects('and a hub attempt of another kind still needs its mark after it', () => db.query(
+    `insert into public.hub_attempts (account_id, client_attempt_id, bloom, kind, correct, score, mode)
+     values ($1, 'attempt-0037-after', 'remember', 'mcq', null, null, 'practice')`, [STUDENT]), { code: '23514', match: /hub_attempts_mark_check/ });
 }
 
 await db.close();
@@ -3908,6 +3996,55 @@ section('0033 on a database that already holds uploads, chapters and lessons');
   const again = await applyAll(before33, files.filter((f) => f.name >= '0033'), 'a second time');
   check('and running it again changes nothing', again && asBefore(await read('topic_lessons'), kept.topic_lessons) === JSON.stringify(kept.topic_lessons));
   await before33.close();
+}
+
+// ---------------------------------- 0037 over uploads and hub answers already kept --
+
+section('0037 on a database that already holds uploads and hub answers');
+
+{
+  const before37 = await freshDatabase();
+  await applyAll(before37, files.filter((f) => f.name < '0037'), 'up to the file before 0037');
+  const [H, P, S] = [randomUUID(), randomUUID(), randomUUID()];
+  await before37.query('insert into auth.users (id) values ($1), ($2), ($3)', [H, P, S]);
+  const add = (id, role, code, reportsTo, rollNo) => before37.query(
+    `insert into public.accounts (id, role, code, department, reports_to, roll_no) values ($1, $2, $3, 'CSE', $4, $5)`,
+    [id, role, code, reportsTo, rollNo]);
+  await add(H, 'hod', 'BL-HD3701', null, null);
+  await add(P, 'professor', 'BL-PR3701', H, null);
+  await add(S, 'student', 'BL-ST3701', P, '21CS01');
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  const sha = (await import('node:crypto')).createHash('sha256').update(png).digest('hex');
+  await before37.query(`insert into public.contents (id, title, kind, topics, owner_id) values
+    ('93777777-7777-4777-8777-777777777777', 'deck', 'pptx', '["Cells"]', $1)`, [P]);
+  await before37.query(`insert into public.media (owner_id, content_id, mime, bytes, sha256, data, alt, slide_no) values
+    ($1, '93777777-7777-4777-8777-777777777777', 'image/png', $2, $3, $4::text::bytea, 'A leaf', null),
+    ($1, '93777777-7777-4777-8777-777777777777', 'image/jpeg', $2, $3, $4::text::bytea, 'A slide photo', 2)`,
+  [P, png.length, sha, `\\x${png.toString('hex')}`]);
+  await before37.exec(`
+    insert into public.hub_attempts (account_id, client_attempt_id, bloom, kind, correct, score, mode, created_at) values
+      ('${S}', 'before-37-mcq', 'remember', 'mcq', true, 1, 'practice', '2026-11-19T05:00:00Z'),
+      ('${S}', 'before-37-open', 'create', 'open', false, 0.5, 'practice', '2026-11-19T05:01:00Z');
+  `);
+  const counts = await rowCounts(before37);
+  const read = async (table, cols = '*') => (await before37.query(`select ${cols} from public.${table} order by id`)).rows;
+  const MEDIA_COLS = 'id, owner_id, content_id, mime, bytes, sha256, alt, created_at, slide_no';
+  const kept = { media: await read('media', MEDIA_COLS), attempts: await read('hub_attempts') };
+  const ok = await applyAll(before37, files.filter((f) => f.name >= '0037'), 'over existing uploads and hub answers');
+  check('0037 applies over existing uploads and hub answers, adding and removing no row', ok && JSON.stringify(counts) === JSON.stringify(
+    Object.fromEntries(Object.entries(await rowCounts(before37)).filter(([t]) => t in counts))));
+  check('every upload and hub answer reads back as it was (a JPEG slide photo included: it is no drawing)',
+    asBefore(await read('media', MEDIA_COLS), kept.media) === JSON.stringify(kept.media)
+    && asBefore(await read('hub_attempts'), kept.attempts) === JSON.stringify(kept.attempts));
+  const fresh = await before37.query(`select count(*) filter (where drawing)::int as drawings,
+    count(*) filter (where session_id is not null or roll_no is not null or account_id is not null or question_id is not null or answer_key is not null)::int as set
+    from public.media`);
+  check('an old upload is not a drawing, and carries none of a drawing\'s columns', JSON.stringify(fresh.rows[0]) === '{"drawings":0,"set":0}',
+    JSON.stringify(fresh.rows[0]));
+  const again = await applyAll(before37, files.filter((f) => f.name >= '0037'), 'a second time');
+  check('and running it again changes nothing', again && asBefore(await read('media', MEDIA_COLS), kept.media) === JSON.stringify(kept.media)
+    && asBefore(await read('hub_attempts'), kept.attempts) === JSON.stringify(kept.attempts));
+  await before37.close();
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

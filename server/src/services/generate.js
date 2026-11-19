@@ -1889,6 +1889,18 @@ export function validateItems(raw, topic = '', kinds) {
       clean.unit = typeof item?.unit === 'string' ? collapse(item.unit) : '';
     } else if (kind === 'open') {
       clean.rubric = strings(item?.rubric) ?? [];
+      // Batch 9 (E3): the model may ask for a long answer. Anything but the two
+      // words is left as it came and refused by the validator; none is a short
+      // answer, as every question before the two lengths.
+      if (item?.length !== undefined && item?.length !== null && item?.length !== '') {
+        clean.length = typeof item.length === 'string' ? collapse(item.length).toLowerCase() : item.length;
+      }
+    } else if (kind === 'drawing') {
+      // Batch 9 (E4): the reviewer's points, optional, and whether the student
+      // may add words. No key: a drawing is marked by the professor alone.
+      const points = strings(item?.rubric);
+      if (points?.length) clean.rubric = points;
+      if (item?.allowText === true || item?.allowText === 'true') clean.allowText = true;
     } else if (kind === 'hottext') {
       // Collapsed but never filtered: the answer is a list of POSITIONS in the
       // sentence, so dropping an empty token would quietly move every index
@@ -2163,7 +2175,16 @@ const ITEM_SCHEMA = {
       rubric: {
         type: Type.ARRAY,
         items: { type: Type.STRING },
-        description: 'kind "open" only: 2 to 5 short points a full answer must make. Each is a few significant words.',
+        description: 'kind "open": 2 to 5 short points a full answer must make. Each is a few significant words. kind "drawing": optional, up to 5 points the professor looks for when marking the drawing.',
+      },
+      length: {
+        type: Type.STRING,
+        enum: ['short', 'long'],
+        description: 'kind "open" only: "short" (at most 60 words) or "long" (at most 600 words, for an answer that must explain, argue or design at length).',
+      },
+      allowText: {
+        type: Type.BOOLEAN,
+        description: 'kind "drawing" only: true when the student should also write a few words to explain the drawing.',
       },
       misconceptions: {
         type: Type.ARRAY,
@@ -2191,7 +2212,7 @@ const ITEM_SCHEMA = {
     required: ['bloom', 'kind', 'text'],
     propertyOrdering: [
       'bloom', 'kind', 'text', 'options', 'answerIdx', 'answerIdxs', 'answerBool', 'pairs',
-      'buckets', 'blanks', 'value', 'tolerance', 'unit', 'sequence', 'criterion', 'accept', 'rubric',
+      'buckets', 'blanks', 'value', 'tolerance', 'unit', 'sequence', 'criterion', 'accept', 'rubric', 'length', 'allowText',
       'tokens', 'gaps', 'columns', 'tableRows', 'gridRows', 'answers', 'misconceptions',
       // The figure before the fields keyed on it, so the model draws first and answers from what it drew.
       'figure', 'reading', 'answerIds', 'placements', 'distractors', 'plotKey', 'lineKey', 'bars', 'values',
@@ -2226,7 +2247,9 @@ const KIND_RULES = {
   order:
     '3 to 5 items in "sequence", written in the CORRECT order, which the student sees shuffled. Order by a sequence the source text itself settles: the steps of a process, the stages of an argument, the order of events.',
   rank: '3 to 5 items in "sequence" in the CORRECT order, plus "criterion": the yardstick they are ranked against, stated plainly ("most to least secure"). Say the criterion in the stem too. Ranking with no stated criterion is unanswerable and is rejected.',
-  open: 'the student writes a short answer. Give 2 to 5 "rubric" points, each a few significant words naming something a full answer must contain. Rubric points are matched against the student\'s own words, so use the content words a correct answer would really use.',
+  open: 'the student writes the answer. Give 2 to 5 "rubric" points, each a few significant words naming something a full answer must contain. Rubric points are matched against the student\'s own words, so use the content words a correct answer would really use. Set "length": "short" for an answer of a sentence or two (at most 60 words), "long" only when the task needs explaining, arguing or designing at length (at most 600 words).',
+  // Batch 9 (E4): a whiteboard answer, marked by the professor alone.
+  drawing: 'the student DRAWS the answer: a labelled diagram, a circuit, a flow, a structure or a design the source text describes. The stem says exactly what to draw and what to label. There is no answer key: optionally give up to 5 "rubric" points the professor will look for, and set "allowText": true when a few written words should explain the drawing. Never ask for something the source does not describe, and never for an artwork.',
   hottext:
     '"tokens" is ONE sentence taken from the source, split into its words in reading order (3 to 40), "criterion" says plainly which words to pick ("every word that names a transport protocol"), and "answerIdxs" holds the index of every token that meets it - at least one, never all of them. The criterion must be one the source settles, so a student who has read it can defend every pick and every word left alone; never one that turns on a word only half meeting it.',
   dropdown:

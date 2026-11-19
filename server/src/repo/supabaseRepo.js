@@ -284,6 +284,21 @@ const outMedia = (r) =>
   };
 const MEDIA_META = 'id, owner_id, content_id, mime, bytes, sha256, alt, created_at';
 
+// Batch 9 (0037): a student's drawing. Read only by the drawing methods, so a
+// database without 0037 still reads every other upload.
+const DRAWING_META = `${MEDIA_META}, drawing, session_id, roll_no, account_id, question_id, answer_key`;
+const outDrawing = (r) => (r?.drawing
+  ? {
+    ...outMedia(r),
+    drawing: true,
+    sessionId: r.session_id ?? null,
+    rollNo: r.roll_no ?? null,
+    accountId: r.account_id ?? null,
+    questionId: r.question_id ?? null,
+    answerKey: r.answer_key,
+  }
+  : null);
+
 // 0016: a class, a roster row and an attendance mark.
 const outClass = (r) =>
   r && {
@@ -961,7 +976,8 @@ export function createSupabaseRepo() {
       if (topic) q = q.eq('topic', topic);
       if (bloom) q = q.eq('bloom', bloom);
       if (reviewStatus) q = q.eq('review_status', reviewStatus);
-      if (kind) q = q.eq('kind', kind);
+      if (Array.isArray(kind)) q = q.in('kind', kind);
+      else if (kind) q = q.eq('kind', kind);
       if (final !== undefined) q = q.eq('final', final === true);
       if (classQuestionId) {
         if (!isUuid(classQuestionId)) return [];
@@ -1824,8 +1840,9 @@ export function createSupabaseRepo() {
         questionSnapshot: r.question_snapshot ?? {},
         questionSource: r.question_source ?? 'llm',
         response: r.response ?? null,
-        correct: r.correct === true,
-        score: Number(r.score),
+        // Null only for a drawing (0037), which nobody marks in the hub.
+        correct: r.correct == null ? null : r.correct === true,
+        score: r.score == null ? null : Number(r.score),
         detail: r.detail ?? '',
         reviewStatus: r.review_status ?? 'auto',
         mode: r.mode,
@@ -1873,7 +1890,8 @@ export function createSupabaseRepo() {
             question_snapshot: doc.questionSnapshot ?? {},
             question_source: doc.questionSource ?? 'llm',
             response: doc.response ?? null,
-            correct: doc.correct === true,
+            // Null only for a drawing (0037); every other attempt is marked.
+            correct: doc.correct === null && doc.kind === 'drawing' ? null : doc.correct === true,
             score: doc.score,
             detail: doc.detail ?? '',
             review_status: doc.reviewStatus ?? 'auto',
@@ -2716,6 +2734,62 @@ export function createSupabaseRepo() {
       if (error) fail('setQuestionRoomsOnly')(error);
       return outQuestion(data);
     },
+
+    // ---- Batch 9: answer kinds (a student's drawing, 0037; see memoryRepo for the contract) ----
+    async createDrawing(doc) {
+      const { data, error } = await db.from('media').insert({
+        owner_id: null,
+        content_id: doc.contentId,
+        mime: doc.mime,
+        bytes: doc.bytes,
+        sha256: doc.sha256,
+        alt: doc.alt,
+        data: `\\x${Buffer.from(doc.data).toString('hex')}`,
+        drawing: true,
+        session_id: doc.sessionId ?? null,
+        roll_no: doc.sessionId ? String(doc.rollNo) : null,
+        account_id: doc.sessionId ? null : doc.accountId,
+        question_id: doc.questionId,
+        answer_key: doc.answerKey,
+      }).select(DRAWING_META).single();
+      if (error?.code === '23505') {
+        const held = await this.getDrawingByKey(doc);
+        if (held) return { media: held, duplicate: true };
+      }
+      if (error) fail('createDrawing')(error);
+      return { media: outDrawing(data), duplicate: false };
+    },
+    async getDrawing(id) {
+      if (!isUuid(id)) return null;
+      const { data, error } = await db.from('media').select(DRAWING_META).eq('id', id).eq('drawing', true).maybeSingle();
+      if (error) fail('getDrawing')(error);
+      return outDrawing(data);
+    },
+    async getDrawingByKey({ sessionId = null, rollNo = null, accountId = null, answerKey = '' } = {}) {
+      let q = db.from('media').select(DRAWING_META).eq('drawing', true).eq('answer_key', String(answerKey));
+      if (sessionId) {
+        if (!isUuid(sessionId)) return null;
+        q = q.eq('session_id', sessionId).eq('roll_no', String(rollNo));
+      } else {
+        if (!isUuid(accountId)) return null;
+        q = q.eq('account_id', accountId);
+      }
+      const { data, error } = await q.maybeSingle();
+      if (error) fail('getDrawingByKey')(error);
+      return outDrawing(data);
+    },
+    async listDrawings({ sessionId = null, rollNo = null, accountId = null, questionId = null } = {}) {
+      let q = db.from('media').select(DRAWING_META).eq('drawing', true);
+      for (const [col, v] of [['session_id', sessionId], ['account_id', accountId], ['question_id', questionId]]) {
+        if (!v) continue;
+        if (!isUuid(String(v))) return [];
+        q = q.eq(col, String(v).toLowerCase());
+      }
+      if (rollNo) q = q.eq('roll_no', String(rollNo));
+      const { data, error } = await q.order('created_at', { ascending: true });
+      if (error) fail('listDrawings')(error);
+      return (data ?? []).map(outDrawing);
+    },
   };
 }
 
@@ -2931,6 +3005,13 @@ export const ROUTE_SCHEMA = Object.freeze([
   // again once the file is applied.
   ['hub_attempts', 'unproven', '0036_hub_attempt_proof.sql',
     'a practice or lesson answer sent without proof that the hub served its question is not saved, and the phone keeps it to send again'],
+  // Batch 9, whiteboard answers (0037). Without it no drawing can be kept: a
+  // phone's drawing for a 'drawing' question is not saved (it keeps it and sends
+  // it again), so neither is its answer, and a practice drawing in the hub is
+  // refused. Every other kind, upload and answer works as before. The file also
+  // lets a hub drawing's attempt carry no mark, which a probe cannot see.
+  ['media', 'drawing, session_id, roll_no, account_id, question_id, answer_key', '0037_answer_kinds.sql',
+    'no drawing answer can be kept, in a room or in the hub, so drawing questions cannot be answered (every other kind works as before)'],
 ]);
 
 /** One missing piece, as a sentence naming the file to apply. */

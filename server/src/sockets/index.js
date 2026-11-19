@@ -19,13 +19,16 @@ import {
   answerPrint,
   applyReview,
   REVIEW_MARKS,
+  recordAwaiting,
 } from '../services/mastery.js';
 import { selectNext, servableFor, inRoomSet, reasonForPhone } from '../services/selector.js';
 import { practisedQuestionIds } from '../services/bankShare.js';
 import { needsApproval } from '../services/edits.js';
 import { buildGridRow, phoneRow } from '../routes/session.js';
 import { isRecordId } from '../ids.js';
-import { score, forStudent, countsTowardMastery, shownOptionIndices, readyToMark } from '../questionTypes.js';
+import {
+  score, forStudent, countsTowardMastery, shownOptionIndices, readyToMark, awaitsReview, responseProblem,
+} from '../questionTypes.js';
 import { enginesReady } from '../figures/index.js';
 import { verifyAccountToken, verifyTeacherCredentials } from '../auth.js';
 import { canRead, ownerOf } from '../ownership.js';
@@ -103,6 +106,10 @@ import {
 } from '../services/offline.js';
 import { isImportedRoom } from '../services/roomImport.js';
 import { allAnswers } from '../services/evidence.js';
+// ---- Batch 9: answer kinds (whiteboard answers) ----
+import {
+  AWAITING_DETAIL, AWAITING_NOTE, DRAWING_AGAIN, DRAWING_NEEDS_ID, DRAWING_NOT_HERE, awaitingMark, drawingRefusal, keepRoomDrawing,
+} from '../services/drawings.js';
 
 const presence = new Map(); // `${code}:${rollNo}` -> socket.id
 const bankCache = new Map(); // sessionId -> Promise<question[]>
@@ -821,16 +828,20 @@ async function replayStored(io, socket, { session, profile, prior, settings, ids
       kind: prior.kind,
       answerId: prior.answerKey,
     };
+    // A drawing still waiting for its professor (Batch 9) goes back in as it
+    // went in the first time: in the history, counted nowhere until marked.
     current = prior.ungraded
       ? recordUngraded(profile, fields).profile
-      : applyAnswer(profile, {
-        ...fields,
-        correct: prior.correct,
-        score: prior.score,
-        tries: prior.attempt,
-        redemption: settings.redemption,
-        adapt: settings.adapt,
-      }).profile;
+      : waitingRow(prior)
+        ? recordAwaiting(profile, fields).profile
+        : applyAnswer(profile, {
+          ...fields,
+          correct: prior.correct,
+          score: prior.score,
+          tries: prior.attempt,
+          redemption: settings.redemption,
+          adapt: settings.adapt,
+        }).profile;
     // A row a professor has reviewed: the rebuilt entry is tagged the way
     // applyReview tags it. Without the tag the mark is the professor's but reads
     // as the machine's provisional one, and a later double-tap was told so.
@@ -854,6 +865,10 @@ async function replayStored(io, socket, { session, profile, prior, settings, ids
   }
 
   const row = rowFor(current, settings);
+  if (waitingRow(prior)) {
+    socket.emit('server:result', awaitingResult(prior.kind, current, row, ids));
+    return;
+  }
   socket.emit('server:result', {
     correct: prior.ungraded ? false : Boolean(prior.correct),
     score: prior.score,
@@ -873,6 +888,32 @@ async function replayStored(io, socket, { session, profile, prior, settings, ids
     ...ids,
   });
 }
+
+/**
+ * A final answer row still waiting for a professor's mark (Batch 9): a drawing,
+ * never marked by the machine, not yet reviewed (services/drawings.js).
+ */
+const waitingRow = awaitingMark;
+
+/**
+ * What a phone is told about an answer that waits for its professor: saved, not
+ * marked, no key (there is none), and nothing either way about its level.
+ */
+const awaitingResult = (kind, profile, row, ids = {}) => ({
+  correct: null,
+  score: null,
+  provisional: true,
+  awaitingReview: true,
+  note: AWAITING_NOTE,
+  solution: null,
+  detail: AWAITING_DETAIL,
+  kind,
+  workingLevel: profile.workingLevel,
+  reason: row.next.why,
+  levelChanged: false,
+  profile: row,
+  ...ids,
+});
 
 /**
  * An answer row the answer path stored, kept and not counted (KEPT_LIMIT): a
@@ -1144,6 +1185,9 @@ async function handleAnswer(io, socket, payload) {
       // Two resends racing on one key: the second is answered from the first.
       if (stamped.duplicate && !keptNotCounted(stamped.answer)) {
         await replayStored(io, socket, { session, profile, prior: stamped.answer, settings, ids });
+      } else if (earlier && answerPrint(earlier.response) === print && waitingRow(earlier)) {
+        // A drawing sent again while it still waits (Batch 9): told it waits.
+        socket.emit('server:result', awaitingResult(earlier.kind, profile, rowFor(profile, settings), ids));
       } else if (earlier && answerPrint(earlier.response) === print) {
         const row = rowFor(profile, settings);
         socket.emit('server:result', {
@@ -1264,6 +1308,23 @@ async function handleAnswer(io, socket, payload) {
         else await dispatchNext(socket, { profile, session, bank, resume: !onScreen(questionId) });
         return;
       }
+    }
+
+    // Batch 9 (E3, E4): what the question's kind cannot take is refused before
+    // anything is marked or stored: a written answer over its word limit, a
+    // drawing's answer that is not { mediaId, text? }, words where the question
+    // takes a drawing alone, and a drawing this phone did not store for this
+    // question in this room. Refused for good (the phone's outbox keeps it and
+    // shows the sentence), and the phone stays on its question to send another.
+    const problem = responseProblem(question, response)
+      ?? (awaitsReview(question)
+        ? await drawingRefusal(repo, { mediaId: response.mediaId, sessionId: ctx.sessionId, rollNo: ctx.rollNo, questionId })
+        : null);
+    if (problem) {
+      logIgnored('student:answer', `${ctx.rollNo}'s answer to ${questionId} refused before marking: ${problem}`);
+      socket.emit('server:refused', { ...ids, message: problem });
+      closedNote();
+      return;
     }
 
     // Phase 7: was this question given to this phone, and when? The question
@@ -1393,7 +1454,8 @@ async function handleAnswer(io, socket, payload) {
       // A written answer is marked by matching rubric words. That is a first
       // reading, not a verdict, so it is stored as provisional for a professor
       // to confirm or override.
-      reviewStatus: kind === 'open' ? 'provisional' : 'auto',
+      // A drawing (Batch 9) has no machine mark at all, and waits the same way.
+      reviewStatus: kind === 'open' || awaitsReview(question) ? 'provisional' : 'auto',
       // The phone's confidence tap (Phase 5), or null for none. Stored and
       // never read below: the mark, the ladder and the reply are the same with
       // or without it (services/confidence.js).
@@ -1477,6 +1539,32 @@ async function handleAnswer(io, socket, payload) {
         ...lateNote,
         ...ids,
       });
+      closedNote();
+      await broadcastGrid(io, session);
+      return;
+    }
+
+    // A drawing (Batch 9, E4): never marked by the machine. Stored final and
+    // provisional, with no mark and the detail that it waits, for the room's
+    // review queue; in the history so it is not served again, counted at its
+    // level only once a professor marks it (applyReview). No retry: there is
+    // no mark to be wrong by.
+    if (awaitsReview(question)) {
+      const stamped = await repo.recordAnswer({
+        ...evidence, final: true, correct: null, score: null, detail: AWAITING_DETAIL,
+        autoCorrect: null, autoScore: null, autoDetail: '',
+      });
+      if (stamped.duplicate) {
+        await replayStored(io, socket, { session, profile, prior: stamped.answer, settings, ids });
+        closedNote();
+        return;
+      }
+      const { profile: next } = recordAwaiting(profile, {
+        questionId, bloom: question.bloom, topic: question.topic ?? '', kind, answerId: answerKey, at: answeredAt,
+      });
+      next.served = pinAfter();
+      await repo.saveProfile(await unlessMinor(next));
+      socket.emit('server:result', { ...awaitingResult(kind, next, rowFor(next, settings), ids), ...lateNote });
       closedNote();
       await broadcastGrid(io, session);
       return;
@@ -1587,6 +1675,102 @@ async function handleAnswer(io, socket, payload) {
       reason: 'That answer did not save. Tap Next question to carry on.',
       ...echo,
     });
+  } finally {
+    release?.();
+  }
+}
+
+/**
+ * student:drawing (Batch 9, E4): a phone's drawing for a 'drawing' question,
+ * kept before the answer that names it.
+ *
+ * Payload: { questionId, image, answerId }. `image` is a data URL or binary (a
+ * PNG or WebP picture); `answerId` is the phone's own id for the answer the
+ * drawing belongs to, the same one its student:answer will carry, so a resend
+ * of either is recognised. Taken under the student's lock, like an answer, and
+ * only for the drawing question pinned on this phone's screen or packed for it
+ * (Phase 7): a phone cannot store pictures against questions it was never
+ * given. The picture is checked by its own bytes, capped in size, stripped of
+ * its metadata and kept as an upload owned by the room (services/drawings.js).
+ *
+ * Replies, each echoing { questionId, answerId }:
+ *   drawing:stored    { mediaId }: kept (or already kept under this id); the
+ *                     answer then sends { mediaId, text? } as its response
+ *   drawing:refused   { message }: refused for good (not a picture, too large,
+ *                     not this phone's question, too many drawings); sending the
+ *                     same again will not help
+ *   drawing:rejected  { reason }: not saved this time; send it again
+ */
+async function handleDrawing(socket, payload) {
+  const ctx = socket.data.student;
+  // This phone's place in its student's queue, taken as the drawing arrives,
+  // before any wait, so its answer sent straight after cannot overtake it.
+  const turn = ctx ? lockProfile(ctx.sessionId, ctx.rollNo) : null;
+  const sentKey = String(payload?.answerId ?? '');
+  const echo = { questionId: String(payload?.questionId ?? ''), ...(ANSWER_ID.test(sentKey) ? { answerId: sentKey } : {}) };
+  const refuse = (message) => socket.emit('drawing:refused', { ...echo, message });
+  const again = () => socket.emit('drawing:rejected', { ...echo, reason: DRAWING_AGAIN });
+  let release = null;
+  try {
+    if (!ctx) {
+      reject(socket, 'Join a session before answering.', echo);
+      return;
+    }
+    release = await turn;
+    if (!ANSWER_ID.test(sentKey)) {
+      refuse(DRAWING_NEEDS_ID);
+      return;
+    }
+    const session = await loadSession(ctx.code);
+    if (!session) {
+      socket.emit('session:closed', { ...echo });
+      return;
+    }
+    if (session.status === 'waiting') {
+      socket.emit('server:waiting', { code: session.code, title: session.title ?? '', message: WAITING_MESSAGE, ...echo });
+      return;
+    }
+    // A room being archived and deleted: kept now, the drawing would go with it.
+    if (roomDeleting(ctx.sessionId)) {
+      again();
+      return;
+    }
+    const questionId = String(payload?.questionId ?? '').trim().toLowerCase();
+    if (!isRecordId(questionId)) {
+      refuse(DRAWING_NOT_HERE);
+      return;
+    }
+    const repo = getRepo();
+    const stored = await repo.getProfile(ctx.sessionId, ctx.rollNo);
+    if (!stored) {
+      reject(socket, 'Your row is gone - rejoin with your roll number.', echo);
+      return;
+    }
+    const profile = hydrate(stored);
+    // The question on this phone's screen, or one packed for it (Phase 7): a
+    // drawing made offline from a pack is sent when the phone is back.
+    const pinned = sameId(profile.served?.questionId, questionId);
+    const packed = !pinned && (await repo.listQuestionPacks(ctx.sessionId, ctx.rollNo))
+      .some((p) => (p.questionIds ?? []).some((q) => sameId(q, questionId)));
+    const question = pinned || packed ? await repo.getQuestion(questionId).catch(() => null) : null;
+    if (!question || !awaitsReview(question) || String(question.contentId) !== String(session.contentId)
+      || !inRoomSet(session, question._id)) {
+      refuse(DRAWING_NOT_HERE);
+      return;
+    }
+    const { media } = await keepRoomDrawing(repo, {
+      session, rollNo: ctx.rollNo, questionId: String(question._id), answerKey: sentKey, image: payload?.image,
+    });
+    socket.emit('drawing:stored', { ...echo, answerId: sentKey, mediaId: String(media._id) });
+  } catch (err) {
+    // A refusal the drawing rules made (a 4xx with its sentence) is for good;
+    // anything else is the store, and the phone sends the drawing again.
+    if (err?.status && err.status < 500) {
+      refuse(err.message);
+      return;
+    }
+    logError('student:drawing', err);
+    again();
   } finally {
     release?.();
   }
@@ -2377,6 +2561,8 @@ export function attachSockets(io) {
     socket.on('student:join', unlessProjector('student:join', (payload) => handleJoin(io, socket, payload)));
     socket.on('student:signal', unlessProjector('student:signal', (payload) => handleSignal(socket, payload)));
     socket.on('student:answer', unlessProjector('student:answer', (payload) => handleAnswer(io, socket, payload)));
+    // ---- Batch 9: answer kinds (a whiteboard answer's drawing, before its answer) ----
+    socket.on('student:drawing', unlessProjector('student:drawing', (payload) => handleDrawing(socket, payload)));
     socket.on('student:next', unlessProjector('student:next', () => handleNext(socket)));
     socket.on('student:pack', unlessProjector('student:pack', () => handlePack(socket)));
     socket.on('student:vote', unlessProjector('student:vote', (payload) => handleVote(io, socket, payload)));

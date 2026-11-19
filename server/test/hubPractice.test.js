@@ -473,7 +473,8 @@ describe('progress, the due list and the error log, for the student and for staf
 
   test('verified room answers come into the error log "from class"; unverified ones never', async () => {
     const { repo, cls, content, by } = await fixture();
-    const room = await repo.createSession({ code: 'ROOM01', contentId: content._id, classId: cls._id, ownerId: PROF });
+    // Closed: a room still running holds its questions' keys back (Batch 9, E1).
+    const room = await repo.createSession({ code: 'ROOM01', contentId: content._id, classId: cls._id, ownerId: PROF, status: 'closed', closedAt: at(0).toISOString() });
     const q = by['F evaluate?'];
     const row = (key, over) => repo.recordAnswer({
       sessionId: room._id, answerKey: key, rollNo: '21CS01', accountId: asha.id, questionId: String(q._id), contentId: String(content._id),
@@ -608,7 +609,8 @@ describe('the error log\'s prerequisites, and the Bloom levels now and a month a
 describe('hub attempts change nothing in rooms, attainment or the register (H5)', () => {
   test('the class\'s room answers, profiles, attainment and register are the same before and after', async () => {
     const { repo, cls, content, framing, by } = await fixture();
-    const room = await repo.createSession({ code: 'ROOM02', contentId: content._id, classId: cls._id, ownerId: PROF });
+    // Closed: a room still running keeps its questions closed in practice (Batch 9, E1).
+    const room = await repo.createSession({ code: 'ROOM02', contentId: content._id, classId: cls._id, ownerId: PROF, status: 'closed', closedAt: at(0).toISOString() });
     await repo.saveProfile({ sessionId: room._id, rollNo: '21CS01', name: 'Asha', levels: {}, workingLevel: 'understand', history: [] });
     await repo.saveAttendance([{ sessionId: room._id, classStudentId: (await repo.listClassStudents(cls._id))[0]._id, status: 'present', source: 'joined', rollNo: '21CS01' }]);
     for (const [i, q] of ['F remember?', 'F apply?'].entries()) {
