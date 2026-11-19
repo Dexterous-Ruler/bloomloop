@@ -1100,6 +1100,12 @@ export function createMongoRepo() {
     async setQuestionRoomsOnly(id, roomsOnly) {
       return lean(await Question.findByIdAndUpdate(id, { $set: { roomsOnly: roomsOnly === true } }, { new: true }).lean().catch(() => null));
     },
+
+    // ---- Batch 9: exam integrity (0038; see memoryRepo for the contract) ----
+    async setSessionExamMode(id, examMode) {
+      return lean(await Session.findByIdAndUpdate(id, { $set: { examMode: examMode ?? null } }, { new: true }).lean()
+        .catch((err) => { if (err?.name === 'CastError') return null; throw err; }));
+    },
   };
 }
 

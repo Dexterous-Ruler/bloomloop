@@ -51,6 +51,7 @@ Full detail: `docs/DATABASE_SCHEMA.md`.
 | `0034_zip_gaps_live_wheel.sql` | Batch 8: `teaching_moves` (suggested activities), `wheel_question_draws`, `room_activities.suggestion_id`; a verbal question as a wheel ask | Warns: suggestions, drawing a question with a student and recording a suggestion as an activity fail; everything else works |
 | `0035_bank_share_and_concept_panel.sql` | Batch 8: `questions.rooms_only`, `topic_lessons.sections` (the concept panel); a Get Ready check may end early (`hub_runs` end `ended`) | Warns: keeping a question for rooms only, and saving an AI lesson that has sections, fail; everything else works |
 | `0036_hub_attempt_proof.sql` | Batch 8 (fixes from the review): `hub_attempts.unproven`, a practice or lesson answer kept without proof the hub served its question (counted nowhere, no mark or key shown) | Warns: such an answer is not saved and stays on the phone; every answer that carries its serve token saves as before |
+| `0038_exam_integrity.sql` | Batch 9 (decision E5): `sessions.exam_mode`, a room's opt-in exam mode (copy guard, fullscreen, screen share, screen pictures, Safe Exam Browser keys). Screen pictures get no table: they are held in the server's memory only | Warns: no room can be opened in exam mode or have it changed; every other room opens and runs as before |
 
 The next new file takes `0036`.
 

@@ -36,7 +36,25 @@ import {
   checkLatency,
   noteSecondSocket,
   checkLevelJump,
+  checkTiming,
+  noteSecondDevice,
+  reportable,
 } from '../services/integrity.js';
+// Batch 9 (decision E5): exam mode's half of the live loop.
+import { examModeOf } from '../services/examGuard.js';
+import {
+  SCREEN_NEEDED,
+  examAccepted,
+  examJoinRefusal,
+  examScreenBlocks,
+  examStateFor,
+  handleScreen,
+  handleSnapshot,
+  integrityFull,
+  pushIntegrity,
+  signalAllowed,
+  startExamGuard,
+} from './examGuard.js';
 // Roll numbers in the wild look like 21BCE1234, CS-045, 2/A. Anything else is a
 // typo or a probe, and an empty one would collide with every other empty one.
 // ROLL_SHAPE lives with the roster so a class list can never hold a roll number
@@ -549,6 +567,16 @@ async function handleJoin(io, socket, payload) {
       return;
     }
 
+    // Batch 9 (E5): a room that requires Safe Exam Browser turns away every other
+    // browser, with one sentence, before anything is written. For every student,
+    // including one marked under 18: it watches nobody, and an exemption keyed on
+    // a typed roll number would let anyone type a classmate's to skip it.
+    const sebRefusal = examJoinRefusal(session, socket, payload);
+    if (sebRefusal) {
+      reject(socket, sebRefusal);
+      return;
+    }
+
     // Decision 7 (19 Nov 2026): a room profile is linked to a student account
     // only when the phone presents that signed-in student's token here,
     // verified as the student's own routes verify it (verifyAccountToken). It
@@ -637,11 +665,18 @@ async function handleJoin(io, socket, payload) {
     // lookup finds nothing. Not recorded for a student marked under 18
     // (decision 8; signalsOff).
     const heldBy = presence.get(key(session.code, rollNo));
+    // Batch 9: an exam room records this as second_device, and its staff hear of it at once.
+    const examOn = examModeOf(session).on;
     if (heldBy && heldBy !== socket.id && io.sockets.sockets.get(heldBy)?.connected
       && !(await signalsOff(repo, session, rollNo))) {
-      noteSecondSocket(profile, { other: heldBy });
-      await repo.saveProfile(profile).catch((err) => logError('integrity', err));
+      (examOn ? noteSecondDevice : noteSecondSocket)(profile, { other: heldBy });
+      await repo.saveProfile(profile).then(() => { if (examOn) pushIntegrity(io, session, profile); })
+        .catch((err) => logError('integrity', err));
     }
+    // Batch 9: what this phone must enforce, and whether the roster marks the
+    // student under 18 (then nothing that watches is asked of them). None for a
+    // phone back only to deliver answers to a closed room.
+    const exam = closed ? null : await examStateFor(repo, session, rollNo);
 
     // A room opened for a class: a roll number on its roster marks that student
     // present, unless the professor has already marked them; one off the roster
@@ -688,6 +723,9 @@ async function handleJoin(io, socket, payload) {
       // question is chosen when it asks (student:next), resuming the question
       // pinned on its screen as this join would have.
       resumePending: deliver && !closed,
+      // Batch 9 (E5): this phone's exam state, or null in a room without exam
+      // mode (sockets/examGuard.js examStateFor).
+      exam,
     };
     socket.join(`session:${session.code}`);
 
@@ -710,6 +748,9 @@ async function handleJoin(io, socket, payload) {
       // The three confidence taps a phone may send with any answer (Phase 5).
       // Optional, and information only: they change no mark and no level.
       confidence: CONFIDENCE_CHOICES,
+      // Batch 9 (E5): in an exam room only, what this phone must enforce and the
+      // consent notice to show before the first question. Absent elsewhere.
+      ...examAccepted(session, exam),
     });
 
     await broadcastGrid(io, session);
@@ -930,6 +971,13 @@ async function handleAnswer(io, socket, payload) {
     // Nothing has been served in a room still waiting to start (0018).
     if (session.status === 'waiting') {
       socket.emit('server:waiting', { code: session.code, title: session.title ?? '', message: WAITING_MESSAGE, ...echo });
+      return;
+    }
+    // Batch 9 (E5): in a screen-share room, no answer is taken until the phone
+    // shares its whole screen. Not stored, as in a paused room: the phone keeps
+    // it and is told why, and nothing else is recorded about it.
+    if (!closed && examScreenBlocks(session, ctx)) {
+      socket.emit('exam:screen-needed', { message: SCREEN_NEEDED, ...echo });
       return;
     }
 
@@ -1340,6 +1388,14 @@ async function handleAnswer(io, socket, payload) {
       }
       return p;
     };
+    // Batch 9 (E5): in an exam room, the timing rule is timing_anomaly, and a
+    // signal this answer recorded reaches the room's staff once it is saved.
+    const examOn = examModeOf(session).on;
+    const saveWithSignals = async (p) => {
+      const kept = await unlessMinor(p);
+      await repo.saveProfile(kept);
+      if (examOn && recorded(kept.integrity, signalsBefore)) pushIntegrity(io, session, kept);
+    };
 
     // Checked on the first attempt only: `served.at` is when the server sent
     // this question, so the gap is real elapsed time and not something the
@@ -1348,7 +1404,7 @@ async function handleAnswer(io, socket, payload) {
     // first answer arriving faster than that can show here. An answer that
     // will not count touches no profile, so records nothing.
     const servedAt = givenAt;
-    if (attempt === 1 && !keptAs) checkLatency(profile, question, servedAt);
+    if (attempt === 1 && !keptAs) (examOn ? checkTiming : checkLatency)(profile, question, servedAt);
 
     // Scored here, from the stored item, per its kind. A client-sent
     // correctness flag is never read. The SAME seed and supports forStudent()
@@ -1461,7 +1517,7 @@ async function handleAnswer(io, socket, payload) {
         questionId, bloom: question.bloom, topic: question.topic ?? '', kind, answerId: answerKey, at: answeredAt,
       });
       next.served = pinAfter();
-      await repo.saveProfile(await unlessMinor(next));
+      await saveWithSignals(next);
       const row = rowFor(next, settings);
       socket.emit('server:result', {
         ungraded: true,
@@ -1504,7 +1560,7 @@ async function handleAnswer(io, socket, payload) {
         tries: attempt,
         last: print,
       };
-      await repo.saveProfile(await unlessMinor(profile));
+      await saveWithSignals(profile);
       const row = rowFor(profile, settings);
       socket.emit('server:result', {
         retry: true,
@@ -1551,7 +1607,7 @@ async function handleAnswer(io, socket, payload) {
     // a question they have already been marked on. A packed question was not
     // the pin, so the pin stays on the question still on the screen.
     next.served = pinAfter();
-    await repo.saveProfile(await unlessMinor(next));
+    await saveWithSignals(next);
 
     const row = rowFor(next, settings);
     socket.emit('server:result', {
@@ -2299,6 +2355,15 @@ async function handleWatch(socket, payload) {
     } catch (err) {
       logError('teacher:class-question', err);
     }
+    // Batch 9 (E5): an exam room's signals and pictures, every student at once;
+    // then each change as it happens (sockets/examGuard.js).
+    if (examModeOf(session).on) {
+      try {
+        socket.emit('teacher:integrity', await integrityFull(getRepo(), session));
+      } catch (err) {
+        logError('teacher:integrity', err);
+      }
+    }
   } catch (err) {
     logError('teacher:watch', err);
   }
@@ -2334,11 +2399,22 @@ async function handleDisconnect(io, socket) {
  * feedback either way, because telling them which reports land is telling them
  * exactly what to suppress.
  */
-async function handleSignal(socket, payload) {
+async function handleSignal(io, socket, payload) {
   let release = null;
   try {
     const ctx = socket.data.student;
     if (!ctx) return;
+    // Batch 9 (E5): an exam room takes the exam kinds too, at most at
+    // SIGNAL_LIMIT's rate, and nothing at all from a phone whose student the
+    // roster marks under 18. Checked before the student's turn and the store, so
+    // a flood costs nothing. Any other room is exactly as it was.
+    const kind = String(payload?.kind ?? '');
+    const exam = Boolean(ctx.exam) && examModeOf(await loadSession(ctx.code)).on;
+    // A share reported stopped here pauses answering as the screen event does,
+    // so the two ways a phone may say it cannot disagree; even when the rate
+    // drops the signal itself.
+    if (exam && kind === 'screenshare_stopped' && ctx.exam.screen === 'started') ctx.exam.screen = 'stopped';
+    if (exam && (ctx.exam.minor || !reportable(kind, { exam }) || !signalAllowed(ctx, kind))) return;
     release = await lockProfile(ctx.sessionId, ctx.rollNo);
     // Written into the profile, which the archive of a room being deleted has
     // already read: see holdRoomForDelete.
@@ -2347,11 +2423,13 @@ async function handleSignal(socket, payload) {
     const stored = await repo.getProfile(ctx.sessionId, ctx.rollNo);
     if (!stored) return;
     const profile = hydrate(stored);
-    if (!reportFromClient(profile, String(payload?.kind ?? ''), payload ?? {})) return;
+    if (!reportFromClient(profile, kind, payload ?? {}, { exam })) return;
     // Decision 8: never recorded for a student their class's roster marks
     // under 18. The phone is told nothing either way, as for any signal.
-    if (await signalsOff(repo, await loadSession(ctx.code), ctx.rollNo)) return;
+    const session = await loadSession(ctx.code);
+    if (await signalsOff(repo, session, ctx.rollNo)) return;
     await repo.saveProfile(profile);
+    if (exam) pushIntegrity(io, session, profile);
   } catch (err) {
     logError('student:signal', err);
   } finally {
@@ -2375,7 +2453,10 @@ export function attachSockets(io) {
       return handler(...args);
     };
     socket.on('student:join', unlessProjector('student:join', (payload) => handleJoin(io, socket, payload)));
-    socket.on('student:signal', unlessProjector('student:signal', (payload) => handleSignal(socket, payload)));
+    socket.on('student:signal', unlessProjector('student:signal', (payload) => handleSignal(io, socket, payload)));
+    // Batch 9 (E5): an exam room's screen share and its pictures (sockets/examGuard.js).
+    socket.on('student:screen', unlessProjector('student:screen', (payload, ack) => handleScreen(io, socket, payload, ack)));
+    socket.on('student:snapshot', unlessProjector('student:snapshot', (payload, ack) => handleSnapshot(io, socket, payload, ack)));
     socket.on('student:answer', unlessProjector('student:answer', (payload) => handleAnswer(io, socket, payload)));
     socket.on('student:next', unlessProjector('student:next', () => handleNext(socket)));
     socket.on('student:pack', unlessProjector('student:pack', () => handlePack(socket)));
@@ -2385,4 +2466,7 @@ export function attachSockets(io) {
       .catch((err) => logError('projector:watch', err)));
     socket.on('disconnect', () => handleDisconnect(io, socket));
   });
+  // Batch 9 (E5): overdue pictures and the two-hour purge, with this file's
+  // lock, session cache and delete mark lent to exam mode.
+  startExamGuard(io, { lockProfile, loadSession, roomDeleting });
 }

@@ -49,6 +49,7 @@ import { laptopOrigin } from './laptop.js';
 import recordSyncRoutes from './routes/recordSync.js';
 // ---- Batch 8: the live room's suggestions ----
 import teachingMoveRoutes from './routes/teachingMoves.js';
+import examGuardRoutes from './routes/examGuard.js';
 
 /**
  * Any successful write to a question bank drops the live loop's cached copy of
@@ -191,6 +192,13 @@ export function createApp() {
   // (decisions 1 and 5); kept with what they were built from. Staff-only,
   // gated per route for the same reason as the routers above.
   app.use('/api/session', teachingMoveRoutes);
+
+  // ---- Batch 9: exam integrity (decision E5) ----
+  // /api/session/:code/exam: the room's exam mode, its students' signals, the
+  // newest screen picture per student (served from memory, never kept in a
+  // table) and the collusion check. Staff-only, gated per route for the same
+  // reason as the routers above; the phones use the socket and never call these.
+  app.use('/api/session', examGuardRoutes);
 
   // Teacher-only: class rosters are names and roll numbers, and nothing a phone
   // needs. Whose class is whose is checked inside, by ownership.js.

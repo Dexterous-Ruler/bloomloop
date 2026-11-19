@@ -151,6 +151,11 @@ const sessionSchema = new Schema(
     startLevel: { type: String, enum: LEVELS, default: 'understand' },
     questionsPerStudent: { type: Number, min: 1, max: 500, default: null },
     timePerQuestion: { type: Number, min: 10, max: 600, default: null },
+
+    // Batch 9 (supabase/migrations/0038). The room's exam mode, or null for none.
+    // Declared for the same reason as the settings above: undeclared, a room
+    // opened in exam mode would save as an ordinary one and enforce nothing.
+    examMode: { type: Schema.Types.Mixed, default: null },
   },
   { versionKey: false },
 );
