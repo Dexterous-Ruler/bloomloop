@@ -1434,6 +1434,53 @@ the Auth calls itself said no request left the machine. The second run's figures
 **Not run:** anything against Supabase, Mongo or a model; a real sign-in; any screen.
 `scripts/smoke.mjs` was not run.
 
+## Batch 8: figures, interaction kinds and the design-zip gaps (19 November 2026)
+
+Four new end-to-end scripts, each over HTTP and Socket.io on the production `createApp`
+and `attachSockets` with the in-process store, every network setting blank:
+
+| Script | Covers |
+|---|---|
+| `scripts/figures.mjs` | The figure stimulus saved, refused with one sentence and read back; what the phone, the bank list, the review queue, the projector (at a step), the print page and a hub lesson get; a phone never sees a spec or steps; slide pictures kept from a `.pptx` and the placeholder alt refused; image regions left out for students |
+| `scripts/figkinds.mjs` | `hotspot`, `label`, `plot`, `numberline` and `chart` saved, served with per-student tokens and no key, answered and marked over the socket; staff `parts`; figure generation from fixture replies (keys read off the figure, `figure-key` and `figure-dropped` checks) |
+| `scripts/zipgaps1.mjs` | Teaching moves and activity prompts (fixture model, counts-only basis, refusals, "Use it"), the wheel's `withQuestion` and "Another", the `verbal` ask, `room.class`, per-level insights, the support band against the previous room, the class comparison, `contentId` on hardest items, `answerKey`, and the `answerId` echo on the normal, paused and not-joined answer paths and a not-joined vote |
+| `scripts/zipgaps2.mjs` | Topic sources, level support, `lastUsed`, the `writer` switch, rooms-only, the room avoiding practised questions, serve tokens (missing, wrong, expired, resend), ending a Get Ready check, `path.why`, the concept panel, and a figure added to an AI lesson keeping its sections in the new draft |
+
+New unit files include `test/figures.test.js` (with SVG snapshots in
+`test/snapshots/figures`; regenerate with `UPDATE_FIGURE_SNAPSHOTS=1`, then look at
+them), `test/zipgaps1.test.js`, `test/zipGaps2.test.js`, `test/wheel.test.js` and
+`test/b8seams.test.js` (the merge's seams). `node --test` also loads
+`test/fixtures/figures.js`, which has no tests; that is harmless.
+
+### The run for the Batch 8 docs
+
+Every suite run once through the offline runner (`verify-p6.sh`) on `ba0f59d`, with no
+code change. The figures are what each run printed:
+
+| Suite | Result |
+|---|---|
+| Unit (`npm test`) | 1232 / 1232, 286 suites |
+| Migrations | 1708 / 1708 |
+| `liveloop`, `security`, `review`, `evidence` | 41, 13, 83, 37: all passed |
+| Resume, integrity | 7 and 6 mandated steps, 0 failures |
+| Question kinds round trip | 21 kinds, 84 checks, 0 failures |
+| `bank`, `kinds`, `media`, `items` | 73, 43, 67, 49: all passed |
+| `roster`, `records`, `modes`, `insights` | 80, 97, 101, 66: all passed |
+| `outcomes`, `attainment`, `acceptance4`, `decisions` | 87, 73, 76, 79: all passed |
+| `classquestion`, `misconceptions`, `honesty`, `keysafety` | 76, 54, 66, 43: all passed |
+| `hub`, `practice`, `paths`, `lessons`, `tutor` | 78, 78, 88, 100, 84: all passed |
+| `offline` | **exit 1**: 83 checks passed, then "timeout waiting for server:result" in its grace-window section (the step after "reached the server inside the window, its turn after it"); no check failed before it |
+| `laptop`, `recordsync` | 79 (`refusedOffMachine` 0), 38: all passed |
+| `figures`, `figkinds`, `zipgaps1`, `zipgaps2` | 51, 58, 63, 64: all passed |
+
+The `offline.mjs` stop is the same one seen once on the tree over `eb397c5` (above, "The
+client session's server asks"), which passed on a rerun. It was not rerun here, so
+whether it is that timing flake or a Batch 8 change to the answer replies is **not
+known**: rerun `node server/scripts/offline.mjs` before relying on it.
+
+**Not run:** anything against Supabase, Mongo or a model; a real phone; any screen.
+`scripts/smoke.mjs` was not run.
+
 ## Checked by hand in the browser
 
 These were checked on a local server with `--env-file` holding a generated teacher key,

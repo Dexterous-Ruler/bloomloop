@@ -33,7 +33,7 @@ guest join by room code + roll number is still supported and must stay working.
 | Start / end a session | no | ✅ own | no |
 | Live grid | any session in department | own sessions | no |
 | Take a session | no | no | ✅ |
-| Own results & history | — | — | ✅ read-only |
+| Own results & history | — | — | ✅ read-only. *(19 Nov 2026, Phase 6: students with accounts now reach the Learning Hub as well as their own results.)* |
 | Exports | department-wide | own sessions | own results |
 | Create accounts | ✅ professors | ✅ students | no |
 

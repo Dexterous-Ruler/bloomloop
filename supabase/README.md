@@ -51,7 +51,7 @@ Full detail: `docs/DATABASE_SCHEMA.md`.
 | `0034_zip_gaps_live_wheel.sql` | Batch 8: `teaching_moves` (suggested activities), `wheel_question_draws`, `room_activities.suggestion_id`; a verbal question as a wheel ask | Warns: suggestions, drawing a question with a student and recording a suggestion as an activity fail; everything else works |
 | `0035_bank_share_and_concept_panel.sql` | Batch 8: `questions.rooms_only`, `topic_lessons.sections` (the concept panel); a Get Ready check may end early (`hub_runs` end `ended`) | Warns: keeping a question for rooms only, and saving an AI lesson that has sections, fail; everything else works |
 
-The next new file takes `0033`.
+The next new file takes `0036`.
 
 ## Applying
 
@@ -143,6 +143,16 @@ hosted project.
 set (`0000` to `0032`) is the simple way: every file is safe to re-run. None has run
 anywhere but PGlite (`npm run migrations`, 1457 of 1457 on 19 November 2026); nothing
 was run against the hosted project.
+
+**Batch 8 adds three files, and rooms need none of them.** `0033`, `0034` and `0035`
+are all route-only: the boot probe checks them in `ROUTE_SCHEMA`, so a missing one is a
+boot-log line naming its file and what fails until it is applied, Supabase is still used
+and every room runs. Apply them before or after the server, in number order; re-running
+the whole set (`0000` to `0035`) is the simple way. Two checks the probe cannot see: a
+wheel pick set to `verbal` needs `0034`, and ending a Get Ready check early needs
+`0035`. None has run anywhere but PGlite (`npm run migrations`, 1708 of 1708 on 19
+November 2026); nothing was run against the hosted project. The server also needs
+`HUB_SERVE_TOKEN_SECRET` set in a deployment (`docs/API.md`, "Batch 8").
 
 **`0030` (Phase 7: question packs and the phone's own answer time) must be applied
 before the server that writes it is deployed.** It adds the `question_packs` table (the

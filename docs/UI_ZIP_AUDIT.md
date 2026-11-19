@@ -46,6 +46,19 @@ Sizes:
 - **M:** a day or two, or it needs a new server field or route.
 - **L:** several days, with server design work.
 
+## Batch 8 status (19 Nov 2026)
+
+The server side of these gaps is built in `ba0f59d` (`docs/API.md`, "Batch 8"), and the
+UI session built their screens in `4384844`, checked against local servers only:
+- **Served by the server:** M1, M2, M3, M5 (material); L1 and C2 (teaching moves and
+  activity prompts); L2 (the class on the room); W2 (the wheel's Question + student);
+  A1 (the class comparison: `roomReport` already carried per-room levels, so the new
+  part is the comparison block) and A3 (`contentId` on hardest items); P1 and H9c
+  (stepped figures on the projector and in lessons); H9a and H9b (the concept panel's
+  sections); and from the older files H5 ("why this path") and gaps 2 (per-level
+  insight lines), 6 (support against the previous room) and 9 (a verbal ask).
+- The rows below still describe the gaps as they were found.
+
 ## Gaps by screen
 
 ### Frame: rail, top bar, header

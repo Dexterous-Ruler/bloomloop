@@ -9,15 +9,32 @@ Every table has row level security **on with no policies**. Only the server's
 service role key, which bypasses RLS, can read or write; the anon key sees nothing.
 The server is the only place authorization is decided.
 
-Last revised 19 November 2026, after Phase 7, offline-first: question packs, the
-phone's own answer time and the log of serves (`0030`), rooms imported from laptop mode
-(`0031`) and replay keys for the console's record writes (`0032`). Before them came
-Phase 6, the student Learning Hub (`0025` to `0029`, 1226 migration checks). The run
-for the Phase 7 docs gave 1457 of 1457 on PGlite, offline with every network setting
-blank, on Node 24.22.3. Nothing has been run against the hosted Supabase project. The
-next free number is `0033`.
+Last revised 19 November 2026, after Batch 8: slide pictures (`0033`), the live room's
+suggestions, the wheel's question draws and a verbal ask (`0034`), and rooms-only
+questions, the hub's concept panel and ending a Get Ready check early (`0035`). Before
+them came Phase 7, offline-first (`0030` to `0032`, 1457 migration checks). The run for
+the Batch 8 docs gave 1708 of 1708 on PGlite, offline with every network setting blank.
+Nothing has been run against the hosted Supabase project. The next free number is
+`0036`.
 
-**Applying everything: `0000` to `0032`, in number order.** The numbering has no gap.
+**Applying everything: `0000` to `0035`, in number order.** The numbering has no gap.
+
+**Applying Batch 8: `0033`, `0034`, `0035`, in order. Rooms need none of them.** All
+three are route-only (`ROUTE_SCHEMA`): a missing one is a boot-log line naming its file,
+Supabase is still used and every room runs. Safe before or after the server.
+- `0033`: without it a deck still uploads but keeps none of its slide pictures; every
+  figure is still drawn (a figure is JSON in a question's stimulus or a lesson's chunk
+  step and needs no column).
+- `0034`: without it teaching moves, a wheel draw `withQuestion` (the pick is stored,
+  then the draw row fails with a 500) and recording a suggestion as an activity fail. A
+  pick set to `verbal` is refused by the old check, which the probe cannot see.
+- `0035`: without it the rooms-only switch and saving an AI lesson that has sections
+  fail; every question reads as shared and no lesson has sections. Ending a Get Ready
+  check early is refused by the old end check, which the probe cannot see.
+
+None rewrites a row, narrows a check or drops anything. `0017` now lists `verbal` and
+`0028` lists `ended` too, so re-running those older files never narrows a check below
+what a later file allows. RLS is on with no policies on the two new tables.
 
 **Applying Phase 7: `0030` before the server is deployed; then `0031` and `0032`.**
 - **`0030` is one rooms need: apply it before deploying the Phase 7 server.** The
@@ -111,11 +128,11 @@ rewrites no row; every existing question reads as having no labels. Run on PGlit
 (`npm run migrations`, 752 of 752 on 19 November 2026).
 
 **The boot probe, since 19 November 2026**, checks the tables and columns the server
-writes from `0000` to `0032`, each named with its file (not the columns of `0003` to
+writes from `0000` to `0035`, each named with its file (not the columns of `0003` to
 `0007`, nor `0011`'s index or `0012`'s triggers, which it does not look for;
 `supabase/README.md` lists which file it checks). What rooms need (`0000` to
 `0018`, `0022` to `0024`, and `0030`) stops Supabase being used when missing; what only some routes
-need (`0019`, `0020`, `0021`'s `attendance.roll_no`, `0025` to `0029`, `0031` and `0032`) is logged at boot, one line
+need (`0019`, `0020`, `0021`'s `attendance.roll_no`, `0025` to `0029`, `0031` to `0035`) is logged at boot, one line
 per missing piece, naming the file to apply and what fails until it is, and Supabase
 is still used (`ROOM_SCHEMA`, `ROUTE_SCHEMA` in `server/src/repo/supabaseRepo.js`).
 Before this, `0019` to `0021` were not checked at all.
@@ -177,8 +194,19 @@ printable pages read what these tables and the Phase 1 to 3 tables already hold.
 | `0030_offline_packs.sql` | Phase 7, offline answers: `question_packs` (a pack of keyless questions sent to one phone; written once, gone only with its room, trigger `question_packs_written_once`), `answers.device_answered_at` (nullable; the phone's own time, for the record) and `profiles.served_log` (jsonb, not null, default `[]`; every question put on the phone's screen). **Rooms need it: apply before the server.** Changes no row | new (Phase 7) |
 | `0031_room_imports.sql` | Phase 7, laptop mode: `room_imports` (one row per room file imported; unique laptop room id and room; written once, trigger `room_imports_written_once`, function `room_imports_keep_record`). Route-only. Changes no row | new (Phase 7) |
 | `0032_record_write_keys.sql` | Phase 7, the console's outbox: `record_writes` (the first reply of each teacher-record write sent with a key; append-only through `0017`'s `teacher_records_guard`, trigger `record_writes_append_only`; gone with its room). Route-only. Changes no row | new (Phase 7) |
+| `0033_figures.sql` | Batch 8, figures: `media.slide_no` (null for a picture uploaded on its own, else at least 1, `media_slide_no_check`), `contents.slide_pictures` (jsonb object or null; null is a chapter from before, or typed, `contents_slide_pictures_check`) and the partial index `media_content_slide_idx`. Route-only. Changes no row | new (Batch 8) |
+| `0034_zip_gaps_live_wheel.sql` | Batch 8, live room and wheel: `teaching_moves` (AI suggestions with their counts-only `basis`; append-only through `teacher_records_guard`, trigger `teaching_moves_keep`), `wheel_question_draws` (unique `(pick_id, draw_order)`, trigger `wheel_question_draws_same_room`, append-only `wheel_question_draws_keep`), `room_activities.suggestion_id` (composite foreign key to `teaching_moves(session_id, id)`); `wheel_picks_ask_check` widened to `verbal` (also in `0017`). Route-only. Changes no row | new (Batch 8) |
+| `0035_bank_share_and_concept_panel.sql` | Batch 8, shared bank and concept panel: `questions.rooms_only` (boolean, not null, default false), `topic_lessons.sections` (jsonb, null or an object only when `source = 'llm'`, `topic_lessons_sections_check`); `hub_runs_end_check` lets a `getready` run end `ended` (also in `0028`). Route-only. Changes no row | new (Batch 8) |
 
 The SQL of every moved file is unchanged; only header comments were updated.
+
+What the migration test holds `0033` to `0035` to (Batch 8; 1708 checks in all, 1457
+before them). Each builds fresh, re-runs over its own rows, and is applied over existing
+data (`0033` over media and chapters, `0034` over picks and activities, `0035` over
+questions, lessons and checks) without changing a row. The columns the server uses now
+include `contents.slide_pictures`, `media.slide_no`, `questions.rooms_only` and
+`topic_lessons.sections`. The numbering check is strict again: `0000` to `0035`, no gap.
+Run on PGlite only.
 
 What the migration test holds `0030` to `0032` to (Phase 7; 1457 checks in all, 1226
 before them). Each builds on a fresh database and again unchanged; each re-runs over a
@@ -1862,6 +1890,30 @@ grade posting (`listLinkedStudents`).
 Written by `routes/auth.js`: `insertInvite` (`POST /invite`), `claimInvite` (one
 conditional update, so two racers cannot both win) and `releaseInvite` (`POST
 /signup` rollback).
+
+### Batch 8 additions (0033 to 0035)
+
+New tables (RLS on, no policies; both go with their room):
+- **`teaching_moves` (`0034`)**: `id`, `session_id` (cascade), `purpose` (`move` or
+  `prompt`), `activity_kind` (`check`, `think`, `group`, `diagram`, `real`), `title`
+  (at most 80), `body` (1 to 600), `focus_level` (a level; required for a move),
+  `topic`, `basis` (jsonb object: the room's counts, never a name), `source_ref` (jsonb
+  object or null: the cited slides), `model`, `asked_by` (set null), `asked_at`. Unique
+  `(session_id, id)` for the activity's composite key. Update and delete refused
+  (`teaching_moves_keep`) except with the room.
+- **`wheel_question_draws` (`0034`)**: `session_id`, `pick_id` (cascade), `draw_order`
+  (from 1, unique per pick), `question_id` (set null), `pool_size` (at least 1),
+  `drawn_at`, `drawn_by`. A draw must be of a pick in the same room
+  (`wheel_question_draws_same_room`); append-only (`wheel_question_draws_keep`).
+
+New columns: `media.slide_no` and `contents.slide_pictures` (`0033`);
+`room_activities.suggestion_id` (`0034`, null unless the activity came from a
+suggestion); `questions.rooms_only` and `topic_lessons.sections` (`0035`). Widened checks:
+`wheel_picks_ask_check` (`verbal`, which has no question) and `hub_runs_end_check`
+(`ended`). The interaction kinds needed no migration: their keys (`answerIds`,
+`placements`, `distractors`, `plotKey`, `lineKey`, `bars`, `values`) live in
+`questions.payload`, and a generated finding in `questions.checks` may carry a `basis`
+fingerprint.
 
 ## Types, functions and triggers
 

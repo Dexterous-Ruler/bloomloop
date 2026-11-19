@@ -9,7 +9,51 @@ indicators and the review fixes) are committed as `2f4fd2b`, the Phase 5 follow-
 `4c1df09`. **Phase 6, the Learning Hub's server (`0025` to `0029`), is committed as
 `646b4e6`**, and its docs in the commit after it. **Phase 7, offline-first (`0030` to
 `0032`), is committed as `46bf6f9`** on top of the Phase 6 docs, and its docs in the
-commit after it.
+commit after it. **Batch 8 (`0033` to `0035`) is committed as `ba0f59d`**, and
+its docs in the commit after it.
+
+## Unreleased: Batch 8, figures, interaction kinds and the design-zip server gaps (19 November 2026)
+
+Server and database committed as `ba0f59d` (`0033` to `0035`), on top of the UI
+session's Batch 8 screens (`4384844`). Built in three parallel branches and merged.
+Decided under the owner's delegation (`docs/PRODUCT_DECISIONS.md`, Batch 8). Shapes:
+`docs/API.md`, "Batch 8". **Its two reviewers were still running when it landed; their
+fixes follow in later commits.** Nothing ran against a model, Supabase, Mongo or a real
+phone.
+
+- **Figures for every subject.** A question's stimulus may be a `figure`: a JSON spec of
+  nine types (plot, chart, number line, geometry with optics, timeline, Graphviz
+  diagram, RDKit molecule, pattern, call stack) that the server checks and draws as SVG,
+  with a text description and a data table. Never code, raw SVG or a model's picture.
+  Stepped figures on the projector and in hub lessons; a printable page per chapter;
+  slide pictures kept from `.pptx` uploads (`0033`) with regions on pictures.
+- **Five interaction kinds** (21 kinds in all): `hotspot`, `label`, `plot`,
+  `numberline` and `chart`, marked on the server; per-student zone tokens, so no part
+  name or key reaches a phone. None in the default mix.
+- **Figure generation.** A generated question may carry a plot, chart or number line;
+  the server reads the key off it where it can and flags a model answer that disagrees.
+- **Design-zip gaps, live room and wheel (`0034`).** AI teaching moves and activity
+  prompts on the professor's button (room counts and the professor's slides only,
+  labelled "AI suggestion, your call"); the class on the room; the wheel's "Question +
+  student" and a `verbal` ask; per-level insight lines; the support band against the
+  previous room; the class comparison and `contentId` on hardest questions.
+- **Design-zip gaps, material and hub (`0035`).** Topic slide ranges, supported levels,
+  a template-writer switch, last used; rooms-only questions; rooms avoid questions a
+  student practised; **serve tokens: hub practice and lesson answers are now refused
+  without the token their serving reply carried** (set `HUB_SERVE_TOKEN_SECRET` in a
+  deployment); ending a Get Ready check early; "why this path"; the lesson concept panel
+  (introduction, facts, explanation, code example, mistakes, and a Visual pointing at
+  the professor's own figure).
+- **Smaller:** `answerId` echoed on every answer and vote reply, refusals included;
+  `/sw.js` served `no-cache`; `answerKey` on staff answer lists and the review queue.
+- **Dependencies:** `@hpcc-js/wasm-graphviz` 1.30.0, `@rdkit/rdkit` 2026.9.2, `d3-scale`
+  4.0.3, `d3-shape` 3.2.1; `socket.io-client` 4.8.3 as a server dev dependency.
+
+Tests: new `scripts/figures.mjs`, `figkinds.mjs`, `zipgaps1.mjs` and `zipgaps2.mjs`, and
+new unit files (`docs/TESTING.md`, "Batch 8"). The docs run: unit 1232 / 1232,
+migrations 1708 / 1708, figures 51, figkinds 58, zipgaps1 63 and zipgaps2 64 all
+passed, every other suite passed except `offline.mjs`, which stopped on a timeout in its
+grace-window section after 83 passing checks (not rerun; see `docs/TESTING.md`).
 
 ## Unreleased: the client session's server asks (19 November 2026)
 

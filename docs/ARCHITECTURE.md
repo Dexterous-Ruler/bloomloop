@@ -1088,6 +1088,80 @@ The kept-key locks, the import lock, the wrong-key counter, the pack request fla
 database's unique keys are the guard (`record_writes` per room, writer and key;
 `room_imports.source_room_id`).
 
+## Figures and interaction kinds (Batch 8)
+
+Committed as `ba0f59d` (`0033` to `0035`). Shapes: `docs/API.md`, "Batch 8".
+
+**Figures are data the server draws.** `server/src/figures/`:
+- `spec.js` checks a spec key by key against `FIGURE_TYPES` (nine types) and `LIMITS`,
+  and normalises it. Functions come from fixed families with numeric parameters, so no
+  expression is ever parsed.
+- One engine per type: `plot.js`, `chart.js` (d3-scale, d3-shape), `numberline.js`,
+  `geometry.js` (with lens and mirror images computed from the formula),
+  `sequences.js` (timeline, pattern, stack), `diagram.js` (Graphviz as WebAssembly; the
+  server writes the DOT from escaped labels and fixed lists, and sizes boxes by grapheme
+  so Devanagari fits) and `molecule.js` (RDKit as WebAssembly; SMILES checked, formula
+  computed, its SVG rebuilt path by path).
+- `common.js` holds `safeSvg`, an allow-list of elements and attributes every finished
+  SVG must pass, and the text measuring.
+- `index.js` is the one entry: `renderFigure(spec, { step })` returns `{ svg,
+  description, table, parts, stepCount, ... }`, never throws, and is cached by spec hash
+  and step (400 entries). `checkFigure` is the save-time check (it draws every step).
+  `figureForStudent`, `figureAtStep`, `figureWithSteps` and `figureForStaff` decide who
+  sees what: a phone never gets the spec or the steps.
+- Graphviz and RDKit load at boot beside the store; `listen` waits at most 5 seconds for
+  them. A render asked for earlier says it is being prepared and is not cached.
+
+**Interaction kinds.** `figures/interact.js` gives each student opaque zone tokens
+(seeded `rollNo:questionId`), turns a figure or a picture's regions into zones, builds
+the plot and number-line grids, reads values off a figure (`readFigure`) and marks
+plots, number lines and bars. `questionTypes.js` has the five kinds' `invalidReason`,
+`score` and `forStudent`, like every other kind; the phone sends tokens and never marks.
+Empty axes pass the figure check only as a `plot` question's board.
+
+**Figure generation.** `services/figureDrafts.js` adds the figure fields to the model's
+schema (plot, chart or number line only), checks and draws what comes back, computes the
+key from the figure where it settles the answer, and stores a disagreement as a
+`figure-key` check (or `figure-dropped`) through `services/checks.js`, kept while the
+question's `keyBasis` fingerprint is unchanged. Offline templates make figure questions
+only from an equation, range or list of figures in the material.
+
+**Slide pictures.** `services/slideImages.js` pulls pictures out of a `.pptx` (type told
+by the bytes, metadata stripped, at most 60, once each) into `media` with `slide_no`
+(`0033`). `services/media.js` refuses a slide picture whose alt is still the placeholder.
+
+**Where figures go.** The projector (`services/projector.js`) draws a figure at the
+screen's `step`; hub lessons store a figure as a `chunk` step carrying `figure` (so
+`0027`'s step check still holds on a re-run) and send every step drawn; the room archive
+keeps each drawing once by spec hash within 1 MiB (`figuresLeftOut` otherwise); the print
+page (`routes/figures.js`) has no answers.
+
+**The design-zip gaps.**
+- `services/teachingMoves.js` and `routes/teachingMoves.js`: on the professor's button
+  only (decision 5), the room's counts (never a name or an answer) and the chapter's own
+  slides go to the model in the background; the reply is checked whole (kind, length,
+  labelling words, contact details, cited slides) and either kept append-only in
+  `teaching_moves` with its basis, or refused. Requests in flight live in memory for 15
+  minutes; the result is pushed as `teacher:teaching-move`.
+- `services/wheel.js` draws a question with a student from the room's approved set
+  (polls left out) with crypto randomness, preferring questions not yet asked, and keeps
+  each draw in `wheel_question_draws`.
+- `services/roomClass.js` labels a room with its class; `services/insights.js` adds the
+  per-level series, the room's own threshold and the support band against the class's
+  previous room; `services/classAnalytics.js` adds the two-room comparison.
+- `services/materialInfo.js`: topic sources, level support (the templates' honest-fit
+  check, about 350 ms for 12 topics, not cached) and last used.
+- `services/bankShare.js` (rooms-only, the practised set), `services/selector.js`
+  (`selectNext(..., { avoid })`, used for signed-in students; the set is read when a
+  phone joins), `services/serveTokens.js` (an HMAC over account, question and mode, 7
+  days; secret `HUB_SERVE_TOKEN_SECRET`, which deployments must set) and
+  `services/hubGetReady.js` (`endCheck`, `pathWhy`).
+- `services/hubConcept.js` checks the model's concept sections against the lesson's
+  parts (a piece without a cite is dropped) and builds `visual` from the lesson's own
+  figure steps. The figure is never written by the model and is sent once.
+- `/sw.js` is served `no-cache` (`app.js`); answer and vote replies echo `answerId`
+  (`sockets/index.js`); `services/evidence.js` puts `answerKey` on staff answer items.
+
 ## Client (`client/src`)
 
 | Area | Role |

@@ -19,7 +19,10 @@ follow-ups. **Commit `646b4e6` holds Phase 6, the Learning Hub, on the server on
 (`0025` to `0029`; checklist at the end: "Phase 6: the Learning Hub"); its docs are the
 commit after it. **Commit `46bf6f9` holds Phase 7, offline-first, on the server only**
 (`0030` to `0032`, on top of the Phase 6 docs; checklist at the end: "Phase 7:
-offline-first"); its docs are the commit after it. Every suite passes through the
+offline-first"); its docs are the commit after it. **Commit `ba0f59d` holds Batch 8** (figures,
+interaction kinds and the design-zip server gaps, `0033` to `0035`; checklist at the
+end: "Batch 8"), on top of the UI session's Batch 8 screens (`4384844`); its
+reviewers' fixes follow it. Every suite passes through the
 offline runner after Phase 7 (the test table below). Phase 4, as committed:
 - course outcomes, their mappings and coverage, and the roster from CSV (`0019`);
 - configurable attainment and the marks register (`0020`);
@@ -2317,3 +2320,68 @@ Across the phase
 
 **Client work** (the UI session's; nothing in `client/` was touched): `docs/API.md`,
 "Phase 7: offline-first", "What the screens need".
+
+### Batch 8: figures, interaction kinds and the design-zip gaps: server done, screens built but unticked
+
+Committed as `ba0f59d` (`0033` to `0035`), decided under the owner's delegation
+(`docs/PRODUCT_DECISIONS.md`, Batch 8). Endpoints: `docs/API.md`, "Batch 8". **Batch 8's
+two reviewers were still running when it landed; their fixes follow in later commits, so
+this checklist is of the tree before them.**
+
+A box is ticked only when an end-to-end script covers it (`figures.mjs`, `figkinds.mjs`,
+`zipgaps1.mjs`, `zipgaps2.mjs`: HTTP and Socket.io on the real server, in-process store).
+**The screens are built (`4384844`) but were checked only against local servers, never
+on a real phone, so no screen is ticked.** Nothing ran against a model, Supabase or
+Mongo.
+
+The run for the Batch 8 docs: unit 1232 / 1232, migrations 1708 / 1708, `figures` 51,
+`figkinds` 58, `zipgaps1` 63, `zipgaps2` 64, every older suite passed except
+`offline.mjs`, which stopped on a timeout after 83 passing checks and was not rerun
+(`docs/TESTING.md`, "Batch 8").
+
+**Deploying.** Rooms need none of `0033` to `0035`: all three are route-only. Apply
+`0000` to `0035` in order, and set `HUB_SERVE_TOKEN_SECRET` on the server.
+
+Figures
+- [x] The figure stimulus: nine spec types checked at save, refused with one sentence,
+  drawn as SVG with a description and a data table (`figures.mjs`)
+- [x] A phone gets the drawing only, never the spec, steps or a key; the bank list,
+  review queue and print page get theirs (`figures.mjs`)
+- [x] Stepped figures on the projector, and a figure step added to a hub lesson as a new
+  draft version (`figures.mjs`, `zipgaps2.mjs`)
+- [x] Slide pictures kept from a `.pptx`; the placeholder alt refused; regions left out
+  for students (`figures.mjs`)
+- [ ] Figures on a real phone, the projector wall or a low-end Android; Hindi and Marathi
+  diagram boxes on a device. **Not tested**
+
+Interaction kinds and generation
+- [x] `hotspot`, `label`, `plot`, `numberline` and `chart`: saved, served with
+  per-student tokens and no key, answered and marked over the socket; staff `parts`
+  (`figkinds.mjs`)
+- [x] Figure generation from fixture model replies: keys read off the figure,
+  `figure-key` and `figure-dropped` (`figkinds.mjs`)
+- [ ] The five kinds in hub practice, exams and Get Ready end to end. **Not tested**
+- [ ] A live model filling figure fields. **Not tested**
+- [ ] Tapping, dragging and plotting on a real phone, and their accessibility. **Not
+  tested**
+
+Design-zip gaps
+- [x] Teaching moves and activity prompts (fixture model), "Use it" with `suggestionId`
+  (`zipgaps1.mjs`)
+- [ ] The `teacher:teaching-move` push to a teacher screen (unit test only)
+- [x] Wheel "Question + student", "Another" and the `verbal` ask (`zipgaps1.mjs`)
+- [x] `room.class`, per-level insights, the room's threshold, support against the
+  previous room, the class comparison, `contentId` on hardest items (`zipgaps1.mjs`)
+- [x] `answerKey` on staff answer items (`zipgaps1.mjs`); the review queue's copy is
+  unit-tested only
+- [x] `answerId` echoed on the normal, paused and not-joined answer paths and a
+  not-joined vote (`zipgaps1.mjs`); `server:waiting`, `server:exhausted` and the
+  room-gone refusals were changed in code but not driven end to end
+- [ ] `/sw.js` `no-cache` (unit test with a stand-in build only)
+- [x] Topic sources, supported levels, `lastUsed`, the `writer` switch (`zipgaps2.mjs`)
+- [x] Rooms-only, rooms avoiding practised questions, serve tokens, ending a Get Ready
+  check, `path.why` (`zipgaps2.mjs`)
+- [x] The concept panel and its Visual, kept when a figure is added (`zipgaps2.mjs`)
+- [ ] Every new repo method against a real Supabase or Mongo. **Not tested** (`0033` to
+  `0035` ran on PGlite only)
+- [ ] Every Batch 8 screen on a real phone or projector. **Built, not tested**

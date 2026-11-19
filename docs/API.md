@@ -6452,6 +6452,234 @@ When the console is opened at `localhost`, warn that the projector's QR code the
 phones an address they cannot reach (open the printed LAN link). **Never** show the
 teacher key on the projector, and never offer to open the console from another device.
 
+## Batch 8: figures, interaction kinds and the design-zip server gaps
+
+Committed as `ba0f59d` with migrations `0033` to `0035` (`docs/DATABASE_SCHEMA.md`),
+on top of the UI session's Batch 8 screens (`4384844`). Decided under the owner's
+delegation, 19 Nov 2026 (`docs/PRODUCT_DECISIONS.md`, Batch 8). The room contract's side
+is `CONTRACT.md` Amendment 8. How it works: `docs/ARCHITECTURE.md`, "Figures and
+interaction kinds (Batch 8)". Every change is additive except two hub answer routes,
+which now need a serve token (below).
+
+**Tested, and not.** Over HTTP and Socket.io on the real `createApp` and
+`attachSockets`, in-process store, by `server/scripts/figures.mjs`, `figkinds.mjs`,
+`zipgaps1.mjs` and `zipgaps2.mjs`, plus unit tests (`docs/TESTING.md`). **No model,
+Supabase, Mongo or real phone was used.** Model replies (figure drafts, teaching moves,
+the concept panel) went through the real parsers as fixtures only.
+
+### The figure stimulus
+
+A question's `stimulus` may be `{ kind: 'figure', spec, sourceRef? }`: a JSON spec the
+server checks and draws. Never code, never SVG from anyone, never a model's picture.
+The spec is checked key by key at save time (`POST /api/bank/:contentId/questions`,
+`PATCH /api/bank/question/:id`, `POST /api/bank/bulk` with `action: 'stimulus'`); a bad
+one is a 400 with one sentence, `The figure was not saved: ...`.
+
+| `spec.type` | What it draws | Main keys |
+|---|---|---|
+| `plot` | functions from fixed families only (linear, quadratic, cubic, exponential, logarithmic, sine, cosine, absolute value, piecewise step) with numeric `params`; points, segments, shading | `x`, `y` (`{min,max,step,label}`), `grid`, `functions`, `points`, `segments`, `shade`, `steps` |
+| `chart` | bar, line, pie, histogram, dot plot, box plot | `chart`, `x`, `y`, `categories`, `series`, `slices`, `bins`, `values`, `boxes` |
+| `numberline` | a line with points, intervals and rays | `min`, `max`, `step`, `labelEvery`, `points`, `intervals`, `rays` |
+| `geometry` | points, segments, rays, polygons, circles, angles, vectors; lens and mirror ray diagrams (the image is computed from the formula) | `view`, `grid`, `axes`, `points`, `segments`, `rays`, `polygons`, `circles`, `angles`, `vectors`, `optics`, `steps` |
+| `timeline` | dated events (years, BCE allowed, or year-month-day), in up to four lanes each side | `events` |
+| `diagram` | flowchart, tree, cycle, network, mind map, laid out by Graphviz from DOT the server writes | `layout`, `direction`, `nodes` (at most 25), `edges`, `steps` |
+| `molecule` | a SMILES string RDKit accepts; a stated `formula` must match RDKit's | `smiles`, `name`, `formula` |
+| `pattern` | up to 12 shapes, a blank shown as `?` | `items` |
+| `stack` | frames with steps that push and pop | `frames`, `steps` |
+
+Every spec also takes `title`. Stepped types (`plot`, `geometry`, `diagram`, `stack`)
+take up to 12 `steps` of `{ highlight, caption }` (a stack's steps list frames). The caps
+are `LIMITS` in `server/src/figures/spec.js` (for example a 60-character label, 20,000
+bytes per spec, finite numbers within ±1,000,000), also sent by `GET /api/figures/kinds`.
+An empty plot (axes only) is valid only as the board of a `plot` question.
+
+**What each reader gets.** A phone (room, hub practice, exam, lesson question, offline
+pack, class question) gets `{ kind:'figure', type, title, svg, description, table }`:
+never the spec, the steps or anything that marks. `description` and `table`
+(`{ caption, columns, rows }`) are generated from the spec, never by a model. `svg` may be
+null (an engine not loaded yet); show the description alone then. The bank list
+(`GET /api/bank/:contentId`) adds `figure` (staff view: `ok`, `reason`, `parts`,
+`stepCount`, `steps`, `formula`); the review queue adds `question.figure`.
+
+**Image stimulus regions.** `{ kind:'image', url, alt, regions? }`, each region
+`{ id, label, points: [[x%, y%], ...] }` (0 to 100; at most 24 regions of 3 to 24
+corners). Staff-only: `forStudent` leaves them out, except as the zones of a tap or label
+question.
+
+### The new kinds: hotspot, label, plot, numberline, chart
+
+Twenty-one kinds now. None is in the default mix; a plan's `kindMix` may name them.
+
+| Kind | Levels | Stored keys | Phone gets (`server:question`) | Phone sends | Marking |
+|---|---|---|---|---|---|
+| `hotspot` | Remember, Understand, Analyse | `answerIds` (part names or region ids) | `stimulus`, `zones` (`[{zone}]` on a figure, `[{zone, points}]` on a picture) | `[zone tokens]` | like choose-all |
+| `label` | Remember, Understand | `placements`, `distractors` (up to 3) | `stimulus`, `zones`, `labels` (shuffled, extras included) | `{ zone: labelIndex }` | partial credit per label |
+| `plot` | Apply; Create (conditions only) | `plotKey` (points, a line, or conditions) | `stimulus`, `grid {x, y, frame}`, `place` (`points` or `line`), `maxPoints` | `[[x, y], ...]` (exactly 2 for a line) | within one grid step; points like choose-all, conditions partial |
+| `numberline` | Apply | `lineKey`, `tolerance?` | `stimulus`, `grid {min, max, step, frame}` | `{ points, intervals:[{from,to,fromOpen,toOpen}], rays:[{from,direction,open}] }` | interval ends half each; extra marks cost one each |
+| `chart` | Apply | `bars`, `values`, `tolerance?` | `board {categories, min, max, step, label, xLabel}` | `[height per category]` | per bar |
+
+Zone tokens are opaque and shuffled per student (seeded by `rollNo:questionId`); a tap or
+label figure is drawn again per student with every part name replaced by its token, so
+no part name reaches the phone. "Within one grid step" is strictly less than a step; a
+stated `tolerance` is inclusive. `server:result`'s solution uses the same shapes (the
+right tokens, the placement map, `{place, points|equation|conditions}`, the number-line
+marks, the bar heights). Staff answer items (`GET /api/session/:code/answers`) add
+`parts`: `{ tapped: [names] }` or `{ placed: [{ part, label|null }] }`.
+
+### Figure generation
+
+`POST /api/generate` (and `/preview`): a generated question may carry one `plot`,
+`chart` or `numberline` figure, never another type. The server checks and draws it and,
+where the figure settles the answer, works out the key from it. A model answer that
+disagrees is kept as a draft with a check `figure-key` (with a `basis` fingerprint); a
+figure that fails is dropped with check `figure-dropped`; a kind that needs a figure is
+refused instead. Chart values are compared with the stem's numbers and flagged, never
+changed. A finding goes away once the key or figure is edited. `warnings` gains a
+sentence on which graph, number-line and bar questions the offline templates could
+make.
+
+**The writer switch (M3).** Body `writer: 'auto'` (default) or `'templates'` (the
+built-in writer on purpose); any other value is a 400. The reply adds
+`writer { asked, ran: 'templates'|'model'|'mixed', sentence }`.
+
+### Figure endpoints
+
+| Route | Who | Reply |
+|---|---|---|
+| `GET /api/figures/kinds` | staff | `{ types, stepped, families, charts, diagram{layouts,shapes,lines,arrows}, optics, pattern{shapes,fills,colours}, limits, note }` |
+| `POST /api/figures/preview` | staff (HOD included; writes nothing) | body `{ spec, step? }` gives `{ spec, figure, atStep? }`, or 400 with one sentence |
+| `GET /api/figures/content/:contentId/slide-pictures` | owner; HOD reads; else the same 404 | `{ pictures:[{ id, url, slide, mime, bytes, alt }], kept, summary or null, note }` |
+| `GET /api/figures/content/:contentId/print` | as above | an HTML page: each approved figure question with its text, SVG, description and table; no answers; CSP `default-src 'none'` |
+| `POST /api/hub/lessons/:lessonId/figures` | the chapter's professor (HOD 403; teacher key 401; 503 without Supabase) | body `{ spec, text?, after?, slides? }` gives 201 `{ lesson, message }`: a new draft version with the figure step, keeping the version's concept-panel sections |
+
+### Slide pictures and regions
+
+A `.pptx` upload (`POST /api/content`) keeps the deck's PNG, JPEG and WebP pictures as the
+chapter's uploads (at most 60, each once at the first slide showing it, metadata
+stripped; `0033`). When the deck had any, the reply adds `slidePictures { kept,
+skippedType, skippedLarge, skippedOver, slides, keptAt, note }`; otherwise the reply is
+as before. Each picture's alt is `Picture from slide N (not yet described)`, and
+attaching one to a question is refused until the professor writes the alt. Regions:
+above, under "Image stimulus regions".
+
+### Stepped figures on the projector
+
+`PATCH /api/session/:code/projector` accepts `step` (0 to `stepCount`; 0 is the figure
+itself). The reply's `screen` carries `step`; `shows.question.stimulus` and
+`shows.diagram.stimulus` (and `projector:state`) carry `type, title, svg, description,
+table, step, stepCount, caption` for a figure. Changing the question, diagram or mode
+resets the step. Hub lessons send every step at once: a lesson step of type `'figure'`
+carries `text`, `html` and `figure { svg, description, table, steps:[{caption, svg,
+description}] }` (staff views add `spec`). It is stored as a `chunk` step carrying
+`figure`.
+
+### The design-zip gaps
+
+**Teaching moves and activity prompts, the wheel (`0034`).**
+
+| Route or event | Who | What changed |
+|---|---|---|
+| `GET /api/session/:code/teaching-moves` | staff, read rule | `{ room, label: 'AI suggestion, your call', modelReady, offline?, kinds, suggestions:[{ id, purpose (move or prompt), kind, title, text, focus, topic, basis, sourceRef, label, askedAt, used }], note }` |
+| `POST /api/session/:code/teaching-moves` | staff, write rule (HOD 403) | body `{ kind?, topic? }`. No kind: a teaching move (L1; 409 before any graded answer). A kind (`check`, `think`, `group`, `diagram`, `real`): that activity's prompt (C2). 202 `{ state:'running', requestId, ... }`; 200 `{ state:'offline', message }` with no model; 409 for a closed room or a request already running |
+| `GET /api/session/:code/teaching-moves/requests/:requestId` | the professor who asked | `{ id, state (running, done or failed), suggestion, message }`; kept in memory 15 minutes |
+| socket `teacher:teaching-move` | the room's teacher screens | `{ code, requestId, state, suggestion or null, message or null }` |
+| `POST /api/session/:code/activities` | staff, write rule | optional `suggestionId` (a suggestion of this room); `kind` then defaults to the suggestion's |
+| `POST /api/session/:code/wheel/draw` | staff, write rule | optional `withQuestion: true`: the server draws a question too; the pick carries `question` and `questionDraw { order, poolSize, drawnAt, draws }` |
+| `POST /api/session/:code/wheel/picks/:pickId/next-question` | staff, write rule | "Another": never repeats a question drawn for the pick; 409 when none is left |
+| `PATCH .../wheel/picks/:pickId`, `GET .../wheel` | staff | **verbal ask type**: ask `'verbal'` (`Verbal question`), with no bank question |
+
+A move is built from the room's counts only (per level, the support band, not answered,
+present) and the professor's own slides; it cites a slide and is refused whole if it
+breaks a rule (kind, 500 characters, contact details, labelling words, a slide it was not
+offered). Never repaired, never invented.
+
+**Per-room levels, per-level insights, support against the previous room.**
+- `GET /api/session` rows, room heads (`answers`, `topics`, `items`, attendance) and
+  insights add `room.class { id, courseName, section, termLabel }` or null. Never on the
+  phone's `GET /api/session/:code`.
+- `GET /api/session/:code/insights` (and `teacher:insights`): `series.points[].levels`
+  (every level: `{ accuracy, answers, correct }`, accuracy null with no answers),
+  `series.threshold { goal, sentence }` (the room's own mastery goal, not a fixed 60%),
+  `kpis.support.previousRoom { room, students, compared, then, now, change, sentence }`
+  or null (only students below 40% now who answered in the class's previous room, pooled
+  right of answered on both sides).
+- `GET /api/classes/:id/analytics`: `comparison { previous, latest, levels[6],
+  levelBands[3], sentence }` or null (the newest two rooms; change in points) and
+  `hardest.items[].contentId`. Per-room levels were already in `roomReport`.
+
+**Topic slides, supported levels, last used (M1, M2, M5).** `GET /api/content/:id` adds
+`topicSources[]` (`{ topic, kind: 'slides'|'line'|null, slides, line, label, note? }`, for
+example "Slides 3–4"), `levelSupport { topics:[{ topic, supports, levels:[{ level, label,
+supported, kind, reason }] }], note }` (from the built-in writer's honest-fit check) and
+`lastUsed { at, code, status }` or null. `GET /api/content` rows add `lastUsed`. The
+template switch is `writer`, under "Figure generation".
+
+**Rooms-only, serve tokens, ending Get Ready (`0035`).**
+- `PUT /api/bank/question/:id/rooms-only`, owner only (HOD 403; else 404), body
+  `{ roomsOnly: true|false }`, reply `{ question, changed, roomsOnly, message }`. The hub
+  never serves, shows or explains such a question; rooms are unaffected. Staff lesson
+  question rows add `roomsOnly` and a note.
+- **Serve tokens.** `GET /api/hub/practice/next` and each question of a student's
+  `GET /api/hub/topics/:topicId/lesson` carry `serveToken`. `POST
+  /api/hub/practice/attempts` and `POST
+  /api/hub/lessons/:lessonId/questions/:questionId/attempts` now **need** it: missing, for
+  another account, question or mode, or older than 7 days, is a 409 with a sentence and
+  nothing stored. A resend of an attempt already stored needs none. A deployment must set
+  `HUB_SERVE_TOKEN_SECRET` (it defaults to a fixed dev value); `HUB_SERVE_TOKEN_HOURS`
+  sets the expiry (default 168).
+- A signed-in student's room avoids, at the level it chose, a question they practised in
+  the hub while another of that level is left. Staff `GET
+  /api/session/:code/students/:roll/card` and `GET
+  /api/classes/:id/attainment/students/:studentId` add `practisedInHub` and
+  `practisedNote` on such answers.
+- `POST /api/hub/getready/:checkId/end` (the student who owns it; staff 403):
+  undecided prerequisites become Not sure yet and the asked question is released. Reply
+  `{ changed, check { ..., endedEarly, note }, prerequisites, sentence, path }`; ending an
+  ended check changes nothing. Check reads add `path.why { sentence, changes, source }`.
+
+**Concept panel (H9a to H9c).** Lesson reads (staff `GET /api/hub/lessons/:lessonId`, the
+topic's lesson list; student `GET /api/hub/topics/:topicId/lesson`) add `sections
+{ available, label, intro, facts, steps, example { language, body, html, caption, cite },
+mistakes, note, visual }`. Written by the model for AI lessons only; each piece cites
+lesson parts or is dropped; an AI draft exactly while its lesson is (staff see `aiDraft`).
+`visual { available, figures:[{ step, title, stepCount, cite }], note }` points into the
+same reply's `steps`, so a figure is sent once; it is present whether or not
+`sections.available` is true.
+
+### Answer echoes, `sw.js` and `answerKey`
+
+- **`answerId` echoed.** `session:rejected`, `session:paused`, `session:closed`,
+  `server:waiting` and `server:exhausted` now carry `questionId` + `answerId` (answers) or
+  `classQuestionId` + `answerId` (votes); `class:vote` carries `classQuestionId` +
+  `answerId`. Echoed only when it has the server's key shape.
+- **`/sw.js`** is served with `Cache-Control: no-cache`; other hashed assets stay
+  immutable, the shell `no-store`.
+- **`answerKey` on staff lists**: room answers, attainment detail, the analytics teacher
+  view, the student card and `GET /api/review` items. Never on a student's own copy. On
+  the review queue `answerId` stays the row id the review routes take.
+
+### What the screens need
+
+The UI session built these screens in `4384844` and checked them against local servers
+only, never on a real phone. What they must keep doing:
+- **Figures:** insert `stimulus.svg` as markup (it passed the allow-list), scale to
+  width, offer the description and a "Show the data" table, and show the description
+  alone when `svg` is null. Keep figures on a light card in a dark theme.
+- **Interaction kinds:** send zone tokens, never part names; never mark on the phone;
+  offer keyboard and typed input (tab through zones, a number box per bar).
+- **Projector:** Back, Next and Start over send `step`; show "Step n of m".
+- **Hub:** keep each question's `serveToken` and send it with the answer; the offline
+  outbox must store it (it lasts 7 days). On the 409 sentence, keep the answer and offer
+  to reopen the question.
+- **Live screen:** show a teaching move with its basis sentence and "AI suggestion, your
+  call"; on `offline`, show the server's message, never a template suggestion. Hide the
+  button for an HOD.
+- **Wheel:** never pick the question on the client; show `draw.note` when the pool
+  widened.
+- **Phone outbox:** match replies by `answerId`, including every refusal above.
+- **Student card and attainment:** show `practisedNote` as a neutral note, never as a
+  label on the student.
+
 ## Known open issues
 
 Phase 7 (offline-first), open. None is a failing test; each is a gap, a limit or an

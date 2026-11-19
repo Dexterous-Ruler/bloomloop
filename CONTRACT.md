@@ -70,6 +70,28 @@ Installed and available: `express`, `cors`, `socket.io`, `mongoose`, `multer`, `
 >   contract on the in-process store, with every network service off. Its shapes, and
 >   the import's, are in `docs/API.md`, "Phase 7: offline-first", and are not frozen here.
 > - No new npm dependency (decision O5).
+>
+> **Amendment 8 (19 Nov 2026, Batch 8, decided under the owner's delegation; decisions 1,
+> 4 and 5 and "Batch 8" in `docs/PRODUCT_DECISIONS.md`).** Additive only; a client that
+> sends none of the new fields gets the old behaviour. Shapes: `docs/API.md`, "Batch 8".
+> - **Section 3: the figure stimulus.** `Question.stimulus` may be
+>   `{ kind: 'figure', spec, sourceRef? }`: a JSON spec of one of nine types that the
+>   server checks and draws. A phone gets `{ kind, type, title, svg, description, table }`
+>   only, never the spec, its steps or anything that marks; `projector:state`'s question
+>   and diagram stimulus may add `step`, `stepCount` and `caption`. Section 6 rule 1's
+>   "drawn by code from data" means exactly this: no raw SVG, no code and no expression
+>   parsing from anyone, and never image-model output.
+> - **Sections 3 and 5: five new kinds** (21 in all): `hotspot`, `label`, `plot`,
+>   `numberline`, `chart`, marked on the server. Their keys (`answerIds`, `placements`,
+>   `distractors`, `plotKey`, `lineKey`, `bars`, `values`, and `tolerance`) never reach a
+>   phone; `server:question` carries zones as per-student tokens, grids or an empty board,
+>   and `student:answer` sends tokens or coordinates.
+> - **Section 5: `answerId` echoed.** `session:rejected`, `session:paused`,
+>   `session:closed`, `server:waiting`, `server:exhausted` and `class:vote` now carry
+>   `answerId` with `questionId` (an answer) or `classQuestionId` (a vote), when the
+>   `answerId` has the server's key shape, so an outbox matches every reply by key. New
+>   staff event `teacher:teaching-move`; the model behind it runs only on the
+>   professor's press, from the room's counts (rule 2 holds for the live loop itself).
 
 ---
 

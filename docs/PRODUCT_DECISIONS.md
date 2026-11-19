@@ -181,7 +181,9 @@ MIT), never a generated bitmap.
 
 **Status: decided under the owner's delegation, 19 Nov 2026.** Approved: figures
 rendered deterministically from data (code-rendered SVG plots and diagrams) are
-allowed; image-model output is not. **What was built:** nothing yet.
+allowed; image-model output is not. **What was built:** nothing yet. **Built in Batch 8 (`ba0f59d`, 19 Nov 2026):** the
+figure engines, five interaction kinds and figure generation ("Batch 8: the visuals
+decisions", at the end).
 
 **Revised the same day (about 13:00), under the delegation, when the owner asked again
 for "graphical patterns like in maths".** The half that said no graph question kind
@@ -1737,7 +1739,8 @@ same exposure as practising it.
    lessons and hints until the student finishes it, and each open check adds a few reads
    to every practice request.
 
-None of the four is built. Until they are, the exposure above stands.
+None of the four is built. Until they are, the exposure above stands. **Built in Batch 8 (`ba0f59d`, 19 Nov 2026)**, with
+serve tokens for item 3 ("Batch 8: the shared-bank rules", at the end).
 
 ### Phase 6: open items for the owner
 
@@ -1941,3 +1944,110 @@ answers keep their question ids).
 
 The directive says to consider adaptive paper cards last. They are not built and not
 designed; nothing in Phase 7 depends on them.
+
+### Batch 8 in brief: figures, interaction kinds and the design-zip gaps
+
+Server and database committed as `ba0f59d` (`0033` to `0035`); the screens are the UI
+session's (`4384844`), checked against local servers only, never on a real phone. Every
+choice below was **decided under the owner's delegation, 19 Nov 2026**. The research
+behind the visuals is `reports/BloomLoop visuals research.md`; the gaps are
+`docs/UI_ZIP_AUDIT.md`. Batch 8's two reviewers were still running when it landed, so
+their fixes follow.
+
+### Batch 8: the visuals decisions
+
+- **Code-drawn figures only, never image-model output** (decision 4 as revised). The
+  model and the professor describe a figure as data; the server checks it and draws it.
+  No code, raw SVG or expression is accepted from anyone: functions come only from fixed
+  families with numeric parameters, so there is no expression evaluator.
+- **Maps are not generated.** Indian law makes publishing a map of India that does not
+  match the Survey of India's punishable (Criminal Law Amendment Act, 1961). Maps come
+  only from the professor's own pictures. Generated maps wait for a compliant boundary
+  source **and a lawyer's confirmation**.
+- What code cannot draw (anatomy, apparatus, artworks, maps) is the professor's own
+  picture, for example one kept from their slides. A slide picture keeps the alt
+  "Picture from slide N (not yet described)" and must be described before use. At most
+  60 pictures per deck, each once at the first slide showing it.
+- The model may draw only a plot, a chart or a number line, the types whose answers the
+  server can read. Its figure is never repaired: one that fails is dropped with a
+  sentence. A key read off a figure is used and the disagreement flagged; chart values
+  that disagree with the stem's numbers are flagged, not changed.
+- The molecule's stated formula must match RDKit's (condensed forms such as `C2H5OH`
+  are accepted). Graphviz boxes are sized from our own grapheme measurement, so Hindi
+  and Marathi fit. Figure labels are not translated.
+- A lesson figure is stored as a `chunk` step carrying `figure`, because re-running
+  `0027` re-adds its step-type check. The room archive keeps drawings only within 1 MiB.
+  The render cache holds 400 entries.
+- Image regions are staff-only except as the zones of a tap or label question.
+
+**The five interaction kinds.** Levels: `hotspot` at Remember, Understand and Analyse;
+`label` at Remember and Understand; `plot` at Apply, and at Create only with conditions
+that leave more than one line; `numberline` and `chart` at Apply. None is in the default
+mix, as for `numeric`: a chapter with no figure would push the model into drawing one.
+"Within a grid step" means strictly less than one step; a stated tolerance is inclusive.
+Hotspot and plot points are marked like choose-all; label and conditions get partial
+credit; a number line's interval ends are worth half each and extra marks cost one each;
+a chart is marked per bar. Zone tokens are shuffled per student, so no part name reaches
+a phone.
+
+### Batch 8: the shared-bank rules (the Phase 6 decision, as built)
+
+- **Rooms only** is a per-question switch the owner sets. The hub never serves, shows or
+  explains such a question (practice, reviews, lessons, self-tests, Get Ready, hints and
+  the student's own error log); staff still see it. Rooms are unaffected.
+- **Rooms avoid practised questions.** For a signed-in student, the selector avoids, at
+  the level it chose, a question they practised in the hub while another of that level
+  is left. Such an answer still counts; staff see a neutral note, never a label on the
+  student.
+- **Serve tokens**, chosen over a table of served questions: practice and lesson answers
+  are taken only with the server's signed token from the serving reply. A 7-day expiry,
+  because offline outboxes replay late; a resend of a stored answer needs none. The
+  secret is `HUB_SERVE_TOKEN_SECRET`; its fixed dev default means a restart does not
+  refuse answers waiting on phones, so **a deployment must set its own**.
+- **A student can end a Get Ready check.** Undecided prerequisites become Not sure yet
+  and the question it was asking is released. Ending a check already complete settles it
+  as complete.
+
+### Batch 8: the design-zip choices
+
+- **Teaching moves and activity prompts (L1, C2), under decisions 1 and 5.** Only on the
+  professor's button, in the background. Built from the room's counts (never a name or
+  an answer) and the professor's own slides; it cites its slide, is labelled "AI
+  suggestion, your call", and is refused whole if it breaks a rule. It is never repaired
+  or invented, and with no model the server says so instead of offering a template. A
+  move needs graded answers; a prompt can be asked at any time in an open room.
+- **The wheel's "Question + student" (W2)** draws on the server, preferring questions not
+  yet asked in the room, never repeating within a pick, polls left out.
+- **`verbal` is a fourth wheel ask**, with no bank question.
+- **Support against the previous room (gap 6)** is like for like: only students below
+  40% now who answered in the class's previous room, pooled right of answered on both
+  sides. The class comparison (A1) is the newest two rooms.
+- **Insights' threshold** is the room's own mastery goal, not a fixed 60%.
+- **Supported levels (M2)** are the built-in templates' honest-fit reading; the AI writer
+  may manage a level it marks unsupported, and the note says so.
+- **The concept panel (H9)** is the model's sections (introduction, facts, explanation,
+  code example, mistakes), each citing the lesson parts it came from or dropped, an AI
+  draft exactly while its lesson is, plus a Visual that points at the professor's own
+  stepped figure. The figure is never written by the model and is sent once.
+
+### Batch 8: open items
+
+- **Maps:** a lawyer must confirm before any generated map, and a compliant boundary
+  source is needed.
+- **`HUB_SERVE_TOKEN_SECRET`** must be set on the deployed server.
+- **The reviewers' fixes** were not in `ba0f59d`.
+- Regenerating a rooms-only question does not copy the switch; regenerating a lesson
+  drops a figure the professor added; concept sections are approved or discarded only
+  with their whole lesson.
+- A self-test or lesson built before a question went rooms-only stops showing it, and an
+  answer to it then cannot be sent.
+- The practised set is read when a phone joins a room, so practice during the room is
+  not seen until it joins again.
+- "Question + student" may draw plot, number-line, chart, tap or label questions, which
+  are hard to answer aloud; whether to leave them out is open. A drawn figure question
+  shows as text on the console until it is put on the projector.
+- The hint leak check and item statistics do not cover the five new kinds; class
+  questions do not offer them.
+- Teaching moves and wheel draws are not in a deleted room's archive or a laptop import.
+- Not tested: a live model, Supabase, Mongo, a real phone or a low-end Android device,
+  and Hindi or Marathi diagram boxes on a device.
