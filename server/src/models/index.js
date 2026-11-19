@@ -351,6 +351,8 @@ const attendanceSchema = new Schema(
     source: { type: String, enum: ['joined', 'teacher'], required: true },
     markedAt: { type: String, default: () => new Date().toISOString() },
     markedBy: { type: String, default: null },
+    // 0021: the roll number the mark was made under; null before it.
+    rollNo: { type: String, default: null },
   },
   { versionKey: false },
 );
@@ -485,5 +487,71 @@ const projectorLinkSchema = new Schema(
   { versionKey: false },
 );
 export const ProjectorLink = model('ProjectorLink', projectorLinkSchema);
+
+// Course outcomes (supabase/migrations/0019). Ids are strings, as for the
+// roster. One code per class among outcomes not archived: the partial index
+// matches archivedAt null by type, the form a partial filter accepts.
+const courseOutcomeSchema = new Schema(
+  {
+    classId: { type: String, required: true, index: true },
+    code: { type: String, required: true, maxlength: 16 },
+    statement: { type: String, required: true, maxlength: 300 },
+    targetLevel: { type: String, enum: [...LEVELS, null], default: null },
+    position: { type: Number, required: true, min: 1 },
+    archivedAt: { type: String, default: null },
+    createdAt: { type: String, default: nowIso },
+    updatedAt: { type: String, default: nowIso },
+  },
+  { versionKey: false },
+);
+courseOutcomeSchema.index({ classId: 1, code: 1 }, { unique: true, partialFilterExpression: { archivedAt: { $type: 'null' } } });
+export const CourseOutcome = model('CourseOutcome', courseOutcomeSchema);
+
+// topicKey is the topic in lower case: one topic per chapter per outcome, as
+// Postgres's unique index on lower(topic) has it.
+const outcomeTopicSchema = new Schema(
+  {
+    outcomeId: { type: String, required: true, index: true },
+    classId: { type: String, required: true, index: true },
+    contentId: { type: String, required: true },
+    topic: { type: String, required: true, maxlength: 160 },
+    topicKey: { type: String, required: true },
+    weight: { type: Number, default: 1, min: 0.001, max: 100 },
+    createdAt: { type: String, default: nowIso },
+  },
+  { versionKey: false },
+);
+outcomeTopicSchema.index({ outcomeId: 1, contentId: 1, topicKey: 1 }, { unique: true });
+export const OutcomeTopic = model('OutcomeTopic', outcomeTopicSchema);
+
+const questionOverrideSchema = new Schema(
+  {
+    classId: { type: String, required: true },
+    questionId: { type: String, required: true },
+    outcomeIds: { type: [String], default: () => [] },
+    excluded: { type: Boolean, default: false },
+    updatedAt: { type: String, default: nowIso },
+    updatedBy: by,
+  },
+  { versionKey: false },
+);
+questionOverrideSchema.index({ classId: 1, questionId: 1 }, { unique: true });
+export const QuestionOutcomeOverride = model('QuestionOutcomeOverride', questionOverrideSchema);
+
+// A class's attainment formula, one document per saved version
+// (supabase/migrations/0020). Append-only: the repository never updates one.
+const attainmentConfigSchema = new Schema(
+  {
+    classId: { type: String, required: true },
+    version: { type: Number, required: true, min: 1 },
+    // Validated by services/attainment.js before it is saved.
+    config: { type: Schema.Types.Mixed, required: true },
+    createdAt: { type: String, default: nowIso },
+    createdBy: by,
+  },
+  { versionKey: false, minimize: false },
+);
+attainmentConfigSchema.index({ classId: 1, version: 1 }, { unique: true });
+export const AttainmentConfig = model('AttainmentConfig', attainmentConfigSchema);
 
 export { levelCounter };

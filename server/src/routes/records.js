@@ -39,7 +39,7 @@ import { servableFor } from '../services/selector.js';
 import { sessionSettings } from '../services/mastery.js';
 import { pushProjector, showPick } from '../services/projector.js';
 import { scheduleInsights } from '../services/insights.js';
-import { ATTENDANCE_LOCK } from '../services/roster.js';
+import { ATTENDANCE_LOCK, markRollNo } from '../services/roster.js';
 import {
   ACTIVITY_KINDS,
   GROUP_RESULTS,
@@ -445,7 +445,7 @@ async function markPickAbsent(session, pick, markedBy) {
   const repo = getRepo();
   const release = await lockProfile(session._id, ATTENDANCE_LOCK);
   try {
-    const roster = await repo.listClassStudents(session.classId);
+    const [roster, marks] = await Promise.all([repo.listClassStudents(session.classId), repo.listAttendance(session._id)]);
     const student = roster.find((s) => String(s._id) === String(pick.classStudentId) && !s.removedAt);
     if (!student) {
       return { marked: false, reason: `${pick.rollNo} has been removed from the roster, so has no attendance to mark.` };
@@ -457,6 +457,7 @@ async function markPickAbsent(session, pick, markedBy) {
       source: 'teacher',
       markedAt: new Date().toISOString(),
       markedBy,
+      rollNo: markRollNo(marks, roster)(student._id),
     }]);
     return { marked: true, status: 'absent', studentId: String(student._id) };
   } finally {

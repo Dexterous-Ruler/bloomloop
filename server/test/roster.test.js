@@ -17,6 +17,7 @@ import {
   classGrid,
   cleanName,
   markJoined,
+  markRollNo,
   marksFrom,
   marksFromJoins,
   nameProblem,
@@ -250,6 +251,17 @@ describe('a join marks attendance, and never over the professor', () => {
     assert.equal(m.status, 'present');
     assert.equal(m.source, 'joined');
     assert.equal(m.markedBy, null);
+    assert.equal(m.rollNo, '21CS01', 'the roll number the phone joined with, in the roster\'s form (0021)');
+  });
+
+  test('a teacher mark is made under the roll number the room\'s mark already carries, else the roster\'s now (0021)', () => {
+    const roster = [student('a', '21CS11', 'Asha'), student('b', '21CS02', 'Bilal')];
+    // Asha joined as 21CS01, and her roll number was corrected to 21CS11 since.
+    const rollOf = markRollNo([{ classStudentId: 'a', rollNo: '21CS01' }, { classStudentId: 'b', rollNo: null }], roster);
+    assert.equal(rollOf('a'), '21CS01', 'kept: the room\'s answers were given under it');
+    assert.equal(rollOf('b'), '21CS02', 'a mark from before 0021 has none: the roster\'s now');
+    assert.equal(markRollNo([], roster)('b'), '21CS02', 'no mark yet: the roster\'s now');
+    assert.equal(markRollNo([], roster)('x'), null);
   });
 
   test('the professor\'s mark wins over a later join', async () => {
@@ -339,7 +351,7 @@ describe('a class room\'s archive', () => {
     const [asha, bilal] = await repo.addClassStudents(cls._id, [{ rollNo: '21CS01', name: 'Asha' }, { rollNo: '21CS02', name: 'Bilal' }]);
     const session = await repo.createSession({ code: 'ARC001', contentId: 'c', title: 'R', status: 'closed', classId: cls._id });
     await repo.saveAttendance([
-      { sessionId: session._id, classStudentId: asha._id, status: 'present', source: 'joined', markedAt: '2026-11-19T09:01:00.000Z', markedBy: null },
+      { sessionId: session._id, classStudentId: asha._id, status: 'present', source: 'joined', markedAt: '2026-11-19T09:01:00.000Z', markedBy: null, rollNo: '21CS01' },
       { sessionId: session._id, classStudentId: bilal._id, status: 'absent', source: 'teacher', markedAt: '2026-11-19T09:10:00.000Z', markedBy: 'prof-1' },
     ]);
     const { doc, json } = await buildRoomArchive(repo, session);
@@ -353,6 +365,28 @@ describe('a class room\'s archive', () => {
       ['present', 'joined', 'Asha', '2026-11-19T09:01:00.000Z', asha._id],
     );
     assert.deepEqual([byRoll['21CS02'].status, byRoll['21CS02'].markedBy], ['absent', 'prof-1']);
+  });
+
+  test('keeps the roll number each mark was made under (0021), apart from the roster\'s; an older mark or archive has none', async () => {
+    const repo = createMemoryRepo();
+    const cls = await repo.createClass({ courseName: 'Networks', section: 'TY-CSF B' });
+    const [asha, bilal] = await repo.addClassStudents(cls._id, [{ rollNo: '21CS01', name: 'Asha' }, { rollNo: '21CS02', name: 'Bilal' }]);
+    const session = await repo.createSession({ code: 'ARC003', contentId: 'c', title: 'R', status: 'closed', classId: cls._id });
+    await repo.saveAttendance([
+      { sessionId: session._id, classStudentId: asha._id, status: 'present', source: 'joined', markedBy: null, rollNo: '21CS01' },
+      { sessionId: session._id, classStudentId: bilal._id, status: 'absent', source: 'teacher', markedBy: null },
+    ]);
+    await repo.updateClassStudent(asha._id, { rollNo: '21CS11' });
+    const { json } = await buildRoomArchive(repo, session);
+    const back = decodeRoomArchive(JSON.parse(json));
+    const byId = Object.fromEntries(back.attendance.map((m) => [m.classStudentId, m]));
+    assert.deepEqual([byId[asha._id].rollNo, byId[asha._id].markedRollNo], ['21CS11', '21CS01'], 'the roster\'s now, and the mark\'s');
+    assert.equal(byId[bilal._id].markedRollNo, null);
+    // An archive from before 0021: no markedRollNo column at all.
+    const old = JSON.parse(json);
+    old.attendance.rows = old.attendance.rows.map((r) => r.filter((_, i) => old.attendance.cols[i] !== 'markedRollNo'));
+    old.attendance.cols = old.attendance.cols.filter((c) => c !== 'markedRollNo');
+    assert.deepEqual(decodeRoomArchive(old).attendance.map((m) => m.markedRollNo), [null, null]);
   });
 
   test('a room with no class has no attendance table; an older archive decodes with none', async () => {
@@ -408,8 +442,10 @@ describe('the Supabase repo\'s roster and attendance requests', () => {
       assert.equal(seen[1].url.searchParams.get('on_conflict'), 'session_id,class_student_id');
       assert.match(seen[1].prefer, /resolution=ignore-duplicates/);
       assert.deepEqual(joined, { created: false }, 'nothing came back: the student already had a mark');
+      assert.equal(seen[1].body.roll_no, null, 'a mark sent with no roll number stores none (0021)');
 
-      const [m] = await repo.saveAttendance([{ sessionId: ROOM, classStudentId: STUDENT, status: 'late', source: 'teacher', markedBy: null }]);
+      const [m] = await repo.saveAttendance([{ sessionId: ROOM, classStudentId: STUDENT, status: 'late', source: 'teacher', markedBy: null, rollNo: '21CS01' }]);
+      assert.equal(seen[2].body[0].roll_no, '21CS01', 'the roll number the mark is made under (0021)');
       assert.match(seen[2].prefer, /resolution=merge-duplicates/);
       assert.equal(seen[2].url.searchParams.get('on_conflict'), 'session_id,class_student_id');
       assert.deepEqual([m.status, m.source, m.classStudentId], ['late', 'teacher', STUDENT]);
@@ -438,5 +474,8 @@ describe('the Mongo schemas', () => {
     assert.equal('phone' in row, false);
     assert.equal('email' in row, false);
     assert.equal(new Attendance({ sessionId: 's', classStudentId: 'c', status: 'excused', source: 'teacher' }).validateSync()?.errors?.status?.kind, 'enum');
+    assert.equal(new Attendance({ sessionId: 's', classStudentId: 'c', status: 'present', source: 'joined', rollNo: '21CS01' }).rollNo, '21CS01',
+      'the mark keeps its roll number (0021)');
+    assert.equal(new Attendance({ sessionId: 's', classStudentId: 'c', status: 'present', source: 'joined' }).rollNo, null);
   });
 });

@@ -5,7 +5,7 @@ other SQL files to run.
 
 ## Applying
 
-Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0018`).
+Run every file in `migrations/`, in number order (`0000`, `0001`, ... `0021`).
 
 `0013` must be in place before the Phase 2 server is deployed: every generated
 question is saved with columns it adds, and the server's boot probe falls back to
@@ -25,6 +25,20 @@ checks them and the `projector_links` table. `0018` changes no row; existing roo
 get the values that reproduce how they ran (Student devices, adapting, from
 Understand, no cap, no time per question), and `sessions.status` now also allows
 `waiting`.
+
+Phase 4 adds three files, applied in this order: `0019` (course outcomes and their
+mappings), `0020` (attainment formulas) and `0021` (the roll number an attendance mark
+was made under). The boot probe checks none of them.
+- `0019` and `0020` add tables no room needs: a server deployed before them keeps every
+  room working, and only the outcome and attainment routes fail, naming the missing
+  table. Apply them before anyone uses those routes.
+- **`0021` must be applied before the server is deployed.** The server writes
+  `attendance.roll_no` with every attendance mark, so without it every mark would be
+  refused: a phone's join would mark nobody, and a professor's marks would fail.
+  `0021` adds one nullable column, changes no row and backfills nothing; a mark made
+  before it has no roll number.
+
+None of the three has run anywhere but PGlite (`npm run migrations`).
 
 `0011` creates its index only if no two accounts in one department hold the same
 roll number once trimmed, single-spaced and upper-cased. If some do, it raises a

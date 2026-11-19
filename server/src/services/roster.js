@@ -17,6 +17,7 @@
 // never blended into accuracy (decision 3's safe default, PRODUCT_DECISIONS.md).
 
 import { rollKey } from './accounts.js';
+import { parseCsv } from './csv.js';
 
 /**
  * What a phone may join with (and so what a roster may hold): letters, digits,
@@ -54,7 +55,8 @@ export const JOINED_CAVEAT =
   + 'so a typed roll number is not proof of who was holding the phone.';
 
 // The keys a roster row may carry. Anything else (a phone number, an email) is
-// left out of what is stored and named back in `ignoredFields`.
+// left out of what is stored and named back in `ignoredFields` (a CSV import
+// names unread columns in `ignoredColumns` instead: rosterFromCsv).
 const ROW_KEYS = new Set(['roll', 'rollNo', 'name']);
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
@@ -149,6 +151,18 @@ export function classFields(body = {}, { partial = false } = {}) {
   return out;
 }
 
+/** Why a row was refused, as a word a screen or the CSV import can sort by. The sentence is in `reason`. */
+export const REFUSAL = Object.freeze({
+  notARow: 'not-a-row',
+  noRoll: 'no-roll',
+  badRoll: 'bad-roll',
+  badName: 'bad-name',
+  onRoster: 'on-roster',
+  removed: 'removed',
+  repeated: 'repeated',
+  full: 'class-full',
+});
+
 /** Roll-number order, numerically, so '2' comes before '10'. */
 export function byRoll(a, b) {
   return String(a.rollNo).localeCompare(String(b.rollNo), undefined, { numeric: true });
@@ -163,13 +177,19 @@ export function byRoll(a, b) {
  * student's roll number is refused with "restore them" rather than added as a
  * second row, because their answers and attendance hang off the first.
  *
- * @returns {{ accepted: {index, rollNo, name}[], refused: {index, roll, name, reason}[], ignoredFields: string[] }}
+ * Each refusal also carries a `code` (REFUSAL), so the CSV import can list
+ * duplicates and removed students apart without reading the sentences.
+ * `maxRows` is how long one request's list may be: MAX_CLASS_SIZE for a pasted
+ * list; the CSV import allows a longer file (MAX_CSV_ROWS) and its rows past the
+ * class's room are refused one by one, with their lines, by the same rule.
+ *
+ * @returns {{ accepted: {index, rollNo, name}[], refused: {index, roll, name, code, reason}[], ignoredFields: string[] }}
  */
-export function validateRoster(list, existing = []) {
+export function validateRoster(list, existing = [], { maxRows = MAX_CLASS_SIZE } = {}) {
   if (!Array.isArray(list)) throw fail('students must be a list of { roll, name }.', 400);
   if (!list.length) throw fail('students is empty: send at least one { roll, name }.', 400);
-  if (list.length > MAX_CLASS_SIZE) {
-    throw fail(`students lists ${list.length} rows; ${MAX_CLASS_SIZE} is the most one request may add.`, 400);
+  if (list.length > maxRows) {
+    throw fail(`students lists ${list.length} rows; ${maxRows} is the most one request may add.`, 400);
   }
 
   const held = new Map(existing.map((s) => [s.rollNo, s]));
@@ -181,34 +201,37 @@ export function validateRoster(list, existing = []) {
 
   list.forEach((row, index) => {
     if (!row || typeof row !== 'object' || Array.isArray(row)) {
-      refused.push({ index, roll: null, name: null, reason: 'not a { roll, name } object' });
+      refused.push({ index, roll: null, name: null, code: REFUSAL.notARow, reason: 'not a { roll, name } object' });
       return;
     }
     for (const k of Object.keys(row)) if (!ROW_KEYS.has(k)) ignored.add(k);
 
     const given = row.roll ?? row.rollNo;
-    const refuse = (reason) => refused.push({
+    const refuse = (code, reason) => refused.push({
       index,
       roll: given === undefined || given === null ? null : String(given),
       name: typeof row.name === 'string' ? row.name : null,
+      code,
       reason,
     });
 
-    if (given === undefined || given === null || String(given).trim() === '') return refuse('the roll number is missing');
+    if (given === undefined || given === null || String(given).trim() === '') return refuse(REFUSAL.noRoll, 'the roll number is missing');
     const rollNo = rosterRoll(given);
     if (!rollNo) {
-      return refuse('the roll number is not one a phone can join with: letters, digits, spaces and . _ - / only, '
+      return refuse(REFUSAL.badRoll, 'the roll number is not one a phone can join with: letters, digits, spaces and . _ - / only, '
         + 'starting with a letter or digit, at most 24 characters');
     }
     const name = cleanName(row.name);
     const problem = nameProblem(name);
-    if (problem) return refuse(problem);
+    if (problem) return refuse(REFUSAL.badName, problem);
 
     const prior = held.get(rollNo);
-    if (prior && !prior.removedAt) return refuse(`roll number ${rollNo} is already on this class's roster`);
-    if (prior) return refuse(`roll number ${rollNo} was removed from this class; restore that student instead of adding them again`);
-    if (taken.has(rollNo)) return refuse(`roll number ${rollNo} appears more than once in this list`);
-    if (room <= 0) return refuse(`the class would have more than ${MAX_CLASS_SIZE} students`);
+    if (prior && !prior.removedAt) return refuse(REFUSAL.onRoster, `roll number ${rollNo} is already on this class's roster`);
+    if (prior) {
+      return refuse(REFUSAL.removed, `roll number ${rollNo} was removed from this class; restore that student instead of adding them again`);
+    }
+    if (taken.has(rollNo)) return refuse(REFUSAL.repeated, `roll number ${rollNo} appears more than once in this list`);
+    if (room <= 0) return refuse(REFUSAL.full, `the class would have more than ${MAX_CLASS_SIZE} students`);
 
     room -= 1;
     taken.add(rollNo);
@@ -217,6 +240,119 @@ export function validateRoster(list, existing = []) {
   });
 
   return { accepted, refused, ignoredFields: [...ignored].sort() };
+}
+
+/**
+ * Add a list to a class's roster: validateRoster against the roster as stored,
+ * then one write of the rows that passed. The one path every add takes (the
+ * JSON list and the CSV import), so the two can never disagree about a row.
+ *
+ * A row that passed the check and was still not written lost a race with
+ * another request adding the same roll number: it is on the roster, once, and is
+ * refused as already there.
+ *
+ * @returns {{ roster, accepted, made, refused, ignoredFields }} `roster` is the
+ *   roster as it was read before the write, removed students included
+ */
+export async function addToRoster(repo, classId, list, { maxRows = MAX_CLASS_SIZE } = {}) {
+  const roster = await repo.listClassStudents(classId);
+  const { accepted, refused, ignoredFields } = validateRoster(list, roster, { maxRows });
+  const made = accepted.length
+    ? await repo.addClassStudents(classId, accepted.map(({ rollNo, name }) => ({ rollNo, name })))
+    : [];
+  const added = new Set(made.map((s) => s.rollNo));
+  for (const row of accepted) {
+    if (!added.has(row.rollNo)) {
+      refused.push({
+        index: row.index, roll: row.rollNo, name: row.name, code: REFUSAL.onRoster,
+        reason: `roll number ${row.rollNo} is already on this class's roster`,
+      });
+    }
+  }
+  refused.sort((a, b) => a.index - b.index);
+  return { roster, accepted, made, refused, ignoredFields };
+}
+
+/* ---------------------------------------------------------- CSV import -- */
+
+/** The most a roster CSV may be: about a megabyte, and 2,000 rows under its header. */
+export const MAX_CSV_BYTES = 1024 * 1024;
+export const MAX_CSV_ROWS = 2000;
+
+// Header cells, compared in lower case with . _ - read as spaces and runs of
+// spaces as one: "Roll No.", "ROLL_NO" and "roll  no" are all "roll no".
+const ROLL_HEADERS = new Set(['roll', 'roll no', 'roll number', 'rollno']);
+const NAME_HEADERS = new Set(['name', 'student name']);
+const headerKey = (cell) => String(cell ?? '').toLowerCase().replace(/[._-]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+/**
+ * A roster CSV read into { roll, name } rows, each with the line it came from.
+ *
+ * The first non-blank line must name the columns: one roll number column (roll,
+ * roll no, roll number or rollno) and one name column (name or student name),
+ * in any case and any order. Every other column is left unread and named back
+ * in `ignoredColumns`, so a sheet that also carries phone numbers or emails
+ * never brings them in: a roster keeps a roll number and a name only. A line
+ * whose cells are all blank is skipped and counted.
+ *
+ * Refuses the whole file (400) when it has no such header, names either column
+ * twice, or holds more than MAX_CSV_ROWS rows; 413 when it is over MAX_CSV_BYTES.
+ *
+ * @returns {{ delimiter, columns: { roll, name, all }, rows: { line, roll, name }[], ignoredColumns: string[], blankLines: number }}
+ */
+export function rosterFromCsv(text) {
+  if (typeof text !== 'string' || !text.trim()) {
+    throw fail('Send the CSV as the request body (Content-Type: text/csv) or as { "csv": "..." }; it was empty.', 400);
+  }
+  if (Buffer.byteLength(text, 'utf8') > MAX_CSV_BYTES) {
+    throw fail(`The CSV is larger than ${MAX_CSV_BYTES / (1024 * 1024)} MB. A class list is far smaller; split the file.`, 413);
+  }
+  const { delimiter, records } = parseCsv(text);
+  const blank = (r) => r.cells.every((c) => !c.trim());
+  const headerAt = records.findIndex((r) => !blank(r));
+  const header = records[headerAt];
+  const wanted = 'a roll number column (roll, roll no, roll number or rollno) and a name column (name or student name)';
+  if (!header) throw fail(`The CSV has no rows. Its first line must name the columns: ${wanted}.`, 400);
+
+  const names = header.cells.map((c) => c.replace(/\s+/g, ' ').trim());
+  const keys = names.map(headerKey);
+  const rollAt = keys.flatMap((k, i) => (ROLL_HEADERS.has(k) ? [i] : []));
+  const nameAt = keys.flatMap((k, i) => (NAME_HEADERS.has(k) ? [i] : []));
+  if (!rollAt.length || !nameAt.length) {
+    const found = names.filter(Boolean).map((n) => `"${n}"`).join(', ') || 'nothing';
+    throw fail(`Line ${header.line} must name the columns: ${wanted}. It names ${found}.`, 400);
+  }
+  for (const [at, what] of [[rollAt, 'roll number'], [nameAt, 'name']]) {
+    if (at.length > 1) {
+      throw fail(`Line ${header.line} names ${at.length} ${what} columns (${at.map((i) => `"${names[i]}"`).join(', ')}); keep one.`, 400);
+    }
+  }
+
+  const ignoredColumns = names
+    .map((n, i) => (i === rollAt[0] || i === nameAt[0] ? null : n || `column ${i + 1} (no header)`))
+    .filter(Boolean);
+  const rows = [];
+  let blankLines = 0;
+  let pastHeader = false;
+  for (const r of records.slice(headerAt + 1)) {
+    if (blank(r)) { blankLines += 1; continue; }
+    // A cell past the last named column has no header to say what it is: not
+    // read, and named back once, like an ignored column.
+    if (!pastHeader && r.cells.slice(names.length).some((c) => c.trim())) pastHeader = true;
+    rows.push({ line: r.line, roll: r.cells[rollAt[0]] ?? '', name: r.cells[nameAt[0]] ?? '' });
+  }
+  if (pastHeader) ignoredColumns.push('cells past the last named column');
+  if (!rows.length) throw fail(`The CSV names its columns on line ${header.line} but has no students under them.`, 400);
+  if (rows.length > MAX_CSV_ROWS) {
+    throw fail(`The CSV has ${rows.length} rows; ${MAX_CSV_ROWS} is the most one import reads. A class is at most ${MAX_CLASS_SIZE} students.`, 400);
+  }
+  return {
+    delimiter,
+    columns: { roll: names[rollAt[0]], name: names[nameAt[0]], all: names },
+    rows,
+    ignoredColumns,
+    blankLines,
+  };
 }
 
 /** One roster row as a teacher's screen gets it. Field by field: nothing else stored is sent. */
@@ -384,6 +520,19 @@ export function marksFromJoins({ roster = [], marks = [], profiles = [] } = {}) 
 }
 
 /**
+ * The roll number a teacher mark in a room is made under (0021): the one the
+ * student's mark there already carries, else their roll number on the roster
+ * now. Kept, so a professor correcting a room's attendance after a roll number
+ * changed does not cut the room's answers, given under the old one, loose from
+ * the student. `marks` are the room's, `roster` the class's.
+ */
+export function markRollNo(marks = [], roster = []) {
+  const held = new Map(marks.map((m) => [String(m.classStudentId), m.rollNo]));
+  const now = new Map(roster.map((s) => [String(s._id), s.rollNo]));
+  return (classStudentId) => held.get(String(classStudentId)) || now.get(String(classStudentId)) || null;
+}
+
+/**
  * Mark a roster student present because a phone joined the room with their
  * roll number. Only if nobody has marked them yet: the professor's mark wins
  * over a later join, and a rejoin changes nothing. A roll number not on the
@@ -405,6 +554,8 @@ export async function markJoined(repo, session, rollNo, { now = new Date() } = {
     source: 'joined',
     markedAt: now.toISOString(),
     markedBy: null,
+    // The roll number the phone joined with, in the roster's form (0021).
+    rollNo: student.rollNo,
   });
 }
 

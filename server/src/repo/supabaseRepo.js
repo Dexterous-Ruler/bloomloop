@@ -291,6 +291,7 @@ const outAttendance = (r) =>
     source: r.source,
     markedAt: r.marked_at,
     markedBy: r.marked_by ?? null,
+    rollNo: r.roll_no ?? null,
   };
 
 const inAttendance = (d) => ({
@@ -300,6 +301,8 @@ const inAttendance = (d) => ({
   source: d.source,
   marked_at: d.markedAt ?? new Date().toISOString(),
   marked_by: d.markedBy ?? null,
+  // 0021: the roll number the mark was made under.
+  roll_no: d.rollNo ?? null,
 });
 
 /** A unique violation as the 409 a route can answer with, rather than a 500. */
@@ -403,6 +406,55 @@ const outProjectorLink = (r) =>
     createdBy: r.created_by ?? null,
     revokedAt: r.revoked_at ?? null,
     revokedBy: r.revoked_by ?? null,
+  };
+
+// 0019: course outcomes, their topic mappings and per-question overrides.
+const outOutcome = (r) =>
+  r && {
+    _id: r.id,
+    classId: r.class_id,
+    code: r.code,
+    statement: r.statement,
+    targetLevel: r.target_level ?? null,
+    position: Number(r.position),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    archivedAt: r.archived_at ?? null,
+  };
+
+const outOutcomeTopic = (r) =>
+  r && {
+    _id: r.id,
+    outcomeId: r.outcome_id,
+    classId: r.class_id,
+    contentId: r.content_id,
+    topic: r.topic,
+    // numeric comes back as a string; see outSession.
+    weight: Number(r.weight),
+    createdAt: r.created_at,
+  };
+
+const outOverride = (r) =>
+  r && {
+    _id: r.id,
+    classId: r.class_id,
+    questionId: r.question_id,
+    // uuid[] arrives as a JSON array of strings.
+    outcomeIds: Array.isArray(r.outcome_ids) ? r.outcome_ids.map(String) : [],
+    excluded: r.excluded === true,
+    updatedAt: r.updated_at,
+    updatedBy: r.updated_by ?? null,
+  };
+
+// 0020: a class's attainment formula, one row per saved version.
+const outAttainmentConfig = (r) =>
+  r && {
+    _id: r.id,
+    classId: r.class_id,
+    version: Number(r.version),
+    config: r.config && typeof r.config === 'object' ? r.config : {},
+    createdAt: r.created_at,
+    createdBy: r.created_by ?? null,
   };
 
 /** A record's place in its room already held (23505), as the 409 the routes answer with. */
@@ -1298,6 +1350,141 @@ export function createSupabaseRepo() {
       if (error) fail('revokeProjectorLink')(error);
       return outProjectorLink(data);
     },
+
+    // -- course outcomes (0019; see memoryRepo for the contract) --
+    async listOutcomes(classId) {
+      if (!isUuid(classId)) return [];
+      return allRecords('listOutcomes', 'course_outcomes', (q) => q.eq('class_id', classId), ['position', 'created_at', 'id'], outOutcome);
+    },
+
+    async getOutcome(id) {
+      if (!isUuid(id)) return null;
+      const { data, error } = await db.from('course_outcomes').select('*').eq('id', id).maybeSingle();
+      if (error) fail('getOutcome')(error);
+      return outOutcome(data);
+    },
+
+    // 23505 on course_outcomes_class_code_key: another outcome of the class, not archived, holds the code.
+    async createOutcome(doc) {
+      const now = new Date().toISOString();
+      const { data, error } = await db.from('course_outcomes').insert({
+        class_id: doc.classId,
+        code: doc.code,
+        statement: doc.statement,
+        target_level: doc.targetLevel ?? null,
+        position: doc.position ?? 1,
+        created_at: now,
+        updated_at: now,
+      }).select().single();
+      if (error?.code === '23505') throw conflict(`${doc.code} is already a course outcome of this class.`);
+      if (error) fail('createOutcome')(error);
+      return outOutcome(data);
+    },
+
+    async updateOutcome(id, patch) {
+      if (!isUuid(id)) return null;
+      const set = pick(patch, {
+        code: 'code', statement: 'statement', targetLevel: 'target_level', position: 'position', archivedAt: 'archived_at',
+      });
+      // No updated_at trigger on the table, as for classes.
+      set.updated_at = new Date().toISOString();
+      const { data, error } = await db.from('course_outcomes').update(set).eq('id', id).select().maybeSingle();
+      if (error?.code === '23505') throw conflict(`${patch.code ?? 'That code'} is already a course outcome of this class.`);
+      if (error) fail('updateOutcome')(error);
+      return outOutcome(data);
+    },
+
+    // Its topics go by ON DELETE CASCADE. An override still naming it is a
+    // 23503 (0019's guard): the server takes it off the overrides first.
+    async deleteOutcome(id) {
+      if (!isUuid(id)) return false;
+      const rows = unwrap('deleteOutcome', await db.from('course_outcomes').delete().eq('id', id).select('id'));
+      return (rows ?? []).length > 0;
+    },
+
+    async listOutcomeTopics(classId) {
+      if (!isUuid(classId)) return [];
+      return allRecords('listOutcomeTopics', 'outcome_topics', (q) => q.eq('class_id', classId), ['created_at', 'id'], outOutcomeTopic);
+    },
+
+    // Not one statement: a topic the outcome keeps keeps its row (weight and
+    // spelling updated), new ones are inserted, the rest deleted, in that order,
+    // so a failure part way leaves extra mappings, never fewer.
+    async setOutcomeTopics(outcomeId, classId, links) {
+      if (!isUuid(outcomeId)) return [];
+      const key = (l) => `${String(l.contentId ?? l.content_id).toLowerCase()}\u0000${String(l.topic).toLowerCase()}`;
+      const current = unwrap('setOutcomeTopics', await db.from('outcome_topics').select('*').eq('outcome_id', outcomeId).limit(1000)) ?? [];
+      const held = new Map(current.map((r) => [key(r), r]));
+      const fresh = [];
+      for (const l of links) {
+        const prior = held.get(key(l));
+        const weight = Number(l.weight) || 1;
+        if (!prior) fresh.push({ outcome_id: outcomeId, class_id: classId, content_id: l.contentId, topic: l.topic, weight });
+        else if (prior.topic !== l.topic || Number(prior.weight) !== weight) {
+          unwrap('setOutcomeTopics', await db.from('outcome_topics').update({ topic: l.topic, weight }).eq('id', prior.id));
+        }
+      }
+      if (fresh.length) unwrap('setOutcomeTopics', await db.from('outcome_topics').insert(fresh));
+      const wanted = new Set(links.map(key));
+      const gone = current.filter((r) => !wanted.has(key(r))).map((r) => r.id);
+      if (gone.length) unwrap('setOutcomeTopics', await db.from('outcome_topics').delete().in('id', gone));
+      const rows = unwrap('setOutcomeTopics', await db.from('outcome_topics').select('*').eq('outcome_id', outcomeId)
+        .order('created_at', { ascending: true }).order('id', { ascending: true }).limit(1000));
+      return (rows ?? []).map(outOutcomeTopic);
+    },
+
+    async listQuestionOverrides(classId) {
+      if (!isUuid(classId)) return [];
+      return allRecords('listQuestionOverrides', 'question_outcome_overrides', (q) => q.eq('class_id', classId), ['id'], outOverride);
+    },
+
+    // ON CONFLICT (class_id, question_id) DO UPDATE: one override per question per class.
+    async setQuestionOverride(doc) {
+      const row = unwrap('setQuestionOverride', await db
+        .from('question_outcome_overrides')
+        .upsert({
+          class_id: doc.classId,
+          question_id: doc.questionId,
+          outcome_ids: doc.excluded ? [] : (doc.outcomeIds ?? []),
+          excluded: doc.excluded === true,
+          updated_at: new Date().toISOString(),
+          updated_by: doc.updatedBy ?? null,
+        }, { onConflict: 'class_id,question_id' })
+        .select()
+        .single());
+      return outOverride(row);
+    },
+
+    async deleteQuestionOverride(classId, questionId) {
+      if (!isUuid(classId) || !isUuid(questionId)) return false;
+      const rows = unwrap('deleteQuestionOverride', await db
+        .from('question_outcome_overrides').delete().eq('class_id', classId).eq('question_id', questionId).select('id'));
+      return (rows ?? []).length > 0;
+    },
+
+    // -- attainment formulas (0020; see memoryRepo for the contract) --
+    async getAttainmentConfig(classId) {
+      if (!isUuid(classId)) return null;
+      const { data, error } = await db.from('attainment_configs').select('*').eq('class_id', classId)
+        .order('version', { ascending: false }).limit(1).maybeSingle();
+      if (error) fail('getAttainmentConfig')(error);
+      return outAttainmentConfig(data);
+    },
+
+    // 23505 on attainment_configs_class_version_key: another save took the number first.
+    async addAttainmentConfig(doc) {
+      const { data, error } = await db.from('attainment_configs').insert({
+        class_id: doc.classId,
+        version: doc.version,
+        config: doc.config,
+        created_by: doc.createdBy ?? null,
+      }).select().single();
+      if (error?.code === '23505') {
+        throw conflict('The attainment formula was changed by another request. Nothing was saved: read it again.');
+      }
+      if (error) fail('addAttainmentConfig')(error);
+      return outAttainmentConfig(data);
+    },
   };
 }
 
@@ -1316,6 +1503,11 @@ export async function probeSupabase() {
     ['classes', '0016'], ['class_students', '0016'], ['attendance', '0016'],
     ['observations', '0017'], ['wheel_rounds', '0017'], ['wheel_picks', '0017'], ['hand_tallies', '0017'],
     ['room_activities', '0017'], ['insight_actions', '0017'], ['projector_links', '0018'],
+    // Not 0019's course-outcome tables, on purpose: no room needs them, so a
+    // server deployed before 0019 is applied should keep every room running on
+    // Supabase and answer only the outcome routes with an error naming the table,
+    // not fall back to the in-process store, where nothing is saved. The same
+    // for 0020's attainment_configs and the attainment routes.
   ];
   const missing = [];
   for (const [table, file] of tables) {

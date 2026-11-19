@@ -31,6 +31,21 @@ export function createMemoryRepo() {
   const activities = new Map();
   const insightActions = [];
   const projectorLinks = new Map(); // key: _id (0018); only the token's hash is kept
+  // Course outcomes (0019): a class's outcomes, their topic mappings, and its
+  // per-question overrides, one per (class, question).
+  const outcomes = new Map(); // key: _id
+  const outcomeTopics = new Map(); // key: _id
+  const overrides = new Map(); // key: `${classId}:${questionId}`
+  // Attainment formulas (0020): every saved version, append-only.
+  const attainmentConfigs = [];
+
+  // Unique on (classId, code) among outcomes not archived, as Postgres's partial
+  // unique index course_outcomes_class_code_key is.
+  const codeHeld = (classId, code, exceptId = null) => [...outcomes.values()]
+    .some((o) => o.classId === String(classId) && o.code === code && !o.archivedAt && o._id !== exceptId);
+  const codeTaken = (code) => Object.assign(new Error(`${code} is already a course outcome of this class.`), { status: 409 });
+  // A topic in its chapter, as the unique index on (outcome_id, content_id, lower(topic)) compares it.
+  const linkKey = (l) => `${l.contentId}\u0000${String(l.topic).toLowerCase()}`;
 
   // Unique on (classId, rollNo), as the Postgres constraint and the Mongo index are.
   const rollHeld = (classId, rollNo, exceptId = null) => [...classStudents.values()]
@@ -482,6 +497,8 @@ export function createMemoryRepo() {
         const rec = {
           _id: attendance.get(k)?._id ?? oid(),
           markedBy: null,
+          // 0021: the roll number the mark was made under; null before it.
+          rollNo: null,
           markedAt: new Date().toISOString(),
           ...clone(d),
           sessionId: String(d.sessionId),
@@ -672,6 +689,131 @@ export function createMemoryRepo() {
     /** Only revokedAt and revokedBy ever change, as 0018's guard allows. */
     async revokeProjectorLink(id, { revokedAt, revokedBy = null }) {
       return update(projectorLinks, id, { revokedAt, revokedBy }, ['revokedAt', 'revokedBy']);
+    },
+
+    // -- course outcomes (0019; services/outcomes.js, routes/outcomes.js) --
+
+    /** Every outcome of a class, archived ones included, by position then age. */
+    async listOutcomes(classId) {
+      return clone([...outcomes.values()]
+        .filter((o) => o.classId === String(classId))
+        .sort((a, b) => a.position - b.position || (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0)));
+    },
+
+    async getOutcome(id) {
+      return clone(outcomes.get(String(id)) ?? null);
+    },
+
+    /** A code another outcome of the class holds, not archived, is a 409. */
+    async createOutcome(doc) {
+      if (codeHeld(doc.classId, doc.code)) throw codeTaken(doc.code);
+      const now = new Date().toISOString();
+      const rec = {
+        _id: oid(), targetLevel: null, position: 1, archivedAt: null, createdAt: now, updatedAt: now,
+        ...clone(doc), classId: String(doc.classId),
+      };
+      outcomes.set(rec._id, rec);
+      return clone(rec);
+    },
+
+    /** Code, statement, target level, position and archivedAt (null restores). The class never changes. */
+    async updateOutcome(id, patch) {
+      const rec = outcomes.get(String(id));
+      if (!rec) return null;
+      const code = patch.code ?? rec.code;
+      const active = patch.archivedAt === undefined ? !rec.archivedAt : !patch.archivedAt;
+      if (active && (code !== rec.code || (rec.archivedAt && !patch.archivedAt)) && codeHeld(rec.classId, code, rec._id)) {
+        throw codeTaken(code);
+      }
+      for (const k of ['code', 'statement', 'targetLevel', 'position', 'archivedAt']) if (patch[k] !== undefined) rec[k] = patch[k];
+      rec.updatedAt = new Date().toISOString();
+      return clone(rec);
+    },
+
+    /** The outcome and its topic mappings (Postgres's ON DELETE CASCADE). The caller takes it off overrides first. */
+    async deleteOutcome(id) {
+      const key = String(id);
+      for (const [tid, l] of outcomeTopics) if (l.outcomeId === key) outcomeTopics.delete(tid);
+      return outcomes.delete(key);
+    },
+
+    /** Every topic mapping of a class's outcomes, in the order written. */
+    async listOutcomeTopics(classId) {
+      return clone([...outcomeTopics.values()].filter((l) => l.classId === String(classId)));
+    },
+
+    /**
+     * Replace one outcome's topics with `links` ([{ contentId, topic, weight }]):
+     * a topic it already had keeps its row (its weight and spelling updated),
+     * the rest are added, and topics not in `links` are removed. Returns the
+     * outcome's topics now.
+     */
+    async setOutcomeTopics(outcomeId, classId, links) {
+      const oidKey = String(outcomeId);
+      const held = new Map([...outcomeTopics.values()].filter((l) => l.outcomeId === oidKey).map((l) => [linkKey(l), l]));
+      const wanted = new Set();
+      for (const l of links) {
+        const doc = { contentId: String(l.contentId), topic: l.topic, weight: Number(l.weight) || 1 };
+        const key = linkKey(doc);
+        wanted.add(key);
+        const prior = held.get(key);
+        if (prior) Object.assign(prior, { topic: doc.topic, weight: doc.weight });
+        else {
+          const rec = { _id: oid(), outcomeId: oidKey, classId: String(classId), ...doc, createdAt: new Date().toISOString() };
+          outcomeTopics.set(rec._id, rec);
+        }
+      }
+      for (const [key, l] of held) if (!wanted.has(key)) outcomeTopics.delete(l._id);
+      return clone([...outcomeTopics.values()].filter((l) => l.outcomeId === oidKey));
+    },
+
+    async listQuestionOverrides(classId) {
+      return clone([...overrides.values()].filter((o) => o.classId === String(classId)));
+    },
+
+    /** Upsert on (classId, questionId): one override per question per class. */
+    async setQuestionOverride(doc) {
+      const key = `${doc.classId}:${doc.questionId}`;
+      const rec = {
+        _id: overrides.get(key)?._id ?? oid(),
+        classId: String(doc.classId),
+        questionId: String(doc.questionId),
+        outcomeIds: doc.excluded ? [] : (doc.outcomeIds ?? []).map(String),
+        excluded: doc.excluded === true,
+        updatedAt: new Date().toISOString(),
+        updatedBy: doc.updatedBy ?? null,
+      };
+      overrides.set(key, rec);
+      return clone(rec);
+    },
+
+    async deleteQuestionOverride(classId, questionId) {
+      return overrides.delete(`${classId}:${questionId}`);
+    },
+
+    // -- attainment formulas (0020; services/attainment.js, routes/attainment.js) --
+
+    /** The version in force: the class's highest, or null when none was saved. */
+    async getAttainmentConfig(classId) {
+      const mine = attainmentConfigs.filter((c) => c.classId === String(classId));
+      return clone(mine.reduce((top, c) => (!top || c.version > top.version ? c : top), null));
+    },
+
+    /**
+     * Append a version. One per (class, version), as
+     * attainment_configs_class_version_key has it: a save that lost a race for
+     * the number is a 409, and nothing is written.
+     */
+    async addAttainmentConfig(doc) {
+      if (attainmentConfigs.some((c) => c.classId === String(doc.classId) && c.version === doc.version)) {
+        throw Object.assign(new Error('The attainment formula was changed by another request. Nothing was saved: read it again.'), { status: 409 });
+      }
+      const rec = {
+        _id: oid(), createdAt: new Date().toISOString(), createdBy: null,
+        ...clone(doc), classId: String(doc.classId),
+      };
+      attainmentConfigs.push(rec);
+      return clone(rec);
     },
   };
 }

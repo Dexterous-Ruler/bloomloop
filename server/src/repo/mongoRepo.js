@@ -4,6 +4,7 @@
 import {
   Content, Question, Session, Profile, Answer, RoomArchive, AnswerReview, Media, Class, ClassStudent, Attendance,
   Observation, WheelRound, WheelPick, HandTally, RoomActivity, InsightAction, ProjectorLink,
+  CourseOutcome, OutcomeTopic, QuestionOutcomeOverride, AttainmentConfig,
 } from '../models/index.js';
 
 const lean = (d) => (d ? JSON.parse(JSON.stringify(d)) : null);
@@ -379,6 +380,94 @@ export function createMongoRepo() {
     },
     async revokeProjectorLink(id, { revokedAt, revokedBy = null }) {
       return patchOne(ProjectorLink, id, { revokedAt, revokedBy }, ['revokedAt', 'revokedBy']);
+    },
+
+    // -- course outcomes (0019; see memoryRepo for the contract) --
+    async listOutcomes(classId) {
+      return lean(await CourseOutcome.find({ classId: String(classId) }).sort({ position: 1, createdAt: 1, _id: 1 }).lean()) ?? [];
+    },
+    async getOutcome(id) {
+      return lean(await CourseOutcome.findById(id).lean().catch(() => null));
+    },
+    async createOutcome(doc) {
+      try {
+        return lean(await CourseOutcome.create({ ...doc, classId: String(doc.classId) }));
+      } catch (err) {
+        if (err?.code === 11000) throw Object.assign(new Error(`${doc.code} is already a course outcome of this class.`), { status: 409 });
+        throw err;
+      }
+    },
+    async updateOutcome(id, patch) {
+      try {
+        return await patchOne(CourseOutcome, id, { ...patch, updatedAt: new Date().toISOString() },
+          ['code', 'statement', 'targetLevel', 'position', 'archivedAt', 'updatedAt']);
+      } catch (err) {
+        if (err?.code === 11000) {
+          throw Object.assign(new Error(`${patch.code ?? 'That code'} is already a course outcome of this class.`), { status: 409 });
+        }
+        throw err;
+      }
+    },
+    // The topics first: Mongo has no cascade, and topics left without their
+    // outcome would map evidence to nothing.
+    async deleteOutcome(id) {
+      await OutcomeTopic.deleteMany({ outcomeId: String(id) });
+      return Boolean(await CourseOutcome.findByIdAndDelete(id).catch(() => null));
+    },
+    async listOutcomeTopics(classId) {
+      return lean(await OutcomeTopic.find({ classId: String(classId) }, { topicKey: 0 }).sort({ createdAt: 1, _id: 1 }).lean()) ?? [];
+    },
+    async setOutcomeTopics(outcomeId, classId, links) {
+      const keep = [];
+      for (const l of links) {
+        const key = { outcomeId: String(outcomeId), contentId: String(l.contentId), topicKey: String(l.topic).toLowerCase() };
+        const rec = await OutcomeTopic.findOneAndUpdate(
+          key,
+          { $set: { topic: l.topic, weight: Number(l.weight) || 1 }, $setOnInsert: { ...key, classId: String(classId), createdAt: new Date().toISOString() } },
+          { upsert: true, new: true, runValidators: true },
+        ).lean();
+        keep.push(rec._id);
+      }
+      await OutcomeTopic.deleteMany({ outcomeId: String(outcomeId), _id: { $nin: keep } });
+      return lean(await OutcomeTopic.find({ outcomeId: String(outcomeId) }, { topicKey: 0 }).sort({ createdAt: 1, _id: 1 }).lean()) ?? [];
+    },
+    async listQuestionOverrides(classId) {
+      return lean(await QuestionOutcomeOverride.find({ classId: String(classId) }).sort({ _id: 1 }).lean()) ?? [];
+    },
+    async setQuestionOverride(doc) {
+      const key = { classId: String(doc.classId), questionId: String(doc.questionId) };
+      return lean(await QuestionOutcomeOverride.findOneAndUpdate(
+        key,
+        {
+          $set: {
+            ...key,
+            excluded: doc.excluded === true,
+            outcomeIds: doc.excluded ? [] : (doc.outcomeIds ?? []).map(String),
+            updatedAt: new Date().toISOString(),
+            updatedBy: doc.updatedBy ?? null,
+          },
+        },
+        { upsert: true, new: true, runValidators: true },
+      ).lean());
+    },
+    async deleteQuestionOverride(classId, questionId) {
+      const res = await QuestionOutcomeOverride.deleteOne({ classId: String(classId), questionId: String(questionId) });
+      return (res?.deletedCount ?? 0) > 0;
+    },
+
+    // -- attainment formulas (0020; see memoryRepo for the contract) --
+    async getAttainmentConfig(classId) {
+      return lean(await AttainmentConfig.findOne({ classId: String(classId) }).sort({ version: -1 }).lean());
+    },
+    async addAttainmentConfig(doc) {
+      try {
+        return lean(await AttainmentConfig.create({ ...doc, classId: String(doc.classId) }));
+      } catch (err) {
+        if (err?.code === 11000) {
+          throw Object.assign(new Error('The attainment formula was changed by another request. Nothing was saved: read it again.'), { status: 409 });
+        }
+        throw err;
+      }
     },
   };
 }

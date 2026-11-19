@@ -6,11 +6,20 @@ room archive; commit `05daf56` holds Phase 1 (the review queue, the answer reads
 fixes and migrations `0010` to `0012`); commit `27559ca` holds Phase 2 (the approval
 gate, several kinds per level, images and passages, item statistics, question sets,
 the fixes from its review, migrations `0013` to `0015`, and the UI session's Phase 1
-screens). **Phase 3 is uncommitted**: on the server, the roster, rooms for a class and
-attendance (`0016`); the teacher-record store (`0017`); room modes, the waiting room
-and the projector (`0018`); live insights, the student card and class analytics (no
-migration); and the fixes from the Phase 3 review. Every suite below was rerun on
-19 November 2026 after those fixes. The Phase 3 checklist is at the end.
+screens). Commit `d162cc8` holds Phase 3 (the roster, rooms for a class and
+attendance, `0016`; the teacher-record store, `0017`; room modes, the waiting room and
+the projector, `0018`; live insights, the student card and class analytics; the fixes
+from the Phase 3 review; and the UI session's Phase 2 screens). **Phase 4 is
+uncommitted**, on the server only:
+- course outcomes, their mappings and coverage, and the roster from CSV (`0019`);
+- configurable attainment and the marks register (`0020`);
+- CSV exports, printable reports and the acceptance run (no migration);
+- the fixes from the Phase 4 review (`0021`: the roll number an attendance mark was
+  made under).
+
+Its checklist is at the end. After the review fixes every suite passes: the fix's
+run and a rerun after it, both through the offline runner on 19 November 2026, gave
+the same figures (the test table below).
 
 Source of truth for the plan: `reports/BloomLoop gap analysis and roadmap.md`.
 Decisions that need the owner: `docs/PRODUCT_DECISIONS.md`.
@@ -64,7 +73,7 @@ or resume and does not hear the events.
   the stored answers and per topic × level reports. Endpoints in `docs/API.md`. The
   UI session reports screens for them (`docs/UI_REBUILD.md`, "Phase 1"; not
   re-checked in this pass).
-- Question bank, Phase 2 (server only, uncommitted): generated questions wait as
+- Question bank, Phase 2 (server, committed in `27559ca`): generated questions wait as
   drafts until a professor approves them, with the model, the slides and eight rule
   checks recorded; write-your-own; Harder / Easier; several kinds per level, with
   hot text, dropdown, table and grid generated offline and edited; image upload and
@@ -72,14 +81,33 @@ or resume and does not hear the events.
   room. Endpoints in `docs/API.md`, "Phase 2". **The committed console cannot
   approve a draft**; the UI session reports Phase 2 screens, approval included, in
   its uncommitted work (`docs/UI_REBUILD.md`; see the risks).
-- Classes and the teaching companion, Phase 3 (server only, uncommitted): a class
+- Classes and the teaching companion, Phase 3 (server only, committed in `d162cc8`): a class
   roster of roll numbers and names, rooms opened for a class, attendance;
   observations, the full wheel, the raised-hands tally, no-device activities and a
   record of what was done about each flag; Student devices, Teacher-led and Mixed
   rooms, the other room settings, a waiting room; a projector link with three
   screens; live bands, insight cards and KPI tiles, the student card and class
   analytics. A Teacher-led room runs with no phone at all. Endpoints in
-  `docs/API.md`, "Phase 3". **No screen uses any of it.**
+  `docs/API.md`, "Phase 3". The UI session's uncommitted client now calls the class,
+  roster, observation and class-analytics routes (`client/src/lib/api.js`; not
+  re-checked beyond a search).
+- Course-outcome attainment, Phase 4 (server only, uncommitted):
+  - Course outcomes per class, mapped to topics with weights, with per-question
+    overrides, coverage, and copying to another section.
+  - A roster imported from a CSV file, with a dry run.
+  - The attainment formula as data, saved per class in versions, with two examples
+    shipped as data.
+  - Student and class attainment per outcome, per Bloom level and per level band,
+    split by evidence type and by who wrote the question, with a methodology
+    paragraph in every report.
+  - The marks register.
+  - CSV sheets and printable pages of every report.
+  - A room's answers kept with the student through a corrected roll number, by the
+    roll number on that room's attendance mark (`0021`).
+
+  Endpoints in `docs/API.md`, "Phase 4: every new and changed endpoint". The UI
+  session's uncommitted client now calls these routes (`client/src/lib/api.js`, and
+  new screens such as `client/src/account/Attainment.jsx`); not checked in this pass.
 
 ## Partially implemented
 
@@ -113,12 +141,39 @@ or resume and does not hear the events.
     teacher-led cards and its timer; the projector page, its link and its three
     screens; the live view's bands, cards, KPI tiles and sparklines; the student
     card; class analytics.
-  - Not built on the server: a roster from CSV (Phase 4); a route to delete a
+  - Not built on the server: a route to delete a
     class; a log of roster changes; the "AI teaching move" (decision 5, which
     `CONTRACT.md` forbids today); a "Next set" that serves the handoff's 3 + 1
     review + 1 stretch (the card shows what the selector serves instead).
   - The server pieces built are in the Phase 3 checklist at the end.
-- **Phase 4:** course outcomes and attainment exports.
+- **Phase 4:** every screen, and these pieces:
+  - Screens, none checked against the server (the client belongs to another
+    session). The UI session's uncommitted client has files for some of them
+    (`client/src/account/Outcomes.jsx`, `RosterImport.jsx`, `Attainment.jsx`,
+    `Register.jsx`, `ReportWindow.jsx`), which `docs/UI_REBUILD.md` does not describe
+    yet. The screens the phase needs:
+    - course outcomes and their mapping (topics, weights, per-question overrides,
+      coverage, copy);
+    - the roster import with its dry run;
+    - attainment settings (presets, the formula's fields, saving a version);
+    - the attainment report;
+    - one student's report;
+    - the marks register;
+    - downloading a sheet and opening a page to print.
+  - Not built on the server:
+    - the roadmap's per-question attainment sheet (one column per question, with
+      maximum marks, outcome and level header rows). A question has no maximum
+      marks yet;
+    - counting deleted rooms (their archives are not read);
+    - a route to read an older version of a formula;
+    - best n of m rooms and scaling to a college's maximum marks in the register;
+    - indirect attainment (surveys) or a blend with examinations;
+    - a department-wide or college-wide default formula (each class saves its own;
+      `PRODUCT_DECISIONS.md`, open questions);
+    - following a renamed topic;
+    - a route to merge answers given under a corrected roll number in a room whose
+      marks were made before `0021` (since `0021` the mark ties them).
+  - The server pieces built are in the Phase 4 checklist at the end.
 - **Phase 5:** confidence taps, re-vote, misconception tags.
 - **Phase 6:** the Learning Hub.
 - **Phase 7:** offline outbox, service worker, laptop-server mode.
@@ -127,7 +182,9 @@ or resume and does not hear the events.
 
 - Answer store (Phase 1) needs the idempotency key (defect 8) and topic on history (defect 4).
 - Review queue, item statistics, attainment and the Hub all read the answer store.
-- Attainment needs the roster (Phase 3) and course-outcome tags on questions (Phase 4).
+- Attainment needs the roster (Phase 3) and course outcomes mapped to topics or
+  questions (Phase 4, built: an answer is traced to its outcomes when a report runs,
+  so no tag is stored on a question or an answer).
 - The Hub needs a lasting student identity: `profiles.account_id` written on join (defect 9) or the decision in `PRODUCT_DECISIONS.md` §7.
 - The offline outbox needs idempotency keys and a light student bundle (defects 5 and 8).
 
@@ -140,20 +197,34 @@ Missing before this pass: room settings in the live loop, poll handling, ownersh
 `teacher:watch`, idempotent answer submission, migrations building a fresh database,
 the client (no client tests exist).
 
-Results after Phase 3 and the fixes from its review, every suite rerun once on
-19 November 2026 through the offline runner, which blanks `SUPABASE_URL`,
-`SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `MONGO_URI` and `GEMINI_API_KEY` in
-the environment first (Node 24.22.3, in-process store and PGlite; no network
-service; `docs/TESTING.md`). Each figure below is what the run printed. Phase 0 ended
-at 103 unit, 11 security and 142 migration checks; Phase 1 at 172 unit, 13 security
-and 204 migration checks; Phase 2 at 343 unit and 270 migration checks.
+Results after Phase 4 and the fixes from its review. Every suite was run through the
+offline runner (`docs/TESTING.md`) on 19 November 2026, which first blanks these in
+the environment: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`,
+`MONGO_URI`, `GEMINI_API_KEY`. Node 24.22.3, the in-process store and PGlite; no
+network service.
+
+Each figure below is what the runs printed. Two full runs, the fix's own and a rerun
+after it with no code change between, gave the same figures; every exit code was 0.
+Before the review fixes the three Phase 4 parts had ended at:
+- unit 518, 558 and 573;
+- migrations 509, 533 and 533;
+- `outcomes.mjs` 86, `attainment.mjs` 65 and `acceptance4.mjs` 73.
+
+Earlier phases ended at:
+
+| Phase | Unit | Security | Migrations |
+|---|---|---|---|
+| 0 | 103 | 11 | 142 |
+| 1 | 172 | 13 | 204 |
+| 2 | 343 | | 270 |
+| 3 | 475 | | 451 |
 
 | Suite | Command | Result |
 |---|---|---|
-| Unit: mastery, selector, edits, integrity, accounts, archive, reviews, evidence reads, the three repos (64 methods each); since Phase 2 also `checks`, `approval`, `kindmix`, `newkinds`, `media`, `itemstats`; since Phase 3 also `roster`, `wheel`, `records`, `modes`, `insights` | `cd server && npm test` | **475 / 475** (113 suites) |
+| Unit: mastery, selector, edits, integrity, accounts, archive, reviews, evidence reads, the three repos (76 methods each); since Phase 2 also `checks`, `approval`, `kindmix`, `newkinds`, `media`, `itemstats`; since Phase 3 also `roster`, `wheel`, `records`, `modes`, `insights`; since Phase 4 also `outcomes`, `attainment`, `exports` | `cd server && npm test` | **598 / 598** (137 suites) |
 | Live loop: ownership, evidence, idempotency, polls, retries, redemption, status, room archive | `node server/scripts/liveloop.mjs` | 41 / 41 |
 | Security harness, including a phone answering another room's question | `node server/scripts/security.mjs` | 13 / 13 |
-| Migrations on PGlite: fresh build, re-run, upgrade, constraints, `0010` to `0018` | `cd server && npm run migrations` | **451 / 451** |
+| Migrations on PGlite: fresh build, re-run, upgrade, constraints, `0010` to `0021` | `cd server && npm run migrations` | **573 / 573** |
 | Review queue, end to end with the shared key | `node server/scripts/review.mjs` | 83 / 83 |
 | Evidence reads, end to end with the shared key | `node server/scripts/evidence.mjs` | 37 / 37 |
 | Resume, integrity (both read `server/.env`; the runner blanks the network settings first) | `node server/scripts/resume.mjs`, `integrity.mjs` | pass: 7 and 6 mandated steps, 0 failures, 0 supporting failures, 0 known holes |
@@ -166,6 +237,9 @@ and 204 migration checks; Phase 2 at 343 unit and 270 migration checks.
 | Teacher records (Phase 3), signed-in callers | `node server/scripts/records.mjs` | **97 / 97** |
 | Room modes, the waiting room and the projector (Phase 3), signed-in callers | `node server/scripts/modes.mjs` | **101 / 101** |
 | Live insights, the student card and class analytics (Phase 3), signed-in callers | `node server/scripts/insights.mjs` | **65 / 65** |
+| Course outcomes, their mappings and coverage, the roster from CSV (Phase 4), signed-in callers | `node server/scripts/outcomes.mjs` | **87 / 87** |
+| Attainment and the marks register (Phase 4), signed-in callers | `node server/scripts/attainment.mjs` | **73 / 73** |
+| The directive's acceptance criterion: exports and printable pages (Phase 4), signed-in callers | `node server/scripts/acceptance4.mjs` | **76 / 76** |
 
 "Signed-in callers" means the script answers the server's three Supabase Auth calls
 itself, for a host that cannot resolve, and refuses and counts any other request off
@@ -226,6 +300,24 @@ the insights, unit 467, `insights.mjs` 65; the review fixes, unit 475, `modes.mj
 101, `records.mjs` 97. Every Phase 0 to 2 suite gave the same figure after each piece
 as before it. The rerun for this table matched the last of these.
 
+How the numbers grew during Phase 4, each through the offline runner on 19 November
+2026 as each piece of work reported it:
+
+| Piece | Unit | Migrations | New script |
+|---|---|---|---|
+| Course outcomes and the CSV import | 518 | 509 | `outcomes.mjs` 86 |
+| Attainment and the register | 558 | 533 | `attainment.mjs` 65 |
+| Exports and printable pages | 573 | 533 | `acceptance4.mjs` 73 |
+| The fixes from the review (`0021`) | 598 | 573 | `outcomes.mjs` 87, `attainment.mjs` 73, `acceptance4.mjs` 76 |
+
+Every Phase 0 to 3 suite gave the same figure after each piece as before it, and again
+in the runs for the table above. The review fixes added 25 unit tests (`outcomes` 44,
+`attainment` 56, `exports` 21, `roster` 35, from 43, 40, 15 and 33), 40 migration
+checks for `0021`, and checks to the three Phase 4 scripts. A docs pass between the
+exports and the fixes found three suites failing on a half-finished change to the
+class figure (unit 583 / 584, `attainment.mjs` 64 / 66, `acceptance4.mjs` 70 / 73);
+the fixes finished that change, and those figures no longer hold.
+
 Still missing: any automated client test; an account-path test for anything that
 needs Supabase. That means account linking, accommodations from a real account, CSV
 export with a bearer token, and the student redirect on `/`. From Phase 1 it also
@@ -253,15 +345,37 @@ attendance and records locks are in one process's memory); a server restart with
 room running; any phone, console or projector browser, since no Phase 3 screen
 exists.
 
+From Phase 4:
+- `0019`, `0020` and `0021` on the real database: their triggers under the real
+  service role, PostgREST's partial unique index, `uuid[]`,
+  `order=version.desc&limit=1`, and `attendance.roll_no` written by an upsert.
+- The twelve new repo methods, and the attendance methods writing a mark's roll
+  number, against a real Supabase or Mongo. The requests are checked against a stubbed
+  PostgREST, and the Mongo schemas by building documents.
+- A real Supabase Auth token.
+- Two screens editing one class's outcomes at once, and two formula saves racing on
+  Supabase.
+- A copy or a topic set failing part way on Supabase.
+- Coverage and the reports over thousands of answers on Supabase.
+- A CSV export from a real spreadsheet in another encoding.
+- Any spreadsheet program opening a sheet, including one that splits on semicolons
+  (the guard after a semicolon is checked by bytes only).
+- Printing on paper, or in Firefox or Safari. Only a headless Edge printed the pages,
+  to PDF, and before the review fixes.
+- A console fetching a page and opening it from a blob or `srcdoc`.
+- Any screen. The UI session's uncommitted client calls the Phase 4 routes; its
+  screens were not checked against the server here.
+
 ## Risks found while revalidating
 
 - **Supabase unreachable.** The project's hostname does not resolve (checked against
   public DNS on 18 November 2026). Every account feature is untestable locally and
   broken on the deployed site until the project is restored.
-- **Uncommitted work.** Phases 0 to 2 are committed on branch
-  `roadmap-phase0-evidence` (`b4585a0`, `05daf56`, `27559ca`). Phase 3 (server,
-  tests, docs and migrations `0016` to `0018`) and the UI rebuild's Phase 2 screens
-  are not; one bad checkout loses both.
+- **Uncommitted work.** Phases 0 to 3 are committed on branch
+  `roadmap-phase0-evidence` (`b4585a0`, `05daf56`, `27559ca`, `d162cc8`). Two sets of
+  work are not, and one bad checkout loses both:
+  - Phase 4: server, tests, docs, and migrations `0019` to `0021`;
+  - the UI session's newer client work, which now includes Phase 4 screens.
 - **Deploying the server before a client that approves.** Every generated question
   is a draft since Phase 2, and the committed console has no approve, reject or
   approve-all. A professor who generates a bank then cannot open a room on it (409),
@@ -270,7 +384,21 @@ exists.
 - **Migrations before the server.** `0013` to `0018` must be applied to Supabase, in
   order, before the Phase 3 server is deployed. Without them the boot probe falls
   back to the in-process store, which saves nothing. None of the six has run
-  anywhere but PGlite.
+  anywhere but PGlite. `0019` and `0020` (Phase 4) are different. The boot probe does
+  not check them, on purpose: a server deployed without them keeps every room working
+  and answers the outcome and attainment routes with a 500 naming the missing table.
+  Apply them before anyone uses those routes. **`0021` must be applied before this
+  server is deployed**, and the boot probe does not check it either: the repo writes
+  `attendance.roll_no` on every attendance mark, so on a database without it every
+  mark would be refused (traced from the code, not run on Supabase). A join would be
+  let in and mark nobody, with the failure only logged; a professor's marks would fail.
+  None of the three has run anywhere but PGlite. Apply order: `0019`, `0020`, `0021`.
+- **Attainment leaves out deleted rooms.** An archive's class is inside its JSON, so a
+  report does not read archives, and every report says so. A professor who deletes a
+  room loses its answers from attainment, though they are kept in the archive.
+- **The reports read every answer of the class's rooms on each request** (all
+  attempts, for the best-attempt rule), as coverage and the remove check do. This is
+  fine at class size on the in-process store, but was not measured on Supabase.
 - **Re-running every migration once a room is waiting** (Phase 3 review, fixed).
   `0005` now lists `'waiting'` too; the migration test re-runs the set with a room
   left waiting.
@@ -675,8 +803,8 @@ Class and section, and the roster
   exactly as before: its grids have no new field (`scripts/roster.mjs`)
 - [ ] Classes and roster screens. **Absent** (the client is being rebuilt by another
   session)
-- [ ] Roster import from CSV. **Phase 4**, not built. No route deletes a class, and
-  roster changes (who renamed or removed whom) are not logged
+- [x] Roster import from CSV: built in Phase 4 (its checklist, below). No route
+  deletes a class, and roster changes (who renamed or removed whom) are not logged
 
 Attendance
 
@@ -919,3 +1047,337 @@ Across the phase
   server processes; a start racing a join under real network timing; a server
   restart with a room running; the insights' throttle at a real class's answer rate;
   any phone, console or projector browser
+
+### Phase 4: server done, every screen unticked
+
+The owner's directive for Phase 4 is "Course outcome attainment and institutional
+reporting". It asks for course outcomes, outcome-to-topic and topic-to-question
+mapping, configurable attainment thresholds, student-level and class-level
+attainment, a marks register, attainment sheets, CSV exports and printable reports.
+Reports must keep four kinds of evidence apart: digital answers, teacher
+observations, AI-generated assessments and human-reviewed assessments. No single
+institutional formula may be hard-coded as correct. Acceptance: "a professor can
+conduct multiple sessions and generate a meaningful course-outcome attainment report
+without manually compiling quiz results". The roadmap's step 4 adds "roster import
+from CSV".
+
+A box is ticked only when the feature works **end to end with a test** on the tree
+this file describes. As for Phase 3, that means over HTTP and the socket on a real
+server (the production `createApp` and `attachSockets`), on the in-process store,
+**with signed-in callers** answered in-process:
+- `outcomes.mjs`, 87 checks;
+- `attainment.mjs`, 73;
+- `acceptance4.mjs`, 76: the acceptance criterion end to end, with real phone and
+  projector sockets.
+
+Plus the unit tests (`test/outcomes.test.js` 44, `test/attainment.test.js` 56,
+`test/exports.test.js` 21, and the `0021` tests in `test/roster.test.js`) and PGlite
+for `0019`, `0020` and `0021`.
+
+Nothing in Phase 4 has run against Supabase, Mongo, a real Auth token, any
+spreadsheet program or any browser but a headless Edge printing to PDF (before the
+review fixes). **No screen was checked against any of it**, so every screen line is
+unticked; the UI session's uncommitted client calls these routes. Endpoints:
+`docs/API.md`, "Phase 4: every new and changed endpoint". No new dependency: the CSV
+reader and writer are written in `services/csv.js`.
+
+The fix's run and a rerun after it, both through the offline runner on 19 November
+2026, gave the same figures:
+
+| Suite | Result |
+|---|---|
+| Unit | 598 / 598 |
+| Migrations | 573 / 573 |
+| `outcomes.mjs` | 87 / 87 |
+| `attainment.mjs` | 73 / 73 |
+| `acceptance4.mjs` | 76 / 76 |
+| Every Phase 0 to 3 suite | its old figure |
+
+**Do not deploy this server** until `0019`, `0020` and `0021` are applied (`0021`
+before the server, since every attendance mark writes its column) and a client that
+approves drafts is in place (risks, above).
+
+Course outcomes and their mappings (the directive's "Course outcomes",
+"Outcome-to-topic mapping", "Topic-to-question mapping")
+
+- [x] Course outcomes per class (`0019`): a code (upper-cased, one per class among
+  outcomes in use), a statement of at most 300 characters (no email or phone number),
+  an optional target Bloom level and an order. Create, edit and reorder. At most 50 in
+  use, by creating, restoring or copying (409; the restore since the review). The
+  owner writes; an HOD of the department reads and gets 403 on every write; anyone
+  else gets the class's 404 word for word (`scripts/outcomes.mjs`,
+  `test/outcomes.test.js`, migrations)
+- [x] Removing an outcome. One that any counted answer reaches is archived, not
+  deleted: it keeps its mappings, is still named in every report and can be restored.
+  One with no answers is deleted and taken off every override. Copying to another
+  section makes new rows; nothing stays linked, and a code clash copies nothing
+  (`scripts/outcomes.mjs`)
+- [x] Outcome-to-topic mapping: (chapter, topic) pairs, each with a weight (default 1).
+  The chapters must be ones the caller may read. A topic may map to several outcomes.
+  Only topics the chapter's evidence carries are accepted, and an unknown one is a 400
+  that lists the chapter's topics (`scripts/outcomes.mjs`, `test/outcomes.test.js`)
+- [x] Topic-to-question mapping. By default a question belongs to its topic's
+  outcomes. A per-question override maps it straight to some outcomes (in place of its
+  topic's) or excludes it from all. The override is kept by the question's id, so it
+  holds through edits and, for the answers given to it, after the question is deleted
+  (`test/outcomes.test.js`, `scripts/outcomes.mjs`)
+- [x] `resolveAnswer`, the one rule from an answer to its outcomes:
+  - the override first;
+  - then the topic in its chapter: the question's topic while the question exists,
+    then the one frozen on the answer;
+  - otherwise unmapped. Nothing is dropped.
+
+  Coverage and every attainment figure use it. Coverage gives per outcome and topic
+  the approved questions, the counted answers and the students. The counted answers
+  are mapped, excluded or unmapped, and the three add up (`test/outcomes.test.js`,
+  `scripts/outcomes.mjs`)
+- [ ] **A renamed topic is not followed.** Renaming a topic in a chapter's list leaves
+  its evidence counted as unmapped under the old name (`inChapter: false`) until the
+  old name is mapped too. This is said in coverage and the reports, never dropped
+  (`scripts/outcomes.mjs` checks it). Following renames is not built: nothing
+  records which name became which
+- [ ] Course outcomes and mapping screens. **Not checked** (the UI session's
+  uncommitted client has `Outcomes.jsx`)
+
+The roster from CSV (the roadmap's step 4)
+
+- [x] `POST /api/classes/:id/students/import`, owner only, a dry run included:
+  - `text/csv` or JSON, at most 1 MB and 2,000 rows;
+  - a byte-order mark, CRLF, LF or CR, quoted fields, comma, semicolon or tab;
+  - the roll number and name columns found by their header;
+  - read in time proportional to the file (since the review; a unit test reads
+    crafted files near 1 MB in well under a second).
+
+  The dry run writes nothing. It gives what would be added, every refused row with its
+  line, code and reason, the duplicates in the file and on the roster, the removed
+  students (reported, never restored) and the columns not read. The real import goes
+  through `addToRoster`, the JSON list's own path, and stores a roll number and a name
+  only: a `Phone`, `Mobile` or `Email` column is never read into a row, and is named
+  back. The JSON list answers exactly as before (`test/outcomes.test.js`,
+  `scripts/outcomes.mjs`, `scripts/roster.mjs`, `scripts/acceptance4.mjs`)
+- [ ] The import screen with its dry run. **Not checked** (`RosterImport.jsx` in the
+  UI session's uncommitted client). **Not tested:** a file exported by a real
+  spreadsheet in another encoding (a body is read as UTF-8)
+
+Configurable attainment thresholds, and colleges' own formulas
+
+- [x] The formula is data (`0020`), one row per class per saved version, never changed
+  (the database refuses an edit). It holds:
+  - a student threshold;
+  - the minimum counted answers;
+  - class levels (1 to 10, strictly increasing);
+  - which evidence types count;
+  - final or best attempts;
+  - room weights.
+
+  The formula is checked whole. A bad field, an unknown key, a room not of the class,
+  asking to count teacher records, or (since the review) counting provisional marks
+  without reviewed ones is each a 400 that saves nothing. A save equal to the formula
+  in force writes nothing. `GET`/`PUT .../attainment/config` and
+  `GET /api/attainment/presets` (`test/attainment.test.js`, `scripts/attainment.mjs`,
+  migrations)
+- [x] No institutional formula in code. Two examples ship as data
+  (`services/attainmentPresets.js`), each named "Example: ...". Neither is called NAAC
+  or NBA. A class with no saved formula uses the first and every report says so.
+  Every report returns the formula, its version and a methodology paragraph generated
+  from it, and the paragraph follows each change of field: a saved day in India's
+  time, no "level 0 below 0%", a weighted room outside the report named as such
+  (`test/attainment.test.js`, `test/exports.test.js`, `scripts/attainment.mjs`,
+  `scripts/acceptance4.mjs`)
+- [ ] **A department-wide or college-wide default formula.** Not built: each class
+  saves its own, starting from an example. An owner's question
+  (`PRODUCT_DECISIONS.md`)
+- [ ] A route to read an older version of a formula. Not built: they are kept, and
+  every report names the version it used
+- [ ] The attainment settings screen. **Not checked**
+
+Evidence types kept apart, and never combined without saying how
+
+- [x] Four evidence types read off the answer row (`evidenceTypeOf`), every figure
+  split by them with the answers and marks behind it:
+  - digital (`auto`);
+  - provisional machine marks (`provisional`: the keyword marker; the type the API
+    calls `aiProvisional`, labelled since the review as a machine mark, not AI);
+  - professor-reviewed (`confirmed`, `overridden`);
+  - polls, a count only.
+
+  Provisional marks are shown and, by default, not counted. A review through the
+  queue moves an answer into the reviewed type (`attainment.mjs` and
+  `acceptance4.mjs` review one and check the figure move)
+- [x] Who wrote the question, a second split of every figure (since the review):
+  AI-generated, professor-written, and offline-template or professor-written (a
+  professor's own question is stored as the template's today), each with its counted
+  answers and marks and what was not counted. It moves no mark. In the JSON, every
+  sheet and every page (`test/attainment.test.js`, `test/exports.test.js`;
+  `acceptance4.mjs` reads the sheet's source columns back against the JSON and checks
+  `bySource`)
+- [x] Teacher observations (and picks, tallies, activities) in their own labelled
+  section of every report and page, moving no figure. A formula cannot count them
+  (decision 3). An observation and a tally were recorded, and every figure was
+  checked unchanged (`scripts/attainment.mjs`, `scripts/acceptance4.mjs`)
+- [x] Never combined without saying how. Every report, sheet and page states the
+  formula, its parameters, which types it counted and which it showed but did not
+  count, the question sources, and the methodology paragraph (`scripts/acceptance4.mjs`
+  reads them from each sheet and page)
+- [ ] **No model marks written answers yet.** If one is added, its marks fall in the
+  provisional type unless a column records which marker made them
+
+Student-level and class-level attainment
+
+- [x] Student attainment per outcome:
+  - marks obtained and possible, by evidence type and by question source;
+  - the counted share;
+  - attained, not attained, or not enough evidence below the minimum answers (never
+    not attained);
+  - exact at the threshold (3 of 5 is 60%).
+
+  One student's report lists every answer behind each figure, with its type, its
+  question source, whether it counted and why (`test/attainment.test.js`,
+  `scripts/attainment.mjs`, `scripts/acceptance4.mjs`)
+- [x] Class attainment per outcome. The figure gives:
+  - the roster counted, attained and not attained;
+  - not enough evidence, and how many had no answers;
+  - the share (4 decimals, rounded down for display) and the class level;
+  - the evidence behind the share, from the students counted only;
+  - the evidence of roster students with too few answers, outside the share
+    (`outside.notEnoughEvidence`), and removed and off-roster students beside it,
+    never counted;
+  - a summary that says what the share rests on and what is outside it.
+
+  Finished by the review fixes (`test/attainment.test.js`, `scripts/attainment.mjs`,
+  `scripts/acceptance4.mjs`, each against hand counts)
+- [x] A student's answers stay theirs when their roll number is corrected on the
+  roster (`0021`, since the review): a report ties a room's answers to the student
+  whose attendance mark there was made under the roll number they were given under,
+  and says so (`givenAs`, `rollNotes`). Nothing is inferred: a roll number two marks
+  of one room carry is tied to neither (`test/attainment.test.js`,
+  `test/roster.test.js`, `scripts/attainment.mjs`, migrations)
+- [ ] **A roll number corrected before `0021`.** A mark made before it carries no roll
+  number, so such a room's answers under the old roll number stay apart, as a roll
+  number off the roster, with a note. No route merges them
+- [x] Bloom attainment per level and per decision 6's three bands, per student and for
+  the class, by the same rules (`attainment.mjs`, `acceptance4.mjs`)
+- [x] `?from=&to=&rooms=` on every report. Rooms are counted oldest first; only rooms
+  opened for the class. A bad code or date is a 400 (`scripts/attainment.mjs`,
+  `scripts/acceptance4.mjs`)
+- [ ] Deleted rooms counted. **Not built**: their answers are in the room archive,
+  which a report does not read, and every report says so
+- [ ] The attainment report and student report screens. **Not checked**
+  (`Attainment.jsx` in the UI session's uncommitted client)
+
+The marks register
+
+- [x] `GET /api/classes/:id/register`:
+  - students in roll order by rooms in date order;
+  - marks obtained of possible, by evidence type and by question source;
+  - the attendance mark;
+  - a total;
+  - the roll numbers off the roster, each with its note.
+
+  A room with no answers is 0 of 0 with its attendance mark, never a zero
+  (`test/attainment.test.js`, `scripts/attainment.mjs`, `scripts/acceptance4.mjs`)
+- [ ] Best n of m rooms, and scaling to a college's maximum marks. **Not built**
+- [ ] The register screen. **Not checked** (`Register.jsx` in the UI session's
+  uncommitted client)
+
+Attainment sheets, CSV exports and printable reports
+
+- [x] The files come from the same routes (`?format=csv`, `?format=html`), each the
+  JSON report of the same query handed to a writer that computes nothing. Four CSVs
+  are read back cell by cell against the JSON of the same query:
+  - the course-outcome sheet, its "behind the share", outside-the-share and
+    question-source columns included;
+  - the Bloom sheet;
+  - the register;
+  - the outcome list.
+
+  The queries are the default example, a saved 50% threshold, `?rooms=`, `?from=` and
+  `?to=` (`scripts/acceptance4.mjs`, `test/exports.test.js`)
+- [x] The CSV writer:
+  - a BOM, CRLF, RFC 4180 quoting, numbers unquoted;
+  - the formula-injection guard on a leading `= + - @`, tab or CR (an apostrophe, and
+    always quoted), stated in every sheet;
+  - since the review, the same guard after a semicolon or a tab inside a cell, and
+    every cell holding one quoted;
+  - a name beginning with `=` and a Devanagari name through a real import;
+  - a leading row saying how to keep roll numbers exactly (import as text).
+
+  (`test/exports.test.js`, `scripts/acceptance4.mjs`; the semicolon rule by the unit
+  test only. No spreadsheet program was used)
+- [x] Printable pages for the class report, one student and the register. They are
+  self-contained (no script, font, image or link; a CSP in the header and the page).
+  Every value is escaped through one tagged template. A4 print rules, repeated table
+  headers, landscape matrices, and badges that carry their words. The method, the
+  evidence types, the question sources, the share's evidence and what is outside it,
+  the roll numbers off the roster and the teacher records each have a place
+  (`scripts/acceptance4.mjs`, `test/exports.test.js`; printed to PDF by a headless
+  Edge by hand before the review fixes)
+- [x] No key in a file's address (since the review). A sheet or a page asked for with
+  `?key=` is a 400 that says to send the header, and no file is sent; JSON is not
+  refused (`scripts/acceptance4.mjs`, `test/exports.test.js`). The Phase 0 room CSV
+  still takes `?key=`, on purpose (`docs/API.md`, "Known open issues")
+- [x] ASCII filenames from the class's course, section and id prefix and India's day,
+  never a student's name. CSVs are an attachment, pages inline, and both `no-store`.
+  Who may fetch each format: as for the JSON route (`scripts/acceptance4.mjs`)
+- [ ] The roadmap's per-question attainment sheet (one column per question, with
+  maximum marks, outcome and level header rows). **Not built**: a question has no
+  maximum marks yet
+- [ ] Download and print screens. **Not checked** (`ReportWindow.jsx` and
+  `downloadCsv` / `openReport` in the UI session's uncommitted client). **Not
+  tested:** any spreadsheet program; paper; Firefox or Safari; a console opening a page
+  from a blob or `srcdoc`
+
+The acceptance criterion
+
+- [x] **A professor conducts several sessions and gets a meaningful course-outcome
+  attainment report without compiling quiz results by hand.** `acceptance4.mjs` runs
+  it end to end over HTTP and the socket:
+  1. a bank written and approved;
+  2. a class with its roster imported from a CSV;
+  3. three outcomes mapped to topics;
+  4. three rooms on three days, with absences, a visitor and a reviewed written answer;
+  5. the report, sheets and pages, checked against hand-worked numbers.
+
+  76 / 76 after the review fixes, in both runs. On the server only: no screen was
+  part of it
+
+Privacy and labels
+
+- [x] Staff-only. No phone payload, no projector payload and no public room read in
+  any of the three scripts carries an outcome, a mark, a state, a formula or a report.
+  One phone and the projector stay connected through the acceptance run
+  (`outcomes.mjs`, `attainment.mjs`, `acceptance4.mjs`)
+- [x] Students in roll order, never ranked or numbered by score. States describe
+  evidence, and no label like "slow learner" appears in any report, sheet or page
+  (`attainment.mjs`, `acceptance4.mjs` search for ranks and labels)
+- [x] A roster holds a roll number and a name only, from a CSV too. Other columns are
+  dropped and named back (`outcomes.mjs`, `acceptance4.mjs`, migrations). An
+  attendance mark adds only the roll number it was made under (`0021`)
+- [ ] No leaderboards, coins or streaks: none exists. Checked by reading, and by the
+  scripts' search for ranks; no test can show an absence
+
+Across the phase
+
+- [x] Ownership on every route and format. Another professor gets the class's 404
+  word for word, an HOD of the department reads and gets 403 on every write, another
+  HOD gets 404, a student account 403 and nobody 401 (all three scripts)
+- [x] Existing behaviour kept:
+  - the JSON roster add answers as before;
+  - every room route and socket event is unchanged in shape, the attendance read
+    included;
+  - the room archive gains one field, `markedRollNo` on a class room's attendance
+    rows (`0021`; an older archive decodes with null), and nothing about outcomes;
+  - every Phase 0 to 3 suite gives its old figure.
+- [x] The three repos expose the same 76 methods (unit test). `0019`, `0020` and
+  `0021` are additive and idempotent, re-run over rows in their tables, with RLS on and
+  no policies, and they change no existing row (`npm run migrations`, PGlite only)
+- [ ] **Not tested:**
+  - `0019`, `0020`, `0021` and the twelve new repo methods against a real Supabase or
+    Mongo;
+  - a server deployed before `0021` (traced: every attendance write would fail);
+  - a real Auth token;
+  - two screens editing one class's outcomes at once (last write wins) or two formula
+    saves racing on Supabase;
+  - a copy or topic set failing part way on Supabase (not atomic);
+  - the reports' cost over thousands of answers on Supabase;
+  - every screen.

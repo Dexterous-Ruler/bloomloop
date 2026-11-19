@@ -134,7 +134,8 @@ function sameSnapshot(label, a, b) {
 async function rowCounts(db) {
   const out = {};
   for (const table of ['contents', 'questions', 'sessions', 'profiles', 'accounts', 'invites', 'answers', 'room_archives',
-    'answer_reviews', 'media', 'classes', 'class_students', 'attendance', ...RECORD_TABLES, 'projector_links']) {
+    'answer_reviews', 'media', 'classes', 'class_students', 'attendance', ...RECORD_TABLES, 'projector_links',
+    ...OUTCOME_TABLES]) {
     const exists = await db.query(`select to_regclass('public.${table}') is not null as ok`);
     if (!exists.rows[0].ok) continue;
     out[table] = Number((await db.query(`select count(*)::int as n from public.${table}`)).rows[0].n);
@@ -169,7 +170,7 @@ const COLUMNS_THE_SERVER_USES = {
   media: ['id', 'owner_id', 'content_id', 'mime', 'bytes', 'sha256', 'data', 'alt', 'created_at'],
   classes: ['id', 'owner_id', 'course_name', 'section', 'term_label', 'created_at', 'updated_at'],
   class_students: ['id', 'class_id', 'roll_no', 'name', 'added_at', 'removed_at'],
-  attendance: ['id', 'session_id', 'class_student_id', 'status', 'source', 'marked_at', 'marked_by'],
+  attendance: ['id', 'session_id', 'class_student_id', 'status', 'source', 'marked_at', 'marked_by', 'roll_no'],
   observations: ['id', 'session_id', 'class_id', 'class_student_id', 'roll_no', 'day', 'kind', 'note', 'observed_by',
     'observed_at'],
   wheel_rounds: ['id', 'session_id', 'round', 'present_only', 'no_repeat', 'started_at', 'started_by'],
@@ -181,7 +182,15 @@ const COLUMNS_THE_SERVER_USES = {
     'updated_at'],
   insight_actions: ['id', 'session_id', 'flag_id', 'action', 'note', 'acted_by', 'acted_at'],
   projector_links: ['id', 'session_id', 'token_hash', 'created_at', 'created_by', 'revoked_at', 'revoked_by'],
+  course_outcomes: ['id', 'class_id', 'code', 'statement', 'target_level', 'position', 'created_at', 'updated_at',
+    'archived_at'],
+  outcome_topics: ['id', 'outcome_id', 'class_id', 'content_id', 'topic', 'weight', 'created_at'],
+  question_outcome_overrides: ['id', 'class_id', 'question_id', 'outcome_ids', 'excluded', 'updated_at', 'updated_by'],
+  attainment_configs: ['id', 'class_id', 'version', 'config', 'created_at', 'created_by'],
 };
+
+// The course-outcome tables (0019), and the attainment formula's (0020).
+const OUTCOME_TABLES = ['course_outcomes', 'outcome_topics', 'question_outcome_overrides', 'attainment_configs'];
 
 // The teacher-record tables (0017), every one a room's record.
 const RECORD_TABLES = ['observations', 'wheel_rounds', 'wheel_picks', 'hand_tallies', 'room_activities', 'insight_actions'];
@@ -1294,6 +1303,255 @@ section('room modes, the waiting room and projector links (0018)');
   await db.query('delete from public.sessions where code like $1', ['MOD0%']);
 }
 
+section('course outcomes, topic mappings and question overrides (0019)');
+
+{
+  const KEPT = { code: '23001' };
+  const [cls] = (await db.query(
+    `insert into public.classes (owner_id, course_name, section) values ($1, 'Computer Networks', 'TY-CS A') returning *`, [PROF])).rows;
+  const [otherCls] = (await db.query(
+    `insert into public.classes (owner_id, course_name, section) values ($1, 'Computer Networks', 'TY-CS B') returning *`, [PROF])).rows;
+
+  // The insert createOutcome() sends (server/src/repo/supabaseRepo.js).
+  const outcome = (o = {}) => db.query(
+    `insert into public.course_outcomes (class_id, code, statement, target_level, position) values ($1, $2, $3, $4, $5) returning *`,
+    [given(o, 'classId', cls.id), given(o, 'code', 'CO1'), given(o, 'statement', 'Explain how TCP recovers from loss.'),
+      given(o, 'targetLevel', 'understand'), given(o, 'position', 1)]);
+  const [co1] = (await accepts('a course outcome: code, statement, target level, position', () => outcome())) ?? [];
+  check('it reads back as written, in use (not archived), with its times filled',
+    co1?.code === 'CO1' && co1?.target_level === 'understand' && co1?.position === 1 && co1?.archived_at === null
+    && co1?.created_at instanceof Date && co1?.updated_at instanceof Date);
+  const [co2] = (await accepts('a second, with no target level', () =>
+    outcome({ code: 'CO2', statement: 'Analyse routing tables.', targetLevel: null, position: 2 }))) ?? [];
+  const [theirs] = (await accepts('the same code in another class', () => outcome({ classId: otherCls.id }))) ?? [];
+  const SHAPE = { code: '23514', match: /course_outcomes_code_check/ };
+  await rejects('a code in lower case', () => outcome({ code: 'co9' }), SHAPE);
+  await rejects('a code with a trailing space', () => outcome({ code: 'CO9 ' }), SHAPE);
+  await rejects('a code with two spaces', () => outcome({ code: 'CO  9' }), SHAPE);
+  await rejects('a code over 16 characters', () => outcome({ code: 'C'.repeat(17) }), SHAPE);
+  await rejects('a blank statement', () => outcome({ code: 'CO9', statement: '   ' }), { code: '23514', match: /course_outcomes_statement_check/ });
+  await rejects('a statement over 300 characters', () => outcome({ code: 'CO9', statement: 's'.repeat(301) }),
+    { code: '23514', match: /course_outcomes_statement_check/ });
+  await rejects('a target level spelt analyze', () => outcome({ code: 'CO9', targetLevel: 'analyze' }),
+    { code: '23514', match: /course_outcomes_target_level_check/ });
+  await rejects('a position of 0', () => outcome({ code: 'CO9', position: 0 }), { code: '23514', match: /course_outcomes_position_check/ });
+  await rejects('a class that does not exist', () => outcome({ code: 'CO9', classId: randomUUID() }), { code: '23503' });
+  await rejects('two outcomes of one class with one code', () => outcome({ code: 'CO1', statement: 'Again.' }),
+    { code: '23505', match: /course_outcomes_class_code_key/ });
+
+  // The mappings setOutcomeTopics() writes.
+  const link = (l = {}) => db.query(
+    `insert into public.outcome_topics (outcome_id, class_id, content_id, topic, weight) values ($1, $2, $3, $4, $5) returning *`,
+    [given(l, 'outcomeId', co1?.id), given(l, 'classId', cls.id), given(l, 'contentId', content?.id), given(l, 'topic', 'Congestion control'),
+      given(l, 'weight', 2)]);
+  const [mapped] = (await accepts('an outcome mapped to a topic of a chapter, weight 2', () => link())) ?? [];
+  check('its weight reads back (numeric, as text)', Number(mapped?.weight) === 2);
+  await accepts('the same topic mapped to a second outcome', () => link({ outcomeId: co2?.id, weight: 1 }));
+  await accepts('a second topic for the first outcome, the default weight', () =>
+    db.query(`insert into public.outcome_topics (outcome_id, class_id, content_id, topic) values ($1, $2, $3, 'Flow control')`,
+      [co1?.id, cls.id, content?.id]));
+  await rejects('one topic twice for one outcome and chapter, in another case', () => link({ topic: 'congestion CONTROL' }),
+    { code: '23505', match: /outcome_topics_outcome_topic_key/ });
+  await rejects('a weight of 0', () => link({ topic: 'Sliding windows', weight: 0 }), { code: '23514', match: /outcome_topics_weight_check/ });
+  await rejects('a weight over 100', () => link({ topic: 'Sliding windows', weight: 100.5 }), { code: '23514', match: /outcome_topics_weight_check/ });
+  await rejects('a topic with two spaces in it', () => link({ topic: 'Sliding  windows' }), { code: '23514', match: /outcome_topics_topic_check/ });
+  await rejects('a blank topic', () => link({ topic: '' }), { code: '23514', match: /outcome_topics_topic_check/ });
+  await rejects('a mapping whose class is not its outcome\'s', () => link({ classId: otherCls.id, topic: 'Sliding windows' }),
+    { code: '23503', match: /outcome_topics_outcome_fkey/ });
+  await rejects('a chapter that does not exist', () => link({ contentId: randomUUID(), topic: 'Sliding windows' }), { code: '23503' });
+
+  // The overrides setQuestionOverride() upserts.
+  const QUESTION = randomUUID(); // no foreign key: a question id that names nothing is still a decision about it
+  const override = (o = {}) => db.query(
+    `insert into public.question_outcome_overrides (class_id, question_id, outcome_ids, excluded, updated_by)
+     values ($1, $2, $3, $4, $5)
+     on conflict (class_id, question_id) do update set
+       outcome_ids = excluded.outcome_ids, excluded = excluded.excluded, updated_at = now(), updated_by = excluded.updated_by
+     returning *`,
+    [given(o, 'classId', cls.id), given(o, 'questionId', QUESTION), given(o, 'outcomeIds', [co2?.id]), given(o, 'excluded', false),
+      given(o, 'updatedBy', PROF)]);
+  const [ov] = (await accepts('a question mapped straight to an outcome, whatever its topic', () => override())) ?? [];
+  check('it reads back with its outcome', JSON.stringify(ov?.outcome_ids) === JSON.stringify([co2?.id]) && ov?.excluded === false);
+  const [again] = (await accepts('the same question again: the override is replaced, not doubled', () =>
+    override({ outcomeIds: [co1?.id, co2?.id] }))) ?? [];
+  {
+    const { rows } = await db.query('select count(*)::int as n from public.question_outcome_overrides where class_id = $1', [cls.id]);
+    check('one override per question per class', rows[0].n === 1 && again?.outcome_ids?.length === 2);
+  }
+  await accepts('a question excluded from every outcome', () => override({ questionId: randomUUID(), outcomeIds: [], excluded: true }));
+  const OV_SHAPE = { code: '23514', match: /question_outcome_overrides_shape/ };
+  await rejects('excluded and mapped at once', () => override({ questionId: randomUUID(), excluded: true }), OV_SHAPE);
+  await rejects('neither excluded nor mapped', () => override({ questionId: randomUUID(), outcomeIds: [] }), OV_SHAPE);
+  await rejects('an outcome id that is null', () => override({ questionId: randomUUID(), outcomeIds: [co1?.id, null] }), OV_SHAPE);
+  await rejects('an outcome of another class', () => override({ questionId: randomUUID(), outcomeIds: [theirs?.id] }),
+    { code: '23503', match: /not one of class/ });
+  await rejects('an outcome that does not exist', () => override({ questionId: randomUUID(), outcomeIds: [randomUUID()] }),
+    { code: '23503', match: /not one of class/ });
+  await rejects('one outcome named twice', () => override({ questionId: randomUUID(), outcomeIds: [co1?.id, co1?.id] }),
+    { code: '23514', match: /twice/ });
+
+  // Archived, not deleted; a code freed for reuse.
+  await accepts('archiving an outcome', () => db.query('update public.course_outcomes set archived_at = now() where id = $1', [co2?.id]));
+  const [newCo2] = (await accepts('a new outcome with the archived one\'s code', () =>
+    outcome({ code: 'CO2', statement: 'Design a subnet plan.', position: 3 }))) ?? [];
+  await rejects('restoring the archived one while its code is taken', () =>
+    db.query('update public.course_outcomes set archived_at = null where id = $1', [co2?.id]),
+  { code: '23505', match: /course_outcomes_class_code_key/ });
+  await rejects('moving an outcome to another class', () =>
+    db.query('update public.course_outcomes set class_id = $1 where id = $2', [otherCls.id, newCo2?.id]), KEPT);
+  await rejects('deleting an outcome an override still names', () =>
+    db.query('delete from public.course_outcomes where id = $1', [co2?.id]), { code: '23503', match: /question override/ });
+  await accepts('taking it off the override, then deleting it', async () => {
+    await db.query(`update public.question_outcome_overrides set outcome_ids = array_remove(outcome_ids, $1::uuid) where question_id = $2`,
+      [co2?.id, QUESTION]);
+    return db.query('delete from public.course_outcomes where id = $1', [co2?.id]);
+  });
+  {
+    const { rows } = await db.query('select count(*)::int as n from public.outcome_topics where outcome_id = $1', [co2?.id]);
+    check('its topic mappings went with it', rows[0].n === 0);
+  }
+
+  // Deleting a class takes its outcomes, mappings and overrides with it.
+  const [gone] = (await db.query(
+    `insert into public.classes (owner_id, course_name, section) values ($1, 'Signals', 'SY-EC A') returning *`, [PROF])).rows;
+  const [goneCo] = (await outcome({ classId: gone.id, code: 'CO1' })).rows;
+  await link({ outcomeId: goneCo.id, classId: gone.id });
+  await override({ classId: gone.id, outcomeIds: [goneCo.id] });
+  await accepts('deleting a class whose outcome an override names', () => db.query('delete from public.classes where id = $1', [gone.id]));
+  {
+    const left = await Promise.all(OUTCOME_TABLES.map((t) => db.query(`select count(*)::int as n from public.${t} where class_id = $1`, [gone.id])));
+    check('its outcomes, mappings and overrides went with it', left.every((r) => r.rows[0].n === 0));
+  }
+  {
+    const [chapter] = (await db.query(
+      `insert into public.contents (title, kind, owner_id) values ('Mapped only', 'syllabus', $1) returning id`, [PROF])).rows;
+    await link({ contentId: chapter.id, topic: 'Subnetting' });
+    await rejects('deleting a chapter an outcome is mapped to', () => db.query('delete from public.contents where id = $1', [chapter.id]),
+      { code: '23503', match: /outcome_topics_content_id_fkey/ });
+  }
+
+  const idx = await db.query(`select indexname from pg_indexes where schemaname = 'public' and indexname in
+    ('course_outcomes_class_code_key', 'course_outcomes_class_idx', 'outcome_topics_outcome_topic_key', 'outcome_topics_class_idx',
+     'outcome_topics_content_idx', 'question_outcome_overrides_class_question_key', 'question_outcome_overrides_updated_by_idx')`);
+  check('outcomes by class and code, mappings by outcome, class and chapter, and overrides by class and editor have their indexes',
+    idx.rows.length === 7, idx.rows.map((r) => r.indexname).join(', '));
+  // Left in place: the re-run below runs over them.
+}
+
+section('attainment formulas, version by version (0020)');
+
+{
+  const KEPT = { code: '23001', match: /kept as it was saved/ };
+  const [cls] = (await db.query(
+    `insert into public.classes (owner_id, course_name, section) values ($1, 'Operating Systems', 'TY-CS A') returning *`, [PROF])).rows;
+  const formula = { studentThreshold: 0.6, minAnswers: 3, levels: [{ level: 1, minShare: 0.5 }], evidence: { digital: true },
+    attempts: 'final', roomWeights: [] };
+  // The insert addAttainmentConfig() sends (server/src/repo/supabaseRepo.js).
+  const save = (c = {}) => db.query(
+    `insert into public.attainment_configs (class_id, version, config, created_by) values ($1, $2, $3, $4) returning *`,
+    [given(c, 'classId', cls.id), given(c, 'version', 1), given(c, 'config', formula), given(c, 'createdBy', PROF)]);
+  const [v1] = (await accepts('a class\'s formula, version 1', () => save())) ?? [];
+  check('it reads back as written, its time filled', v1?.version === 1 && v1?.config?.studentThreshold === 0.6
+    && v1?.config?.levels?.[0]?.minShare === 0.5 && v1?.created_at instanceof Date && v1?.created_by === PROF);
+  await accepts('version 2 beside it', () => save({ version: 2, config: { ...formula, minAnswers: 4 } }));
+  {
+    // The read getAttainmentConfig() sends: the highest version is in force.
+    const { rows } = await db.query('select version, config from public.attainment_configs where class_id = $1 order by version desc limit 1', [cls.id]);
+    check('the highest version is the one in force', rows[0]?.version === 2 && rows[0]?.config?.minAnswers === 4);
+  }
+  await rejects('two saves of one version (a race)', () => save({ version: 2 }), { code: '23505', match: /attainment_configs_class_version_key/ });
+  await rejects('version 0', () => save({ version: 0 }), { code: '23514', match: /attainment_configs_version_check/ });
+  await rejects('a config that is a list', () => save({ version: 3, config: JSON.stringify([1, 2]) }), { code: '23514', match: /attainment_configs_config_check/ });
+  await rejects('a config over 32 KB', () => save({ version: 3, config: { ...formula, note: 'x'.repeat(33000) } }),
+    { code: '23514', match: /attainment_configs_config_check/ });
+  await rejects('a class that does not exist', () => save({ classId: randomUUID(), version: 1 }), { code: '23503' });
+  await rejects('changing a saved version', () =>
+    db.query(`update public.attainment_configs set config = '{"studentThreshold": 0.1}' where id = $1`, [v1?.id]), KEPT);
+  await rejects('renumbering a saved version', () => db.query('update public.attainment_configs set version = 9 where id = $1', [v1?.id]), KEPT);
+  await rejects('deleting a saved version', () => db.query('delete from public.attainment_configs where id = $1', [v1?.id]), KEPT);
+
+  // The saver's account deleted: created_by goes null, the formula stays.
+  const SAVER = randomUUID();
+  await db.query('insert into auth.users (id) values ($1)', [SAVER]);
+  await insertAccount({ id: SAVER, role: 'student', code: 'BL-AT0001', reportsTo: PROF, rollNo: '31' });
+  await save({ version: 3, createdBy: SAVER });
+  await accepts('deleting the account that saved a version', () => db.query('delete from auth.users where id = $1', [SAVER]));
+  {
+    const { rows } = await db.query('select created_by, config from public.attainment_configs where class_id = $1 and version = 3', [cls.id]);
+    check('the version stays, with no one recorded as its saver', rows.length === 1 && rows[0].created_by === null
+      && rows[0].config?.studentThreshold === 0.6);
+  }
+
+  // Deleting a class takes its versions with it.
+  const [gone] = (await db.query(
+    `insert into public.classes (owner_id, course_name, section) values ($1, 'Compilers', 'TY-CS B') returning *`, [PROF])).rows;
+  await save({ classId: gone.id, version: 1 });
+  await save({ classId: gone.id, version: 2 });
+  await accepts('deleting a class with saved formulas', () => db.query('delete from public.classes where id = $1', [gone.id]));
+  {
+    const { rows } = await db.query('select count(*)::int as n from public.attainment_configs where class_id = $1', [gone.id]);
+    check('its formulas went with it', rows[0].n === 0);
+  }
+  const idx = await db.query(`select indexname from pg_indexes where schemaname = 'public' and indexname in
+    ('attainment_configs_class_version_key', 'attainment_configs_created_by_idx')`);
+  check('formulas by class and version, and by saver, have their indexes', idx.rows.length === 2, idx.rows.map((r) => r.indexname).join(', '));
+  // Left in place: the re-run below runs over them.
+}
+
+section('the roll number an attendance mark was made under (0021)');
+
+// Kept by the re-run section below, which checks the mark survives it.
+let rollMark = null;
+{
+  const { rows: cols } = await db.query(`select data_type, is_nullable, column_default from information_schema.columns
+    where table_schema = 'public' and table_name = 'attendance' and column_name = 'roll_no'`);
+  check('attendance.roll_no is text, null allowed, with no default (nothing backfilled)',
+    cols.length === 1 && cols[0].data_type === 'text' && cols[0].is_nullable === 'YES' && cols[0].column_default === null,
+    JSON.stringify(cols));
+  const [cls] = (await db.query(
+    `insert into public.classes (owner_id, course_name, section) values ($1, 'Databases', 'TY-CS C') returning *`, [PROF])).rows;
+  const students = Object.fromEntries((await db.query(
+    `insert into public.class_students (class_id, roll_no, name) values ($1, '21CS01', 'Asha'), ($1, '21CS02', 'Bilal') returning id, roll_no`,
+    [cls.id])).rows.map((r) => [r.roll_no, r.id]));
+  const contentId = (await db.query('select id from public.contents limit 1')).rows[0]?.id;
+  const [room] = (await db.query(
+    `insert into public.sessions (code, content_id, title, status, owner_id, class_id) values ('ROLL01', $1, 'R', 'open', $2, $3) returning *`,
+    [contentId, PROF, cls.id])).rows;
+  // What addAttendanceIfAbsent() and saveAttendance() send (server/src/repo/supabaseRepo.js).
+  const join = (studentId, roll) => db.query(
+    `insert into public.attendance (session_id, class_student_id, status, source, marked_at, marked_by, roll_no)
+     values ($1, $2, 'present', 'joined', now(), null, $3)
+     on conflict (session_id, class_student_id) do nothing returning *`, [room.id, studentId, roll]);
+  const teacherMark = (studentId, status, roll) => db.query(
+    `insert into public.attendance (session_id, class_student_id, status, source, marked_at, marked_by, roll_no)
+     values ($1, $2, $3, 'teacher', now(), $4, $5)
+     on conflict (session_id, class_student_id) do update set
+       status = excluded.status, source = excluded.source, marked_at = excluded.marked_at, marked_by = excluded.marked_by,
+       roll_no = excluded.roll_no
+     returning *`, [room.id, studentId, status, PROF, roll]);
+  const [joined] = (await accepts('a join stores the roll number the phone joined with', () => join(students['21CS01'], '21CS01'))) ?? [];
+  check('it reads back with that roll number', joined?.roll_no === '21CS01' && joined?.source === 'joined');
+  // The roster row's roll number corrected; the mark keeps the one it was made under.
+  await db.query(`update public.class_students set roll_no = '21CS11' where id = $1`, [students['21CS01']]);
+  {
+    const { rows } = await db.query('select roll_no from public.attendance where session_id = $1 and class_student_id = $2',
+      [room.id, students['21CS01']]);
+    check('correcting the roster\'s roll number leaves the mark\'s as it was made', rows[0]?.roll_no === '21CS01');
+  }
+  const [marked] = (await accepts('a teacher mark stores the roll number the server sends', () =>
+    teacherMark(students['21CS02'], 'late', '21CS02'))) ?? [];
+  check('it reads back with it', marked?.roll_no === '21CS02' && marked?.status === 'late');
+  await accepts('a mark with no roll number, as every mark before 0021', () => teacherMark(students['21CS02'], 'absent', null));
+  {
+    const { rows } = await db.query('select roll_no, status from public.attendance where session_id = $1 and class_student_id = $2',
+      [room.id, students['21CS02']]);
+    check('reads back with none', rows[0]?.roll_no === null && rows[0]?.status === 'absent');
+  }
+  await accepts('any text the server accepted: no shape check here', () => teacherMark(students['21CS02'], 'present', '21CS 02'));
+  rollMark = { sessionId: room.id, studentId: students['21CS01'] };
+  // Left in place: the re-run below runs over them.
+}
+
 section('deleting');
 
 await rejects('deleting the sign-in of a professor who owns material and students', () =>
@@ -1329,6 +1587,13 @@ sameSnapshot('the re-run left the schema exactly as it was', shapeBeforeRerun, a
   check('accounts_below still answers after the re-run', rows.length === 2);
   const acc = await db.query('select accommodations from public.accounts where id = $1', [STUDENT]);
   check('stored values survive the re-run', acc.rows[0]?.accommodations?.largerText === true);
+  // No earlier file's re-run (0016 re-adds attendance's checks) narrows what 0021 allows.
+  const mark = await db.query('select roll_no from public.attendance where session_id = $1 and class_student_id = $2',
+    [rollMark?.sessionId, rollMark?.studentId]);
+  check('a mark\'s roll number survives the re-run (0021)', mark.rows[0]?.roll_no === '21CS01', JSON.stringify(mark.rows));
+  await accepts('and a mark carrying a roll number is still accepted after it', () => db.query(
+    `update public.attendance set roll_no = '21CS 01', source = 'teacher', status = 'late', marked_by = $3
+      where session_id = $1 and class_student_id = $2`, [rollMark?.sessionId, rollMark?.studentId, PROF]));
 }
 
 await db.close();
@@ -1382,6 +1647,8 @@ section('upgrading a v1 database that already holds data');
     const records = await rowCounts(old);
     check('v1 rooms have no teacher records, and the tables are there to take them (0017)',
       RECORD_TABLES.every((t) => records[t] === 0), JSON.stringify(records));
+    check('a v1 database has no course outcomes or attainment formulas, and the tables are there to take them (0019, 0020)',
+      OUTCOME_TABLES.every((t) => records[t] === 0), JSON.stringify(records));
     const p = await old.query('select integrity, served_tries, account_id, history from public.profiles');
     check('v1 profiles keep their history and get empty integrity, no pin, no account',
       JSON.stringify(p.rows[0]?.integrity) === '[]' && p.rows[0]?.served_tries === 0 && p.rows[0]?.account_id === null
@@ -1401,6 +1668,34 @@ section('upgrading a v1 database that already holds data');
     check('accounts_below is replaced by the version returning whole account rows', r.rows[0]?.result === 'SETOF accounts');
   }
   await old.close();
+}
+
+// ------------------------------------------ 0021 over marks already taken --
+
+section('0021 on a database that already holds attendance');
+
+{
+  const before21 = await freshDatabase();
+  await applyAll(before21, files.filter((f) => f.name < '0021'), 'up to 0020');
+  await before21.exec(`
+    insert into public.contents (id, title, kind) values ('31111111-1111-4111-8111-111111111111', 'deck', 'pptx');
+    insert into public.classes (id, course_name, section) values ('32222222-2222-4222-8222-222222222222', 'Networks', 'A');
+    insert into public.class_students (id, class_id, roll_no, name)
+      values ('33333333-3333-4333-8333-333333333333', '32222222-2222-4222-8222-222222222222', '21CS01', 'Asha');
+    insert into public.sessions (id, code, content_id, status, class_id)
+      values ('34444444-4444-4444-8444-444444444444', 'OLD021', '31111111-1111-4111-8111-111111111111', 'closed',
+              '32222222-2222-4222-8222-222222222222');
+    insert into public.attendance (session_id, class_student_id, status, source)
+      values ('34444444-4444-4444-8444-444444444444', '33333333-3333-4333-8333-333333333333', 'present', 'joined');
+  `);
+  const counts = await rowCounts(before21);
+  const ok = await applyAll(before21, files.filter((f) => f.name >= '0021'), 'over existing marks');
+  const { rows } = await before21.query('select status, source, roll_no from public.attendance');
+  check('0021 applies over existing marks, changing no row: each reads back with no roll number',
+    ok && JSON.stringify(counts) === JSON.stringify(await rowCounts(before21))
+    && rows.length === 1 && rows[0].status === 'present' && rows[0].source === 'joined' && rows[0].roll_no === null,
+    JSON.stringify(rows));
+  await before21.close();
 }
 
 // ------------------------------------- 0011 over accounts that already clash --

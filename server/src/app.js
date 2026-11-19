@@ -24,6 +24,8 @@ import classroomRoutes from './routes/classroom.js';
 import reviewRoutes from './routes/review.js';
 import mediaRoutes from './routes/media.js';
 import classRoutes from './routes/classes.js';
+import outcomeRoutes from './routes/outcomes.js';
+import attainmentRoutes, { presetRoutes as attainmentPresetRoutes } from './routes/attainment.js';
 import recordRoutes from './routes/records.js';
 import projectorRoutes from './routes/projector.js';
 import insightRoutes from './routes/insights.js';
@@ -133,6 +135,15 @@ export function createApp() {
   // Teacher-only: class rosters are names and roll numbers, and nothing a phone
   // needs. Whose class is whose is checked inside, by ownership.js.
   app.use('/api/classes', requireTeacher, classRoutes);
+  // A class's course outcomes and their mappings (Phase 4):
+  // /api/classes/:id/outcomes. Staff-only like the class, whose ownership they
+  // follow; no path here is one the class router answers.
+  app.use('/api/classes', requireTeacher, outcomeRoutes);
+  // Attainment and the marks register (Phase 4): /api/classes/:id/attainment...
+  // and /api/classes/:id/register, staff-only like the class; and the example
+  // formulas at /api/attainment/presets, for any teacher.
+  app.use('/api/classes', requireTeacher, attainmentRoutes);
+  app.use('/api/attainment', requireTeacher, attainmentPresetRoutes);
 
   // Teacher-only: the queue carries students' written answers and the question
   // snapshots with their rubrics. Which rooms a teacher may read or decide on is

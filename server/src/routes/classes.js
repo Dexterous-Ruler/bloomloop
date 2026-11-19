@@ -16,10 +16,15 @@ import { getRepo } from '../repo/index.js';
 import { isRecordId } from '../ids.js';
 import { assertCanRead, assertCanWrite, canWrite, readable } from '../ownership.js';
 import {
+  MAX_CSV_BYTES,
+  MAX_CSV_ROWS,
+  REFUSAL,
+  addToRoster,
   classFields,
   classView,
   cleanName,
   nameProblem,
+  rosterFromCsv,
   rosterRoll,
   studentView,
   validateRoster,
@@ -35,15 +40,19 @@ const fail = (message, status) => Object.assign(new Error(message), { status });
 const KEPT = 'Nothing they did is deleted: their answers in every room, their attendance and their records stay, '
   + 'and they can be put back on the roster (PATCH with { "active": true }).';
 
-/** A class this viewer may read, by id, or the one 404 for "not there" and "not yours". */
-async function readableClass(rawId, viewer) {
+/**
+ * A class this viewer may read, by id, or the one 404 for "not there" and "not
+ * yours". Exported for the course-outcome routes (routes/outcomes.js), whose
+ * ownership follows the class's.
+ */
+export async function readableClass(rawId, viewer) {
   const id = String(rawId ?? '').trim();
   const cls = isRecordId(id) ? await getRepo().getClass(id) : null;
   return assertCanRead(viewer, cls, 'That class');
 }
 
 /** A class this viewer may change: 404 as above, 403 for an HOD who may only read it. */
-async function writableClass(rawId, viewer) {
+export async function writableClass(rawId, viewer) {
   const id = String(rawId ?? '').trim();
   const cls = isRecordId(id) ? await getRepo().getClass(id) : null;
   return assertCanWrite(viewer, cls, 'That class');
@@ -128,34 +137,122 @@ router.patch('/:id', async (req, res, next) => {
  * as every other route spells it). Rows that can join are added; every other
  * row comes back in `refused` with its position and a reason, and nothing is
  * added twice. Fields other than the roll number and the name are not stored,
- * and are named in `ignoredFields`. CSV import is Phase 4.
+ * and are named in `ignoredFields`. A CSV file is the import below; both add
+ * through addToRoster.
  */
 router.post('/:id/students', async (req, res, next) => {
   try {
     const cls = await writableClass(req.params.id, req.viewer);
-    const repo = getRepo();
-    const { accepted, refused, ignoredFields } = validateRoster(req.body?.students, await repo.listClassStudents(cls._id));
-    const made = accepted.length
-      ? await repo.addClassStudents(cls._id, accepted.map(({ rollNo, name }) => ({ rollNo, name })))
-      : [];
-    // A row that passed the check and was still not added lost a race with
-    // another request adding the same roll number: it is on the roster, once.
-    const added = new Set(made.map((s) => s.rollNo));
-    for (const row of accepted) {
-      if (!added.has(row.rollNo)) {
-        refused.push({ index: row.index, roll: row.rollNo, name: row.name, reason: `roll number ${row.rollNo} is already on this class's roster` });
-      }
-    }
-    refused.sort((a, b) => a.index - b.index);
+    const { made, refused, ignoredFields } = await addToRoster(getRepo(), cls._id, req.body?.students);
     const body = await classBody(cls, req.viewer);
     res.json({
       added: made.map(studentView),
-      refused,
+      // As this route has always answered: the refusal's `code` is the import's.
+      refused: refused.map(({ code, ...row }) => row),
       ignoredFields,
       ...(ignoredFields.length
         ? { note: `A roster keeps a roll number and a name only. Not stored: ${ignoredFields.join(', ')}.` }
         : {}),
       size: body.class.size,
+      class: body.class,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The import's body as text when it is sent as a file (text/csv, or text/plain
+// from a pasted sheet). JSON ({ csv }) is read by the app's own JSON parser.
+const csvText = express.text({ type: ['text/csv', 'text/plain', 'application/csv'], limit: MAX_CSV_BYTES });
+
+const DELIMITER_NAMES = { ',': 'comma', ';': 'semicolon', '\t': 'tab' };
+
+/** ?dryRun= or { dryRun } in a JSON body. Either saying true is a dry run: the safe way to read a disagreement. */
+function dryRunFrom(req) {
+  const q = req.query?.dryRun;
+  if (q !== undefined && !['true', 'false'].includes(String(q))) throw fail('dryRun must be true or false.', 400);
+  const b = req.body && typeof req.body === 'object' ? req.body.dryRun : undefined;
+  if (b !== undefined && typeof b !== 'boolean') throw fail('dryRun must be true or false.', 400);
+  return q === 'true' || b === true;
+}
+
+/**
+ * Import students from a CSV file (Phase 4): the roll number and name columns
+ * of a class list as a spreadsheet exports it. The body is the file
+ * (Content-Type: text/csv) or JSON { csv }; at most 1 MB and 2,000 rows.
+ *
+ * With ?dryRun=true (or { dryRun: true }) nothing is written and the reply says
+ * exactly what an import would do: the rows it would add, every row it would
+ * refuse with its line and reason, the duplicates (twice in the file, already on
+ * the roster), the rows naming a removed student, and the columns it did not
+ * read. Without it the same rows are added, through addToRoster: the same check
+ * and the same write as POST /:id/students, so the two cannot disagree.
+ *
+ * A roster keeps a roll number and a name only: every other column (a phone
+ * number, an email, a date of birth) is never read into a row, never stored, and
+ * named back in `ignoredColumns`. A roll number of a removed student is reported
+ * and NOT restored: restoring is a decision about one student
+ * (PATCH /:id/students/:studentId { active: true }), not a side effect of a file.
+ *
+ * Owner only, dry run included: an HOD reads the class and gets 403 here.
+ */
+router.post('/:id/students/import', csvText, async (req, res, next) => {
+  try {
+    // Ownership before reading the file: an outsider learns nothing from a 400.
+    const cls = await writableClass(req.params.id, req.viewer);
+    const dryRun = dryRunFrom(req);
+    const csv = rosterFromCsv(typeof req.body === 'string' ? req.body : req.body?.csv);
+    const repo = getRepo();
+    const list = csv.rows.map(({ roll, name }) => ({ roll, name }));
+
+    let result;
+    if (dryRun) {
+      const roster = await repo.listClassStudents(cls._id);
+      result = { roster, made: [], ...validateRoster(list, roster, { maxRows: MAX_CSV_ROWS }) };
+    } else {
+      result = await addToRoster(repo, cls._id, list, { maxRows: MAX_CSV_ROWS });
+    }
+    const { roster, accepted, made, refused } = result;
+
+    const lineOf = (index) => csv.rows[index].line;
+    const byRoll = new Map(roster.map((s) => [s.rollNo, s]));
+    const firstLine = new Map(accepted.map((a) => [a.rollNo, lineOf(a.index)]));
+    const withCode = (code) => refused.filter((r) => r.code === code);
+    const rollOf = (r) => rosterRoll(r.roll) ?? r.roll;
+
+    const body = await classBody(cls, req.viewer);
+    res.json({
+      dryRun,
+      read: {
+        delimiter: DELIMITER_NAMES[csv.delimiter],
+        columns: { roll: csv.columns.roll, name: csv.columns.name },
+        rows: csv.rows.length,
+        blankLines: csv.blankLines,
+      },
+      ...(dryRun
+        ? { wouldAdd: accepted.map((a) => ({ line: lineOf(a.index), rollNo: a.rollNo, name: a.name })) }
+        : { added: made.map((s) => ({ line: firstLine.get(s.rollNo) ?? null, ...studentView(s) })) }),
+      refused: refused.map((r) => ({ line: lineOf(r.index), roll: r.roll, name: r.name, code: r.code, reason: r.reason })),
+      duplicates: {
+        inFile: withCode(REFUSAL.repeated).map((r) => ({ line: lineOf(r.index), rollNo: rollOf(r), firstLine: firstLine.get(rollOf(r)) ?? null })),
+        onRoster: withCode(REFUSAL.onRoster).map((r) => ({
+          line: lineOf(r.index), rollNo: rollOf(r), onRoster: byRoll.has(rollOf(r)) ? studentView(byRoll.get(rollOf(r))) : null,
+        })),
+      },
+      removed: withCode(REFUSAL.removed).map((r) => ({
+        line: lineOf(r.index), rollNo: rollOf(r), student: studentView(byRoll.get(rollOf(r))),
+      })),
+      ignoredColumns: csv.ignoredColumns,
+      ...(csv.ignoredColumns.length
+        ? { note: `A roster keeps a roll number and a name only. Not read from the file: ${csv.ignoredColumns.join(', ')}.` }
+        : {}),
+      ...(withCode(REFUSAL.removed).length
+        ? { restore: 'Removed students are not restored by an import. To bring one back, restore them on the roster '
+            + '(PATCH /api/classes/:id/students/:studentId with { "active": true }).' }
+        : {}),
+      ...(dryRun ? { message: 'Nothing was changed: this is what importing the file would do.' } : {}),
+      size: body.class.size,
+      ...(dryRun ? { sizeAfter: body.class.size + accepted.length } : {}),
       class: body.class,
     });
   } catch (err) {
@@ -293,6 +390,15 @@ router.delete('/:id/students/:studentId', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// A CSV body over the import's limit is refused by the text parser before the
+// route runs; this says so in a sentence rather than "request entity too large".
+router.use((err, _req, _res, next) => {
+  if (err?.type === 'entity.too.large') {
+    return next(fail(`The CSV is larger than ${MAX_CSV_BYTES / (1024 * 1024)} MB. A class list is far smaller; split the file.`, 413));
+  }
+  return next(err);
 });
 
 export default router;

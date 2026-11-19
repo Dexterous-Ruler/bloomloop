@@ -64,6 +64,11 @@ the room, the line the handoff's own histogram legend draws ("Above 60%"). "Need
 support" is below 40%, the engine's existing below-40% band. Both are defaults in the
 table below; they change no level and no question.
 
+Phase 4's attainment adds a fourth number, again not promotion and not the mastery
+goal: the share of the marks a student needs on a course outcome to attain it. It is
+part of each class's formula, chosen by the college. The shipped example uses 60%,
+named as an example. It moves no level and changes no question.
+
 **Waits on it.** Room settings screen copy, bands, analytics wording.
 
 ## 3. Do observations and spoken answers move a Bloom level?
@@ -90,7 +95,14 @@ records come beside them as their own counts (hands raised, answered aloud,
 observations by kind), never added in; recording a "Needs additional support" moves
 no band, card or tile (`server/scripts/insights.mjs`).
 
-**Waits on it.** Phase 3 observations, Phase 4 attainment.
+**Waits on it.** Phase 3 observations, Phase 4 attainment. Phase 4's course outcomes
+follow the safe default too: teacher records are never mapped to an outcome or counted
+in its coverage, which reads digital answers only (`services/outcomes.js`). So does
+Phase 4's attainment: a formula cannot count teacher records (asking is a 400), and
+every report summarises observations, picks, tallies and activities in a labelled
+section of their own that moves no figure (`services/attainment.js`;
+`server/scripts/attainment.mjs` records an observation and a tally and checks that
+every figure is unchanged).
 
 ## 4. Does "no image generation" cover plots and diagrams drawn from data?
 
@@ -138,7 +150,9 @@ needs no server change. Not to be confused with the live view's three **accuracy
 bands (Needs support, Developing, Excelling), which place a student by accuracy and
 are not about levels at all.
 
-**Waits on it.** Phase 3 class analytics (now built both ways), Phase 4 reports.
+**Waits on it.** Phase 3 class analytics (now built both ways), Phase 4 reports. Phase
+4's Bloom attainment is built both ways too: per level (`bloom.levels`) and per level
+band (`bloom.bands`), with the same rules.
 
 ## 7. Must the Hub require student accounts?
 
@@ -401,3 +415,178 @@ Three findings were not fixed, because each needs the owner (all in `docs/API.md
   force the class's other rooms show for that day. Keeping them (with no room, under
   the class and day) means a test room's marks could never be removed, since
   observations are append-only.
+
+### Phase 4: course outcomes, their mappings, and the roster from CSV
+
+Chosen so the work could go ahead; each is in use, said in `docs/API.md` ("Phase 4"),
+and reversible with no data migration unless the last column says otherwise.
+Decision 3 holds throughout: teacher records are never mapped to an outcome or counted
+in coverage. Decision 8's data minimisation holds for the import: a CSV's other
+columns are never read into a row, let alone stored.
+
+| Default | Why | Cost of changing it |
+|---|---|---|
+| Outcomes belong to a **class** (a course and a section), not to a course across sections or to a chapter | Attainment is reported per class; a second section copies them (`POST .../outcomes/copy`), as new rows with nothing linked, so an edit in one section never moves the other's report | Sharing outcomes across sections needs a course table and a migration |
+| Topics are matched by text, **within their chapter, ignoring case and runs of spaces** (`topicKey`) | The rule the chapter's own topic list already de-duplicates by (`tidyTopics` in `routes/content.js`). The same name in two chapters is two topics | One function; looser matching (punctuation, accents) could join topics a professor keeps apart |
+| A mapping may name any topic the chapter's evidence carries: its list, its questions' topics, or a topic answers in the class's rooms were given under; any other is a 400 that lists them | Stops a typo making a mapping that catches nothing, while still letting a professor map an old name after a rename | None |
+| **A renamed topic is not followed.** Renaming it in the chapter's list leaves questions and answers under the old name; that evidence is counted as unmapped under the old name (`inChapter: false`) until the old name is mapped too | Nothing records that one name became another (the chapter's list is replaced whole), so guessing would risk joining two topics. Never dropping it, and saying so, is the safe direction | Recording renames needs the content edit to say which name became which |
+| Which topic decides: the **question's current topic while the question exists**, then the topic frozen on the answer | The task's rule. A question's topic is not editable today, so the two agree; if it becomes editable, the bank's current topic wins for answers to questions that still exist | One function (`resolveAnswer`) |
+| A per-question override **replaces** its topic's outcomes (it does not add to them), or excludes the question from every outcome | "Map one question directly to specific COs" reads as instead of; adding would make an override unable to take a question away from a wrong topic mapping | One function |
+| An override is kept by the question's id with **no foreign key**, and still applies to answers given to a deleted question (their snapshot keeps the id) | The professor's decision is about that question's evidence, which outlives the question | A foreign key would delete it with the question |
+| "Has evidence", for removing an outcome: **any counted answer** (final, graded, digital) from any of the class's live rooms reaches it. Approved questions mapped to it are not evidence; deleted rooms' archived answers are not read | Archiving keeps what was measured; an outcome nothing was measured against can go | Counting archives needs reading `room_archives` |
+| An outcome with evidence is **archived, keeping its mappings**, so evidence (later answers too) keeps reaching it and reports name it, marked archived. It cannot be edited or remapped until restored; restoring puts it last | "A report run later still names it." Freezing its mappings at archive time would need a copy of them | Stopping new evidence reaching an archived outcome is one condition in the resolver |
+| Deleting an outcome with no evidence takes it off every override; an override left naming nothing is removed and its question follows its topic again, which the reply says | The alternative, refusing the delete, would leave the professor to undo overrides by hand first | None |
+| Codes are upper-cased, one per class among outcomes in use; an archived code may be reused | "co1" and "CO1" are one outcome to a reader; reusing an archived code lets a professor start a revised CO3 | One check |
+| Weights are per topic (above 0, at most 100, default 1); an override counts with weight 1. Coverage counts unweighted | The task asked weights on topic mappings only; how a weight enters a figure is the attainment formula's, which colleges configure | A per-override weight would be a column |
+| Coverage counts **final, graded** answers (polls and retried attempts out), from the class's rooms the caller may read | As item statistics and the topic report count | One filter (`countsAsEvidence`) |
+| The CSV import is **owner only, dry run included** | The task's "owner only"; an HOD writes nothing, and a dry run is a write's rehearsal | One guard |
+| The CSV import reads one roll number column and one name column, found by header (`roll`, `roll no`, `roll number`, `rollno`; `name`, `student name`, any case, `.`, `_`, `-` as spaces). A file without such a header is refused, not guessed at | Guessing a header-less file's columns could put a phone number in the name | A list of words |
+| A CSV may hold **2,000 rows and 1 MB**; the class still stops at 500 students, rows past it refused one by one with their lines | A sheet exported for a whole year may hold several sections; reading it all and saying what was not added beats refusing the file | Constants |
+| A roll number matching a **removed** student is reported and **not restored** | Restoring is a decision about one person; a file is not the place to make it | None |
+| The boot probe does **not** check `0019`'s tables | No room needs them: a server deployed before `0019` keeps its rooms on Supabase and only the outcome routes fail, instead of every room falling back to the in-process store | One line in `probeSupabase` |
+
+### Phase 4: configurable attainment and the marks register
+
+The directive's rule is that no single institutional formula is hardcoded as correct.
+So the formula is data (`0020`), and these are the defaults around it. Each is in use,
+said in `docs/API.md` ("Phase 4: configurable attainment"), and reversible with no data
+migration unless the last column says otherwise. The owner should look at the first
+four.
+
+| Default | Why | Cost of changing it |
+|---|---|---|
+| **A class with no saved formula uses "Example: 60% of marks; levels at 50 / 60 / 70% of students"** (60% of the marks, from 3 answers; class levels at 50, 60 and 70% of students; digital and reviewed answers; final attempts; rooms equal), and every report says it is an example, not an institutional standard. A second example ships: levels at 60 / 70 / 85% | A report has to use some formula before a professor chooses one; the numbers are the task's own example, and 60% is the line a published university handbook draws, without naming it. Neither preset is called NAAC or NBA | Data: `DEFAULT_PRESET` and `PRESETS` in `services/attainmentPresets.js` |
+| **Provisional machine marks (written answers the keyword marker marked, not yet reviewed) do not count by default** | The task's default. Note that the live ladder does count them at once (the review default above); attainment is a report a college files, where a keyword match is not yet a mark. A professor who reviews the queue moves them into `humanReviewed`, which counts | One field of the formula (`evidence.aiProvisional`), per class |
+| **The class figure counts the roster now**; removed students and roll numbers not on the roster are listed after it, labelled, and never counted (their evidence is in `outside`) | A mistyped or visiting roll number is not a student of the class, and a removed student has left it. An empty roster gives no class figure, and the summary says to import one | One filter in `classFigure` |
+| **Below `minAnswers` counted answers, a student is "not enough evidence"**, including with none at all; such students are not counted in the class's share | The task's rule: never "not attained" without the evidence. The class figure's `notEnoughEvidence` and `withNoAnswers` say how many | None |
+| Evidence types are read from `review_status` and `ungraded`: `auto` digital, `provisional` the keyword marker's (a provisional machine mark, not AI), `confirmed` / `overridden` a professor's; a poll counts only as a number | How Phase 1 writes them; no column needed | One function (`evidenceTypeOf`) |
+| One answer is one mark (the score in force, 0 to 1), times the topic's weight in the outcome (1 for a question mapped by an override) times the room's weight; Bloom attainment weighs by room only | Weights on topics were asked for in the mapping, and on rooms in the formula; a question has no maximum marks of its own yet | A per-question mark would be a column on questions |
+| **Final attempts**: every final attempt counts; a question answered in two rooms counts in both; a second final row for one question in one room (only after a failed profile write) replaces the first, as item statistics read it. **Best**: one attempt per student and question across attempts and rooms, the highest mark among the counted types first, ties to a final attempt and then the later one; since the review, a written answer's attempt followed by a retry never counts under best | "Best attempt per question" read as per student and question; choosing among counted types first stops a provisional 1 hiding a reviewed 0.4; only a final written attempt can be reviewed, so an earlier one could never be checked | One function (`chooseAnswers`) |
+| Bloom attainment counts every counted answer at its level, mapped to an outcome or not, and an answer excluded from outcomes by an override still counts at its level | An override is about outcomes; the level is the question's own. Both the six levels and decision 6's three bands are given | One filter |
+| **Deleted rooms are not counted** | An archive's class is inside its JSON, so a report would read and decode every archive in full; no `includeArchived` option was built. Every report says so | Reading `room_archives` (a class column on archives would make it cheap) |
+| `from` and `to` select rooms by the day each opened, in India's time (`roomDay`), as observations are dated; `rooms` names codes of the class's rooms | One rule for "which class meetings", not for when each answer was given | One filter in `roomsWindow` |
+| A saved formula is **never changed**: a save is the next version, a save equal to the one in force writes nothing, and the first save is version 1 even when it equals the default example (the professor chose it) | A report printed under version 2 must be checkable later; the database refuses edits (`0020`) | A route to read old versions is not built |
+| A room weight is stored by the room's id (a code may be sent); a room deleted since is ignored and shown `found: false`; in a report, `inReport` says whether the room is among those counted | Codes are freed when a room is deleted and may be drawn again | None |
+| **The register** applies the formula's evidence types and attempts rule (best within a room), not outcomes, thresholds or room weights; one question is one mark; no answers in a room is 0 of 0 with the attendance mark beside it, **never a zero** | The roadmap's "absent versus zero"; weights belong to attainment | Scaling to a college's marks and best n of m rooms are not built |
+| States and levels are decided in exact integer arithmetic | 0.7 + 0.7 + 0.7 is not 2.1 in floating point; a student at exactly the threshold attains | None |
+| Students are listed in roll order: the roster, then removed students with evidence, then roll numbers off the roster; never by any mark, never numbered | No ranks (the roadmap's "Labels and leaderboards") | None |
+| Teacher records in a report: observations in force per student and day in the rooms counted, picks by response, questions asked aloud with their hands, activities by kind; never a mark | Decision 3's safe default | None |
+
+### Phase 4: CSV exports and printable reports
+
+Each is in use, said in `docs/API.md` ("Phase 4: CSV exports, printable reports and the
+acceptance run"), and reversible with no data migration.
+
+| Default | Why | Cost of changing it |
+|---|---|---|
+| Files come from **the JSON routes themselves** (`?format=csv`, `?format=html`), not from separate `/export` or `/print` routes | One place reads a query, so a file is always the JSON of the same rooms, formula and filters | New routes calling the same writers |
+| The **method rides in the sheet**: leading rows (label, value), a blank row, then each table with a title row; not a second file | A sheet mailed on its own still says which formula, version and rooms made it. Spreadsheets open leading rows as they are | A second file, or a header-only sheet, from the same writer |
+| The guard: a text cell starting with `= + - @`, tab or CR gets an apostrophe **and is always quoted**; since the review, the same after a semicolon or a tab inside a cell, and every cell holding one quoted; numbers are never guarded | The OWASP list; quoting makes the neutralised cell plain in the file. A negative number is a number. A spreadsheet that splits on semicolons or tabs would otherwise start a new cell mid-name | Two regular expressions |
+| Teacher records in a sheet **at class level only**; a student's are in their own printable report | A sheet is filtered and mailed a row at a time, and "Needs additional support: 2" beside a name is the label the roadmap's "Labels and leaderboards" warns against | One table |
+| The register's page has a teacher-records section that says they are **not in the register** and where they are | The register is marks; decision 3 keeps records out of every mark | None |
+| A filename names the class's course, section, **the first 8 characters of its id** (a class has no code) and India's day; never a student, even for one student's report | A file may be forwarded; the class's own words are already on it | One function |
+| The attainment sheet is **student by outcome**, as the task asks; the roadmap's per-question sheet (maximum marks, outcome and level header rows) is not built | A question has no maximum marks yet (one answer is one mark) | A new sheet from the student report's answers, and a marks column for questions |
+| The printable page holds its **own Content-Security-Policy** (`<meta>`) as well as the header's | The console opens it from a blob or `srcdoc`, where no header reaches it | None |
+
+### Phase 4: the defaults the owner should look at
+
+The tables above hold every Phase 4 default. These eight are the ones the owner is
+most likely to want to look at, gathered here with where each is said. Each is in use
+and reversible with no data migration. The formula defaults change by data (a preset)
+or per class (a saved version), never by code.
+
+| Default | What is in use | Why | Cost of changing it |
+|---|---|---|---|
+| **The evidence types** | Four types, read off the answer row as Phase 1 writes it (`evidenceTypeOf`). **Digital**: `review_status` `auto`, an objective answer marked from the stored key. **Provisional machine mark** (the API's `aiProvisional`): `provisional`, a written answer marked by the keyword (rubric) marker, or by a model marker if one is ever added, and not reviewed. **Reviewed**: `confirmed` or `overridden`, the professor's mark. **Poll**: `ungraded`, a count only, never a mark. Teacher records are **not** an evidence type; a formula cannot count them (400) and every report gives them a section of their own. These are the directive's four kinds of evidence: digital answers; teacher observations; "AI-generated assessments", which is the provisional type, a machine's mark nobody has reviewed; and human-reviewed assessments | No column is needed, and each type says what a person can trust about a mark. No model marks written answers today, so "AI" names a type that so far holds keyword marks only. The API key `aiProvisional` keeps the directive's word (and saved formulas use it); since the review every label and methodology calls it a "provisional machine mark", "not AI", and the sheets' columns "provisional written answers", so no report claims a model marked anything | One function. A separate type per marker needs a column on `answers` saying which marker made the provisional mark |
+| **The default formula and the presets, as examples** | A class with no saved formula uses **"Example: 60% of marks; levels at 50 / 60 / 70% of students"**: a student attains an outcome with 60% of its marks from at least 3 counted answers; the class reaches level 1, 2 or 3 when 50, 60 or 70% of the students counted attain; digital and reviewed answers count; final attempts; rooms equal. A second example ships, "Example: 60% of marks; levels at 60 / 70 / 85% of students". Every report says which it used, that it is an example to start from and not an institutional standard, and gives its exact parameters. Neither is called NAAC, NBA or any body's formula | The directive forbids one formula hard-coded as correct. A report still needs some formula before a professor picks one, and an example labelled as an example is honest about that | Data: `PRESETS` and `DEFAULT_PRESET` in `services/attainmentPresets.js`; or each class saves its own |
+| **Provisional machine marks are left out by default** | `evidence.aiProvisional: false` in both examples. Since the review a save may count them only together with reviewed marks (400 otherwise), since a review replaces the machine's mark; a formula stored otherwise before still reads. Provisional marks are shown in every figure, with their answers and marks, and marked "not counted". A professor who reviews them in the queue moves them into the reviewed type, which counts. A class may switch them on in its own formula. The live ladder does count them at once (the review default above), so a student's level and their attainment can rest on different evidence, and the methodology paragraph says which attainment used | A college files attainment; a keyword match is not yet a mark anyone stands behind | One field per class |
+| **Deleted ("archived") rooms** | Not counted in attainment, coverage, the register or the outcome remove check. A deleted room's answers are kept in `room_archives` (decision 9), but an archive's class is inside its JSON, and every report says deleted rooms are left out. An **archived course outcome** is a different thing: one with evidence is archived rather than deleted, keeps its mappings, and is still named and computed in every report, marked archived | Reading every archive in full on every report costs too much, and a class column on archives would be a migration of its own. Most deletions are test rooms | A class column on `room_archives`, then an `includeArchived` option |
+| **Renamed topics** | Not followed. Renaming a topic in a chapter's list leaves its questions and answers under the old name, so that evidence counts as **unmapped** under the old name (`inChapter: false`) until the old name is mapped too. It is never dropped, and coverage and every report list it | Nothing records which name became which, and guessing could join two topics a professor keeps apart | The content edit would need to record renames, and the resolver would follow them |
+| **The CSV import rules** | Owner only, the dry run included. The file is `text/csv` or JSON `{ csv }`, at most 1 MB and 2,000 rows (the class still stops at 500). It may carry a BOM, CRLF, LF or CR, quoted fields, and comma, semicolon or tab, told from the header line. The header must name one roll number column and one name column; a file without one is refused, never guessed. **Every other column is never read into a row** and is listed back (a phone, email or date-of-birth column included). A name holding an `@` or a long number is refused. A removed student's roll number is reported, never restored. The rows go through the JSON list's own check (`addToRoster`). A body is read as UTF-8 | Decision 8's data minimisation, and the roster rule of roll number and name only | Constants and a word list in `services/roster.js` |
+| **The formula-injection guard** | In every CSV sheet, a text cell starting with `=`, `+`, `-`, `@`, a tab or a CR gets an apostrophe in front **and is always quoted**. Numbers are never guarded. Every sheet says so in its `Formula guard` row. Since the Phase 4 review the guard also works after a semicolon or a tab inside a cell, and every cell holding one is quoted, so a spreadsheet set to split on semicolons (Excel in many European locales) cannot start a cell with `=` from the middle of a name. Of the two fixes the review offered, this one was chosen: names are not narrowed | The OWASP rule for CSV injection, for the comma-separated sheets Indian installs of Excel open by default and for a semicolon locale | Two regular expressions in `services/csv.js`. The Phase 0 room CSV keeps its older guard (`docs/API.md`, "Known open issues") |
+| **Print delivery** | A printable report is a self-contained HTML page from the same route (`?format=html`), served inline with `no-store`. It has no script, font, image or link, its own Content-Security-Policy in the header and the page, and A4 print rules. Readers print with the browser's own Print. No PDF is made on the server (it would need a headless browser or a PDF library). The console fetches with the sign-in header (or the `x-teacher-key` header) and opens the page from a blob or `srcdoc`. Since the review a page or a sheet asked for with `?key=` in its address is a 400, so the shared key is never printed in a page's footer or kept with a download | No new dependency. The page is the report's own words and figures, and the reader's browser prints it | A short-lived link without the key, or a server-side PDF (a new dependency) |
+
+### Phase 4 review: the rules the fixes chose
+
+The fixes from the Phase 4 review (19 November 2026) chose these rules. Each is in
+use, said in `docs/API.md` ("Phase 4: every new and changed endpoint"), and
+reversible with no data migration unless the last column says otherwise.
+
+| Rule | What is in use | Why | Cost of changing it |
+|---|---|---|---|
+| **Whose answers: through the attendance mark** | An attendance mark keeps the roll number it was made under (`0021`): a join the phone's, in the roster's form; a professor's mark (and a wheel pick's Absent) the roster's at that moment, unless the mark it replaces already carries one, which is kept. A report gives a room's answers to the student whose mark in that room carries the roll number they were given under, filed under their roll number now; otherwise the roster as it stands decides. **Nothing is inferred**: a roll number two marks of one room carry is tied to neither, and a mark made before `0021` ties nothing. `rollNotes` says, for every roll number left off the roster, where its answers are and whom a mark under it was made for | A professor who corrects a roll number on the roster must not lose the student's earlier answers to "not on the roster". Answers are evidence and are never rewritten (`0012`), so the tie is kept on the mark. Guessing from names or timing could give one student's answers to another | The column is a migration (`0021`); the rule is one function (`rollResolver`) |
+| **Question provenance beside the evidence type** | Every figure's counted marks are split again by who wrote the question, from the answer row's `question_source`: AI-generated (`llm`), professor-written (`teacher`), and offline-template or professor-written (`fallback`, how a professor's own question is stored today). It moves no mark | The directive's "AI-generated assessments" can mean an AI-written question as well as an AI-marked answer. The evidence type says who marked; this says who wrote. Labelling `fallback` as both is honest while a professor's question is stored that way | One function (`questionSourceOf`); a `teacher` value needs the Phase 2 contract change |
+| **The class figure rests on the students counted** | A figure's `marks` are the answers of the students attained or not attained. Roster students with too few counted answers are outside the share, with their evidence in `outside.notEnoughEvidence`, and the summary says so | Counting their answers in made a figure look better supported than it was | One filter in `classFigure` |
+| **Rounding down for display** | A share is cut to 4 decimals, rounded down; obtained marks to 3 decimals down, possible marks up. States and levels are decided exactly, never from these | A share of 59.996% printed as 60% beside "Not attained" under a 60% threshold reads as a mistake; a printed figure should never read higher than it is | Three functions |
+| **A weighted room outside the window is "not in this report"** | Room weights are named from every room of the class the caller may read, and each carries `inReport`. Only a room the class no longer has reads "since deleted" | `?rooms=` or the dates leaving a room out is not its deletion | None |
+| **No key in a file's address** | A sheet or a page asked for with `?key=` is a 400 that says to send the `x-teacher-key` header; JSON with `?key=` is still taken. The Phase 0 room CSV is left as it was | A browser prints a page's address in its footer and keeps it in its history, and a download keeps its address, so the shared key would leave the room on paper | One check in `reportFormat` |
+| **Provisional marks only with reviewed ones** | A save counting `aiProvisional` without `humanReviewed` is a 400; a formula stored that way before still reads, and its methodology says what it does | A review replaces the machine's mark, so such a formula would take every reviewed answer out of the count | One check in `configFrom` |
+| **Only rooms opened for the class** | A report counts only rooms opened for the class (`sessions.class_id`), and every methodology and `definitions.rooms` now say so | A room opened without choosing the class may hold anyone's answers | None: it was already so; only the words are new |
+| **A restore counts towards the 50** | Restoring an archived outcome while 50 are in use is a 409, as creating one is | The cap was meant for outcomes in use, however they get there | One check |
+| **A formula's day is India's** | The day a formula was saved, in its label and methodology, is India's day | Every other day in a report is | None |
+
+Left alone on purpose by the fixes, and open in `docs/API.md`: the Phase 0 room CSV
+still takes `?key=` (its header must stay on row 1 for the Classroom import); "everyone
+who joined" (`fromJoins`) decides by each student's roll number on the roster now; and
+a roll number reused within a class after a correction can send answers in rooms
+without a tying mark to its current holder.
+
+### Phase 4: open questions for the owner
+
+These are questions, not decisions. Nothing is built that settles them; each says what
+is in use meanwhile.
+
+1. **A department-wide or college-wide default formula.** Each class now saves its own
+   formula, starting from a shipped example. Should an HOD (or a college
+   administrator, a role that does not exist) set a default that every class in the
+   department starts from? Or one every class must use? If so, may a professor depart
+   from it, and must a report say so? Meanwhile there is none: each class uses the
+   shipped example until its professor saves one. Building it needs a department-level
+   table and a rule for who may write it (an HOD writes nothing today).
+2. **Indirect attainment.** Many colleges blend direct attainment with indirect
+   attainment, such as course-exit surveys, and with university examination results,
+   at weights of their own. Is that needed? If so, does BloomLoop collect the surveys,
+   or does it only take the figures in? Meanwhile every report says it is direct
+   attainment only, from the class's answers.
+3. **Maximum marks per question, and the per-question attainment sheet.** One answer
+   is one mark today. The roadmap's sheet (one column per question, with maximum
+   marks, outcome and level header rows) needs a question to carry its own maximum.
+   Is that wanted, and should it scale to a college's examination marks?
+4. **Should deleted rooms count?** Today they do not (above).
+5. **Provisional marks, and a model marking written answers.** Should a class be able
+   to count provisional marks at all? It can today, by its own formula, and since the
+   review only together with reviewed marks. If a model ever marks written answers
+   (decision 5), should its marks be a type of their own, apart from the keyword
+   marker's?
+6. **Students under 18 and attainment records** (decision 8). Attainment reports and
+   their files are personal data about students. Who may receive a printed or
+   exported report, and for how long may it be kept? Nothing limits either today
+   beyond staff-only access.
+7. **Semicolon locales.** The guard now also covers a spreadsheet that splits on
+   semicolons (the review fix above). The sheets are still written with commas, so a
+   reader in such a locale imports them rather than opening them. Is a
+   semicolon-separated download wanted?
+8. **Decisions 3 and 6, as attainment applies them.**
+   - Decision 3: teacher records never count in attainment and are reported beside
+     it.
+   - Decision 6: both the six levels and the three level bands are given.
+
+   Settling either decision needs no data change: it is the formula's rule or the
+   screen's choice.
+9. **Archived outcomes and new evidence.** An outcome archived because evidence
+   reached it keeps its mappings, so answers given later still reach it and every
+   report names it, marked archived. Should an archived outcome stop taking new
+   evidence from the day it was archived? That is one condition in the resolver.
+10. **What the target Bloom level is for.** An outcome may carry a target level. It is
+    stored and shown in the outcome list, the sheets and the pages, and enters no
+    figure. Should attainment use it (for example, count only answers at or above it),
+    or is it a label?
+11. **An HOD's reports across classes.** An HOD reads each class of their department
+    one at a time; no route reports across classes or sections. Is a department view
+    wanted, and with which figures?
+12. **Older formula versions.** Every saved version is kept and every report names
+    the one it used, but only the version in force is served. Should a report be
+    re-run under an older version, or should the old versions be readable?
+13. **Course outcomes to programme outcomes.** Accreditation reports map course
+    outcomes to programme outcomes (CO to PO). BloomLoop has no programme outcomes.
+    Is that mapping wanted here, or is it done elsewhere from the exported sheet?

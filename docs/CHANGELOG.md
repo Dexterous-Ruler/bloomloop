@@ -2,13 +2,15 @@
 
 Newest first. Nothing below is deployed. The 18 November entries are committed as
 `b4585a0` on branch `roadmap-phase0-evidence`, the Phase 1 entries of 19 November as
-`05daf56` and the Phase 2 entries as `27559ca`. The Phase 3 entries of 19 November are
+`05daf56` and the Phase 2 entries as `27559ca`. **Phase 3 is committed as `d162cc8`.**
+The Phase 4 entries, its review fixes and `0019` to `0021` included, are
 uncommitted.
 
 ## Unreleased: 19 November 2026
 
-Server and database only; the client is the UI session's (`docs/UI_REBUILD.md`), and
-no screen uses anything from Phase 3. At the end of Phase 1
+Server and database only; the client is the UI session's (`docs/UI_REBUILD.md`). Its
+uncommitted client calls the Phase 3 class routes and now the Phase 4 routes too (not
+checked here). At the end of Phase 1
 every suite was rerun: unit 172/172, live loop 41/41, security 13/13, migrations
 204/204, review 83/83, evidence 37/37, resume and integrity pass, and the
 question-kind round trip had its 5 known failures. After Phase 2 and its review
@@ -19,7 +21,262 @@ Phase 3 and its review fixes, the rerun through the offline runner gave unit
 475/475, migrations 451/451, roster 80/80, records 97/97, modes 101/101, insights
 65/65, and every earlier suite as before. Nothing was run against Supabase, Mongo,
 Gemini or with a real Auth token (the Phase 3 suites answer the Auth calls
-themselves).
+themselves). After Phase 4's attainment work: unit 558/558, migrations 533/533,
+outcomes 86/86, attainment 65/65, and every earlier suite as before. After Phase 4's
+exports: unit 573/573, migrations 533/533, acceptance4 73/73, and every earlier suite
+as before. After the fixes from the Phase 4 review, the full rerun through the offline
+runner gave unit 598/598, migrations 573/573, outcomes 87/87, attainment 73/73,
+acceptance4 76/76, and every earlier suite as before.
+
+### Phase 4: full rerun and docs
+
+No code change in this pass. Every suite was run through the offline runner after
+the review fixes, twice (the fix's own run and a rerun), with the same figures: unit
+598/598, migrations 573/573, outcomes 87/87, attainment 73/73, acceptance4 76/76, and
+every earlier suite as before (`docs/TESTING.md`, "Full rerun after Phase 4"). The
+examples in `docs/API.md` were captured again after the fixes, from a one-off copy of
+the acceptance run on the in-process store with the network settings blanked.
+
+An earlier docs pass, made before the review fixes, ran every suite on a tree where a
+change to the class figure was half done and recorded three suites failing (unit
+583/584, attainment 64/66, acceptance4 70/73). The fixes finished that change; this
+pass replaces those figures and the text that described the half-done change.
+
+- `docs/API.md`:
+  - the "Phase 4: every new and changed endpoint" index: the reports' query with the
+    `key` rule, the Phase 4 status codes, what every report carries, whose answers
+    they are (`0021`, `rollNotes`, `givenAs`), the evidence types with the machine
+    mark, the question sources, a class figure captured after the fixes, the files as
+    they now look, and a list of the review fixes;
+  - the outcome, attainment and export parts brought up to date: the restore at 50,
+    the linear import, the save rule for provisional marks, `best` and written
+    retries, room weights and `inReport`, rounding down, the student report's
+    `givenAs` and `questionSourceType`, the register's `rollNotes`, the sheets' new
+    rows and columns (30 leading rows; "behind the share", outside the share and the
+    nine question-source columns), the semicolon guard, no key in a file's address,
+    the pages' new sections;
+  - the attendance write and the archive's `markedRollNo` under Phase 3 and "Deleted
+    rooms";
+  - "Known open issues": the semicolon guard and the key printed on a page moved to
+    "now fixed"; added the deliberate leftovers (the Phase 0 room CSV still takes
+    `?key=`; "everyone who joined" decides by the roster roll now; a roll number
+    reused after a correction), roll numbers corrected before `0021`, `best` across
+    rooms with provisional marks counted, and deploying before `0021`;
+  - the UI session's uncommitted client noted as calling the Phase 4 routes.
+- `docs/IMPLEMENTATION_STATUS.md`: the test table; how the numbers grew; the risks
+  (`0021` before the server; the two fixed review findings and the half-done change
+  removed); the Phase 4 checklist by the directive's items, with class attainment,
+  the course-outcome sheet, the guard, no key in a file's address, question sources,
+  the roll-number tie and the acceptance criterion now ticked, and every screen
+  unticked.
+- `docs/TESTING.md`: the Phase 4 script rows, the migrations row for `0021`, "Phase 4
+  review fixes", "Full rerun after Phase 4" and "Not covered".
+- `docs/ARCHITECTURE.md`: the course-outcome attainment section brought up to date
+  (the roll resolver, question sources, display rounding, what can and cannot be
+  configured), and the client row.
+- `docs/DATABASE_SCHEMA.md` and `supabase/README.md`: `0021`, its column and the apply
+  order `0019`, `0020`, `0021`, with why `0021` must come before the server.
+- `docs/PRODUCT_DECISIONS.md`: the defaults the review fixes chose, and the Phase 4
+  questions for the owner brought up to date.
+
+### Phase 4: fixes from the review
+
+Server, tests and database (uncommitted). One migration, `0021`. No new dependency. Every finding of the Phase 4 review is fixed, each with a
+check in the unit tests or the three Phase 4 scripts.
+
+- **The class figure rests on the students counted.** A figure's `marks` (an outcome,
+  a Bloom level or a band) holds only the answers of the students counted, attained or
+  not attained. Roster students with too few counted answers are outside the share:
+  `outside.notEnoughEvidence` gives `{ students, answers, marks }`. The summary reads
+  "Rests on N counted answers from the M students counted: ..." and, when any answers
+  are outside, adds "Outside the share: X counted answers from Y students with not
+  enough evidence."
+- **Rounded down for display.** A share is cut to 4 decimals, rounded down (2 of 3 is
+  0.6666, "66.66%"; 59.996% reads 59.99, never 60 beside "Not attained" under a 60%
+  threshold). Obtained marks are rounded down and possible marks up, to 3 decimals.
+  States and levels are still decided exactly.
+- **Room weights in a report** are named from every room of the class the caller may
+  read, and each carries `inReport`. A weighted room the dates or `?rooms=` leave out
+  is "a room not in this report", never "since deleted", in the methodology, the
+  parameters and the files.
+- **A corrected roll number keeps a student's answers** (`0021`). An attendance mark
+  keeps the roll number it was made under (`attendance.roll_no`): a join the phone's,
+  in the roster's form; a professor's mark (and a wheel pick's Absent) the roster's at
+  that moment, unless the mark it replaces already carries one, which is kept. A
+  report gives a room's answers to the student whose mark there carries their roll
+  number, else matches them to the roster as it stands; nothing is inferred, and a
+  roll number two marks of one room carry is tied to neither. The class report and the
+  register gain `rollNotes` (every roll number off the roster: its rooms, and whom a
+  mark under it was made for), with `note` on each row off the roster; a student
+  report's answers gain `givenAs` and a sentence in `note`; a deleted class room's
+  archive gains `markedRollNo` on each attendance row (null in older archives).
+- **Who wrote the question.** Every `marks` gains `questionSources` (`aiGenerated`,
+  `professorWritten`, `offlineTemplate`, each `{ answers, obtained, possible,
+  notCounted }`), the class report `answers.bySource`, the student report
+  `answerCounts.bySource` and `questionSourceType` on each answer, and all three
+  reports `questionSources`. A `fallback` question is labelled "Offline-template or
+  professor-written questions", since a professor's own question is stored that way;
+  `teacher` maps to professor-written. It moves no mark.
+- **Provisional marks called what they are.** `aiProvisional` is labelled
+  "Provisional machine marks" and described as a keyword match against the rubric, not
+  AI, in every report, sheet and page; the stored key is unchanged.
+- **A save may not count `aiProvisional` without `humanReviewed`** (400): a review
+  replaces the machine's mark, so such a formula would drop every reviewed answer. A
+  formula stored that way still reads, and its methodology says what it does.
+- **`best` attempts** never count a written answer's attempt followed by a retry: only
+  a final attempt can be reviewed, so a provisional mark on an earlier attempt no
+  longer beats the professor's mark on the final one.
+- **A formula's saved day** is India's day, as every other day in a report.
+- **No "level 0 below 0%"** in the parameters when the first level starts at 0%.
+- **Only rooms opened for the class** are counted, and the methodology, the register's
+  methodology and `definitions.rooms` say so.
+- **CSV sheets.** The class table's evidence columns are "<Type> behind the share
+  (counted)" or "(not counted)" with ": marks obtained" and ": marks possible", then
+  nine question-source columns, "Polls behind the share (not marked)", and two
+  outside-the-share columns before the removed students' (39 columns in all). New
+  leading rows: "Question sources", "Roll numbers not on the roster" and "Roll
+  numbers" (how to keep them exactly: import as text). The register gains "Total
+  counted answers on <source>" three times.
+- **The CSV guard** also puts an apostrophe after a semicolon or a tab inside a cell
+  where a formula would start, and quotes every cell holding a semicolon or a tab.
+- **No key in a file's address.** `?format=csv` or `html` with `?key=` on
+  `/attainment`, `/attainment/students/:studentId`, `/register` and
+  `/outcomes?format=csv` is a 400 that says to send the `x-teacher-key` header. JSON
+  with `?key=` is still 200. The Phase 0 room CSV (`routes/export.js`) is unchanged.
+- **Restoring an outcome** (`PATCH .../outcomes/:outcomeId` with `{ "archived":
+  false }`) while 50 are in use is a 409, as creating one is.
+- **The CSV import reads in linear time**; a crafted file near the 1 MB limit used to
+  take seconds. A unit test reads such files.
+- **Printable pages**: a question-source table, "Who wrote the questions behind each
+  share", an "Outside the share" column, the roll numbers off the roster with their
+  notes, and the question's source under each answer on the student page.
+- Left alone on purpose: the Phase 0 room CSV still takes `?key=` (its header must
+  stay on row 1 for the Classroom import); "everyone who joined" (`marksFromJoins`)
+  decides by the roster's roll number now; a roll number reused within a class after a
+  correction can send answers to its current holder (`docs/API.md`, "Known open
+  issues").
+- Tests: unit 598 (25 more: `outcomes` 44, `attainment` 56, `exports` 21, `roster`
+  35), migrations 573 (40 more, for `0021`), `outcomes.mjs` 87, `attainment.mjs` 73,
+  `acceptance4.mjs` 76; every earlier suite unchanged.
+
+### Phase 4: CSV exports, printable reports and the acceptance run
+
+Server, tests and docs (uncommitted); no client change. No migration, no repo method,
+no new dependency.
+
+- **The reports as files, from the same routes** (`?format=csv`, `?format=html`; JSON
+  stays the default): the course-outcome attainment sheet and, with `&sheet=bloom`, the
+  Bloom sheet (`GET /api/classes/:id/attainment`); the marks register
+  (`.../register`); the outcome list with its mappings (`.../outcomes`, CSV only);
+  printable pages for the class's attainment, one student
+  (`.../attainment/students/:studentId`, HTML only) and the register. Each file is the
+  JSON report of the same request handed to a writer that computes nothing
+  (`services/exports.js`, `services/printable.js`).
+- **A CSV writer** (`csvCell`, `toCsv` in `services/csv.js`): BOM, CRLF, RFC 4180
+  quoting, numbers unquoted, and a formula-injection guard (a text cell starting with
+  `= + - @`, a tab or a CR gets an apostrophe and is quoted), said in every sheet.
+  Every sheet starts with rows giving the class, period, rooms, formula, its exact
+  parameters, the methodology paragraph and the evidence types, then its tables.
+  Teacher records appear at class level only.
+- **Printable pages**: self-contained HTML (inline CSS, no script, font, image or
+  link; a Content-Security-Policy in the header and the page), every value escaped
+  through one tagged template, A4 print rules with page breaks, repeated table headers
+  and landscape matrices, state and level badges that carry their words, and a
+  separate teacher-records section.
+- ASCII filenames from the class's course, section and id prefix and India's day,
+  never a student's name; `no-store`. Ownership as for the JSON route; a bad `format`
+  or `sheet` is a 400 after the class's 404; `?key=` works exactly as for an image.
+- The class report's outcomes now carry `topics` and `directQuestions` (what each is
+  mapped to), additively.
+- **`server/scripts/acceptance4.mjs`**: the directive's acceptance criterion end to
+  end (73 checks), added to the offline runner; `server/test/exports.test.js` (15).
+
+### Phase 4: configurable attainment and the marks register
+
+Server, database and docs (uncommitted); no client change. One migration, `0020`. No
+new dependency.
+
+- **The attainment formula is data** (`0020` `attainment_configs`; `services/attainment.js`
+  `validateConfig`, `configFrom`): a student threshold, a minimum number of counted
+  answers, class levels (strictly increasing), which evidence types count, final or
+  best attempts, room weights. Stored per class as numbered versions that are never
+  changed (the database refuses an edit); `GET` (read rule) and `PUT` (owner)
+  `/api/classes/:id/attainment/config`, from a preset or by named fields; a bad field,
+  an unknown key, a room not of the class or counting teacher records is a 400 that
+  saves nothing.
+- **Presets as data, named as examples** (`services/attainmentPresets.js`,
+  `GET /api/attainment/presets`): "Example: 60% of marks; levels at 50 / 60 / 70% of
+  students" (the default until a class saves its own) and "... 60 / 70 / 85% ...".
+  Neither is called NAAC or NBA; every report says when it used one.
+- **Evidence types** read off the answer row (`evidenceTypeOf`): digital (`auto`),
+  provisional written marks (`provisional`: the keyword, or a model, marker, not
+  reviewed), professor-reviewed (`confirmed`, `overridden`); polls a count only. Every
+  figure is split by them, with the answers it rests on; provisional marks are shown
+  and, by default, not counted.
+- **Course-outcome and Bloom attainment** (`GET /api/classes/:id/attainment`,
+  `?from=&to=&rooms=`): per student and outcome, marks obtained and possible by type,
+  the counted share and a state (attained, not attained, not enough evidence); per
+  outcome, the roster counted, attained and share, the class's level, the evidence and
+  the students outside the count (removed, off the roster); the same per Bloom level and
+  per decision 6's three bands; every answer mapped, excluded or unmapped, adding up;
+  teacher records in their own section, moving no figure; the formula, its version and
+  a methodology paragraph written from it. Decided in exact integer arithmetic.
+- **One student's report** (`.../attainment/students/:studentId`), with every answer
+  behind it in the teacher's view, its type, whether it counted and why, and the
+  outcomes it reached.
+- **The marks register** (`GET /api/classes/:id/register`): students in roll order by
+  rooms in date order, marks obtained of possible by evidence type, the attendance mark
+  and a total; no answers in a room is 0 of 0 beside its attendance mark, never a zero.
+- Staff-only throughout; students listed in roll order, never ranked. Deleted rooms
+  are not counted (their archives are not read), and every report says so.
+
+### Phase 4: course outcomes, their mappings, and the roster from CSV
+
+Server, database and docs (uncommitted); no client change. One migration, `0019`.
+No new dependency: the CSV reader is written in `services/csv.js`.
+
+- **Course outcomes** (`0019` `course_outcomes`; `routes/outcomes.js`,
+  `services/outcomes.js`): a class's outcomes, each a code, a statement of at most
+  300 characters, an optional target level and a place in the order. List, create,
+  edit, reorder, remove, and copy from another class the caller may read (new rows,
+  nothing linked). Removing one that any counted answer reaches archives it instead,
+  keeping its mappings, so later reports still name it; one with none is deleted and
+  taken off any override. Ownership follows the class.
+- **Mappings** (`outcome_topics`, `question_outcome_overrides`): an outcome to topics
+  of chapters the caller may read, each with a weight (default 1), a topic to any
+  number of outcomes; a per-question override mapping one question straight to some
+  outcomes, or excluding it, kept by the question's id so it outlives edits and, for
+  the answers given to it, the question itself.
+- **`resolveAnswer`**, the one pure rule from an answer row to its outcomes and why
+  (`question`, `topic`, `excluded`, `unmapped`), for the coverage and the attainment
+  report alike: the override first, then the topic in its chapter (the question's
+  while it exists, then the answer's frozen one). A topic renamed after answers were
+  given keeps its answers counted, as unmapped under the old name, until it is
+  mapped.
+- **Coverage** (`GET /api/classes/:id/outcomes/coverage`): per outcome and topic, the
+  approved questions and counted answers, what an override sends it, the students
+  behind it, and whether it has evidence, in words; every counted answer is mapped,
+  excluded or unmapped, and the three add up.
+- **Roster import from CSV** (`POST /api/classes/:id/students/import`, owner only): a
+  file or JSON, at most 1 MB and 2,000 rows; a BOM, CRLF, quoted fields, comma,
+  semicolon or tab; the roll number and name columns found by their header. A dry run
+  says exactly what would be added and refused (with lines and reasons), the
+  duplicates in the file and on the roster, the removed students (reported, never
+  restored) and the columns not read (a phone or email column is never read into a
+  row). The real import adds through `addToRoster`, which `POST /:id/students` now
+  uses too, answering exactly as before.
+- `validateRoster` gives each refusal a `code` beside its sentence and takes a
+  longer request when the caller says so; the JSON list's reply leaves the code out.
+- The room archive is unchanged: no answer stores an outcome, and the class's
+  outcomes outlive its rooms (said in `services/archive.js`).
+- The boot probe does not check `0019`'s tables, so a server deployed before it keeps
+  its rooms on Supabase; only the outcome routes fail.
+- Tests: `test/outcomes.test.js` (43), `scripts/outcomes.mjs` (86, added to the
+  offline runner), 57 new checks in `npm run migrations` (509 in all). Every earlier
+  suite unchanged (`docs/TESTING.md`).
+- Docs: `API.md` ("Phase 4" and its open issues), `DATABASE_SCHEMA.md`,
+  `ARCHITECTURE.md`, `PRODUCT_DECISIONS.md` (the defaults this part chose),
+  `IMPLEMENTATION_STATUS.md` (a Phase 4 checklist), `TESTING.md`.
 
 ### Phase 3: full rerun and docs
 

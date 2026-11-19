@@ -52,6 +52,7 @@ import {
   ATTENDANCE_LOCK,
   attendanceReport,
   classGrid,
+  markRollNo,
   marksFrom,
   marksFromJoins,
 } from '../services/roster.js';
@@ -695,6 +696,7 @@ router.post('/:code/attendance', requireTeacher, async (req, res, next) => {
         wanted = marksFrom(req.body?.marks, roster);
       }
       const markedAt = new Date().toISOString();
+      const rollOf = markRollNo(marks, roster);
       if (wanted.length) {
         await repo.saveAttendance(wanted.map((m) => ({
           sessionId: String(session._id),
@@ -703,6 +705,7 @@ router.post('/:code/attendance', requireTeacher, async (req, res, next) => {
           source: 'teacher',
           markedAt,
           markedBy: req.viewer?.id ?? null,
+          rollNo: rollOf(m.classStudentId),
         })));
       }
       changed = wanted.length;

@@ -27,7 +27,9 @@
  *   attendance a room opened for a class (Phase 3, 0016) keeps its class's id on
  *              the room and every attendance mark, each with the roll number and
  *              the name its roster row held when the room was deleted (the roster
- *              lives on and may change). Only in a class room's archive; any
+ *              lives on and may change), and the roll number the mark was made
+ *              under (`markedRollNo`, 0021; null for a mark from before it or an
+ *              archive from before it). Only in a class room's archive; any
  *              other has none, and an archive from before Phase 3 decodes with
  *              `classId: null` and no marks, so the version is unchanged.
  *   records    the room's teacher records (Phase 3, 0017): every observation
@@ -37,6 +39,13 @@
  *              for attendance. An archive without them had none, so the version
  *              is unchanged. They count towards the 1 MiB like everything else.
  *   times      milliseconds after `timeBase`, not ISO strings.
+ *
+ * Not archived with a room: course outcomes and their mappings (Phase 4, 0019).
+ * They belong to the class and outlive any one room, and no answer stores an
+ * outcome: an answer is traced to its outcomes when a report runs, from the
+ * question id, chapter and topic it already carries (services/outcomes.js). So
+ * deleting a room leaves the class's outcomes as they were, and an archived
+ * answer can still be traced, from those same fields, against them.
  *
  * A field is only ever left out of a table as a whole column, and only when
  * every row rebuilds it exactly from what it points at; `derived` lists those
@@ -280,12 +289,15 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
   // ----------------------------------------------------------- attendance --
   // Not kept: the row id and session id (the archive's own). The roster row's
   // roll number and name are copied in, since it outlives the room and may be
-  // corrected later; its id stays, so a mark can still be traced to it.
+  // corrected later; its id stays, so a mark can still be traced to it. The
+  // roll number the mark itself was made under (0021) is `markedRollNo`, so the
+  // room's answers, given under it, can still be tied to the student.
   const onRoster = new Map(roster.map((s) => [String(s._id), s]));
-  const attendanceRows = marks.map(({ _id, sessionId: _s, ...rest }) => ({
+  const attendanceRows = marks.map(({ _id, sessionId: _s, rollNo: markedRollNo, ...rest }) => ({
     ...rest,
     rollNo: onRoster.get(String(rest.classStudentId))?.rollNo ?? null,
     name: onRoster.get(String(rest.classStudentId))?.name ?? null,
+    markedRollNo: markedRollNo ?? null,
   }));
 
   // ------------------------------------------------------ teacher records --
@@ -415,8 +427,11 @@ export function decodeRoomArchive(data) {
     return { ...rest, answerKey: answers[a]?.answerKey ?? null };
   });
 
-  // A room opened for no class, or archived before Phase 3, has no marks.
-  const attendance = fromTable(data.attendance).map((row) => withTimes(row, ATTENDANCE_TIMES, (v) => fromOffset(v, base)));
+  // A room opened for no class, or archived before Phase 3, has no marks. A
+  // mark archived before 0021, or made before it, has no markedRollNo: null.
+  const attendance = fromTable(data.attendance).map((row) => ({
+    ...withTimes(row, ATTENDANCE_TIMES, (v) => fromOffset(v, base)), markedRollNo: row.markedRollNo ?? null,
+  }));
   // A room with no teacher records, or archived before them, has empty lists.
   const records = Object.fromEntries(Object.entries(RECORDS).map(([name, { times }]) => [
     name,

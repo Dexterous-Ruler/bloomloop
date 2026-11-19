@@ -9,7 +9,30 @@ Every table has row level security **on with no policies**. Only the server's
 service role key, which bypasses RLS, can read or write; the anon key sees nothing.
 The server is the only place authorization is decided.
 
-Last revised 19 November 2026, after the Phase 3 review fixes (`0016` to `0018`).
+Last revised 19 November 2026, after the Phase 3 review fixes (`0016` to `0018`),
+and for Phase 4: course outcomes (`0019`), attainment formulas (`0020`) and, from the
+Phase 4 review, the roll number an attendance mark was made under (`0021`). The full
+rerun after the review fixes gave 573 of 573 migration checks on PGlite.
+
+**Applying Phase 4: `0019`, then `0020`, then `0021`.** None of the three is checked
+by the server's boot probe, unlike `0010` to `0018`, but they differ in what a
+missing one breaks:
+- **`0019` and `0020`.** A server deployed before they are applied keeps every room
+  on Supabase. Only the outcome, coverage, attainment, config and register routes
+  fail, with a 500 naming the missing table. Apply both before anyone uses those
+  routes. The CSV roster import needs only `0016`.
+- **`0021` must be applied before the server is deployed.** The repo writes
+  `attendance.roll_no` on every attendance mark (`inAttendance` in
+  `server/src/repo/supabaseRepo.js`), so without the column PostgREST would refuse
+  every mark: a phone's join would be let in but mark nobody (the failure is only
+  logged), and a professor's marks and the Absent mark of a wheel pick would fail.
+  Traced from the code; not run against Supabase.
+
+None of the three changes an existing row. `0019` and `0020` add tables only and no
+column to `answers`, `sessions`, `classes` or `room_archives`: a course outcome, its
+mappings and a formula belong to a class and are never stored on an answer. `0021`
+adds one nullable column to `attendance` and backfills nothing. The exports and
+printable pages read what these tables and the Phase 1 to 3 tables already hold.
 
 ## Migration order
 
@@ -34,8 +57,48 @@ Last revised 19 November 2026, after the Phase 3 review fixes (`0016` to `0018`)
 | `0016_classes_roster_attendance.sql` | `classes`, `class_students` (the roster: a roll number and a name only), nullable `sessions.class_id`, `attendance` (one mark per room and roster student); trigger `attendance_student_in_room_class`. Changes no row: every existing room gets `class_id` null | new (Phase 3) |
 | `0017_teacher_records.sql` | The teacher-record store: `observations` (append-only), `wheel_rounds`, `wheel_picks`, `hand_tallies`, `room_activities`, `insight_actions` (append-only); functions `teacher_records_guard`, `observations_in_room_class`, `room_activities_same_room`; nine triggers (one reuses `0016`'s `attendance_student_in_room_class`). Changes no row | new (Phase 3) |
 | `0018_room_modes_and_projector.sql` | How a room runs: `sessions.mode`, `adapt`, `start_level`, `questions_per_student`, `time_per_question`, a Teacher-led room needs a class; `sessions.status` may be `waiting`; `projector_links` (a projector's token, kept as its SHA-256) with trigger `projector_links_keep` (`0017`'s guard). Changes no row: every existing room gets the values it ran under | new (Phase 3) |
+| `0019_course_outcomes.sql` | `course_outcomes` (a class's outcomes, archived rather than deleted once evidence reaches them), `outcome_topics` (an outcome mapped to a topic of a chapter, with a weight), `question_outcome_overrides` (one question's outcomes in one class, or excluded); functions and triggers `question_outcome_overrides_in_class` and `course_outcomes_guard`. Changes no row and no existing table | new (Phase 4) |
+| `0020_attainment_configs.sql` | `attainment_configs`: a class's attainment formula, one row per saved version (append-only; the highest is in force); function and trigger `attainment_configs_guard`. Changes no row and no existing table | new (Phase 4) |
+| `0021_attendance_roll.sql` | `attendance.roll_no` (nullable text): the roll number an attendance mark was made under. No default, no check, no index, nothing backfilled; a mark from before it reads as null. Changes no row | new (Phase 4 review) |
 
 The SQL of every moved file is unchanged; only header comments were updated.
+
+`0021` has run only on PGlite (`npm run migrations`, 573 of 573 on 19 November 2026;
+the suite grew by 40 checks with it). It builds on a fresh database, runs again
+unchanged (a mark's roll number survives the re-run), and upgrades a v1 database. The
+checks read `attendance.roll_no` back as text, nullable, with no default; a join's
+roll number and a teacher mark's read back; a mark with none reads as null; any text
+the server accepted is taken (no shape check); correcting the roster's roll number
+leaves the mark's as it was made. Applied over a database that already holds marks
+(built up to `0020`), it changes no row: each reads back with no roll number. Apply it
+before deploying the server (above).
+
+`0020` has run only on PGlite (`npm run migrations`, 533 of 533 on 19 November 2026;
+24 checks are new with it). It builds on a fresh database, runs again unchanged (also
+over saved versions), and a v1 database is upgraded with the table empty. Its checks
+refuse version 0, a config that is a JSON list, and one over 32 KB (23514); two rows of
+one class with one version (23505); a class that does not exist (23503); and changing,
+renumbering or deleting a saved version (23001). Deleting the account that saved a
+version sets `created_by` null and keeps the version; deleting a class takes its
+versions. Apply it before using the attainment routes; the server boots without it,
+like `0019`.
+
+`0019` has run only on PGlite (`npm run migrations`, 509 of 509 on 19 November 2026;
+57 checks are new with it). It builds on a fresh database, runs again unchanged
+(also over rows in all three tables), and a v1 database is upgraded with the three
+tables empty. Its checks refuse a code in lower case, with a trailing space, with two
+spaces or over 16 characters, a blank or over-long statement, a target level spelt
+`analyze`, a position of 0, an outcome of a class that does not exist, a weight of 0 or
+over 100, a topic with two spaces or blank, and an override that both maps and
+excludes, does neither or holds a null (23514); a second outcome with a code in use, one
+topic twice for an outcome and chapter in another case, and a second override for one
+question (23505); a mapping whose class is not its outcome's, a chapter that does not
+exist, an override naming another class's outcome or one that does not exist, deleting
+an outcome an override names, and deleting a mapped chapter (23503); naming an outcome
+twice (23514); moving an outcome to another class (23001). It accepts an archived
+outcome's code for a new one and refuses restoring the old one over it; deleting an
+outcome takes its mappings, and deleting a class its outcomes, mappings and overrides.
+Apply it before using the outcome routes; the server boots without it.
 
 `0018` has run only on PGlite (`npm run migrations`, 451 of 451 on 19 November 2026;
 37 checks are new with it). It builds on a fresh database, runs again unchanged, and
@@ -92,7 +155,8 @@ the Phase 3 server: the boot probe now checks the three tables and `sessions.cla
 `0010` to `0015` have run only on PGlite (`npm run migrations`, 270 of 270 on
 19 November 2026, rerun after the Phase 2 review fixes, and part of the 451 since).
 `0010` to `0012` are committed with Phase 1 (`05daf56`), `0013` to `0015` with Phase
-2 (`27559ca`); `0016` to `0018` are not yet committed. The live project has been
+2 (`27559ca`), `0016` to `0018` with Phase 3 (`d162cc8`); `0019` to `0021` (Phase 4)
+are not committed yet. The live project has been
 unreachable since 18 November, so whether it has any of them could not be checked.
 Apply them in order before deploying the Phase 1, 2 and 3 server: the boot probe falls back to the in-process store when `answer_reviews`,
 any `0013` column, the `media` table or `sessions.question_ids` is missing (last
@@ -404,8 +468,10 @@ table had no reviews, so the version stays 1), and times as offsets from
 class has no `classId` key, so it archives byte for byte as before; it decodes as null),
 and a room opened for a class carries an `attendance` table: every mark, with the
 roll number and name its roster row held when the room was deleted, since the roster
-outlives the room (`server/test/roster.test.js`, `server/scripts/roster.mjs`). An
-archive from before decodes with `classId` null and no marks, so the version stays 1.
+outlives the room (`server/test/roster.test.js`, `server/scripts/roster.mjs`). Since
+`0021` each mark also carries `markedRollNo`, the roll number the mark itself was made
+under (null for a mark from before `0021`, and in an older archive). An archive from
+before decodes with `classId` null and no marks, so the version stays 1.
 A room with teacher records (`0017`) also carries `observations` (every set and
 clear), `wheelRounds`, `wheelPicks`, `tallies`, `activities` and `insightActions`,
 each only when it has any, a roster student's name copied in; without them the
@@ -522,6 +588,7 @@ is not absent.
 | `source` | text | not null; `joined` (a phone joined with that roll number; the server marked it) or `teacher` (`attendance_source_check`). A `joined` row is always `present` with no `marked_by` (`attendance_joined_check`). A typed roll number is not proof of identity (decision 7's known gap) |
 | `marked_at` | timestamptz | not null, default now() |
 | `marked_by` | uuid | null; references `accounts(id)` on delete set null. The professor; null for a join and on the shared key |
+| `roll_no` | text | null; no default, no check (`0021`). The roll number the mark was made under, in the room's form: for a `joined` mark the one the phone joined with; for a `teacher` mark the student's roll number on the roster at that moment, unless the mark it replaces already carries one, which is kept (`markRollNo` in `services/roster.js`). Null for a mark made before `0021`. The attainment reports give a room's answers given under it to this mark's student, whatever the roster holds now; a roll number two marks of one room carry is tied to neither |
 
 Unique `(session_id, class_student_id)` (`attendance_session_student_key`), also
 the index for reading a room's marks. Indexes `attendance_student_idx` and
@@ -537,8 +604,10 @@ never replaces a mark already there) from the live loop's join, and
 `saveAttendance` (`on conflict ... do update`: the professor's mark replaces
 whatever was there) from `POST /api/session/:code/attendance`, and from a wheel pick
 set to Absent (`PATCH /api/session/:code/wheel/picks/:pickId`, unless
-`markAttendance: false`). Read by `GET /api/session/:code/attendance`, the teacher's
-grid (present count), the wheel and the tally (who is present), and the room archive.
+`markAttendance: false`). Both send `roll_no` since `0021`. Read by
+`GET /api/session/:code/attendance` (which does not show `roll_no`), the teacher's
+grid (present count), the wheel and the tally (who is present), the attainment
+reports and the register (whose each room's answers are), and the room archive.
 
 ### The teacher-record store (0017)
 
@@ -702,6 +771,103 @@ connection that the link is not revoked, is under 12 hours old and its room is n
 closed. What the
 projector shows is held in the server's memory, not here.
 
+### Course outcomes (0019)
+
+Three tables: a class's outcomes, what each is mapped to, and per-question
+overrides. Staff-only; nothing in them is about a student. **No answer, question or
+room stores an outcome**: an answer is traced to its outcomes when a report runs,
+from the question id, chapter and topic it already carries (`resolveAnswer` in
+`server/src/services/outcomes.js`). So a room's archive (`room_archives`) carries
+none of this, and deleting a room changes none of it. RLS on, no policies, on all
+three.
+
+#### course_outcomes
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key. Unique with `class_id` too (`course_outcomes_id_class_key`), the target of `outcome_topics`' foreign key |
+| `class_id` | uuid | not null; references `classes(id)` on delete cascade. Outcomes belong to a class (a course and a section): attainment is per class, and a second section copies them |
+| `code` | text | not null; trimmed, single-spaced, upper case, `^[A-Z0-9][A-Z0-9 ._/-]{0,15}$` (`course_outcomes_code_check`). One per class among outcomes not archived (`course_outcomes_class_code_key`, a partial unique index), so an archived CO3 leaves the code free |
+| `statement` | text | not null; 1 to 300 characters once trimmed (`course_outcomes_statement_check`). The server also refuses one holding an email address or a mobile number |
+| `target_level` | text | null, or one of the six levels in British spelling (`course_outcomes_target_level_check`) |
+| `position` | integer | not null, default 1, at least 1 (`course_outcomes_position_check`). The class's order; not unique (a reorder writes row by row), ties broken by `created_at` |
+| `created_at`, `updated_at` | timestamptz | not null, default now(); no trigger maintains `updated_at`, the repo sets it |
+| `archived_at` | timestamptz | null: in use. Set instead of deleting once evidence reaches the outcome: its mappings stay, evidence still reaches it, reports still name it |
+
+Index `course_outcomes_class_idx` on `(class_id, position)`. Trigger
+`course_outcomes_guard` (function of the same name), `before update of class_id or
+delete`: an outcome cannot move to another class (23001), and is not deleted while an
+override names it (23503), except inside the cascade from deleting its class.
+
+#### outcome_topics
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `outcome_id`, `class_id` | uuid | not null; together reference `course_outcomes(id, class_id)` on delete cascade (`outcome_topics_outcome_fkey`), so a mapping is always its outcome's class's |
+| `content_id` | uuid | not null; references `contents(id)`, no delete action: a mapped chapter is not deleted out from under the mapping |
+| `topic` | text | not null; 1 to 160 characters, trimmed and single-spaced (`outcome_topics_topic_check`), as the chapter spells it |
+| `weight` | numeric(6,3) | not null, default 1; above 0 and at most 100 (`outcome_topics_weight_check`). How much that topic's evidence counts beside the outcome's other topics; read back as a number |
+| `created_at` | timestamptz | not null, default now() |
+
+Unique `(outcome_id, content_id, lower(topic))` (`outcome_topics_outcome_topic_key`):
+a topic once per chapter per outcome, compared in lower case as the server compares
+topics. Indexes on `class_id` and `content_id`.
+
+#### question_outcome_overrides
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `class_id` | uuid | not null; references `classes(id)` on delete cascade |
+| `question_id` | uuid | not null. **No foreign key**, on purpose: an answer keeps its question's id in its snapshot after the question is deleted (`0008` sets `answers.question_id` null), and the decision still applies to the answers given to it |
+| `outcome_ids` | uuid[] | not null, default `{}`; every id an outcome of `class_id`, each once (trigger `question_outcome_overrides_in_class`, 23503 / 23514) |
+| `excluded` | boolean | not null, default false. Excluded with no outcomes, or mapped to 1 to 50 with no null (`question_outcome_overrides_shape`) |
+| `updated_at` | timestamptz | not null, default now() |
+| `updated_by` | uuid | null; references `accounts(id)` on delete set null |
+
+Unique `(class_id, question_id)` (`question_outcome_overrides_class_question_key`),
+what the repo upserts on. Index on `updated_by` where not null.
+
+Written by the repo methods `createOutcome`, `updateOutcome`, `deleteOutcome`,
+`setOutcomeTopics` (a read, then updates, inserts and deletes: not one statement),
+`setQuestionOverride` (`on conflict (class_id, question_id) do update`) and
+`deleteQuestionOverride`, from `routes/outcomes.js`; read by `listOutcomes`,
+`getOutcome`, `listOutcomeTopics` and `listQuestionOverrides`, each paged like the
+teacher records. The boot probe does not check these tables, on purpose (a server
+deployed before `0019` keeps its rooms on Supabase; only the outcome routes fail).
+
+### attainment_configs (0020)
+
+A class's attainment formula, one row per saved version. The formula is data, not
+code: colleges compute attainment by their own rules, so the server validates a
+formula (`validateConfig` in `server/src/services/attainment.js`) and stores it per
+class, and every attainment report states the version it used. Named examples ship
+as data in `server/src/services/attainmentPresets.js`; a class with no row uses the
+default example, and its reports say so. Staff-only; nothing here is about a
+student. RLS on, no policies.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | uuid | primary key |
+| `class_id` | uuid | not null; references `classes(id)` on delete cascade |
+| `version` | integer | not null, at least 1 (`attainment_configs_version_check`). 1, 2, 3 ... per class; the highest is in force. Unique with `class_id` (`attainment_configs_class_version_key`), so two saves racing for one number are a 23505 (the repo's 409) |
+| `config` | jsonb | not null; a JSON object of at most 32 KB (`attainment_configs_config_check`). The shape (`studentThreshold`, `minAnswers`, `levels`, `evidence`, `attempts`, `roomWeights`) and every range are the server's check |
+| `created_at` | timestamptz | not null, default now() |
+| `created_by` | uuid | null; references `accounts(id)` on delete set null. Null on the shared teacher-key path |
+
+Index on `created_by` where not null. Trigger `attainment_configs_guard` (function of
+the same name), `before update or delete`: a saved version is never changed or
+deleted (23001), so a report printed under version 2 can always be checked against
+it; a change is a new version. Inside a foreign key's action it lets the class's
+delete take its versions and an account's delete set `created_by` null.
+
+Written by the repo method `addAttainmentConfig` (an insert of the next version,
+from `PUT /api/classes/:id/attainment/config`); read by `getAttainmentConfig` (the
+highest version: `order by version desc limit 1`). No column is added to answers,
+rooms or classes, and a room's archive carries none of it: the formula is the
+class's. The boot probe does not check the table, as for `0019`.
+
 ### accounts (0001, 0003, 0006)
 
 One per Supabase Auth user.
@@ -845,4 +1011,7 @@ it and without it no room could open. Since `0016` it also probes `classes`,
 `createSession` writes `class_id` on every room. Since `0017` it also probes the six
 teacher-record tables. Since `0018` it also probes `projector_links` and the five
 new `sessions` columns (`mode`, `adapt`, `start_level`, `questions_per_student`,
-`time_per_question`), which `createSession` writes on every room.
+`time_per_question`), which `createSession` writes on every room. It does not probe
+`0019`, `0020` or `0021`: the first two on purpose (no room needs them), and
+`attendance.roll_no` (`0021`) not at all, though every attendance write sends it, so
+apply `0021` before the server (top of this file).
