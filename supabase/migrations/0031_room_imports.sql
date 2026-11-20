@@ -78,10 +78,11 @@ create table if not exists public.room_imports (
   constraint room_imports_session_id_key unique (session_id)
 );
 
--- The archive's own ceiling (0009): 1 MiB of JSON.
+-- The archive's own ceiling: 4 MiB of JSON since 0039 (1 MiB before). Re-running
+-- this file must never narrow the check a later file allows, so it says 4 MiB too.
 alter table public.room_imports drop constraint if exists room_imports_bytes_check;
 alter table public.room_imports
-  add constraint room_imports_bytes_check check (bytes > 0 and bytes <= 1048576);
+  add constraint room_imports_bytes_check check (bytes > 0 and bytes <= 4194304);
 
 alter table public.room_imports drop constraint if exists room_imports_sha256_check;
 alter table public.room_imports

@@ -1039,7 +1039,7 @@ router.post('/:code/start', requireTeacher, async (req, res, next) => {
  * from every list and dashboard. Before any of that, the whole room is written
  * to one compact JSON document (services/archive.js) and the delete only goes
  * ahead once that write has succeeded: if the archive cannot be written, or
- * would be over the 1 MB ceiling, nothing is deleted.
+ * would be over the 4 MB ceiling, nothing is deleted.
  *
  * Still asks for ?confirm=CODE - the teacher types the room code back - because
  * the room does disappear from the live screens for good.
@@ -1076,7 +1076,7 @@ router.delete('/:code', requireTeacher, async (req, res, next) => {
       const { doc, bytes } = await buildRoomArchive(repo, session, { archivedBy: req.viewer?.id ?? null });
       if (bytes > ARCHIVE_LIMIT_BYTES) {
         throw fail(
-          `${session.code} was not deleted: its archive would be ${(bytes / (1024 * 1024)).toFixed(2)} MB, over the 1 MB limit. `
+          `${session.code} was not deleted: its archive would be ${(bytes / (1024 * 1024)).toFixed(2)} MB, over the 4 MB limit. `
             + 'Nothing was changed. Export the results as CSV and close the room instead.',
           413,
         );
@@ -1150,7 +1150,7 @@ router.get('/:code/integrity/:rollNo', requireTeacher, async (req, res, next) =>
 });
 
 /**
- * Said when a room closes whose archive is near or past the 1 MiB a room may be
+ * Said when a room closes whose archive is near or past the 4 MiB a room may be
  * kept in when it is deleted (or imported from laptop mode). Long written
  * answers (Batch 9, E3: up to 600 words each) can take a full class's room past
  * it; such a room is kept, closed, and can be exported as CSV, but not deleted
@@ -1158,7 +1158,7 @@ router.get('/:code/integrity/:rollNo', requireTeacher, async (req, res, next) =>
  * at the close; a failed read says nothing and never stops the close.
  */
 export const ARCHIVE_NEAR_LIMIT = (bytes) => `This room's record is ${(bytes / (1024 * 1024)).toFixed(2)} MB, close to or over `
-  + 'the 1 MB a deleted room can be kept in. If it is over, the room cannot be deleted: keep it closed, and export the '
+  + 'the 4 MB a deleted room can be kept in. If it is over, the room cannot be deleted: keep it closed, and export the '
   + 'results as CSV if you need a copy.';
 
 async function archiveWarning(repo, session) {

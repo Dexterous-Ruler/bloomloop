@@ -322,7 +322,7 @@ describe('a room\'s archive keeps its teacher records', () => {
       [[], [], [], [], [], []]);
   });
 
-  test('the records count towards the 1 MiB, and a busy term\'s class still fits with room to spare', async () => {
+  test('the records count towards the 4 MiB, and a busy term\'s class still fits with room to spare', async () => {
     const repo = createMemoryRepo();
     const cls = await repo.createClass({ courseName: 'N', section: 'A' });
     const roll = (i) => `21CS${String(i).padStart(3, '0')}`;

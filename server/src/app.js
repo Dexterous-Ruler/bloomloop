@@ -100,6 +100,9 @@ export function createApp() {
       credentials: true,
     }),
   );
+  // A room archive may be 4 MiB (0039), so its import alone takes a larger body;
+  // every other route keeps 2 MB. A body parsed here is not parsed again below.
+  app.use('/api/imports/rooms', express.json({ limit: '6mb' }));
   app.use(express.json({ limit: '2mb' }));
 
   // One place to see whether the demo is running on real services or fallbacks.

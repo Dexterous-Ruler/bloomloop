@@ -13,7 +13,8 @@ run migrations npm run migrations
 cd "$ROOT"
 for s in liveloop security review evidence resume integrity roundtrip bank kinds media items roster records \
          modes insights outcomes attainment acceptance4 decisions classquestion misconceptions honesty keysafety \
-         hub practice paths lessons tutor offline laptop recordsync figures figkinds zipgaps1 zipgaps2; do
+         hub practice paths lessons tutor offline laptop recordsync figures figkinds zipgaps1 zipgaps2 \
+         answerkinds examguard; do
   [ -f "server/scripts/$s.mjs" ] && run "$s" node "server/scripts/$s.mjs"
 done
 echo "Output in $OUT. Never run server/scripts/smoke.mjs this way: it is the one script meant for live keys."

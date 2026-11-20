@@ -620,7 +620,7 @@ are deleted only if that succeeds. Needs a room the caller may write.
 | 403 | A room the caller may read but not write |
 | 404 | No such room, or not one the caller may read: `That session was not found.` for both, word for word (since the Phase 3 review; an unknown code used to get `No session with code <CODE>`). The same holds for `GET /:code/grid`, `POST /:code/pause`, `/resume`, `/close` and `GET /:code/integrity/:rollNo`. Only the phones' open `GET /api/session/:code` still names the code |
 | 409 | `That room is being deleted. Nothing was changed.` for a start, pause, resume or close sent while this delete runs |
-| 413 | The archive would be over 1 MiB. Nothing was deleted |
+| 413 | The archive would be over 4 MiB (1 MiB before `0039`). Nothing was deleted |
 
 While the delete runs, a review of an answer in that room gets 409, and a live answer
 gets the phone's "did not save" notice.
@@ -2165,7 +2165,7 @@ when the room has any: `observations` (every set and clear, so the log is kept),
 `wheelRounds`, `wheelPicks`, `tallies`, `activities`, `insightActions`, with their
 counts in `counts`. A roster student's name is copied in, as for attendance. An
 archive without them decodes with empty lists; the format version is unchanged. They
-count towards the 1 MiB: a class of 60 with a mark each, 40 picks, 10 tallies, 5 group
+count towards the 4 MiB: a class of 60 with a mark each, 40 picks, 10 tallies, 5 group
 challenges and 10 insight actions adds about 28 KB.
 
 ---
@@ -6108,7 +6108,7 @@ atomic: a temporary file in the same folder, every byte written, flushed, then r
 over the room's file; a write that cannot finish fails without renaming, so the last
 good file stays. Files are written readable by the laptop's user only (0600 in a 0700
 folder, where the system honours it; Windows does not), since they hold every
-question's key. A file over 1 MB is still written, with a warning: it cannot be
+question's key. A file over 4 MB is still written, with a warning: it cannot be
 imported. No archive, laptop or cloud, carries the profiles' log of serves.
 
 **`GET /api/laptop`** (staff: a professor's or HOD's token, or the key; 401 without):
@@ -6182,7 +6182,7 @@ class. Every refusal is a sentence and writes nothing:
 | 403 | The file names another teacher as the room's owner | "This archive records a room another teacher owns, so only they may import it. Nothing was imported." |
 | 404 | A chapter or class not the caller's, or not there | "That chapter was not found." / "That class was not found." |
 | 409 | The room id is already here (a live room, a deleted room's archive, or an import the caller may not read) | "A room with this archive's id or code is already in BloomLoop from somewhere else, so this file was not imported: an import never replaces or joins evidence that is already here. Nothing was imported." |
-| 413 | The archive is over 1 MB / the body over the parser's 2 MB | "This archive is N MB, over the 1 MB a room archive may be. Nothing was imported." / "This file is over the 1 MB a room archive may be. Nothing was imported." |
+| 413 | The archive is over 4 MB / the body over the import route's 6 MB parser | "This archive is N MB, over the 4 MB a room archive may be. Nothing was imported." / "This file is over the 4 MB a room archive may be. Nothing was imported." |
 
 **The reply carries `error` only.** The import sets `needs: 'chapter'` or
 `needs: 'class'` on its two 400s, but the app's error handler sends `{ error }` alone,
@@ -6849,7 +6849,7 @@ copy guard and signals work in any room.
 | `GET /api/session/:code/exam/collusion` | read rule | `{ room, rule { minMatches, closeSeconds, commonShare, commonFloor, sentence }, pairs, note, privacy }`. 409 unless the room is in exam mode |
 | `GET /api/session/:code/students/:roll/card` | read rule | adds `integrity` (the summary; null for under 18 or never joined), `integrityNote`, and in an exam room `exam: { snapshotAt }` |
 | `PATCH /api/classes/:id/students/:studentId` | owner | changing `under18` pushes `exam:mode` to that student's phone in a running exam room at once |
-| `POST /api/session/:code/close` | owner | reply may add `archiveWarning` and `archiveBytes` when the room's archive is over 90% of 1 MiB (long answers can pass it) |
+| `POST /api/session/:code/close` | owner | reply may add `archiveWarning` and `archiveBytes` when the room's archive is over 90% of 4 MiB (long answers can pass it) |
 | `DELETE /api/session/:code` | owner | also purges the room's pictures at once |
 
 Every exam route is `requireTeacher` (a phone gets 401, a student account 403) and

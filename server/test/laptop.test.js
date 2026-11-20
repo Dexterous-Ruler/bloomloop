@@ -282,20 +282,20 @@ describe('the archive writer', () => {
     assert.equal(decodeRoomArchive(readJson(file)).answers.length, 3, 'and then nothing more');
   });
 
-  test('a room over the 1 MB an archive may be is still written, with a warning that it cannot be imported', async () => {
+  test('a room over the 4 MB an archive may be is still written, with a warning that it cannot be imported', async () => {
     const dir = tempDir();
     const repo = createMemoryRepo();
     const { session } = await roomWith(repo);
     const content = await repo.getContent((await repo.getSession(session._id)).contentId);
     const [big] = await repo.insertQuestions([{
-      contentId: content._id, topic: 'Cells', text: 'x'.repeat(1100 * 1024), kind: 'open', bloom: 'create',
+      contentId: content._id, topic: 'Cells', text: 'x'.repeat(4200 * 1024), kind: 'open', bloom: 'create',
     }]);
     await answer(repo, session, big, 9);
     const logged = [];
     const writer = createArchiveWriter({ getRepo: () => repo, dir, intervalMs: 3600000, source: SOURCE, log: (l) => logged.push(l) });
     assert.equal(await writer.flush(), 1);
-    assert.ok(fs.statSync(path.join(dir, `room-LAPT01-${session._id}.json`)).size > 1024 * 1024);
-    assert.ok(logged.some((l) => /over the 1 MB/.test(l) && /cannot be imported/.test(l)), logged.join('\n'));
+    assert.ok(fs.statSync(path.join(dir, `room-LAPT01-${session._id}.json`)).size > 4 * 1024 * 1024);
+    assert.ok(logged.some((l) => /over the 4 MB/.test(l) && /cannot be imported/.test(l)), logged.join('\n'));
   });
 });
 

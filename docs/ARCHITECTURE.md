@@ -80,7 +80,7 @@ and is sent `projector:*` events only.
   answer's evidence (the response, snapshot and `auto_*`) and any edit or delete of
   a review row, whoever sends it.
 - **Deleted rooms.** A room's rows are deleted only after the whole room has been
-  written to `room_archives` (`0009`), as JSON under 1 MiB, its review log included.
+  written to `room_archives` (`0009`), as JSON under 4 MiB (`0039`; 1 MiB before), its review log included.
   While that runs, the room takes no answer and no review.
 - **Reading it back.** `services/evidence.js` builds every answer a screen gets:
   in full for a teacher, through `redactForStudent` for the student who gave it,
@@ -1142,7 +1142,7 @@ by the bytes, metadata stripped, at most 60, once each) into `media` with `slide
 **Where figures go.** The projector (`services/projector.js`) draws a figure at the
 screen's `step`; hub lessons store a figure as a `chunk` step carrying `figure` (so
 `0027`'s step check still holds on a re-run) and send every step drawn; the room archive
-keeps each drawing once by spec hash within 1 MiB (`figuresLeftOut` otherwise); the print
+keeps each drawing once by spec hash within 4 MiB (`figuresLeftOut` otherwise); the print
 page (`routes/figures.js`) has no answers.
 
 **The design-zip gaps.**

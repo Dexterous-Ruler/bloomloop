@@ -16,6 +16,8 @@ docs in the commit after it.
 
 ## Unreleased: Batch 9, the hub during a class, written and drawn answers, exam mode (20 November 2026)
 
+- **Room archives may be 4 MiB (migration `0039`).** A deleted room or an imported laptop room was kept as JSON of at most 1 MiB; long answers (up to 600 words) push an ordinary exam room past that, which blocked its delete and its import. The limit is now 4 MiB in the server (`ARCHIVE_LIMIT_BYTES`), the Mongo models and the two database checks, and the room-import route alone takes a 6 MB body (every other route keeps 2 MB). The archive is still plain JSON.
+
 Server and database only, on branch `batch9`: built in two parallel branches (answer
 kinds `e95b90b`; exam integrity `46221a6`), merged (`648bea2`), reviewed and fixed
 (`b6af63e`). Decided under the owner's delegation (`docs/PRODUCT_DECISIONS.md`, Batch

@@ -11,7 +11,7 @@
  * The rules, in the order they are applied:
  *
  *   malformed      the file must be a room archive (decodeRoomArchive reads it)
- *                  carrying laptop mode's mark, within the archive's own 1 MB,
+ *                  carrying laptop mode's mark, within the archive's own 4 MB,
  *                  and every row must be one the store would take. Anything else
  *                  is refused with a sentence naming the first problem. These
  *                  are checks of shape, not of authenticity: the professor holds
@@ -153,7 +153,7 @@ export function checkArchive(archive) {
   if (archive.version !== ARCHIVE_VERSION) throw malformed(`it is version ${JSON.stringify(archive.version)}, and this server reads version ${ARCHIVE_VERSION}`);
   const { bytes } = archiveDigest(archive);
   if (bytes > ARCHIVE_LIMIT_BYTES) {
-    throw fail(413, `This archive is ${(bytes / (1024 * 1024)).toFixed(2)} MB, over the 1 MB a room archive may be. ${NOTHING}`);
+    throw fail(413, `This archive is ${(bytes / (1024 * 1024)).toFixed(2)} MB, over the 4 MB a room archive may be. ${NOTHING}`);
   }
   // The mark laptop mode puts on what it saves. It says where a file came from;
   // anyone can write it, so it proves nothing, and the sentence does not claim

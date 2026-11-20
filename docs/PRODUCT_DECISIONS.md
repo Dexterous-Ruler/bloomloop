@@ -2209,10 +2209,17 @@ them. What the server does until then is under decision 8, "Batch 9".
   `PUBLIC_ORIGIN` must be set on a deployment.
 - **Screen pictures live in one process.** A second server process has its own store; a
   console reaching another process sees no picture.
-- **Long answers and the archive.** A full class of long answers can take a room's
-  archive past its 1 MiB; such a room is kept, closed, and can be exported as CSV, but
-  not deleted or imported until the owner decides how the limit should change. The
-  close says so when a room is near it.
+- **Long answers and the archive: decided 20 Nov 2026 (migration `0039`).** A full
+  class of long answers took a room's archive past its 1 MiB, so it could not be
+  deleted, and a laptop room that size could not be imported. Of the three options
+  (gzip, a higher limit, long text kept outside the limit), the limit is now **4 MiB**.
+  The archive stays plain JSON, which is what the owner asked for ("save the room and
+  other data in the form of json format", 18 Nov 2026). Postgres compresses large jsonb
+  on disk anyway. 4 MiB holds about 1,100 long answers beside everything else. Gzip
+  would have turned the archive into a blob nobody can read without a tool, and text
+  kept elsewhere would split one room across two places. Reversing this is one constant
+  (`ARCHIVE_LIMIT_BYTES`) and one migration. The close still warns when a room is
+  near the limit.
 - **Before a room opens**, practice can still show a question's key; the rooms-only
   switch is the professor's tool for that.
 - The repository's offline runner (`scripts/test-offline.sh`) and the README do not yet

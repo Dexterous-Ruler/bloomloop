@@ -96,7 +96,7 @@ importRoutes.get('/', requireTeacher, async (req, res, next) => {
 // eslint-disable-next-line no-unused-vars
 export function importBodyRefused(err, _req, res, next) {
   if (err?.type === 'entity.too.large') {
-    res.status(413).json({ error: `This file is over the 1 MB a room archive may be. ${NOTHING}` });
+    res.status(413).json({ error: `This file is over the 4 MB a room archive may be. ${NOTHING}` });
     return;
   }
   if (err?.type === 'entity.parse.failed') {

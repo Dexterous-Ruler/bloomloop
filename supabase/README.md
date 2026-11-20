@@ -54,7 +54,7 @@ Full detail: `docs/DATABASE_SCHEMA.md`.
 | `0037_answer_kinds.sql` | Batch 9 (decision E4): `media.drawing`, `session_id`, `roll_no`, `account_id`, `question_id`, `answer_key`, a student's whiteboard answer kept as an upload of their room or their hub account (PNG or WebP only, written once); a hub attempt may carry no mark only when it is a drawing | Warns: no drawing answer can be kept, in a room or in the hub, so drawing questions cannot be answered; every other kind works as before |
 | `0038_exam_integrity.sql` | Batch 9 (decision E5): `sessions.exam_mode`, a room's opt-in exam mode (copy guard, fullscreen, screen share, screen pictures, Safe Exam Browser keys). Screen pictures get no table: they are held in the server's memory only | Warns: no room can be opened in exam mode or have it changed; every other room opens and runs as before |
 
-The next new file takes `0039`.
+The next new file takes `0040`.
 
 ## Applying
 

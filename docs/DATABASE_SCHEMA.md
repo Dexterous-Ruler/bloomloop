@@ -14,9 +14,16 @@ unmarked hub drawing (`0037`), and a room's exam mode (`0038`). Before them came
 8's review fix (`0036`, a hub answer kept without proof it was served) and Batch 8
 (`0033` to `0035`, 1708 migration checks). The run for the Batch 9 docs gave 1954
 passed, 0 failed on PGlite, offline with every network setting blank. Nothing has been
-run against the hosted Supabase project. The next free number is `0039`.
+run against the hosted Supabase project. The next free number is `0040`.
 
-**Applying everything: `0000` to `0038`, in number order.** The numbering has no gap.
+**Applying everything: `0000` to `0039`, in number order.** The numbering has no gap.
+
+**Applying `0039` (20 Nov 2026): any time, before or after the server.** It widens the
+size check on `room_archives.bytes` and `room_imports.bytes` from 1 MiB to 4 MiB, because
+Batch 9's long answers make an ordinary exam room's record pass 1 MiB. No row changes and
+nothing is narrowed. Without it the server's own 4 MiB limit still applies first, so an
+archive between 1 and 4 MiB is refused by the database check and the room is not deleted
+(the delete is all-or-nothing); every room runs.
 
 **Applying Batch 9: `0037`, then `0038`. Rooms need neither.** Both are route-only
 (`ROUTE_SCHEMA`): a missing one is a boot-log line naming its file, Supabase is still
@@ -215,6 +222,7 @@ printable pages read what these tables and the Phase 1 to 3 tables already hold.
 | `0036_hub_attempt_proof.sql` | Batch 8's review fix: `hub_attempts.unproven` (boolean, not null, default false): a practice or lesson answer kept without proof the hub served its question, counted nowhere. Route-only. Changes no row | new (Batch 8 review) |
 | `0037_answer_kinds.sql` | Batch 9, whiteboard answers: `media.drawing` (boolean, not null, default false), `session_id` (references `sessions(id)` on delete cascade), `roll_no`, `account_id` (references `accounts(id)` on delete cascade), `question_id` (no foreign key), `answer_key`; `media_drawing_check`; unique `media_room_drawing_key` and `media_hub_drawing_key`, index `media_session_idx`; trigger `media_drawing_written_once`; `hub_attempts.correct` and `score` nullable, with `hub_attempts_mark_check` (null only, and always, for a drawing). Route-only. Changes no row | new (Batch 9) |
 | `0038_exam_integrity.sql` | Batch 9, exam mode: `sessions.exam_mode` (jsonb, null for none) with `sessions_exam_mode_check` (null or an object). No table for screen pictures, on purpose. Route-only. Changes no row: every room reads as no exam mode | new (Batch 9) |
+| `0039_archive_ceiling.sql` | `room_archives_bytes_check` and `room_imports_bytes_check` widened from 1048576 to 4194304 bytes. Changes no row | new (20 Nov 2026) |
 
 The SQL of every moved file is unchanged; only header comments were updated.
 

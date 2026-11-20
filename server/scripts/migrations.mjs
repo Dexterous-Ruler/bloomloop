@@ -638,7 +638,8 @@ section('room archives');
   await accepts('a second write for the same room replaces the first', () => archive(sid, 240));
   const { rows } = await db.query('select count(*)::int as n, max(bytes) as b from public.room_archives where session_id = $1', [sid]);
   check('one archive per room, holding the latest write', rows[0].n === 1 && Number(rows[0].b) === 240);
-  await rejects('an archive over 1 MiB', () => archive('00000000-0000-4000-8000-0000000000a2', 1048577), { code: '23514' });
+  await accepts('a 2 MiB archive, as a room of long answers makes (0039 raised the ceiling from 1 MiB)', () => archive('00000000-0000-4000-8000-0000000000a4', 2097152));
+  await rejects('an archive over 4 MiB (0039)', () => archive('00000000-0000-4000-8000-0000000000a2', 4194305), { code: '23514' });
   await rejects('an archive with no size', () => archive('00000000-0000-4000-8000-0000000000a3', 0), { code: '23514' });
 }
 
@@ -2622,8 +2623,9 @@ const kept31 = {};
   await rejects('the same laptop room imported twice', () => record({ sessionId: null }), { code: '23505', match: /room_imports_source_room_id_key/ });
   await rejects('two imports becoming one room', () => record({ sourceRoomId: 'other-room' }), { code: '23505', match: /room_imports_session_id_key/ });
   await rejects('an empty file', () => record({ sourceRoomId: 'r-empty', sessionId: null, bytes: 0 }), { code: '23514', match: /room_imports_bytes_check/ });
-  await rejects('a file over the 1 MiB an archive may be', () =>
-    record({ sourceRoomId: 'r-big', sessionId: null, bytes: 1048577 }), { code: '23514', match: /room_imports_bytes_check/ });
+  await rejects('a file over the 4 MiB an archive may be (0039)', () =>
+    record({ sourceRoomId: 'r-big', sessionId: null, bytes: 4194305 }), { code: '23514', match: /room_imports_bytes_check/ });
+  await accepts('a 2 MiB file (0039)', () => record({ sourceRoomId: 'r-2mib', sessionId: null, bytes: 2097152 }));
   await rejects('a hash that is not one', () => record({ sourceRoomId: 'r-hash', sessionId: null, sha256: 'xyz' }), { code: '23514', match: /room_imports_sha256_check/ });
   await rejects('a laptop room id that could be a path', () => record({ sourceRoomId: '../etc', sessionId: null }), { code: '23514', match: /room_imports_source_check/ });
   await rejects('a room code that is not one', () => record({ sourceRoomId: 'r-code', sourceCode: 'lpt 31', sessionId: null }), { code: '23514' });

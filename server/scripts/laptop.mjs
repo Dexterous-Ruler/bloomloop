@@ -704,8 +704,8 @@ const hod = await call(K, 'POST', '/api/imports/rooms', { body: { archive: saved
 check('an HOD: 403, with a sentence', hod.status === 403 && /HOD can read/.test(hod.body.error ?? ''), JSON.stringify(hod.body));
 const notJson = await call(K, 'POST', '/api/imports/rooms', { raw: '{"archive": {', as: 'profA' });
 check('a body that is not JSON: 400, with a sentence', notJson.status === 400 && /not readable JSON\. Nothing was imported\./.test(notJson.body.error ?? ''), JSON.stringify(notJson.body));
-const huge = await call(K, 'POST', '/api/imports/rooms', { raw: JSON.stringify({ archive: { pad: 'x'.repeat(2200 * 1024) } }), as: 'profA' });
-check('a body over the limit: 413, with a sentence', huge.status === 413 && /over the 1 MB a room archive may be/.test(huge.body.error ?? ''), JSON.stringify(huge.body));
+const huge = await call(K, 'POST', '/api/imports/rooms', { raw: JSON.stringify({ archive: { pad: 'x'.repeat(6300 * 1024) } }), as: 'profA' });
+check('a body over the limit: 413, with a sentence', huge.status === 413 && /over the 4 MB a room archive may be/.test(huge.body.error ?? ''), JSON.stringify(huge.body));
 const empty = await call(K, 'POST', '/api/imports/rooms', { body: { ...target }, as: 'profA' });
 check('no file: 400, with a sentence that names no field', empty.status === 400 && /^Choose the room file laptop mode saved/.test(empty.body.error ?? ''), JSON.stringify(empty.body));
 check('none of those wrote anything', same(before, { sessions: (await repo.listSessions()).length, answers: (await repo.listAnswers({})).length }));

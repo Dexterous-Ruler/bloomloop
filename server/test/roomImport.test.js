@@ -391,12 +391,12 @@ describe('refused with a sentence, and nothing written', () => {
     await refused(repo, prof, { archive: bad((a) => { a.attendance.rows[0][a.attendance.cols.indexOf('status')] = 'absent'; }), ...target }, 400, /says a join marked a student absent/);
   });
 
-  test('an archive over the 1 MB an archive may be is a 413 with a sentence', async () => {
+  test('an archive over the 4 MB an archive may be is a 413 with a sentence', async () => {
     const { archive } = await laptopRoom();
     const { repo, target } = await cloud();
     const big = copy(archive);
-    big.questions[0].text = 'x'.repeat(1024 * 1024);
-    await refused(repo, prof, { archive: big, ...target }, 413, /^This archive is 1\.\d\d MB, over the 1 MB a room archive may be\. Nothing was imported\.$/);
+    big.questions[0].text = 'x'.repeat(4 * 1024 * 1024);
+    await refused(repo, prof, { archive: big, ...target }, 413, /^This archive is 4\.\d\d MB, over the 4 MB a room archive may be\. Nothing was imported\.$/);
   });
 
   test('another teacher\'s room, or a room id or code already here from another source', async () => {

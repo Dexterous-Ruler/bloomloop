@@ -37,7 +37,7 @@
  *              raised-hands tally, activity and insight action, each table only
  *              when the room has any. A roster student's name is copied in, as
  *              for attendance. An archive without them had none, so the version
- *              is unchanged. They count towards the 1 MiB like everything else.
+ *              is unchanged. They count towards the 4 MiB like everything else.
  *   class      the room's class questions (Phase 5, 0023), each with where it
  *   questions  ended, whether its key was revealed and its times, pointing at
  *              the question as it was asked by position (`q`), like an answer.
@@ -58,13 +58,13 @@
  * Figures (Batch 8): a question snapshot keeps its figure's spec, and `figures`
  * keeps each figure drawn as the phones saw it ({ type, title, svg, description,
  * table }), by the hash of its spec, so the archive shows the picture without
- * the server that drew it. Only when it fits the 1 MiB; otherwise
+ * the server that drew it. Only when it fits the 4 MiB; otherwise
  * `figuresLeftOut` counts them, and each can be drawn again from its spec. An
  * archive without either had no figures, so the version is unchanged.
  *
  * Drawings (Batch 9, E4): a whiteboard answer's row keeps its response as it was
  * given, { mediaId, text }, and nothing else of the picture. The picture's bytes
- * are not copied in: a room of drawings would pass the 1 MiB on its own, and
+ * are not copied in: a room of drawings would pass the 4 MiB on its own, and
  * deleting the room deletes its drawings with it. `drawings` then says how many
  * answers named one and that their pictures are not kept here (DRAWINGS_NOTE).
  * Only when the room has any; an archive without it had none, so the version is
@@ -82,11 +82,11 @@ import { figureForStudent, specHash, normaliseSpec } from '../figures/index.js';
 
 /** What an archive says about its drawings (Batch 9): the references are kept, the pictures are not. */
 export const DRAWINGS_NOTE = 'The answers that are drawings keep the id of their picture and the student\'s words. '
-  + 'The pictures themselves are not in this archive (each one is up to 400 KB, and the archive holds at most 1 MiB), '
+  + 'The pictures themselves are not in this archive (each one is up to 400 KB, and the archive holds at most 4 MiB), '
   + 'and they were deleted with the room.';
 /** The same, in a copy of a room that still exists (laptop mode's files): its pictures were not deleted. */
 export const DRAWINGS_KEPT_NOTE = 'The answers that are drawings keep the id of their picture and the student\'s words. '
-  + 'The pictures themselves are not in this file (each one is up to 400 KB, and the file holds at most 1 MiB); they '
+  + 'The pictures themselves are not in this file (each one is up to 400 KB, and the file holds at most 4 MiB); they '
   + 'stay with the server that ran the room.';
 
 /**
@@ -110,7 +110,7 @@ function figuresOf(questions) {
 export const ARCHIVE_FORMAT = 'bloomloop.room-archive';
 export const ARCHIVE_VERSION = 1;
 /** The owner's ceiling. A room that would not fit is refused, never trimmed. */
-export const ARCHIVE_LIMIT_BYTES = 1024 * 1024;
+export const ARCHIVE_LIMIT_BYTES = 4 * 1024 * 1024;
 
 const PAGE = 1000;
 
@@ -311,7 +311,7 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
   const minors = minorRolls(roster, marks);
   // The log of what each phone was given (servedLog, Phase 7) is left out: it
   // decides only whether an answer arriving after the close counts, and no
-  // answer can reach a room once it is archived; kept, it would fill the 1 MB
+  // answer can reach a room once it is archived; kept, it would fill the 4 MB
   // an archive may be for nothing.
   const studentRows = profiles.map(({ _id, sessionId: _s, history, servedLog: _log, ...rest }) => (
     minors.has(String(rest.rollNo)) ? { ...rest, integrity: [] } : rest));
@@ -448,7 +448,7 @@ export async function buildRoomArchive(repo, session, { archivedBy = null, now =
 
   // Batch 8: each figure the room's questions showed, drawn once as the phones
   // saw it, keyed by its spec's hash (the snapshot keeps the spec itself). Only
-  // when it fits: the 1 MiB is for evidence first, and a figure left out can be
+  // when it fits: the 4 MiB is for evidence first, and a figure left out can be
   // drawn again from its spec, so the archive then says how many were left out.
   const drawn = figuresOf(questions);
   let json = JSON.stringify(data);

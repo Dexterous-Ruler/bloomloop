@@ -591,7 +591,7 @@ console.log('\nreview: an answer over the limit that cannot be shortened is kept
   const first = await ask(phone, 'student:join', { code: roomV.body.code, rollNo: '21CS09', name: 'Ravi' }, ['server:question', 'server:exhausted']);
   check('a phone is given the short answer', first.payload.question?._id === id(openShort), JSON.stringify(first.payload));
   // A long record, as a room full of long answers makes one (written straight to the store).
-  for (let i = 0; i < 300; i += 1) {
+  for (let i = 0; i < 1200; i += 1) {
     await repo.recordAnswer({
       sessionId: roomV.body.sessionId, answerKey: `bulk-${i}`, rollNo: `B${String(i).padStart(3, '0')}`, questionId: id(openLong), contentId,
       topic: 'Cells', bloom: 'create', kind: 'open', questionSnapshot: { id: id(openLong), kind: 'open', length: 'long' },
@@ -600,8 +600,8 @@ console.log('\nreview: an answer over the limit that cannot be shortened is kept
     });
   }
   const closed = await post(`/api/session/${roomV.body.code}/close`, {});
-  check('closing a room whose record is near or over 1 MB says so, with what to do (review)', closed.status === 200
-    && /close to or over the 1 MB a deleted room can be kept in/.test(closed.body.archiveWarning ?? '') && closed.body.archiveBytes > 900 * 1024,
+  check('closing a room whose record is near or over 4 MB says so, with what to do (review)', closed.status === 200
+    && /close to or over the 4 MB a deleted room can be kept in/.test(closed.body.archiveWarning ?? '') && closed.body.archiveBytes > 3.6 * 1024 * 1024,
     JSON.stringify({ status: closed.status, warning: closed.body.archiveWarning, bytes: closed.body.archiveBytes }));
   await new Promise((r) => setTimeout(r, 150));
   const back = await connect();

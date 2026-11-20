@@ -1,4 +1,4 @@
-// The room archive: a deleted room kept as one JSON document under 1 MB.
+// The room archive: a deleted room kept as one JSON document under its 4 MiB ceiling.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -72,7 +72,7 @@ test('toTable drops columns nobody has a value for, and fromTable restores the r
   assert.deepEqual(fromTable(t), [{ a: 1, c: null }, { a: 2, c: 'x' }]);
 });
 
-test('a room far bigger than a class archives under 1 MB, with every answer in it', async () => {
+test('a room far bigger than a class archives under the archive ceiling, with every answer in it', async () => {
   const repo = createMemoryRepo();
   const session = await bigRoom(repo);
   const answers = await repo.listAnswers({ sessionId: session._id, limit: 100000 });

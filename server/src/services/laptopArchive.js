@@ -24,7 +24,7 @@
  * here from the room's code and id, checked against one pattern, and resolved
  * inside the folder before anything is opened.
  *
- * A room whose archive passes the 1 MB an archive may be is still written (it is
+ * A room whose archive passes the 4 MB an archive may be is still written (it is
  * evidence, and is never trimmed), with a warning: the import route refuses it,
  * as the cloud's delete refuses to archive one.
  */
@@ -176,7 +176,7 @@ export function createArchiveWriter({
     const bytes = Buffer.byteLength(json, 'utf8');
     if (bytes > ARCHIVE_LIMIT_BYTES && !warnedLarge.has(id)) {
       warnedLarge.add(id);
-      log(`[laptop] WARNING: room ${data.room.code} is ${(bytes / (1024 * 1024)).toFixed(2)} MB, over the 1 MB a room archive may be. `
+      log(`[laptop] WARNING: room ${data.room.code} is ${(bytes / (1024 * 1024)).toFixed(2)} MB, over the 4 MB a room archive may be. `
         + 'It is still saved here, but it cannot be imported online: close it and open a new room for the rest of the class.');
     }
     writeAtomic(folder, name, json, { fs });
