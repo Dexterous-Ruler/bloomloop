@@ -660,4 +660,23 @@ export const api = {
   // archivedAt, importedAt, importedBy, bytes, summary }], limitBytes }, newest first.
   roomImports: () => req('/imports/rooms'),
   // -- end of laptop mode and imported rooms -------------------------------------
+
+  // -- Batch 9, X3: exam mode on the console (teach/ExamRoom.jsx) ----------------
+  // Staff (requireTeacher); the same 404 for "not yours" and "not there". The
+  // setting at the opening rides on createSession as `examMode`.
+  // { room, examMode (keys included), help, students (null while off), honesty, privacy }.
+  examMode: (code) => req(`/session/${encodeURIComponent(code)}/exam`),
+  // The room owner only: an HOD 403, a closed room 409. -> { room, examMode, help }.
+  setExamMode: (code, examMode) => json('PATCH')(`/session/${encodeURIComponent(code)}/exam`, { examMode }),
+  // The newest screen picture of one student, fetched with this browser's
+  // credentials in headers and never cached: { url (a blob url the caller
+  // revokes), at (X-Snapshot-At) }. A 404 throws its sentence.
+  examSnapshot: async (code, roll) => {
+    const res = await send(`/session/${encodeURIComponent(code)}/exam/snapshots/${encodeURIComponent(roll)}`, { cache: 'no-store' });
+    const at = res.headers.get('x-snapshot-at');
+    return { url: URL.createObjectURL(await res.blob()), at };
+  },
+  // { room, rule { ..., sentence }, pairs, note, privacy }; 409 outside exam mode.
+  examCollusion: (code) => req(`/session/${encodeURIComponent(code)}/exam/collusion`),
+  // -- end of Batch 9, X3 ---------------------------------------------------------
 };

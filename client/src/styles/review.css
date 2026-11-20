@@ -143,6 +143,11 @@
 .rv-stim { max-height: 200px; overflow: auto; padding: 10px 12px; border-left: 2px solid var(--line-2); font: 400 13px/1.6 var(--font); color: var(--text-2); }
 .rv-stim img { max-width: 100%; height: auto; border-radius: 8px; }
 .rv-stim:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* A drawing answer (batch 9, E4): the phone's white paper, in both themes. */
+.rv-drawing { margin: 0 0 10px; max-width: 420px; background: #fff; color-scheme: light; border: 1px solid var(--line-2); border-radius: 10px; overflow: hidden; }
+.rv-drawing img { display: block; width: 100%; height: auto; }
+.rv-drawing .hint { margin: 0; padding: 12px 14px; color: #585C63; }
+.rv-drawing-skel { aspect-ratio: 1; border-radius: 0; }
 
 .rv-rubric { display: flex; flex-direction: column; gap: 7px; counter-reset: rv-rb; }
 .rv-rubric li { display: flex; align-items: flex-start; gap: 10px; font: 400 13.5px/1.45 var(--font); color: var(--text-2); }

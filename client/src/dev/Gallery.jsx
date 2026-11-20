@@ -38,6 +38,8 @@ const AREAS = {
   classes: { title: 'Classes', line: 'Rosters, removed students and a class across its rooms.' },
   attend: { title: 'Lobby and attendance', line: 'The waiting room, attendance against the class, and the two halves of a Mixed room.' },
   records: { title: 'Teacher records', line: 'The wheel, the raised-hands tally, observations and activities. Staff only.' },
+  wheel: { title: 'The wheel', line: 'The wheel at 10 and 30, the reel past 30, a spin held still, landed, think time and reduced motion. Staff only. Batch 9.' },
+  exam: { title: 'Exam mode', line: 'Signals in roll order, the newest screen picture, matching wrong answers and the setting changed live. Never a ranking. Staff only. Batch 9.' },
   coach: { title: 'Live insights', line: 'Bands, the three cards, KPI tiles and one student’s card. Staff only.' },
   wall: { title: 'Projector', line: 'What the wall shows, its controls and its links.' },
   outcomes: { title: 'Course outcomes', line: 'A class’s outcomes, what maps to them and what reaches none. Staff only.' },

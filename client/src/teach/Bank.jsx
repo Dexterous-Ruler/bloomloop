@@ -15,7 +15,7 @@ import { useEffect, useState } from 'react';
 import Tubes from '../fx/Tubes.jsx';
 import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
-import { KIND_LABEL } from '../lib/kinds.js';
+import { labelOf } from '../lib/kinds.js';
 import { Button, Chip, Dialog, Empty, Icon, Level, Menu, Note, Num, Panel, Section, Segmented, Tip } from '../ui/index.jsx';
 import { toast } from '../ui/toast.jsx';
 import { LevelSpread } from '../ui/viz.jsx';
@@ -873,7 +873,7 @@ export default function Bank({ content, selected, bank, onBank, onPhase, focus, 
                       {q.topic && <span className="tc-q-topic">{q.topic}</span>}
                       <span className="tc-ref">{refOf.get(q._id)}</span>
                       <i className="dot" aria-hidden="true" />
-                      <span>{KIND_LABEL[kind] ?? kind}</span>
+                      <span>{q.kindLabel || labelOf({ kind, length: q.length })}</span>
                       {/* Batch 8: a figure question says what it draws; the drawing is in the opened key. */}
                       <FigureTag q={q} />
                       {slides && <span className="tc-q-slides">{slides}</span>}

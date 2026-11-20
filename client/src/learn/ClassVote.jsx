@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from 'react';
 
-import { KIND_LABEL } from '../lib/kinds.js';
+import { labelOf } from '../lib/kinds.js';
 import { Button, Icon, Note, Panel } from '../ui/index.jsx';
 import { Provenance } from './Question.jsx';
 import Stimulus from './Stimulus.jsx';
@@ -163,7 +163,7 @@ export default function ClassVote({ q, end = null, mine = null, first = null, ke
         <Stimulus key={`stim:${q?.id}`} stimulus={q?.question?.stimulus} html={q?.question?.rich?.passage} />
         <div className="ln-ask">
           <span className="ln-kind">
-            {KIND_LABEL[kind] ?? kind}
+            {labelOf({ kind, length: q?.question?.length })}
             {q?.question?.topic ? <span>{` · ${q.question.topic}`}</span> : null}
           </span>
           <h1

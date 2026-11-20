@@ -30,7 +30,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { api } from '../lib/api.js';
-import { KIND_LABEL } from '../lib/kinds.js';
+import { labelOf } from '../lib/kinds.js';
 import { Button, Chip, Empty, Icon, Level, Note } from '../ui/index.jsx';
 import { LAPTOP_QUESTION, laptopItems, useLaptopQuestionIds } from './imported.jsx';
 
@@ -165,7 +165,7 @@ export function ItemMeta({ item, className = '' }) {
       )}
       {item.topic && <span className="it-topic clip">{item.topic}</span>}
       <i className="it-dot" aria-hidden="true" />
-      <span>{KIND_LABEL[item.kind] ?? item.kind}</span>
+      <span>{labelOf(item)}</span>
       {prov?.label && (
         prov.aiDraft
           ? <DraftTag title={prov.sentence || undefined}>{prov.label}</DraftTag>

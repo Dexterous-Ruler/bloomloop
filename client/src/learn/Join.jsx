@@ -26,6 +26,8 @@ export default function Join({
   status,
   onJoin,
   onForget,
+  // Shown in place of the form (batch 9: an exam room's rules, before the join).
+  panel,
 }) {
   const [code, setCode] = useState(initialCode || '');
   const [rollNo, setRollNo] = useState(initialRoll || '');
@@ -65,7 +67,7 @@ export default function Join({
         </div>
 
         <main className="gate-main">
-          <form
+          {panel || <form
             className="gate-card"
             onSubmit={(e) => {
               e.preventDefault();
@@ -154,7 +156,7 @@ export default function Join({
                 </p>
               )}
             </div>
-          </form>
+          </form>}
         </main>
 
         <div className="gate-foot">Only your teacher sees your answers. You are never ranked against anyone.</div>

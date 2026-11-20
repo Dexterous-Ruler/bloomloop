@@ -4,9 +4,11 @@
  * not shown a league table.
  */
 
+import { Link } from 'react-router-dom';
+
 import Tubes from '../fx/Tubes.jsx';
 import { LEVELS } from '../lib/bloom.js';
-import { Button, Level, Num, Panel, Section } from '../ui/index.jsx';
+import { Button, Icon, Level, Num, Panel, Section } from '../ui/index.jsx';
 import { Dock, EarlyDays } from './parts.jsx';
 
 // Six tubes across a phone leave about 44px each, which is not room for
@@ -133,8 +135,26 @@ export default function Finish({ profile, ending, reason = '', led = null, linke
         {linked && ' These answers are in your own history too, because you were signed in.'}
       </p>
 
+      {/* E2 (batch 9). Not signed in, or the server would not link: one line,
+          and the way to fix it. Both links leave the room first, as the button
+          does, so the phone does not rejoin a finished room later; the leave
+          and the route change land in one render, so nothing flashes between. */}
+      {!linked && (
+        <p className="ln-signin">
+          Signing in keeps a history of your answers and opens your Learning Hub.{' '}
+          <Link to="/signin" onClick={onLeave}>Sign in</Link>
+        </p>
+      )}
+
       <Dock>
-        <Button size="xl" block icon="logout" onClick={onLeave}>Leave the room</Button>
+        {linked && (
+          <Link className="btn btn-primary btn-xl btn-block" to="/hub" onClick={onLeave}>
+            <Icon name="book" />Continue in your Learning Hub
+          </Link>
+        )}
+        <Button variant={linked ? 'ghost' : undefined} size={linked ? 'lg' : 'xl'} block icon="logout" onClick={onLeave}>
+          Leave the room
+        </Button>
       </Dock>
     </>
   );

@@ -55,20 +55,26 @@ const SAVE = {
   queued: ['clock', 'Saved on this phone'],
   // The same, said while the connection is down (Phase 7, "Next").
   held: ['clock', 'Saved, will be marked when you reconnect'],
+  // A drawing is never marked by the machine (batch 9, E4): it is sent, then
+  // the professor reviews it.
+  heldDrawing: ['clock', 'Saved, will be sent when you reconnect'],
   sending: [null, 'Saved on this phone, sending'],
   sent: ['send', 'Sent'],
   // An answer or vote the server kept and did not count: with its sentence,
   // never a mark.
-  uncounted: ['send', 'Sent, not counted'],
+  uncounted: ['send', 'Kept, not counted'],
   marked: ['check', 'Marked'],
   // Refused for good, or never got through: kept here, never sent again.
   refused: ['info', 'Kept on this phone, not taken'],
+  // Refused on the question still on screen (too long, say): the answer is
+  // still in its box, to change and send again, with the server's sentence.
+  again: ['info', 'Not taken'],
 };
 
 /** An outbox item's state in the words above. */
 export const saveState = (i, flying, offline) => (i.status === 'queued'
-  ? (flying === i.answerId ? 'sending' : offline ? 'held' : 'queued')
-  : i.counted === false ? 'uncounted' : i.status);
+  ? (flying === i.answerId ? 'sending' : offline ? (i.image || i.payload?.response?.mediaId ? 'heldDrawing' : 'held') : 'queued')
+  : i.counted === false ? 'uncounted' : i.again ? 'again' : i.status);
 
 export function SaveState({ state, note = '', live = false }) {
   const s = SAVE[state];

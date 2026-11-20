@@ -1,0 +1,233 @@
+/* The five figure kinds on the phone (learn/figkinds/). Loaded with them only. */
+
+/* ---- chart (K3): bars set by drag or arrow keys. The card is the server's
+   figure paper, white in both themes, so these colours are fixed: they are
+   server/src/figures/common.js's (INK, MUTED, GRID, AXIS, ACCENT), plus --ok. */
+.fk-bar { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.fk-bar-card { background: #fff; color-scheme: light; border: 1px solid var(--line); border-radius: var(--r-3); padding: 8px 6px 4px; }
+.fk-bar-svg { display: block; width: 100%; height: auto; font-family: var(--font); user-select: none; -webkit-user-select: none; }
+.fk-bar-grid { stroke: #E3E5E0; stroke-width: 1; }
+.fk-bar-minor { stroke: #F0F1EE; }
+.fk-bar-axis { stroke: #3A4540; stroke-width: 1.4; }
+.fk-bar-tick { font: 500 11px var(--mono); fill: #585C63; }
+.fk-bar-cat { font: 600 11.5px var(--font); fill: #1F2A24; }
+.fk-bar-name { font: 500 11px var(--font); fill: #585C63; }
+.fk-bar-col { cursor: ns-resize; touch-action: none; outline: none; -webkit-tap-highlight-color: transparent; }
+.fk-bar-col[aria-disabled='true'] { cursor: default; }
+.fk-bar-hit { fill: transparent; }
+.fk-bar-ring { fill: none; stroke: #2F6B4F; stroke-width: 2; opacity: 0; }
+.fk-bar-col:focus-visible .fk-bar-ring { opacity: 1; }
+.fk-bar-col[data-active='true'] .fk-bar-ring { opacity: 0.35; }
+.fk-bar-fill { fill: #2F6B4F; transition: y var(--t-1) var(--ease), height var(--t-1) var(--ease); }
+.fk-bar-col[data-active='true'] .fk-bar-fill, .fk-bar-svg[data-drag] .fk-bar-fill { transition: none; }
+.fk-bar-col[data-active='true'] .fk-bar-fill { fill: #245640; }
+.fk-bar-grip { fill: #fff; stroke: #1F2A24; stroke-width: 1.2; }
+.fk-bar-val { font: 600 12px var(--mono); fill: #1F2A24; }
+.fk-bar-mine { fill: #3A4540; }
+.fk-bar-right { fill: rgba(27, 114, 70, 0.14); stroke: #1B7246; stroke-width: 1.6; stroke-dasharray: 4 3; }
+.fk-bar-val-right { fill: #1B7246; }
+.fk-bar-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 4px 6px 6px; font: 500 12.5px/1.4 var(--font); color: #585C63; }
+.fk-bar-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.fk-bar-sw { width: 12px; height: 12px; border-radius: 3px; background: #3A4540; }
+.fk-bar-sw-right { background: rgba(27, 114, 70, 0.14); border: 1.5px dashed #1B7246; }
+@media (prefers-reduced-motion: reduce) { .fk-bar-fill { transition: none; } }
+
+/* ---- hotspot and label (K1): a layer of buttons over the server's drawing,
+   measured off it. Rings and pins sit on the figure's white paper, so their
+   colours are fixed (the server's INK and ACCENT, the light theme's ok and
+   bad, each AA on white); the labels and the list under it use the tokens. */
+.fk-hot-board { position: relative; min-width: 0; }
+.fk-hot-layer { position: absolute; z-index: 1; pointer-events: none; }
+.fk-hot-pic { background: #fff; color-scheme: light; border: 1px solid var(--line); border-radius: var(--r-3); padding: 8px; overflow: hidden; }
+.fk-hot-pic img { display: block; max-width: 100%; height: auto; margin: 0 auto; border-radius: 6px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.fk-hot-alt { margin: 0; padding: 12px; font: 400 14px/1.55 var(--font); color: #3A4540; }
+
+/* A part: the button is at least 44 px and centred on the part; the ring
+   (::before) hugs the part, a little larger than it. */
+.fk-hot-part {
+  position: absolute; translate: -50% -50%; pointer-events: auto;
+  width: max(44px, calc(var(--w) + 12px)); height: max(44px, calc(var(--h) + 12px));
+  padding: 0; border: 0; border-radius: 12px; background: transparent; cursor: pointer; outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.fk-hot-part::before {
+  content: ''; position: absolute; left: 50%; top: 50%; translate: -50% -50%;
+  width: max(22px, calc(var(--w) + 10px)); height: max(22px, calc(var(--h) + 10px));
+  border-radius: 8px; border: 1.5px dashed rgba(31, 42, 36, 0.34); background: transparent;
+  transition: border-color var(--t-1) var(--ease), background var(--t-1) var(--ease), box-shadow var(--t-1) var(--ease);
+}
+.fk-hot-part[data-round]::before { border-radius: 999px; }
+.fk-hot-part:disabled { cursor: default; }
+.fk-hot-part:disabled:not([data-tone])::before { opacity: 0.45; }
+@media (hover: hover) { .fk-hot-part:hover:not(:disabled)::before { border-color: #1F2A24; } }
+.fk-hot-part:focus-visible::before { box-shadow: 0 0 0 2px #fff, 0 0 0 4px #1F2A24; }
+.fk-hot-part[data-tone='on']::before { border: 2.5px solid #2F6B4F; background: rgba(47, 107, 79, 0.16); }
+.fk-hot-part[data-tone='yes']::before { border: 2.5px solid #1B7246; background: rgba(27, 114, 70, 0.14); }
+.fk-hot-part[data-tone='miss']::before { border: 2.5px dashed #1B7246; }
+.fk-hot-part[data-tone='no']::before { border: 2.5px solid #C43D3D; background: rgba(196, 61, 61, 0.1); }
+
+/* A region of a picture: its own outline is the button. */
+.fk-hot-shapes, .fk-lab-shapes { position: absolute; left: 0; top: 0; overflow: visible; }
+.fk-hot-shapes polygon, .fk-lab-shapes polygon {
+  fill: transparent; stroke: #1F2A24; stroke-opacity: 0.6; stroke-width: 1.5; stroke-dasharray: 5 4; stroke-linejoin: round;
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.95));
+  transition: fill var(--t-1) var(--ease), stroke var(--t-1) var(--ease);
+}
+.fk-hot-shapes polygon { pointer-events: all; cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; }
+.fk-hot-shapes polygon[aria-disabled='true'] { cursor: default; }
+.fk-hot-shapes polygon:focus-visible { stroke-opacity: 1; stroke-width: 3; stroke-dasharray: none; }
+.fk-hot-shapes polygon[data-tone='on'] { fill: rgba(47, 107, 79, 0.24); stroke: #2F6B4F; stroke-opacity: 1; stroke-width: 2.5; stroke-dasharray: none; }
+.fk-hot-shapes polygon[data-tone='yes'] { fill: rgba(27, 114, 70, 0.22); stroke: #1B7246; stroke-opacity: 1; stroke-width: 2.5; stroke-dasharray: none; }
+.fk-hot-shapes polygon[data-tone='miss'] { stroke: #1B7246; stroke-opacity: 1; stroke-width: 2.5; }
+.fk-hot-shapes polygon[data-tone='no'] { fill: rgba(196, 61, 61, 0.18); stroke: #C43D3D; stroke-opacity: 1; stroke-width: 2.5; stroke-dasharray: none; }
+.fk-lab-shapes { pointer-events: none; }
+
+/* Marked: a tick or a cross on the ring, so right and wrong are not colour alone. */
+.fk-hot-mark {
+  position: absolute; translate: -50% -50%; width: 18px; height: 18px; display: grid; place-items: center;
+  border-radius: 999px; background: #1B7246; color: #fff; box-shadow: 0 0 0 2px #fff; pointer-events: none;
+}
+.fk-hot-mark[data-tone='no'] { background: #C43D3D; }
+.fk-hot-mark[data-tone='miss'] { background: #fff; color: #1B7246; box-shadow: inset 0 0 0 1.5px #1B7246, 0 0 0 2px #fff; }
+
+/* label: a numbered pin on each part (a finger's target, 44 px) ... */
+.fk-lab-pin {
+  position: absolute; translate: -50% -50%; width: 44px; height: 44px; padding: 0; border: 0; background: transparent;
+  display: grid; place-items: center; cursor: pointer; pointer-events: auto; -webkit-tap-highlight-color: transparent;
+}
+.fk-lab-pin:disabled { cursor: default; }
+.fk-lab-pin > span {
+  width: 24px; height: 24px; display: grid; place-items: center; border-radius: 999px;
+  background: #fff; color: #1F2A24; border: 1.5px solid #1F2A24; font: 700 12px/1 var(--mono);
+  box-shadow: 0 1px 3px rgba(20, 22, 26, 0.22);
+  transition: background var(--t-1) var(--ease), border-color var(--t-1) var(--ease), box-shadow var(--t-1) var(--ease);
+}
+.fk-lab-pin[data-has] > span { background: #2F6B4F; border-color: #2F6B4F; color: #fff; }
+.fk-lab-pin[data-state='open'] > span { box-shadow: 0 0 0 4px rgba(47, 107, 79, 0.22); }
+.fk-lab-pin[data-state='pick'] > span, .fk-lab-pin[data-over] > span { box-shadow: 0 0 0 2px #fff, 0 0 0 4px #1F2A24; }
+.fk-lab-pin[data-tone='yes'] > span { background: #1B7246; border-color: #1B7246; color: #fff; }
+.fk-lab-pin[data-tone='no'] > span { background: #C43D3D; border-color: #C43D3D; color: #fff; }
+
+/* ... the labels to place ... */
+.fk-lab-tray {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px; min-height: 62px;
+  border-radius: 12px; background: var(--raised); border: 1px dashed var(--line-2);
+}
+.fk-lab-tray > .t-small { padding: 0 8px; }
+.fk-lab-chip {
+  min-height: 44px; max-width: 100%; padding: 0 14px; border-radius: 11px; cursor: grab; touch-action: none;
+  background: var(--surface); border: 1px solid var(--line-2); color: var(--text); box-shadow: var(--sh-1);
+  font: 600 14.5px/20px var(--font); text-align: left; overflow-wrap: anywhere; user-select: none; -webkit-user-select: none;
+  transition: border-color var(--t-1) var(--ease), box-shadow var(--t-1) var(--ease), opacity var(--t-1) var(--ease);
+}
+.fk-lab-chip:disabled { cursor: default; opacity: 0.6; }
+.fk-lab-chip[data-state='pick'] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.fk-lab-chip[data-flying] { opacity: 0.4; }
+
+/* ... and the parts as a list: the same targets, by keyboard. */
+.fk-lab-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.fk-lab-row {
+  display: flex; align-items: center; gap: 4px; padding: 3px 4px 3px 0; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--line-2); box-shadow: var(--sh-1);
+  transition: border-color var(--t-1) var(--ease), box-shadow var(--t-1) var(--ease);
+}
+.fk-lab-row[data-state='pick'] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.fk-lab-row[data-over] { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.fk-lab-part {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 4px 10px;
+  border: 0; border-radius: 10px; background: transparent; cursor: pointer; text-align: left;
+  font: 600 15px/20px var(--font); color: var(--text);
+}
+.fk-lab-part:disabled { cursor: default; }
+.fk-lab-part:focus-visible { outline-offset: -2px; }
+.fk-lab-num {
+  width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 999px;
+  border: 1.5px solid var(--text); color: var(--text); font: 700 12px/1 var(--mono);
+}
+.fk-lab-part:has(.fk-lab-mine) .fk-lab-num { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.fk-lab-mine { min-width: 0; overflow-wrap: anywhere; }
+.fk-lab-empty { color: var(--text-3); font-weight: 500; }
+.fk-lab-row .ln-out { width: 40px; height: 40px; }
+
+/* Marked: what was put on each part, and the right label where it differs. */
+.fk-lab-row[data-tone] { align-items: flex-start; gap: 12px; padding: 10px 14px 10px 10px; }
+.fk-lab-row[data-tone='yes'] { border-color: var(--ok-fill); background: var(--ok-soft); }
+.fk-lab-row[data-tone='no'] { border-color: var(--bad-fill); background: var(--bad-soft); }
+.fk-lab-row[data-tone='yes'] .fk-lab-num { background: var(--ok-fill); border-color: var(--ok-fill); color: #fff; }
+.fk-lab-row[data-tone='no'] .fk-lab-num { background: var(--bad-fill); border-color: var(--bad-fill); color: #fff; }
+.fk-lab-out { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; padding-top: 4px; font: 600 15px/20px var(--font); color: var(--text); }
+.fk-lab-out .fk-lab-mine, .fk-lab-truth { display: flex; align-items: flex-start; gap: 8px; }
+.fk-lab-out svg { flex: none; height: 20px; }
+.fk-lab-row[data-tone='yes'] .fk-lab-mine svg { color: var(--ok); }
+.fk-lab-row[data-tone='no'] .fk-lab-mine { color: var(--text-2); font-weight: 500; text-decoration: line-through; }
+.fk-lab-row[data-tone='no'] .fk-lab-mine svg { color: var(--bad); }
+.fk-lab-truth svg { color: var(--ok); }
+
+@media (prefers-reduced-motion: reduce) {
+  .fk-hot-part::before, .fk-hot-shapes polygon, .fk-lab-pin > span, .fk-lab-chip, .fk-lab-row { transition: none; }
+}
+
+/* ---- plot and number line (K2): the server's drawing with an overlay in the
+   same viewBox. The overlay and the legend sit on the figure's white paper, so
+   their colours are fixed (the server's INK, AXIS and ACCENT, the light
+   theme's ok); the lists under the drawing use the tokens. NumberLine.jsx
+   shares the stage, the remove button and the add button (.fk-plot-*). */
+.fk-plot, .fk-line { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.fk-plot-stage { position: relative; margin: 0 auto; }
+.fk-plot-stage .fk-plot-svg svg { display: block; width: 100%; max-width: none; height: auto; margin: 0; }
+.fk-plot-stage .fk-plot-over {
+  position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; margin: 0;
+  touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+}
+.fk-plot-stage .fk-plot-over[data-still] { cursor: default; touch-action: auto; }
+.fk-plot-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 6px 4px 2px; font: 500 12.5px/1.4 var(--font); color: #3A4540; }
+.fk-plot-legend span { display: inline-flex; align-items: center; gap: 8px; }
+
+/* The points, by keyboard: a chip each, its arrow keys move it. */
+.fk-plot-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.fk-plot-chip {
+  display: inline-flex; align-items: stretch; border-radius: 11px; background: var(--surface);
+  border: 1px solid var(--line-2); box-shadow: var(--sh-1);
+}
+.fk-plot-chip[data-on] { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.fk-plot-pick {
+  display: inline-flex; align-items: center; gap: 9px; min-height: 44px; padding: 0 12px; border: 0; border-radius: 10px;
+  background: none; cursor: pointer; font: 600 14.5px/1 var(--font); color: var(--text); font-variant-numeric: tabular-nums;
+}
+.fk-plot-pick:disabled { cursor: default; }
+.fk-plot-pick:focus-visible { outline-offset: -2px; }
+.fk-plot-dot { width: 10px; height: 10px; flex: none; border-radius: 999px; background: var(--text); }
+.fk-plot-x {
+  width: 44px; min-height: 44px; flex: none; display: grid; place-items: center; padding: 0; border: 0;
+  border-left: 1px solid var(--line); border-radius: 0 10px 10px 0; background: none; color: var(--text-3); cursor: pointer;
+}
+.fk-plot-x:hover { color: var(--text); }
+.fk-plot-x:focus-visible { outline-offset: -2px; }
+.fk-plot-add {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; border-radius: 11px;
+  border: 1px dashed var(--line-2); background: none; cursor: pointer; font: 600 14px/1 var(--font); color: var(--primary);
+}
+.fk-plot-add:hover { border-color: var(--primary); }
+.fk-plot-conds { margin: 0; padding-left: 20px; font: 600 15px/1.5 var(--font); color: var(--text); }
+
+/* Number line: what to mark, then a row per mark (its ends, open or closed). */
+.fk-line-tools .seg > button { min-height: 44px; padding: 0 16px; }
+.fk-line-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.fk-line-list > li:last-child:not(.fk-line-mark) { align-self: flex-start; }
+.fk-line-mark {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 0 2px 12px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--line-2); box-shadow: var(--sh-1);
+}
+.fk-line-what { min-width: 58px; font: 600 13px/18px var(--font); color: var(--text-2); }
+.fk-line-to { font: 400 13px/18px var(--font); color: var(--text-3); }
+.fk-line-end {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 11px; border-radius: 9px;
+  border: 1px solid var(--line); background: var(--raised); cursor: pointer;
+  font: 600 14.5px/1 var(--font); color: var(--text); font-variant-numeric: tabular-nums;
+}
+.fk-line-end:hover:not(:disabled) { border-color: var(--line-2); }
+.fk-line-end:disabled { cursor: default; }
+.fk-line-glyph { width: 12px; height: 12px; flex: none; border-radius: 999px; border: 2px solid var(--text); background: var(--text); }
+.fk-line-glyph[data-open] { background: transparent; }
+.fk-line-left { transform: scaleX(-1); }
+.fk-line-x { margin-left: auto; align-self: stretch; }

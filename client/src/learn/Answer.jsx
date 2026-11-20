@@ -17,13 +17,21 @@
  * be reset by hand.
  */
 
-import { Fragment, useContext, useEffect, useRef, useState } from 'react';
+import { Fragment, Suspense, lazy, useContext, useEffect, useRef, useState } from 'react';
 
 import { clearDraft, readDraft, saveDraft } from '../lib/draft.js';
+import { OPEN_WORDS } from '../lib/kinds.js';
 import { Button, Icon, Note } from '../ui/index.jsx';
 import { Dock, Held, pieces, rt } from './parts.jsx';
 
 const KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+/* Batch 8's five kinds asked on a figure. Their code loads only when one is
+   on screen, so /join carries none of it (learn/figkinds/). */
+export const FIGURE_KINDS = new Set(['hotspot', 'label', 'plot', 'numberline', 'chart']);
+const FigureAnswer = lazy(() => import('./figkinds/FigureAnswer.jsx'));
+// Batch 9 (E4): the whiteboard, lazy for the same reason (learn/drawing/).
+const DrawingAnswer = lazy(() => import('./drawing/DrawingAnswer.jsx'));
 
 /* How far a finger travels before a press becomes a drag. Under it nothing has
    happened, so a thumb that shifts a pixel getting off a handle does not
@@ -53,12 +61,35 @@ const brief = (options) => options.length > 0 && options.every((o) => String(o).
 
 /** The one action, in the dock. Gone while the answer is held on this phone:
     it has been given, and the page says where it is. */
-function Send({ label, disabled, busy, onClick }) {
+export function Send({ label, disabled, busy, onClick }) {
   if (useContext(Held)) return null;
   return (
     <Dock>
       <Button variant="primary" size="xl" block busy={busy} disabled={disabled} onClick={onClick}>{label}</Button>
     </Dock>
+  );
+}
+
+/* Words and characters as the server counts them (batch 9, E3): a zero-width
+   space, word joiner, BOM or U+180E is a gap between words; characters are
+   the trimmed text with each run of white space as one. */
+const GAP = /[​⁠﻿᠎]/g;
+const wordsIn = (t) => (String(t ?? '').replace(GAP, ' ').match(/\S+/g) || []).length;
+const charsIn = (t) => String(t ?? '').trim().replace(/\s+/g, ' ').length;
+
+/** The live count under a written box, against the question's limits. It
+    guides and never blocks: the server is the judge. */
+export function Count({ id, text, maxWords, maxChars }) {
+  const n = wordsIn(text);
+  const c = charsIn(text);
+  const over = n > maxWords || c > maxChars;
+  const tone = over ? 'over' : n > maxWords * 0.9 || c > maxChars * 0.9 ? 'near' : undefined;
+  return (
+    <p className="ln-words" id={id} data-tone={tone}>
+      <span>{n} of {maxWords} words{c > maxChars * 0.9 ? `, ${c} of ${maxChars} characters` : ''}</span>
+      {/* Changes only at the two thresholds, so a reader hears it twice, not per word. */}
+      <span role="status">{over ? 'Over the limit' : tone ? 'Nearly at the limit' : ''}</span>
+    </p>
   );
 }
 
@@ -296,6 +327,21 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
 
   const solution = result?.solution;
 
+  if (FIGURE_KINDS.has(kind)) {
+    return (
+      <Suspense fallback={<p className="ln-hint">Loading the figure…</p>}>
+        <FigureAnswer question={question} result={result} locked={locked} busy={waiting} onSubmit={onSubmit} />
+      </Suspense>
+    );
+  }
+  if (kind === 'drawing') {
+    return (
+      <Suspense fallback={<p className="ln-hint">Loading the drawing board…</p>}>
+        <DrawingAnswer question={question} result={result} locked={locked} busy={waiting} onSubmit={onSubmit} />
+      </Suspense>
+    );
+  }
+
   /* ---------------------------------------------------------------- mcq --- */
   if (kind === 'mcq') {
     const options = question.options ?? [];
@@ -342,7 +388,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
           const s = stateOf(v);
           return (
             <button key={String(v)} type="button" className="ln-opt ln-big" data-state={s} disabled={locked} onClick={() => onSubmit(v)}>
-              <span>{v ? 'True' : 'False'}</span>
+              {v ? 'True' : 'False'}
               {s === 'yes' && <span className="ln-tag"><Icon name="check" size={14} />Correct answer</span>}
               {s === 'no' && <span className="ln-tag"><Icon name="close" size={14} />Your answer</span>}
             </button>
@@ -595,6 +641,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
                 data-state={activeLeft === li ? 'pick' : pairs[li] !== undefined ? 'done' : undefined}
                 disabled={locked}
                 aria-pressed={activeLeft === li}
+                aria-label={t}
                 onClick={() => tapLeft(li)}
               >
                 <span className="ln-key" aria-hidden="true">{KEYS[li]}</span>
@@ -612,7 +659,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
                   className="ln-tile"
                   data-state={mate !== null ? 'done' : undefined}
                   disabled={locked || usedRight.has(r.i)}
-                  aria-label={mate !== null ? `${r.t}, matched to ${left[mate]}` : undefined}
+                  aria-label={mate !== null ? `${r.t}, matched to ${left[mate]}` : r.t}
                   onClick={() => tapRight(r.i)}
                 >
                   <span className="ln-key" aria-hidden="true">{mate !== null ? KEYS[mate] : ''}</span>
@@ -733,7 +780,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
           >
             <Icon name="grip" />
           </button>
-          <button type="button" className="ln-item-t" disabled={locked} aria-pressed={held === it.i} onClick={() => tapItem(it.i)}>
+          <button type="button" className="ln-item-t" disabled={locked} aria-pressed={held === it.i} aria-label={tone ? undefined : it.t} onClick={() => tapItem(it.i)}>
             {tone && <Icon name={tone === 'yes' ? 'check' : 'close'} size={14} />}
             <span className="ln-opt-t">
               <span className="wrap-any" {...rt(it.h, it.t)} />
@@ -767,7 +814,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
         <div className="ln-bins">
           {groups.map((g, gi) => (
             <section key={g} className="ln-bin" data-bin={gi} data-over={fly?.over === gi ? 'true' : undefined}>
-              <button type="button" className="ln-bin-head" disabled={locked} onClick={() => tapBin(gi)}>
+              <button type="button" className="ln-bin-head" disabled={locked} aria-label={g} onClick={() => tapBin(gi)}>
                 <span className="strong grow wrap-any" {...group(gi)} />
                 {held !== null && !locked
                   ? <span className="ln-tag">Put it here</span>
@@ -917,7 +964,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
           <div className="stack stack-2">{Array.from({ length: count }).map((_, i) => box(i))}</div>
         )}
 
-        {result && (
+        {result && solution != null && (
           <Key label="Accepted answers">
             <ol className="ln-list">{(Array.isArray(solution) ? solution : []).map((s, i) => <li key={i}>{s}</li>)}</ol>
           </Key>
@@ -1211,7 +1258,7 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
           {question.unit && <span className="mono">{question.unit}</span>}
         </form>
 
-        {result && (
+        {result && solution != null && (
           <Key label="The value">
             <b>{String(solution ?? '')}{question.unit ? ` ${question.unit}` : ''}</b>
           </Key>
@@ -1223,15 +1270,25 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
   }
 
   const isOpen = kind === 'open';
+  // E3 (batch 9): a short answer is a compact box, a long one a roomy editor;
+  // both count against the limits the question carries. No `length` means
+  // short. Sent as the string typed.
+  const long = question.length === 'long';
+  const cap = question.maxWords || OPEN_WORDS[long ? 'long' : 'short'];
+  const wordsId = `ln-words-${question._id}`;
   return (
     <>
       {isOpen && question.hint && <p className="hint">{question.hint}</p>}
       {isOpen ? (
-        <textarea
-          className="textarea ln-open" value={typed} disabled={locked} rows={6}
-          onChange={(e) => setTyped(e.target.value)}
-          placeholder="Your answer, in your own words" aria-label="Your answer"
-        />
+        <>
+          <textarea
+            className="textarea ln-open" data-long={long || undefined} value={typed} disabled={locked} rows={long ? 14 : 4}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder="Your answer, in your own words"
+            aria-label="Your answer" aria-describedby={wordsId}
+          />
+          {!result && <Count id={wordsId} text={typed} maxWords={cap} maxChars={question.maxChars || cap * 15} />}
+        </>
       ) : (
         <form onSubmit={send}>
           <input
@@ -1242,7 +1299,8 @@ export default function Answer({ question, result, busy, sent, onSubmit }) {
         </form>
       )}
 
-      {result && (
+      {/* No key at all when the server held it back (a resent hub answer, batch 9). */}
+      {result && solution != null && (
         <Key label={isOpen ? 'Points a full answer makes' : 'Accepted answer'}>
           {isOpen
             ? <ul className="ln-list">{(Array.isArray(solution) ? solution : []).map((p, i) => <li key={i}>{p}</li>)}</ul>

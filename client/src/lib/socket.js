@@ -119,6 +119,24 @@ export const EV = {
   // good (kept on the phone, never sent again).
   kept: 'server:kept',
   refused: 'server:refused',
+  // Batch 9 (E4): a drawing's picture, sent ahead of its answer under the
+  // answer's own id. Stored (its mediaId), not saved this time (send it
+  // again), or refused for good with a sentence.
+  studentDrawing: 'student:drawing',
+  drawingStored: 'drawing:stored',
+  drawingRejected: 'drawing:rejected',
+  drawingRefused: 'drawing:refused',
+  // Batch 9 (E5), the phone in an exam room: its rules changed mid-room
+  // ({ examMode }, null when off), and an answer not taken before the whole
+  // screen is shared ({ message, questionId, answerId }). What only exam mode
+  // sends (student:exam-consent, student:screen, student:snapshot) is named
+  // in learn/guard/Exam.jsx, so /join's first download does not carry it.
+  examMode: 'exam:mode',
+  screenNeeded: 'exam:screen-needed',
+  // Batch 9 (E5): an exam room's signals, to its staff screens only.
+  // { code, full, students: [{ rollNo, name?, summary?, snapshotAt? }] }:
+  // full replaces the list, otherwise the students named are patched.
+  teacherIntegrity: 'teacher:integrity',
   // Batch 8: a teaching move or activity prompt asked for on the console has
   // been written (or could not be): { code, requestId, state: done|failed,
   // suggestion, message }. To the room's teacher screens only.

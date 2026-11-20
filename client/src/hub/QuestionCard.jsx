@@ -23,11 +23,19 @@
  * Batch 8: an answer refused for its serve token (not sent with the question,
  * or too long ago) is kept too, with the server's sentence and, when the
  * screen can, "Open the question again" (`onReopen`).
+ *
+ * Batch 9: a question in a class that is still running is closed here; an
+ * answer to it is a 409 that keeps it on this device, with the server's
+ * sentence. A resent answer whose question is closed now comes back `held`:
+ * its earlier mark with `heldNote`, and no key, explanation or feedback. The
+ * hints of such a question read back as `held` with a `note`. A drawing (sent
+ * by the board as { image, text? }) comes back `notMarked`, with no mark: the
+ * board shows its `note`, and no verdict is drawn.
  */
 
 import { Fragment, useEffect, useId, useRef, useState } from 'react';
 
-import { BLANK_MARK, KIND_LABEL } from '../lib/kinds.js';
+import { BLANK_MARK, labelOf } from '../lib/kinds.js';
 import Answer from '../learn/Answer.jsx';
 import { DockSlot, Held } from '../learn/parts.jsx';
 import Stimulus from '../learn/Stimulus.jsx';
@@ -311,7 +319,8 @@ export function QuestionCardView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const graded = result && !result.ungraded;
+  // A drawing is never marked (correct null): no verdict at all.
+  const graded = result && !result.ungraded && typeof result.correct === 'boolean';
   const tone = !graded ? null : result.correct ? 'yes' : result.score > 0 && result.score < 1 ? 'part' : 'no';
   const opts = drawn ? optionsOf(q) : [];
   const right = drawn ? rightOf(q, result?.solution) : [];
@@ -325,7 +334,7 @@ export function QuestionCardView({
     <article className="hub-q" ref={art} aria-label={label || undefined} aria-labelledby={label ? undefined : textId}>
       <div className="hub-q-head">
         <Level level={q.bloom} />
-        <span className="hub-q-kind" id={kindId}>{KIND_LABEL[kind] ?? kind}</span>
+        <span className="hub-q-kind" id={kindId}>{labelOf(q) || kind}</span>
         {(label || topicName) && (
           <span className="hub-q-label">{[topicName, label].filter(Boolean).join(' · ')}</span>
         )}
@@ -404,8 +413,12 @@ export function QuestionCardView({
                 {result.detail && <span>{result.detail}</span>}
               </p>
             )}
+            {result.held && result.heldNote && (
+              <p className="hub-q-held"><Icon name="clock" size={15} /><span>{result.heldNote}</span></p>
+            )}
             {result.provisionalNote && <p className="hub-q-meta">{result.provisionalNote}</p>}
-            {result.note && <p className="hub-q-meta">{result.note}</p>}
+            {/* A drawing's note is shown by the board itself, under the drawing. */}
+            {result.note && kind !== 'drawing' && <p className="hub-q-meta">{result.note}</p>}
             {showWhy && (
               <dl className="hub-q-why">
                 {drawn && answerOpts.length > 0 && (
@@ -495,7 +508,10 @@ export default function QuestionCard({ question, slot, send, askHint, opened, on
     let on = true;
     opened(attemptId)
       .then((r) => {
-        if (!on || !r?.hints?.length) return;
+        if (!on) return;
+        // Closed for now (a class still running): no hint shows, and the note says why.
+        if (r?.held) { setHintSaid(r.note || ''); setHintLeft(0); return; }
+        if (!r?.hints?.length) return;
         setHints(r.hints);
         setHintWhy(r.why ?? '');
         setHintLeft(r.remaining ?? 0);

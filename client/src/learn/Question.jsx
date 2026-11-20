@@ -7,10 +7,10 @@
 import { Fragment, useEffect, useState } from 'react';
 
 import { LABEL } from '../lib/bloom.js';
-import { BLANK_MARK, KIND_LABEL } from '../lib/kinds.js';
+import { BLANK_MARK, labelOf } from '../lib/kinds.js';
 import Mark from '../fx/Mark.jsx';
 import { Button, Icon, Ladder, Level } from '../ui/index.jsx';
-import Answer from './Answer.jsx';
+import Answer, { FIGURE_KINDS } from './Answer.jsx';
 import Stimulus from './Stimulus.jsx';
 import { Dock, Held, NextUp, SaveState, Sure, pieces, rt } from './parts.jsx';
 
@@ -156,7 +156,9 @@ export default function Question({
      shared path would put a tick on an opinion. A student must not think they
      got a poll wrong, and must not be told they got it right either. Answer
      says what happened instead. */
-  const marked = result && !result.ungraded && kind !== 'poll';
+  // Nor on one that waits for a person (a drawing, batch 9): it has no mark
+  // yet, and the kind says so in the server's own sentence.
+  const marked = result && !result.ungraded && !result.awaitingReview && kind !== 'poll';
   const partial = marked && !result.correct && result.score > 0 && result.score < 1;
   const tone = !marked ? null : result.correct ? 'yes' : partial ? 'part' : 'no';
 
@@ -185,13 +187,14 @@ export default function Question({
         {/* Above the question, and remounted with it: the fold belongs to the
             question being asked, so the next item on the same reading opens
             expanded. */}
-        <Stimulus key={`stim:${question._id}`} stimulus={question.stimulus} html={question.rich?.passage} />
+        {/* The figure kinds draw their own figure, to answer on it. */}
+        {!FIGURE_KINDS.has(kind) && <Stimulus key={`stim:${question._id}`} stimulus={question.stimulus} html={question.rich?.passage} />}
 
         <div className="ln-ask">
           <span className="ln-kind">
             {/* The raw id when kinds.js has a gap, so the separator is never
                 left hanging off the front of the topic. */}
-            {KIND_LABEL[kind] ?? kind}
+            {labelOf({ kind, length: question.length })}
             {question.topic ? <span>{` · ${question.topic}`}</span> : null}
           </span>
           {/* A cloze or dropdown passage is not a prompt with an answer under
@@ -286,7 +289,7 @@ export default function Question({
           {/* A written answer's first mark is the machine's reading of it
               against the rubric, and a professor can still confirm or change
               it. Said so plainly, so a student is not surprised later. */}
-          {result.provisional && (
+          {marked && result.provisional && (
             <p className="t-small dim" role="note">Your teacher may review this mark.</p>
           )}
           {/* What comes next and why, in the server's words: the levels of the

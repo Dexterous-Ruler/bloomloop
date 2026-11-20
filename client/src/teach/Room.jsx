@@ -21,6 +21,10 @@
  * `classId` and `status` ('waiting' with a waiting room); onSession gets it
  * as it comes.
  *
+ * Batch 9 (E5): exam mode, off unless turned on (teach/ExamSettings.jsx), sent
+ * as `examMode` only when on. Fullscreen, screen sharing and pictures need a
+ * class and are off without one; a Teacher-led room is offered none of it.
+ *
  * @param bank         the GET /api/bank/:id reply; questions carry `status`
  * @param activeCount  approved questions, the only ones a room serves
  * @param draftCount   questions waiting for approval
@@ -30,7 +34,7 @@
  * @param create       stands in for api.createSession (the dev gallery)
  * @param loadClasses  stands in for api.listClasses (the dev gallery)
  * @param initialRun   how the room runs to begin with (the dev gallery):
- *                     { classId, mode, lobby, adapt, startLevel, cap, timer }
+ *                     { classId, mode, lobby, adapt, startLevel, cap, timer, exam }
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -40,6 +44,7 @@ import { api } from '../lib/api.js';
 import { reduced } from '../lib/motion.js';
 import { Button, Chip, Empty, Icon, Level, Note, Panel, Section, Segmented, Switch } from '../ui/index.jsx';
 import { LevelSpread } from '../ui/viz.jsx';
+import ExamSettings, { EXAM_OFF, examLine, examModeFrom, rememberExamHelp } from './ExamSettings.jsx';
 
 // The server's own lists (server/src/services/mastery.js MASTERY_GOALS and
 // MAX_REATTEMPTS). It rejects anything else with a 400, so a drift here shows
@@ -465,6 +470,8 @@ export default function Room({
   const [cap, setCap] = useState(initialRun.cap ?? '');
   const [timer, setTimer] = useState(initialRun.timer ?? '');
   const [classes, setClasses] = useState({ status: 'loading', list: [], error: '' });
+  // Batch 9: exam mode, as a draft (ExamSettings.jsx), off to begin with.
+  const [exam, setExam] = useState(initialRun.exam ?? EXAM_OFF);
 
   const readClasses = useCallback(() => {
     setClasses((c) => ({ ...c, status: 'loading' }));
@@ -508,14 +515,17 @@ export default function Room({
   // Only when both are set: either one alone says nothing about how long.
   const est = capped.value != null && timed.value != null ? estimate(capped.value, timed.value) : null;
   const needsClass = teacherLed && !cls;
+  // No phone joins a Teacher-led room, so it is never sent exam mode.
+  const examOn = !teacherLed && exam.on;
+  const examOut = examModeFrom(exam, { hasClass: Boolean(cls) });
   const blocked = needsClass
     ? 'A Teacher-led room needs a class. Choose one, or open the room for Student devices or Mixed.'
-    : capped.why || timed.why || '';
+    : capped.why || timed.why || (examOn ? examOut.why : '') || '';
 
   async function start() {
     setError(null); setBusy(true);
     try {
-      onSession(await create(content.contentId, content.title, {
+      const reply = await create(content.contentId, content.title, {
         masteryGoal: Number(goal),
         reattempts: Number(tries),
         redemption: redeem === 'on',
@@ -531,7 +541,11 @@ export default function Room({
         ...(!teacherLed && startLevel !== START_DEFAULT ? { startLevel } : {}),
         ...(capped.value != null ? { questionsPerStudent: capped.value } : {}),
         ...(timed.value != null ? { timePerQuestion: timed.value } : {}),
-      }));
+        ...(examOn ? { examMode: examOut.value } : {}),
+      });
+      // The server's help for exam mode, kept for the next opening.
+      rememberExamHelp(reply?.examHelp);
+      onSession(reply);
     }
     catch (err) { setError({ message: err.message, status: err.status }); }
     finally { setBusy(false); }
@@ -648,6 +662,12 @@ export default function Room({
             <span>{runs}</span>
             <b>Opens</b>
             <span>{opens}</span>
+            {examOn && (
+              <>
+                <b>Exam</b>
+                <span>{`Exam mode: ${examLine(examOut.value)}.`}</span>
+              </>
+            )}
           </div>
           {error && (
             <Note tone="bad" role="alert">
@@ -707,6 +727,20 @@ export default function Room({
             </div>
             <Switch label="Waiting room" checked={lobby} onChange={setLobby} />
           </div>
+        </section>
+
+        <section className="card tc-rules" aria-label="Exam mode">
+          <div className="tc-rules-head">
+            <Section title="Exam mode" sub="Off unless you turn it on. You can change it from the live room while it runs." />
+          </div>
+          <ExamSettings
+            draft={exam}
+            onDraft={(d) => { setExam(d); setError(null); }}
+            hasClass={Boolean(cls)}
+            teacherLed={teacherLed}
+            idp="ro-ex"
+            why={examOn ? examOut.why : ''}
+          />
         </section>
 
         <section className="card tc-rules" aria-label="Room rules">

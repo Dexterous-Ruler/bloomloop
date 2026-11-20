@@ -19,7 +19,7 @@ import { Link } from 'react-router-dom';
 
 import { staffHub } from '../hub/hubApi.js';
 import RichText from '../hub/RichText.jsx';
-import { KIND_LABEL } from '../lib/kinds.js';
+import { labelOf } from '../lib/kinds.js';
 import { FigureDialog, useFigureKinds } from '../teach/FigureBuilder.jsx';
 import { DraftTag, StatusTag } from '../teach/ItemStats.jsx';
 import FigureSteps from '../ui/FigureSteps.jsx';
@@ -98,7 +98,7 @@ function StaffQuestion({ q, contentId, canEdit }) {
     <li className="hq-lq" data-status={q.status}>
       <span className="hq-meta">
         <Level level={q.bloom} />
-        <span>{KIND_LABEL[q.kind] ?? q.kind}</span>
+        <span>{labelOf(q)}</span>
         {prov.label && (prov.aiDraft
           ? <DraftTag title={prov.sentence || undefined}>{prov.label}</DraftTag>
           : <><i className="it-dot" aria-hidden="true" /><span className="it-prov" title={prov.sentence || undefined}>{prov.label}</span></>)}

@@ -31,6 +31,7 @@ import AccountShell from '../shell/AccountShell.jsx';
 import { useViewer } from '../shell/viewer.js';
 import { Button, Chip, Dialog, Empty, Field, Icon, Menu, Note, Segmented, Tip } from '../ui/index.jsx';
 import { ImportedTag, LeaveOutImported } from '../teach/imported.jsx';
+import { examLine } from '../teach/ExamSettings.jsx';
 import { useLaptop } from '../teach/laptop.jsx';
 import {
   dayParts, plural, Rate, roomLink, RoomState, roomWhen, sizeOf, stampOf,
@@ -75,7 +76,7 @@ function Skeleton() {
 /** A room's settings, said quietly: the goal always, the rest only when on. */
 const MODE_LABEL = { 'teacher-led': 'Teacher-led', mixed: 'Mixed' };
 
-function Settings({ settings, classId, cls }) {
+function Settings({ settings, classId, cls, exam }) {
   if (!settings) return null;
   const goal = Number(settings.masteryGoal);
   const tries = Number(settings.reattempts) || 0;
@@ -98,6 +99,12 @@ function Settings({ settings, classId, cls }) {
       {Number.isFinite(goal) && goal > 0 && <span className="ac-set" title="Mastery goal: the accuracy a level counts as mastered at">Goal {Math.round(goal * 100)}%</span>}
       {tries > 0 && <span className="ac-set" title="Tries a student gets at a question they missed">{plural(tries, 'retry', 'retries')}</span>}
       {settings.redemption && <span className="ac-set" title="Early misses can be set aside once a student shows they have it">Redemption</span>}
+      {/* Batch 9: the room list's exam summary (counts only, never a key). */}
+      {exam?.on && (
+        <span className="ac-set" title={`Exam mode: ${examLine(exam)}. Signals are a prompt to look, never proof.`}>
+          Exam mode{exam.screenShare ? ', screen shared' : exam.fullscreen ? ', fullscreen' : ''}{exam.seb?.required ? ', Safe Exam Browser' : ''}
+        </span>
+      )}
     </>
   );
 }
@@ -146,7 +153,7 @@ function RoomRow({ room: r, busy, onPause, onResume, onAskClose, onAskDelete }) 
         <span className="ac-room-t clip" title={r.title || undefined}>{r.title || 'Untitled room'}</span>
         <span className="ac-room-sub">
           <span title={stampOf(when) || undefined}>{roomWhen(r)}</span>
-          <Settings settings={r.settings} classId={r.classId} cls={r.class} />
+          <Settings settings={r.settings} classId={r.classId} cls={r.class} exam={r.examMode} />
           {/* null is the whole approved bank; a list is the set picked when it opened. */}
           {Array.isArray(r.questionIds) && (
             <span className="ac-set" title="This room serves a set of questions picked when it opened, and no others">
@@ -327,7 +334,7 @@ function DeletedRooms({ archives, onReload, onDownload }) {
  */
 export function RoomsView({
   loading, error, locked, rooms, reading, onReload,
-  busy, actionError, notice, onDismiss,
+  busy, actionError, notice, warning, onDismiss,
   onPause, onResume, onClose, onDelete,
   archives, onReloadArchives, onDownload,
   onImport,
@@ -487,10 +494,11 @@ export function RoomsView({
         </label>
       </div>
 
-      {(error || notice || (!asking && actionError) || readOnly) && (
+      {(error || notice || warning || (!asking && actionError) || readOnly) && (
         <div className="stack stack-3">
           {error && <Note tone="bad">The rooms below are the last ones that loaded: {error}</Note>}
           {notice && <Note tone="ok" role="status">{notice}</Note>}
+          {warning && <Note tone="warn" role="status">{warning}</Note>}
           {!asking && refused}
           {readOnly && (
             <Note>
@@ -680,6 +688,8 @@ export default function Rooms() {
   const [busy, setBusy] = useState(null);
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
+  // Batch 9: a close reply's archiveWarning, shown as given.
+  const [warning, setWarning] = useState('');
 
   // The deleted rooms, as their archives. Read on their own: a slow or refused
   // archive list must not hold up the rooms that are running.
@@ -761,6 +771,7 @@ export default function Rooms() {
     setBusy({ code, action });
     setActionError('');
     setNotice('');
+    setWarning('');
     let ok = true;
     try {
       await run();
@@ -776,7 +787,10 @@ export default function Rooms() {
 
   const pause = (room) => act(room.code, 'pause', () => api.pauseSession(room.code));
   const resume = (room) => act(room.code, 'resume', () => api.resumeSession(room.code));
-  const close = (room) => act(room.code, 'close', () => api.closeSession(room.code));
+  const close = (room) => act(room.code, 'close', async () => {
+    const res = await api.closeSession(room.code);
+    if (res?.archiveWarning) setWarning(`${room.code} is closed. ${res.archiveWarning}`);
+  });
   const destroy = (room, typed) => act(room.code, 'delete', async () => {
     let res;
     try {
@@ -812,7 +826,8 @@ export default function Rooms() {
       busy={busy}
       actionError={actionError}
       notice={notice}
-      onDismiss={() => { setActionError(''); setNotice(''); }}
+      warning={warning}
+      onDismiss={() => { setActionError(''); setNotice(''); setWarning(''); }}
       onPause={pause}
       onResume={resume}
       onClose={close}

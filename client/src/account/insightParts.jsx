@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { LABEL, LEVELS } from '../lib/bloom.js';
-import { KIND_LABEL } from '../lib/kinds.js';
+import { labelOf } from '../lib/kinds.js';
 import { Button, Chip, Icon, Level } from '../ui/index.jsx';
 import {
   BAND, MIN_EVIDENCE, REVIEW, STEPS, asPct, bands, cellsOf, day, dayTime, hardest, levelN, markOf, plural, saidLines,
@@ -617,7 +617,7 @@ function AnswerRow({ item, view }) {
   const note = String(item.review?.note ?? '').trim();
   const text = String(item.question?.text ?? '').trim();
   const facts = [
-    KIND_LABEL[item.kind] ?? item.kind,
+    labelOf(item),
     item.attempt > 1 ? `attempt ${item.attempt}` : null,
     dayTime(item.answeredAt) || null,
     item.room?.title || null,

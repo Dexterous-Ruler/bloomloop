@@ -1,0 +1,47 @@
+/* The drawing kind on the phone (learn/drawing/). Loaded with it only.
+   The board is paper, white in both themes like the server's figures, so the
+   ink's colours read the same to the student and to the professor. */
+
+.dw { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+/* ---- tools: four small groups that wrap to two rows on a phone */
+.dw-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.dw-group { display: flex; align-items: center; gap: 2px; }
+.dw-history { margin-left: auto; }
+.dw-btn {
+  display: inline-grid; place-items: center; width: 44px; height: 44px; padding: 0;
+  border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--text-2);
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background var(--t-1) var(--ease), border-color var(--t-1) var(--ease), color var(--t-1) var(--ease);
+}
+.dw-btn:hover:not(:disabled) { background: var(--raised); color: var(--text); }
+.dw-btn[aria-pressed='true'] { background: var(--primary-soft); border-color: var(--primary); color: var(--text); }
+.dw-btn:disabled { cursor: default; opacity: 0.42; }
+.dw-swatch { width: 22px; height: 22px; border-radius: 999px; background: var(--c); box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 32%, transparent); }
+.dw-width { width: var(--d); height: var(--d); border-radius: 999px; background: var(--text); }
+
+/* ---- the board */
+.dw-board { display: flex; justify-content: center; min-width: 0; }
+.dw-paper {
+  position: relative; width: 100%; aspect-ratio: 1; max-width: 560px;
+  background: #fff; color-scheme: light; border: 1px solid var(--line-2); border-radius: var(--r-3);
+  overflow: hidden; box-shadow: var(--sh-1);
+}
+.dw-canvas {
+  display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+}
+.dw-canvas[data-tool='eraser'] { cursor: cell; }
+.dw[data-locked] .dw-canvas { cursor: default; }
+.dw-empty {
+  position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
+  font: 500 14px/1 var(--font); color: #6A6E75; letter-spacing: 0.01em;
+}
+
+/* ---- what happened, and the words */
+.dw-said:empty { display: none; }
+.dw-sending { margin: 0; font: 500 13px/1.5 var(--font); color: var(--text-2); }
+.dw-label { margin-top: 4px; font: 600 13.5px/1.4 var(--font); color: var(--text); }
+.dw-text { min-height: 84px; font-size: 16px; }
+
+@media (prefers-reduced-motion: reduce) { .dw-btn { transition: none; } }

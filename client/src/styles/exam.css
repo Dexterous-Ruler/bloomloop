@@ -1,0 +1,156 @@
+/* Exam mode on the console (Batch 9, E5 and E7): the setting at the opening and
+   in a running room, the signals in roll order, the screen picture and the
+   matching wrong answers. Neutral ink throughout: nothing here is coloured by
+   how much was recorded. */
+
+/* ------------------------------------------------------------ the setting */
+
+.ex-set { display: flex; flex-direction: column; min-width: 0; }
+.ex-honest {
+  display: flex; align-items: flex-start; gap: 9px; margin: 0; padding: 14px 24px;
+  border-bottom: 1px solid var(--line); background: var(--raised);
+  font: 500 12.5px/1.55 var(--font); color: var(--text-2);
+}
+.ex-honest > svg { flex: none; margin-top: 2px; color: var(--text-3); }
+.ex-honest > span { max-width: 78ch; }
+
+.ex-parts { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.ex-row[data-sub] { position: relative; padding-left: 44px; }
+.ex-row[data-sub]::before { content: ''; position: absolute; left: 26px; top: 0; bottom: 0; width: 1px; background: var(--line-2); }
+.ex-why { color: var(--warn) !important; font-weight: 600 !important; }
+.ex-noclass { margin: 14px 24px 2px 44px; }
+.ex-seg { display: inline-flex; }
+.ex-seg .seg button:disabled { cursor: not-allowed; }
+
+.ex-keys { position: relative; display: grid; gap: 14px; padding: 2px 24px 18px 44px; }
+.ex-keys::before { content: ''; position: absolute; left: 26px; top: 0; bottom: 0; width: 1px; background: var(--line-2); }
+.ex-key { display: grid; gap: 4px; min-width: 0; }
+.ex-key > b { font: 600 13px/1.35 var(--font); color: var(--text); }
+.ex-key > span { max-width: 70ch; font: 400 12px/1.5 var(--font); color: var(--text-3); }
+.ex-key .textarea { width: 100%; min-height: 0; resize: vertical; font: 500 12px/1.5 var(--mono); word-break: break-all; }
+
+/* In the dialog the rules sit flush with its body. */
+.ex-dlg { display: flex; flex-direction: column; gap: 12px; }
+.ex-dlg .ex-honest { margin: 0 0 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-3); }
+.ex-dlg .tc-rule { padding: 14px 0; }
+.ex-dlg .ex-row[data-sub] { padding-left: 22px; }
+.ex-dlg .ex-row[data-sub]::before, .ex-dlg .ex-keys::before { left: 6px; }
+.ex-dlg .ex-keys { padding: 2px 0 14px 22px; }
+.ex-dlg .ex-noclass { margin: 12px 0 2px 22px; }
+
+/* ------------------------------------------------------------- the space */
+
+.ex-live { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.ex-skel-brief { height: 230px; border-radius: var(--r-5); }
+.ex-skel-list { height: 320px; border-radius: var(--r-4); }
+
+.ex-brief { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 26px 36px; }
+.ex-brief-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.ex-brief-meta { font: 500 11.5px/1.3 var(--font); color: var(--on-panel-3); }
+.ex-lead { max-width: 44ch; font: 700 22px/1.3 var(--font); letter-spacing: -0.015em; color: var(--on-panel); text-wrap: pretty; }
+.ex-lead em { font-style: normal; color: var(--mint); }
+.ex-brief-honest { max-width: 66ch; font: 400 12.5px/1.6 var(--font); color: var(--on-panel-2); }
+.ex-brief-acts:empty { display: none; }
+.ex-ro { font: 500 12.5px/1.5 var(--font); color: var(--on-panel-3); }
+.ex-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 10px; align-content: start; }
+.ex-tiles .ptile > b { font-variant-numeric: tabular-nums; }
+
+.ex-cols { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(300px, 1fr); gap: 18px; align-items: start; }
+.ex-side { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.ex-card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 18px 22px 14px; border-bottom: 1px solid var(--line); }
+.ex-card-body { display: flex; flex-direction: column; gap: 12px; padding: 16px 22px 20px; min-width: 0; }
+.ex-find { width: min(240px, 100%); }
+.ex-honesty {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 11px 22px;
+  border-bottom: 1px solid var(--line); background: var(--raised);
+  font: 500 12px/1.55 var(--font); color: var(--text-2);
+}
+.ex-honesty > svg { flex: none; margin-top: 2px; color: var(--text-3); }
+.ex-quiet { font: 400 12.5px/1.5 var(--font); color: var(--text-3); }
+.ex-priv { display: flex; align-items: flex-start; gap: 7px; font: 400 12px/1.5 var(--font); color: var(--text-3); }
+.ex-priv > svg { flex: none; margin-top: 2px; }
+
+/* One student: who, what was recorded, and the picture's time. */
+.ex-rows { margin: 0; padding: 0; list-style: none; }
+.ex-st { display: grid; grid-template-columns: minmax(110px, 150px) minmax(0, 1fr) auto; gap: 8px 18px; align-items: start; padding: 14px 22px; transition: background var(--t-1) var(--ease); }
+.ex-st + .ex-st { border-top: 1px solid var(--line); }
+.ex-st[data-on='true'] { background: var(--primary-soft); }
+.ex-st-who { min-width: 0; }
+.ex-st-open {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; max-width: 100%; padding: 0; border: 0; background: none;
+  text-align: left; color: var(--text); cursor: pointer;
+}
+span.ex-st-open { cursor: default; }
+.ex-st-open > b { font: 600 13px/1.3 var(--mono); }
+.ex-st-open > span { max-width: 100%; font: 500 12.5px/1.35 var(--font); color: var(--text-3); }
+button.ex-st-open:hover > b { text-decoration: underline; text-underline-offset: 3px; }
+button.ex-st-open:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; border-radius: 4px; }
+.ex-st-pic { align-self: center; justify-self: end; }
+.ex-st-pic .btn { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+.ex-sum { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.ex-counts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ex-counts > li {
+  display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px;
+  border: 1px solid var(--line); border-radius: var(--r-1); background: var(--surface);
+  font: 500 12px/1 var(--font); color: var(--text-2); white-space: nowrap;
+}
+.ex-counts > li > b { font: 600 11.5px/1 var(--mono); color: var(--text); }
+.ex-latest { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font: 500 12.5px/1.5 var(--font); color: var(--text-2); }
+.ex-latest-k { font: 500 10px/1.4 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-3); }
+.ex-latest-meta { display: inline-flex; flex-wrap: wrap; gap: 0 8px; font: 400 12px/1.5 var(--font); color: var(--text-3); }
+.ex-latest-meta > time { font-family: var(--mono); font-size: 11.5px; }
+.ex-notes { display: grid; gap: 3px; margin: 0; padding: 0 0 0 10px; list-style: none; border-left: 2px solid var(--line); font: 400 12px/1.5 var(--font); color: var(--text-3); }
+
+/* The picture: what was shared, as sent, letterboxed in a quiet frame. */
+.ex-shot { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ex-shot-frame {
+  position: relative; display: grid; place-items: center; aspect-ratio: 16 / 10; overflow: hidden;
+  border: 1px solid var(--line); border-radius: var(--r-3); background: var(--sunk);
+}
+.ex-shot-frame > img { width: 100%; height: 100%; object-fit: contain; }
+.ex-shot-frame > .skel { position: absolute; inset: 0; border-radius: 0; }
+.ex-shot-none { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 34ch; padding: 18px; text-align: center; font: 500 12.5px/1.5 var(--font); color: var(--text-3); }
+.ex-shot-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; font: 400 12.5px/1.4 var(--font); color: var(--text-3); }
+.ex-shot-meta b { color: var(--text); font-weight: 600; }
+
+/* Matching wrong answers. */
+.ex-rule { max-width: 70ch; font: 400 12.5px/1.55 var(--font); color: var(--text-3); }
+.ex-pair-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.ex-pair { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; }
+.ex-pair + .ex-pair { border-top: 1px solid var(--line); }
+.ex-pair-who { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font: 600 13.5px/1.4 var(--font); color: var(--text); }
+.ex-pair-who > span[aria-hidden] { font-weight: 400; color: var(--text-3); }
+.ex-pair-who b { font-family: var(--mono); font-size: 12.5px; }
+.ex-pair-n { font: 400 12.5px/1.5 var(--font); color: var(--text-2); }
+.ex-pair-qs { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.ex-pair-qs > li { display: flex; align-items: center; gap: 8px; min-width: 0; font: 400 12px/1.4 var(--font); color: var(--text-3); }
+.ex-pair-qs > li > .mono { margin-left: auto; flex: none; font-size: 11.5px; }
+
+/* The student card's signals (teach/StudentCard.jsx). */
+.ex-card { display: flex; flex-direction: column; gap: 10px; }
+.ex-card-pic { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; font: 500 12.5px/1.4 var(--font); color: var(--text-2); }
+.ex-card-pic b { font-family: var(--mono); font-weight: 600; color: var(--text); }
+
+@media (max-width: 1100px) {
+  .ex-cols { grid-template-columns: minmax(0, 1fr); }
+  .ex-side { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+}
+@media (max-width: 900px) {
+  .ex-brief { grid-template-columns: minmax(0, 1fr); }
+  .ex-side { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .ex-brief { padding: 22px 18px; gap: 20px; }
+  .ex-lead { font-size: 18px; }
+  .ex-st { grid-template-columns: minmax(0, 1fr) auto; padding: 14px 16px; }
+  .ex-st > .ex-sum { grid-column: 1 / -1; grid-row: 2; }
+  .ex-st-pic { grid-column: 2; grid-row: 1; }
+  .ex-card-head, .ex-card-body { padding-left: 16px; padding-right: 16px; }
+  .ex-honesty { padding: 11px 16px; }
+  .ex-honest { padding: 12px 18px; }
+  .ex-row[data-sub] { padding-left: 30px; }
+  .ex-row[data-sub]::before, .ex-keys::before { left: 16px; }
+  .ex-keys { padding: 2px 18px 16px 30px; }
+  .ex-noclass { margin: 12px 18px 2px 30px; }
+}

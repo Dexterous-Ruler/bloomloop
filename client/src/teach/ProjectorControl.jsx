@@ -36,7 +36,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
-import { KIND_LABEL } from '../lib/kinds.js';
+import { labelOf } from '../lib/kinds.js';
 import { Button, Chip, Icon, Level, Note, Segmented, Switch } from '../ui/index.jsx';
 import { useLaptop, wallSearch } from './laptop.jsx';
 import { WallScreen, countsHeld } from './Wall.jsx';
@@ -142,7 +142,7 @@ function Item({ q, up, canWrite, busy, onPut, diagram }) {
       <div className="bm-item-main">
         <span className="bm-item-meta">
           <Level level={q.bloom} />
-          <span>{diagram ? (STIM_LABEL[q.stimulus?.kind] ?? 'Passage') : KIND_LABEL[q.kind] ?? q.kind}</span>
+          <span>{diagram ? (STIM_LABEL[q.stimulus?.kind] ?? 'Passage') : labelOf(q)}</span>
           {!diagram && q.stimulus && (
             <span className="bm-has"><Icon name={q.stimulus.kind === 'passage' ? 'book' : 'zoom'} size={13} /><span className="sr-only">Has a diagram, figure or passage</span></span>
           )}

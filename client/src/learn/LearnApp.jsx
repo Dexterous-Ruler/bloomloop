@@ -7,7 +7,7 @@
  * like lives in the files beside it.
  */
 
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
 // The dyslexia-friendly face. Only @font-face rules: the files download only
@@ -20,11 +20,25 @@ import { drop, dropConfirmed, keep, keepPack, listFor, readPack, scopeOf } from 
 import { connect, EV, stillTrying, tryNow } from '../lib/socket.js';
 import { Button, Dialog, Ladder, Mark, Note } from '../ui/index.jsx';
 import ClassVote from './ClassVote.jsx';
-import Finish from './Finish.jsx';
 import Join from './Join.jsx';
-import LevelMove from './LevelMove.jsx';
 import Question from './Question.jsx';
 import { Climb, Conn, Dock, DockSlot, Hold, Kept, Offline, saveState } from './parts.jsx';
+
+// Shown once a set ends or a level moves, so not in /join's first download;
+// the service worker precaches both with the phone (sw/plugin.js).
+const Finish = lazy(() => import('./Finish.jsx'));
+const LevelMove = lazy(() => import('./LevelMove.jsx'));
+// Exam mode (E5, E7): its notice before the join, the rules in the room, the
+// copy guard and, on a laptop, fullscreen, the shared screen and its pictures.
+// Only an exam room loads it (learn/guard/Exam.jsx).
+const examPart = (part) => lazy(() => import('./guard/Exam.jsx').then((m) => ({ default: m[part] })));
+const Exam = examPart('default');
+const ExamConsent = examPart('Consent');
+const ExamTold = examPart('Told');
+// An exam room's rules and notice, read before the join; null for any other
+// room, or one that cannot be read (the join then says why).
+const roomExam = (code) => fetch(`/api/session/${code}`, { cache: 'no-store', signal: AbortSignal.timeout?.(5000) })
+  .then((r) => r.json()).then((b) => (b.exam?.on ? b.exam : null)).catch(() => null);
 
 const STORE_KEY = 'bloomloop:student';
 
@@ -90,10 +104,16 @@ function accountToken() {
  * this phone holds answers it has not sent: then the server serves nothing at
  * the join, the answers go first, and a closed room lets the phone in to send
  * them. Built per join, so a fresh sign-in counts on the next reconnect.
+ * In Safe Exam Browser (batch 9), its own values for this page, from its
+ * JavaScript API; the Browser Exam Key's only where it has one.
  */
 const joinPayload = (creds, deliver = false) => {
   const token = accountToken();
-  return { ...creds, ...(token ? { token } : {}), ...(deliver ? { deliver: true } : {}) };
+  const seb = window.SafeExamBrowser?.security;
+  return {
+    ...creds, ...(token ? { token } : {}), ...(deliver ? { deliver: true } : {}),
+    ...(seb?.configKey && { seb: { url: window.location.href.split('#')[0], configKeyHash: seb.configKey, browserExamKeyHash: seb.browserExamKey } }),
+  };
 };
 
 /* The pictures of packed questions, kept while online so they still draw with
@@ -351,6 +371,19 @@ export default function LearnApp() {
   // told the same true thing again after a reload is the harmless direction to
   // be wrong in. Not telling somebody is the harmful one.
   const [told, setTold] = useState(false);
+  // Exam mode (learn/guard/Exam.jsx): null when off, else { mode, changed }:
+  // the room's `examMode` for this phone, and whether it came mid-room
+  // (exam:mode). quietRef: `watched` false, a student marked under 18, who
+  // sends no signal at all. examRef: { seen: the rules last shown and read
+  // here, rejoined: Exam's, called on every accept before the outbox goes }.
+  // An answer the room did not take before the whole screen was shared
+  // (exam:screen-needed) waits as in a paused room (roomHoldRef), until the
+  // share lets it go (Exam's onShared).
+  // consent: an exam room's notice on the join screen, { creds, exam }.
+  const [exam, setExam] = useState(null);
+  const quietRef = useRef(false);
+  const examRef = useRef({});
+  const [consent, setConsent] = useState(null);
 
   const socketRef = useRef(null);
   // Seeded from storage, so the very first connect already has something to
@@ -552,10 +585,14 @@ export default function LearnApp() {
       drained();
       return;
     }
-    const timer = window.setTimeout(() => timedOut(next.answerId), REPLY_MS);
-    flightRef.current = { id: next.answerId, kind: next.kind, questionId: next.questionId ?? '', timer };
+    // A drawing's picture goes first, under its answer's own id (batch 9, E4),
+    // and is given longer: it is the size of a photo.
+    const up = Boolean(next.image);
+    const timer = window.setTimeout(() => timedOut(next.answerId), up ? 3 * REPLY_MS : REPLY_MS);
+    flightRef.current = { id: next.answerId, kind: up ? 'drawing' : next.kind, questionId: next.questionId ?? '', timer };
     setFlying(next.answerId);
-    socket.emit(next.kind === 'vote' ? EV.studentVote : EV.studentAnswer, next.payload);
+    if (up) socket.emit(EV.studentDrawing, { questionId: next.questionId, image: next.image, answerId: next.answerId });
+    else socket.emit(next.kind === 'vote' ? EV.studentVote : EV.studentAnswer, next.payload);
   }
 
   // No reply at all: left for the next connection. Twice, and it is kept and
@@ -573,8 +610,9 @@ export default function LearnApp() {
   }
 
   // A save that failed: again after 1, 2 and 4 seconds (jittered), then left
-  // for the next connection.
-  function again(id) {
+  // for the next connection. A drawing not saved, after 8, 16 and 32: the
+  // room takes only so many a minute.
+  function again(id, base = 1000) {
     release();
     const n = (triesRef.current.get(id) || 0) + 1;
     triesRef.current.set(id, n);
@@ -583,7 +621,7 @@ export default function LearnApp() {
       pump();
       return;
     }
-    const wait = 1000 * 2 ** (n - 1) * (0.5 + Math.random());
+    const wait = base * 2 ** (n - 1) * (0.5 + Math.random());
     restUntilRef.current = Date.now() + wait;
     window.setTimeout(pump, wait + 20);
   }
@@ -601,6 +639,9 @@ export default function LearnApp() {
     const c = credsRef.current;
     if (!c) return;
     seqRef.current = (seqRef.current + 1) % 1000;
+    // A drawing's picture is kept beside its answer, on disk, until the room
+    // has stored it (batch 9, E4); the answer then names it.
+    const { image, ...rest } = typeof payload.response?.image === 'string' ? payload.response : {};
     const item = {
       answerId: payload.answerId,
       scope: scopeOf(c.code, c.rollNo),
@@ -609,7 +650,8 @@ export default function LearnApp() {
       kind,
       seq: Date.now() * 1000 + seqRef.current,
       at: new Date().toISOString(),
-      payload,
+      payload: image ? { ...payload, response: rest } : payload,
+      ...(image ? { image } : {}),
       status: 'queued',
       note: '',
       timeouts: 0,
@@ -717,6 +759,11 @@ export default function LearnApp() {
         : []);
       setLinked(p.linked === true);
       setLinkNote(typeof p.linkNote === 'string' ? p.linkNote : '');
+      // The room's exam mode for this phone (learn/guard/Exam.jsx); a screen
+      // still shared is told again here, before the outbox goes.
+      takeExam(p.examMode, false);
+      setConsent(null);
+      examRef.current.rejoined?.();
       // The outbox goes again once the join's own reply is in (the question,
       // a pause, a wait), and at the latest after three seconds. A join that
       // said it holds answers gets no question, so they go at once.
@@ -1058,15 +1105,55 @@ export default function LearnApp() {
       const id = p.answerId || (f?.kind === 'answer' ? f.id : '');
       if (!id) return;
       if (patch.counted === false && !connRef.current.only) connRef.current.trail = true;
-      if (boxRef.current.find((i) => i.answerId === id)?.questionId === shownIdRef.current) {
+      const mine = boxRef.current.find((i) => i.answerId === id)?.questionId === shownIdRef.current;
+      if (mine) {
         awaitingRef.current = false;
         setAwaiting(false);
       }
-      settle(id, { ...patch, note: p.message || '' });
+      // Refused on the question still on screen in a room that runs (too long,
+      // say: batch 9, E3): the answer stays in its box, to change and send again.
+      const redo = mine && patch.status === 'refused' && !connRef.current.only && !resultRef.current;
+      if (redo) setPicked(null);
+      settle(id, { ...patch, note: p.message || '', ...(redo ? { again: true } : {}) });
       if (patch.counted === false) drop(id);
     };
     const onKept = onFinal({ status: 'sent', counted: false });
     const onRefused = onFinal({ status: 'refused' });
+
+    /* A drawing's picture (batch 9, E4). Stored: the item names it and goes on
+       as the answer { mediaId, text? }, its picture off this phone. Not saved
+       this time: sent again later. Refused: for good, kept here with the
+       server's sentence, as a refused answer is (on screen, the board opens
+       again for a new drawing). */
+    const drawnOf = (p) => {
+      const f = flightRef.current;
+      return boxRef.current.find((i) => i.image && i.answerId === (p.answerId || (f?.kind === 'drawing' ? f.id : '')));
+    };
+    const onStored = (p = {}) => {
+      const was = drawnOf(p);
+      if (!was || !p.mediaId) return;
+      if (flightRef.current?.id === was.answerId) release();
+      skipRef.current.delete(was.answerId);
+      const { image: _, ...rest } = was;
+      write({ ...rest, payload: { ...was.payload, response: { mediaId: String(p.mediaId), ...was.payload.response } } }).then(pump);
+    };
+    const onDrawAgain = (p = {}) => {
+      const was = drawnOf(p);
+      if (was && flightRef.current?.id === was.answerId) again(was.answerId, 8000);
+    };
+    const onDrawRefused = (p = {}) => {
+      const was = drawnOf(p);
+      if (was) onRefused({ ...p, answerId: was.answerId });
+    };
+
+    /* Exam mode (batch 9, learn/guard/Exam.jsx): at the join, or changed
+       mid-room (exam:mode; null: turned off), when it is shown and read
+       before answering goes on. */
+    const takeExam = (m, changed) => {
+      quietRef.current = m?.watched === false;
+      setExam(m?.on ? { mode: m, changed } : null);
+    };
+    const onExamMode = (p = {}) => takeExam(p.examMode, true);
 
     // Paused or waiting, whether as the join's reply, a reply to an answer or
     // the room stopping: nothing is refused, and nothing goes until it runs.
@@ -1202,6 +1289,11 @@ export default function LearnApp() {
     socket.on(EV.pack, onPack);
     socket.on(EV.kept, onKept);
     socket.on(EV.refused, onRefused);
+    socket.on(EV.drawingStored, onStored);
+    socket.on(EV.drawingRejected, onDrawAgain);
+    socket.on(EV.drawingRefused, onDrawRefused);
+    socket.on(EV.examMode, onExamMode);
+    socket.on(EV.screenNeeded, holdRoom);
 
     // The wifi is back: try now, not at the end of the current wait.
     const onOnline = () => tryNow(socket);
@@ -1231,6 +1323,11 @@ export default function LearnApp() {
       socket.off(EV.pack, onPack);
       socket.off(EV.kept, onKept);
       socket.off(EV.refused, onRefused);
+      socket.off(EV.drawingStored, onStored);
+      socket.off(EV.drawingRejected, onDrawAgain);
+      socket.off(EV.drawingRefused, onDrawRefused);
+      socket.off(EV.examMode, onExamMode);
+      socket.off(EV.screenNeeded, holdRoom);
       socket.disconnect();
     };
   }, []);
@@ -1295,6 +1392,8 @@ export default function LearnApp() {
       // Before the server has bound a student to this socket there is nothing
       // for a signal to be about, and the server would drop it anyway.
       if (!acceptedRef.current) return false;
+      // Marked under 18 (decision 8): nothing is reported at all.
+      if (quietRef.current) return false;
       const socket = socketRef.current;
       // Never into a socket that is down. socket.io buffers an emit and flushes
       // it on the next connect ahead of our own rejoin - onto a socket the
@@ -1514,7 +1613,18 @@ export default function LearnApp() {
     if (phase === 'done' && focusOnRef.current) closeFocus();
   }, [phase, closeFocus]);
 
-  const join = useCallback((creds) => {
+  // `read`: an exam room's rules, shown on the join screen and read (batch 9:
+  // the server counts a join as having read them), or true for any other room.
+  const join = useCallback((creds, read) => {
+    if (!read) {
+      setConsent(null);
+      setRejected('');
+      setRefusedResume('');
+      setJoining(true);
+      roomExam(creds.code).then((e) => (e ? (setJoining(false), setConsent({ creds, exam: e })) : join(creds, true)));
+      return;
+    }
+    if (read !== true) examRef.current.seen = read;
     credsRef.current = creds;
     // The student typed this, so nothing that comes back is a surprise to them.
     silentRef.current = false;
@@ -1525,6 +1635,8 @@ export default function LearnApp() {
     setJoining(true);
     const s = socketRef.current;
     if (s?.connected) sendJoin(s);
+    // Turned away mid-room (Safe Exam Browser asked for), the server hung up.
+    else if (s && !s.active) s.connect();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Drop this phone's claim to be this student.
@@ -1564,6 +1676,9 @@ export default function LearnApp() {
     closeFocus();
     setFocusRefused(false);
     setTold(false);
+    setExam(null);
+    quietRef.current = false;
+    examRef.current.seen = null;
     budgetRef.current = SIGNAL_BUDGET;
     lastSentRef.current = {};
     hiddenAtRef.current = 0;
@@ -1647,6 +1762,9 @@ export default function LearnApp() {
     // attempt carries the same key and can never count twice.
     const answer = { questionId: String(item.question._id), response, ...stamp() };
     setRetry(null);
+    // An answer refused here and changed since: this one takes its place, on
+    // screen and on disk (drop's promise is what filters it out).
+    boxRef.current = boxRef.current.filter((i) => !(i.again && i.questionId === answer.questionId && drop(i.answerId)));
     // On this phone before it is sent, and kept until a reply comes back for
     // it. The tap that lands in the second the wifi drops is the one a student
     // would never forgive us for losing. Re-sending it later is safe because
@@ -1801,6 +1919,12 @@ export default function LearnApp() {
         error={rejected || (status === 'lost' ? 'The connection to the server stopped. Reload this page to try again.' : '')}
         status={status}
         onJoin={join}
+        /* An exam room's rules, read before the join (batch 9). */
+        panel={consent && !rejected && (
+          <Suspense fallback={null}>
+            <ExamConsent ask={consent} busy={joining} join={join} back={setConsent} />
+          </Suspense>
+        )}
       />
     );
   }
@@ -1854,7 +1978,8 @@ export default function LearnApp() {
   // The answer on screen is given and nothing here will mark it: offline, or
   // kept or refused by the server. The way on is the pack, or the next
   // question.
-  const onward = own && (packView || (!result && (offline || own.status === 'refused' || own.counted === false)))
+  // Not past one refused to be changed and sent again: the room asks it still.
+  const onward = own && !own.again && (packView || (!result && (offline || own.status === 'refused' || own.counted === false)))
     ? (offline ? goPack : () => requestNext(true)) : null;
   // Offline with nothing left to answer: the server's sentence about the
   // pack when it sent none, else the phone's own. On a packed question not yet
@@ -2002,13 +2127,13 @@ export default function LearnApp() {
               </Note>
             )}
             {view === 'done' && deliver && <Kept items={unsent} flying={flying} offline={offline} />}
-            {view === 'done' && <Finish profile={profile} ending={ending} reason={endReason} led={led} linked={linked} onLeave={leave} />}
+            {view === 'done' && <Suspense fallback={null}><Finish profile={profile} ending={ending} reason={endReason} led={led} linked={linked} onLeave={leave} /></Suspense>}
             {view === 'done' && !deliver && <Kept items={unsent} flying={flying} offline={offline} />}
 
             {view === 'move' && (
               <>
                 {focusLeft}
-                <LevelMove result={result} busy={awaiting} onNext={() => goNext(true)} />
+                <Suspense fallback={null}><LevelMove result={result} busy={awaiting} onNext={() => goNext(true)} /></Suspense>
                 {focusLine}
               </>
             )}
@@ -2034,11 +2159,11 @@ export default function LearnApp() {
                         else it tells a student. It is here at all because
                         surveillance a student has not been told about is the
                         indefensible version of this feature. */}
-                    {!told && (
+                    {!told && (exam ? <Suspense fallback={null}><ExamTold mode={exam.mode} /></Suspense> : (
                       <Note icon="eye" role="status">
                         This session records when the page loses focus. Your teacher can see it.
                       </Note>
-                    )}
+                    ))}
                     {focusLeft}
                     {/* Said once, about the question it is about, and gone when
                         that question is answered. A student who dropped
@@ -2117,6 +2242,22 @@ export default function LearnApp() {
         )}
 
         {hold}
+
+        {/* Exam mode, while the room is being answered. */}
+        {exam && phase === 'question' && (
+          <Suspense fallback={null}>
+            <Exam
+              exam={exam}
+              seen={examRef}
+              socket={socketRef}
+              rollNo={rollNo}
+              code={code}
+              onSignal={signal}
+              onShared={() => { roomHoldRef.current = false; pump(); }}
+              down={status === 'lost'}
+            />
+          </Suspense>
+        )}
 
         {/* The one action. Whichever screen has it renders into this. */}
         <footer className="ln-dock" ref={setDock} inert={hold ? '' : undefined} />

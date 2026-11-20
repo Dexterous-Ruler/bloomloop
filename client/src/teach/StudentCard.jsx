@@ -18,20 +18,27 @@
  * (the key it was stored under, the phone's own id for it when it sent one) is
  * listed under "Answer references", folded away, for tracing a kept answer.
  *
+ * Batch 9: the student's signals (`integrity`: counts, the latest and the
+ * server's notes, null when none are shown) with `integrityNote` beside them,
+ * and in an exam room when their newest screen picture arrived
+ * (`exam.snapshotAt`), which can be shown here, read with this browser's
+ * credentials and never cached.
+ *
  * Every figure and sentence is the server's (GET /api/session/:code/students/
  * :roll/card, docs/API.md). The next set is the selector's plan and is labelled
  * as one, never as a promise.
  *
  *   <StudentCard code roll onClose />        reads the card; roll null draws nothing
- *   <StudentCardView card error onClose />   the same, drawn from a body (the gallery uses it)
+ *   <StudentCardView card error onClose loadSnapshot? />   the same, drawn from a body (the gallery uses it)
  */
 
 import { useEffect, useState } from 'react';
 
 import { api } from '../lib/api.js';
 import { LABEL } from '../lib/bloom.js';
-import { Dialog, Icon, Level, Note } from '../ui/index.jsx';
+import { Button, Dialog, Icon, Level, Note } from '../ui/index.jsx';
 import { TapBars } from './ClassQuestions.jsx';
+import { SignalSummary, SnapshotView } from './ExamRoom.jsx';
 
 import '../styles/levels.css';
 
@@ -339,6 +346,35 @@ function Mastery({ mastery }) {
   );
 }
 
+/**
+ * What was recorded about them in this room, never as a verdict, and their
+ * newest screen picture in an exam room, shown only when asked for.
+ */
+function Signals({ card, roll, loadSnapshot }) {
+  const [viewing, setViewing] = useState(false);
+  const summary = card.integrity;
+  const at = card.exam?.snapshotAt ?? null;
+  return (
+    <div className="ex-card">
+      {summary ? <SignalSummary summary={summary} /> : (
+        <p className="co-sc-quiet">{card.student?.joined === false ? 'No phone joined, so nothing was recorded.' : 'No signals are shown for this student.'}</p>
+      )}
+      {summary && card.integrityNote && <p className="co-sc-quiet">{card.integrityNote}</p>}
+      {card.exam && (
+        <div className="ex-card-pic">
+          <span>{at ? <>Newest screen picture sent at <b>{clock(at)}</b></> : 'No screen picture from this student.'}</span>
+          {at && loadSnapshot && (
+            <Button size="sm" icon={viewing ? 'eyeOff' : 'projector'} aria-expanded={viewing} onClick={() => setViewing((v) => !v)}>
+              {viewing ? 'Hide the picture' : 'Show the picture'}
+            </Button>
+          )}
+        </div>
+      )}
+      {viewing && at && loadSnapshot && <SnapshotView roll={roll} name={card.student?.display} at={at} load={loadSnapshot} />}
+    </div>
+  );
+}
+
 function Skeleton() {
   return (
     <div className="co-sc-skel" aria-busy="true" aria-label="Reading the student card">
@@ -348,7 +384,7 @@ function Skeleton() {
 }
 
 /** The card drawn from one body, in an open sheet. */
-export function StudentCardView({ card, error, roll, onClose }) {
+export function StudentCardView({ card, error, roll, onClose, loadSnapshot }) {
   const s = card?.student;
   const room = card?.room ?? {};
   const band = card?.band ?? {};
@@ -407,6 +443,12 @@ export function StudentCardView({ card, error, roll, onClose }) {
             <AnswerKeys answers={card.lastAnswers} />
           </Sec>
 
+          {'integrity' in card && (
+            <Sec title="Signals" aside={<span className="co-sc-aside">A prompt to look, never proof</span>}>
+              <Signals card={card} roll={s?.rollNo ?? roll} loadSnapshot={loadSnapshot} />
+            </Sec>
+          )}
+
           <Sec title="Teacher records" aside={<span className="co-sc-aside">{card.records?.day}</span>}>
             <Records records={card.records} />
           </Sec>
@@ -434,5 +476,13 @@ export default function StudentCard({ code, roll, onClose }) {
 
   if (!roll) return null;
   const mine = state.for === roll;
-  return <StudentCardView card={mine ? state.card : null} error={mine ? state.error : ''} roll={roll} onClose={onClose} />;
+  return (
+    <StudentCardView
+      card={mine ? state.card : null}
+      error={mine ? state.error : ''}
+      roll={roll}
+      onClose={onClose}
+      loadSnapshot={() => api.examSnapshot(code, roll)}
+    />
+  );
 }

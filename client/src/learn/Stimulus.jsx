@@ -11,10 +11,12 @@
  * and one tap folds it to a line when the student needs the room to answer.
  */
 
-import { useId, useState } from 'react';
+import { Suspense, lazy, useId, useState } from 'react';
 
 import { Icon } from '../ui/index.jsx';
-import Figure from './Figure.jsx';
+// A figure loads when one is shown, so /join's first download carries none of
+// it; the service worker precaches it with the phone (sw/plugin.js).
+const Figure = lazy(() => import('./Figure.jsx'));
 import { rt } from './parts.jsx';
 
 /** `html`: the passage as the server built it (`question.rich.passage`), when it holds a formula or code. */
@@ -62,7 +64,7 @@ export default function Stimulus({ stimulus, html }) {
           role="region"
           aria-label={`The ${what} this question is about`}
         >
-          {isFigure ? <Figure figure={stimulus} /> : isImage
+          {isFigure ? <Suspense fallback={null}><Figure figure={stimulus} /></Suspense> : isImage
             ? (broken
               ? <p>{stimulus.alt}</p>
               : <img src={stimulus.url} alt={stimulus.alt ?? ''} onError={() => setBroken(true)} />)

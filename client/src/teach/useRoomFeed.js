@@ -30,6 +30,28 @@ import { connect, EV, stillTrying } from '../lib/socket.js';
 const NO_ROOM = { attendance: null, waiting: null, feed: null };
 const roomOf = (p) => ({ attendance: p.attendance ?? null, waiting: p.waiting ?? null, feed: p.feed ?? null });
 
+const byRoll = (a, b) => String(a.rollNo).localeCompare(String(b.rollNo), undefined, { numeric: true });
+/**
+ * Batch 9: one `teacher:integrity` push onto the last. A full push replaces the
+ * list (and counts as a new `seq`, so a screen knows to read the setting
+ * again); a partial one patches the students it names, field by field, by roll
+ * number, keeping roll order.
+ */
+function mergeIntegrity(prev, p) {
+  const students = Array.isArray(p.students) ? p.students : [];
+  if (p.full) {
+    const { students: _s, full: _f, ...head } = p;
+    return { ...head, students: [...students].sort(byRoll), seq: (prev?.seq ?? 0) + 1 };
+  }
+  const next = [...(prev?.students ?? [])];
+  for (const s of students) {
+    if (!s?.rollNo) continue;
+    const at = next.findIndex((x) => x.rollNo === s.rollNo);
+    if (at < 0) next.push(s); else next[at] = { ...next[at], ...s };
+  }
+  return { ...(prev ?? { code: p.code, seq: 0 }), students: next.sort(byRoll) };
+}
+
 export default function useRoomFeed(code) {
   const [rows, setRows] = useState([]);
   const [room, setRoom] = useState(NO_ROOM);
@@ -40,6 +62,9 @@ export default function useRoomFeed(code) {
   // Batch 8: the latest `teacher:teaching-move` push (a suggestion written, or
   // not), for the screen that asked; it matches it to its own requestId.
   const [teachingMove, setTeachingMove] = useState(null);
+  // Batch 9: an exam room's signals, merged from `teacher:integrity`; null
+  // until the first push (a room never in exam mode sends none).
+  const [integrity, setIntegrity] = useState(null);
   const [wire, setWire] = useState({ live: false, everLive: false, downSince: null, rejoined: false, stopped: false });
   const [wireError, setWireError] = useState('');
   const [error, setError] = useState('');
@@ -84,6 +109,10 @@ export default function useRoomFeed(code) {
       if (!p?.requestId || (p.code && p.code !== code)) return;
       setTeachingMove(p);
     };
+    const onIntegrity = (p) => {
+      if (!p || (p.code && p.code !== code)) return;
+      setIntegrity((prev) => mergeIntegrity(prev, p));
+    };
     const onRefused = (p) => setError(p?.reason || 'The server would not hand over this room.');
     const onStatus = (p) => {
       if (!p || (p.code && p.code !== code)) return;
@@ -99,6 +128,7 @@ export default function useRoomFeed(code) {
     socket.on('teacher:insights', onInsights);
     socket.on(EV.teacherClassQuestion, onClassQuestion);
     socket.on(EV.teachingMove, onTeachingMove);
+    socket.on(EV.teacherIntegrity, onIntegrity);
     return () => {
       socket.off('connect', onConnect);
       socket.off('disconnect', drop);
@@ -109,6 +139,7 @@ export default function useRoomFeed(code) {
       socket.off('teacher:insights', onInsights);
       socket.off(EV.teacherClassQuestion, onClassQuestion);
       socket.off(EV.teachingMove, onTeachingMove);
+      socket.off(EV.teacherIntegrity, onIntegrity);
       socket.close();
     };
   }, [code]);
@@ -152,5 +183,5 @@ export default function useRoomFeed(code) {
     socketRef.current?.connect();
   };
 
-  return { rows, room, insights, setInsights, classQuestion, setClassQuestion, teachingMove, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus };
+  return { rows, room, insights, setInsights, classQuestion, setClassQuestion, teachingMove, integrity, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus };
 }

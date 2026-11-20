@@ -3,9 +3,9 @@
  *
  * The server draws (crypto randomness, every student on the wheel equally
  * likely) and stores the pick before it answers. This screen never picks: the
- * ring only walks to the roll number the server returned, so the spin is a
- * picture of a choice already made. Who is on the ring is the server's
- * `pool.onWheel`; a student who has had a turn this round sits on it dimmed.
+ * wheel (WheelDisc.jsx) only spins to the roll number the server returned, so
+ * the spin is a picture of a choice already made. Who is on the wheel is the
+ * server's `pool.onWheel`; a student who has had a turn this round is not.
  *
  * Each draw goes on the projector by itself as a roll number and a first name
  * (the server pushes it). What the pick was asked and how they responded stay
@@ -34,8 +34,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
 import { offlineNow, record, shownOf, useOutbox, useSynced } from '../lib/consoleOutbox.js';
-import { gsap, reduced } from '../lib/motion.js';
 import { Button, Icon, Level, Note, Segmented, Switch } from '../ui/index.jsx';
+
+import WheelDisc from './WheelDisc.jsx';
 
 /* ------------------------------------------------------------- shared */
 
@@ -179,12 +180,12 @@ export function QuestionPicker({ id, questions, value, onChange, disabled, label
   );
 }
 
-/* ------------------------------------------------------------- the ring */
+/* ------------------------------------------------------------- the wheel */
 
 /**
- * Who the ring shows: everyone on the wheel now, and (with no repeats on)
- * whoever has had a turn this round, dimmed. In roll order, as the server
- * keeps the pool.
+ * Who the wheel knows of: everyone on it now, and (with no repeats on) whoever
+ * has had a turn this round, marked `off` (they get no segment). In roll order,
+ * as the server keeps the pool.
  */
 export function ringOf(wheel) {
   const on = wheel?.pool?.onWheel ?? [];
@@ -201,112 +202,6 @@ export function ringOf(wheel) {
     out.push(p);
   }
   return out.sort(byRoll);
-}
-
-const C = 120;
-const polar = (r, a) => [C + r * Math.cos(a), C + r * Math.sin(a)];
-
-/**
- * The ring of ticks, one per student, and in its middle who was drawn. With
- * `spin` ({ ring, pick }) it walks the lit tick round the students who were on
- * the wheel and stops on the server's pick, then calls `onLanded`. Under
- * reduced motion it stops there at once.
- *
- * With `think` ({ left, of }) the middle counts the seconds down and an arc
- * round the ticks empties with them. With `names` false it shows no name.
- */
-export function Ring({ people, spin, latest, left, onLanded, think = null, names = true }) {
-  const [hot, setHot] = useState(-1);
-  const landed = useRef(onLanded);
-  landed.current = onLanded;
-
-  useEffect(() => {
-    if (!spin) return undefined;
-    const ring = spin.ring;
-    const target = ring.findIndex((p) => p.rollNo === spin.pick?.rollNo);
-    const live = ring.map((p, i) => (p.off ? -1 : i)).filter((i) => i >= 0);
-    const finish = () => { setHot(target); landed.current?.(); };
-    if (target < 0 || live.length < 2 || reduced()) { finish(); return undefined; }
-    const laps = live.length > 12 ? 1 : 2;
-    const state = { v: 0 };
-    const tween = gsap.to(state, {
-      v: live.length * laps + live.indexOf(target),
-      duration: 1.5,
-      ease: 'power3.out',
-      onUpdate: () => setHot(live[Math.floor(state.v) % live.length]),
-      onComplete: finish,
-    });
-    // A tab starved of frames would never land: a timer is not frame-bound.
-    const guard = setTimeout(() => tween.progress(1), 2600);
-    return () => { clearTimeout(guard); tween.kill(); };
-  }, [spin]);
-
-  const list = spin ? spin.ring : people;
-  const n = list.length;
-  const lit = spin ? hot : list.findIndex((p) => p.rollNo === latest?.rollNo);
-  const walking = spin ? list[hot] : null;
-  const thick = n > 60 ? 2 : 3;
-
-  return (
-    <div className="rc-ring" data-spinning={spin ? 'true' : undefined}>
-      <svg viewBox="0 0 240 240" aria-hidden="true" focusable="false">
-        <circle className="rc-ring-track" cx={C} cy={C} r={94} />
-        {think && (
-          <circle
-            className="rc-ring-think"
-            cx={C} cy={C} r={112}
-            pathLength={1}
-            strokeDasharray="1 1"
-            strokeDashoffset={1 - think.left / think.of}
-            transform={`rotate(-90 ${C} ${C})`}
-          />
-        )}
-        {list.map((p, i) => {
-          const a = ((-90 + (i * 360) / n) * Math.PI) / 180;
-          const on = i === lit;
-          const [x1, y1] = polar(on ? 82 : 88, a);
-          const [x2, y2] = polar(on ? 106 : 100, a);
-          return (
-            <line
-              key={p.rollNo}
-              className="rc-tick"
-              data-off={p.off && !on ? 'true' : undefined}
-              data-on={on ? 'true' : undefined}
-              x1={x1.toFixed(2)} y1={y1.toFixed(2)} x2={x2.toFixed(2)} y2={y2.toFixed(2)}
-              strokeWidth={on ? 4 : thick}
-            />
-          );
-        })}
-      </svg>
-      <div className="rc-ring-mid" key={think ? 'think' : spin ? 'spin' : latest?.id ?? 'none'}>
-        {think ? (
-          <>
-            <span className="eyebrow">Think time</span>
-            <b className="rc-ring-roll rc-ring-count mono">{think.left}</b>
-            <span className="rc-ring-sub">{think.left === 1 ? 'second' : 'seconds'}</span>
-          </>
-        ) : spin ? (
-          <>
-            <span className="eyebrow">Drawing</span>
-            <b className="rc-ring-roll mono is-walking">{walking?.rollNo ?? '·  ·  ·'}</b>
-            <span className="rc-ring-sub">&nbsp;</span>
-          </>
-        ) : latest ? (
-          <>
-            <span className="eyebrow">Drawn</span>
-            <b className="rc-ring-roll mono">{latest.rollNo}</b>
-            <span className="rc-ring-name clip">{(names && latest.name) || ' '}</span>
-          </>
-        ) : (
-          <>
-            <span className="eyebrow">On the wheel</span>
-            <b className="rc-ring-roll mono">{left}</b>
-            <span className="rc-ring-sub">{left === 1 ? 'student' : 'students'}, equally likely</span>
-          </>
-        )}
-      </div>
-    </div>
-  );
 }
 
 /* ------------------------------------------------------------- one pick */
@@ -352,7 +247,7 @@ export function PickCard({
   if (drawing) {
     return (
       <section className="card rc-pick" aria-busy="true" aria-label="The pick">
-        <div className="rc-card-h"><div className="sec"><h2>Drawing</h2><p>The pick is already made. The ring is showing it.</p></div></div>
+        <div className="rc-card-h"><div className="sec"><h2>Drawing</h2><p>The pick is already made. The wheel is showing it.</p></div></div>
         <div className="rc-pick-body"><span className="skel" style={{ height: 34, width: '70%' }} /><span className="skel" style={{ height: 34 }} /></div>
       </section>
     );
@@ -529,7 +424,7 @@ function WheelSkeleton() {
         <section className="card rc-stage">
           <div className="rc-card-h"><span className="skel" style={{ height: 20, width: 140 }} /></div>
           <div className="rc-stage-body">
-            <span className="skel rc-ring-skel" />
+            <span className="skel rc-disc-skel" />
             <div className="stack stack-2 grow"><span className="skel" style={{ height: 42, width: 120 }} /><span className="skel" style={{ height: 52 }} /><span className="skel" style={{ height: 52 }} /></div>
           </div>
         </section>
@@ -600,7 +495,7 @@ export function WheelView({
           </header>
 
           <div className="rc-stage-body">
-            <Ring people={people} spin={spin} latest={latest} left={pool.left} onLanded={onLanded} think={think} names={names} />
+            <WheelDisc people={people} spin={spin} latest={latest} left={pool.left} onLanded={onLanded} think={think} names={names} />
             <div className="rc-stage-side">
               {canControl && (
                 <div className="rc-draw">
@@ -669,52 +564,53 @@ export function WheelView({
                 </Note>
               )}
               {closed && <Note>The room is closed, so the wheel no longer draws. Its picks can still be filled in.</Note>}
-              <div className="rc-sets">
-                <Setting
-                  label="Present only"
-                  hint={classRoom ? 'Students marked present or late. Unmarked students are left off.' : 'Phones that joined this room.'}
-                  checked={round.presentOnly}
-                  canControl={canControl}
-                  busy={busy === 'presentOnly'}
-                  disabled={blocked}
-                  onChange={(v) => onSetting('presentOnly', v)}
-                />
-                <Setting
-                  label="No repeats"
-                  hint="Nobody is drawn twice until everyone on the wheel has had a turn this round."
-                  checked={round.noRepeat}
-                  canControl={canControl}
-                  busy={busy === 'noRepeat'}
-                  disabled={blocked}
-                  onChange={(v) => onSetting('noRepeat', v)}
-                />
-                {/* These two are this screen's own: nothing is sent. */}
-                <Setting
-                  label="Names"
-                  hint="Off shows roll numbers only on this screen, for a laptop the class can see."
-                  checked={names}
-                  canControl
-                  onChange={(v) => onPref?.('names', v)}
-                />
-                {canControl && (
-                  <Setting
-                    label="Think time"
-                    hint={`${THINK_SECONDS} seconds for everyone to think before each draw. On this screen only.`}
-                    checked={Boolean(prefs.think)}
-                    canControl
-                    disabled={thinking || spinning}
-                    onChange={(v) => onPref?.('think', v)}
-                  />
-                )}
-                {canControl && prefs.think && !withQ && (
-                  <div className="rc-think-pick">
-                    <label className="label" htmlFor="rc-think-q">Question to think about <span className="opt">optional</span></label>
-                    <QuestionPicker id="rc-think-q" label="Question to think about" questions={questions} value={thinkQ} disabled={thinking || spinning} onChange={(id) => onThinkQ?.(id)} />
-                    <span className="hint">Shown while everyone thinks, and saved as what the next pick was asked.</span>
-                  </div>
-                )}
-              </div>
             </div>
+          </div>
+
+          <div className="rc-sets">
+            <Setting
+              label="Present only"
+              hint={classRoom ? 'Students marked present or late. Unmarked students are left off.' : 'Phones that joined this room.'}
+              checked={round.presentOnly}
+              canControl={canControl}
+              busy={busy === 'presentOnly'}
+              disabled={blocked}
+              onChange={(v) => onSetting('presentOnly', v)}
+            />
+            <Setting
+              label="No repeats"
+              hint="Nobody is drawn twice until everyone on the wheel has had a turn this round."
+              checked={round.noRepeat}
+              canControl={canControl}
+              busy={busy === 'noRepeat'}
+              disabled={blocked}
+              onChange={(v) => onSetting('noRepeat', v)}
+            />
+            {/* These two are this screen's own: nothing is sent. */}
+            <Setting
+              label="Names"
+              hint="Off shows roll numbers only on this screen, for a laptop the class can see."
+              checked={names}
+              canControl
+              onChange={(v) => onPref?.('names', v)}
+            />
+            {canControl && (
+              <Setting
+                label="Think time"
+                hint={`${THINK_SECONDS} seconds for everyone to think before each draw. On this screen only.`}
+                checked={Boolean(prefs.think)}
+                canControl
+                disabled={thinking || spinning}
+                onChange={(v) => onPref?.('think', v)}
+              />
+            )}
+            {canControl && prefs.think && !withQ && (
+              <div className="rc-think-pick">
+                <label className="label" htmlFor="rc-think-q">Question to think about <span className="opt">optional</span></label>
+                <QuestionPicker id="rc-think-q" label="Question to think about" questions={questions} value={thinkQ} disabled={thinking || spinning} onChange={(id) => onThinkQ?.(id)} />
+                <span className="hint">Shown while everyone thinks, and saved as what the next pick was asked.</span>
+              </div>
+            )}
           </div>
 
           {pool.onWheel.length > 0 && (

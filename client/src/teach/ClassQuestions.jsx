@@ -28,7 +28,7 @@ import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import Figure from '../learn/Figure.jsx';
 import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
-import { KIND_LABEL } from '../lib/kinds.js';
+import { KIND_LABEL, labelOf } from '../lib/kinds.js';
 import { Button, Chip, Empty, Icon, Level, Note, Num, Panel, Switch } from '../ui/index.jsx';
 
 const list = (v) => (Array.isArray(v) ? v : []);
@@ -218,7 +218,7 @@ function Brief({ cq, running, canControl, busy, error, onAct, onView }) {
         <h2 className="cq-brief-q">{q.text || 'Question text not stored'}</h2>
         <p className="cq-brief-meta">
           {q.level && <Level level={q.level}>{q.levelLabel ?? LABEL[q.level]}</Level>}
-          <span>{q.kindLabel ?? KIND_LABEL[q.kind] ?? q.kind}</span>
+          <span>{q.kindLabel ?? labelOf(q)}</span>
           {q.topic && <span className="clip">{q.topic}</span>}
           {q.sourceLabel && <span>{q.sourceLabel}</span>}
         </p>
@@ -902,7 +902,7 @@ function ConfQuestions({ questions, choices }) {
                   <span className="cq-cq-t">{q.text || 'Question text not stored'}</span>
                   <span className="cq-cq-meta">
                     {q.level && <Level level={q.level} />}
-                    <span>{KIND_LABEL[q.kind] ?? q.kind}</span>
+                    <span>{labelOf(q)}</span>
                     <span>{plural(num(q.answers) ?? 0, 'answer')}, {tapped} with a tap</span>
                   </span>
                 </span>

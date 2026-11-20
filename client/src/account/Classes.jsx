@@ -27,7 +27,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
-import { KIND_LABEL } from '../lib/kinds.js';
+import { labelOf } from '../lib/kinds.js';
 import AccountShell from '../shell/AccountShell.jsx';
 import { useViewer } from '../shell/viewer.js';
 import {
@@ -1456,7 +1456,7 @@ function Hardest({ hd }) {
                     <Level level={it.bloom} />
                     {uncertain && <Chip tone="line" icon="help" className="cl-q-unsure">Level uncertain</Chip>}
                     {it.topic && <span>{it.topic}</span>}
-                    {it.kind && <span>{KIND_LABEL[it.kind] ?? it.kind}</span>}
+                    {it.kind && <span>{labelOf(it)}</span>}
                     {it.provenance?.label && (
                       <span className="ac-set" title={it.provenance.sentence || undefined}>
                         {it.provenance.label}

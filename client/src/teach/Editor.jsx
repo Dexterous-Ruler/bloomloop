@@ -22,7 +22,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
-import { BLANK_MARK, KIND_LABEL, KIND_SHAPE } from '../lib/kinds.js';
+import { BLANK_MARK, KIND_LABEL, KIND_SHAPE, OPEN_WORDS, labelOf } from '../lib/kinds.js';
 import { Button, Dialog, Field, Icon, Level, Note, Segmented } from '../ui/index.jsx';
 import { StimulusEditor, seedStimulus, stimulusFor } from './Media.jsx';
 
@@ -47,7 +47,9 @@ const FIELDS = {
   multi: ['options', 'answerIdxs'],
   order: ['sequence'],
   rank: ['sequence', 'criterion'],
-  open: ['rubric'],
+  open: ['rubric', 'length'],
+  // Batch 9 (E4): the rubric is optional here, the reviewer's guide.
+  drawing: ['rubric', 'allowText'],
   hottext: ['tokens', 'answerIdxs', 'criterion'],
   dropdown: ['blanks'],
   table: ['columns', 'rows'],
@@ -144,6 +146,10 @@ function seed(stored) {
     tolerance: numText(q.tolerance),
     unit: q.unit ?? '',
     rubric: arr(q.rubric),
+    // Batch 9 (E3): a written answer is short unless it says long.
+    length: q.length === 'long' ? 'long' : 'short',
+    // Batch 9 (E4): a drawing takes words beside it only when it says so.
+    allowText: q.allowText === true,
     tokens,
     hotText: tokens.join(' '),
     hotIdxs: hot ? arr(q.answerIdxs).map(Number) : [],
@@ -206,6 +212,8 @@ const OUT = {
     })),
   },
   grid: { columns: (d) => d.gridCols, rows: (d) => d.gridRows, answers: gridOf },
+  // An optional list: a point left empty is left out rather than refused.
+  drawing: { rubric: (d) => d.rubric.map((r) => String(r ?? '').trim()).filter(Boolean) },
 };
 
 function payload(d) {
@@ -541,7 +549,17 @@ function GridEd({ draft, set }) {
   );
 }
 
-function Body({ draft, set }) {
+/**
+ * The two lengths of a written answer as the server has them (the bank's
+ * `kinds.openLengths`: { short, long }, each { maxWords, maxChars, label }),
+ * with the phone's own figures for a bank read that carries none.
+ */
+const lengthsOf = (served) => ({
+  short: { maxWords: OPEN_WORDS.short, label: 'Short answer', ...(served?.short ?? {}) },
+  long: { maxWords: OPEN_WORDS.long, label: 'Long answer', ...(served?.long ?? {}) },
+});
+
+function Body({ draft, set, lengths }) {
   const { kind } = draft;
 
   if (kind === 'mcq' || kind === 'multi') {
@@ -687,10 +705,53 @@ function Body({ draft, set }) {
   }
 
   if (kind === 'open') {
+    const long = draft.length === 'long';
+    const sizes = lengthsOf(lengths);
     return (
       <div className="stack stack-3">
+        <div className="stack stack-2">
+          <Segmented
+            label="Length of the answer"
+            value={long ? 'long' : 'short'}
+            onChange={(length) => set({ length })}
+            options={['short', 'long'].map((id) => ({ id, label: sizes[id].label }))}
+          />
+          <p className="hint">
+            {long
+              ? `Up to ${sizes.long.maxWords} words. The student writes in a large box that counts their words.`
+              : `Up to ${sizes.short.maxWords} words. The student writes in a small box.`}
+            {' '}Marked on the points below, then reviewed by you.
+          </p>
+        </div>
         <p className="hint">Each point is matched against the words a student actually writes, so use the content words a correct answer would use, not a sentence about it.</p>
         <Lines items={draft.rubric} min={2} max={5} placeholder="Point a full answer must make" addLabel="Add a point" onChange={(rubric) => set({ rubric })} />
+      </div>
+    );
+  }
+
+  // Batch 9 (E4): never marked by the machine; every answer waits for a professor's mark in Review.
+  if (kind === 'drawing') {
+    return (
+      <div className="stack stack-3">
+        <div className="stack stack-2">
+          <Segmented
+            label="What the student sends"
+            value={draft.allowText ? 'words' : 'drawing'}
+            onChange={(v) => set({ allowText: v === 'words' })}
+            options={[{ id: 'drawing', label: 'A drawing only' }, { id: 'words', label: 'A drawing, and words if they want' }]}
+          />
+          <p className="hint">
+            {draft.allowText
+              ? `A box beside the board takes up to ${lengthsOf(lengths).long.maxWords} words explaining the drawing.`
+              : 'The student sends the drawing alone, with no box for words.'}
+            {' '}No drawing is marked by the machine: each one waits for your mark in Review.
+          </p>
+        </div>
+        <div className="stack stack-2">
+          <span className="t-label">What to look for</span>
+          <p className="hint">Optional: up to five points, your guide when you mark it. Students never see them, and nothing is matched against them.</p>
+          <Lines items={draft.rubric} min={0} max={5} placeholder="Something a good drawing shows" addLabel="Add a point" onChange={(rubric) => set({ rubric })} />
+        </div>
       </div>
     );
   }
@@ -962,7 +1023,8 @@ export default function Editor({
   // What this level may be asked as: the server's list, so the editor can
   // never offer a swap the server would refuse.
   const swaps = draft.bloom ? (kinds?.forLevel?.[draft.bloom] ?? [draft.kind]) : [];
-  const label = (k) => kinds?.label?.[k] ?? KIND_LABEL[k] ?? k;
+  // A written answer is picked as one kind, then made short or long below it.
+  const label = (k) => (k === 'open' ? 'Written answer' : kinds?.label?.[k] ?? KIND_LABEL[k] ?? k);
   const retagged = !creating && draft.bloom !== question.bloom;
   const status = question?.status;
   const isDraft = status === 'draft';
@@ -1091,7 +1153,7 @@ export default function Editor({
     ? 'It goes straight into the bank as approved, and rooms can serve it as soon as it is added.'
     : (
       <>
-        {[question.topic || 'Untitled topic', LABEL[question.bloom] ?? question.bloom, label(question.kind ?? 'mcq')].join(' · ')}
+        {[question.topic || 'Untitled topic', LABEL[question.bloom] ?? question.bloom, question.kindLabel || (question.kind === 'open' ? labelOf(question) : label(question.kind ?? 'mcq'))].join(' · ')}
         {source && ` · ${source}`}
         {slides.length > 0 && <> · <span className="mono">{slides.length === 1 ? 'Slide' : 'Slides'} {slides.join(', ')}</span></>}
       </>
@@ -1221,7 +1283,7 @@ export default function Editor({
                 <h4 className="tc-ed-h" id="ed-kind">{label(draft.kind)}</h4>
                 {KIND_SHAPE[draft.kind] && <p className="hint">{KIND_SHAPE[draft.kind]}</p>}
               </div>
-              <Body draft={draft} set={set} />
+              <Body draft={draft} set={set} lengths={kinds?.openLengths} />
             </>
           ) : (
             <>

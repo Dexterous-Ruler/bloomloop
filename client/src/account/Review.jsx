@@ -26,7 +26,7 @@ import { Link } from 'react-router-dom';
 
 import Figure from '../learn/Figure.jsx';
 import { api } from '../lib/api.js';
-import { KIND_LABEL } from '../lib/kinds.js';
+import { labelOf } from '../lib/kinds.js';
 import AccountShell from '../shell/AccountShell.jsx';
 import { useViewer } from '../shell/viewer.js';
 import { ImportedNote, ImportedTag } from '../teach/imported.jsx';
@@ -58,7 +58,13 @@ const PASS = 0.7;
 
 const pctOf = (s) => (s == null || !Number.isFinite(Number(s)) ? '—' : `${Math.round(Number(s) * 100)}%`);
 const nameOf = (item) => item?.student?.name || 'Name not recorded';
-const kindLabel = (k) => (k === 'open' ? 'Written answer' : KIND_LABEL[k] ?? k ?? '');
+// The server's label for the item (batch 9): "Short answer", "Long answer" or
+// "Draw your answer"; worked out here only for an item that carries none.
+const kindLabel = (item) => item?.kindLabel || labelOf({ kind: item?.kind, length: item?.length }) || item?.kind || '';
+/** A drawing answer (batch 9, E4): the picture is `drawing` ({ mediaId, url }, or null), the words beside it `text`. */
+const isDrawing = (item) => item?.kind === 'drawing';
+/** A drawing has no machine mark: the server's sentence for a confirm (a 409). */
+const DRAWING_MARK = 'A drawing has no machine mark to confirm: give it a mark of your own.';
 const round3 = (n) => Math.round(n * 1000) / 1000;
 
 /** A response as text. Written answers are text; anything else is shown as it came. */
@@ -68,6 +74,12 @@ function responseText(r) {
   if (Array.isArray(r)) return r.join(', ');
   return JSON.stringify(r);
 }
+
+/** What the student wrote: a drawing's words, or the answer itself. */
+const saidOf = (item) => (isDrawing(item) ? String(item.text ?? '') : responseText(item?.response));
+
+/** Words as the server counts them: runs of non-space, a zero-width space or joiner a gap. */
+const wordsIn = (text) => String(text ?? '').replace(/[​⁠﻿᠎]/g, ' ').trim().split(/\s+/).filter(Boolean).length;
 
 /** "3 min after it was served", from the two stamps the answer carries. */
 function took(item) {
@@ -95,7 +107,7 @@ function perDay(items, days = 7) {
 
 /** What the form starts from for one answer: what is in force now. */
 function draftFor(item) {
-  const hasAuto = typeof item.autoCorrect === 'boolean' && item.autoScore != null;
+  const hasAuto = !isDrawing(item) && typeof item.autoCorrect === 'boolean' && item.autoScore != null;
   // The note in force is carried over. Sending a decision without it would
   // clear a note the student has already read.
   const note = item.reviewNote ?? '';
@@ -214,11 +226,11 @@ function Brief({ summary, rooms, readOnly, decided, onOpen }) {
   } else if (n === 0) {
     lead = readOnly ? <>Nothing is waiting in the department&apos;s rooms.</> : <>Nothing is waiting for you.</>;
   } else if (summary.hasMore) {
-    lead = <>More than <em>{plural(SUMMARY_LIMIT, 'written answer')}</em> are waiting, in at least {plural(roomsWaiting, 'room')}.</>;
+    lead = <>More than <em>{plural(SUMMARY_LIMIT, 'answer')}</em> are waiting, in at least {plural(roomsWaiting, 'room')}.</>;
   } else {
     lead = (
       <>
-        <em>{plural(n, 'written answer')}</em> {n === 1 ? 'is' : 'are'} waiting in {plural(roomsWaiting, 'room')}.
+        <em>{plural(n, 'answer')}</em> {n === 1 ? 'is' : 'are'} waiting in {plural(roomsWaiting, 'room')}.
         {oldest && <> The oldest is {nameOf(oldest)}&apos;s, written {ago(oldest.answeredAt) || 'at an unrecorded time'}.</>}
       </>
     );
@@ -231,7 +243,10 @@ function Brief({ summary, rooms, readOnly, decided, onOpen }) {
         <p className="rv-lead">{lead}</p>
         <div className="brief">
           <b>How</b>
-          <span>Each written answer is marked as it arrives, by matching rubric words. That mark counts toward the student&apos;s level now.</span>
+          <span>
+            Each written answer is marked as it arrives, by matching rubric words. That mark counts toward the student&apos;s level now.
+            A drawing has no machine mark: it counts once it is given one here.
+          </span>
           <b>{readOnly ? 'You' : 'Yours'}</b>
           <span>
             {readOnly
@@ -289,7 +304,7 @@ function Brief({ summary, rooms, readOnly, decided, onOpen }) {
 /* --------------------------------------------------------------- one item */
 
 function QueueItem({ item, active, open, showStatus, onPick }) {
-  const said = responseText(item.response);
+  const said = saidOf(item);
   const reviewed = item.reviewStatus !== 'provisional';
   return (
     <div
@@ -305,7 +320,10 @@ function QueueItem({ item, active, open, showStatus, onPick }) {
           <b className="clip">{nameOf(item)}</b>
           {item.student?.rollNo && <span className="rv-roll">{item.student.rollNo}</span>}
         </div>
-        <p className="rv-item-said">{said ? `“${said}”` : 'No answer text was recorded.'}</p>
+        <p className="rv-item-said">
+          {isDrawing(item) && item.drawing ? (said ? `A drawing, and “${said}”` : 'A drawing, with no words')
+            : said ? `“${said}”` : isDrawing(item) ? 'No drawing was stored with this answer.' : 'No answer text was recorded.'}
+        </p>
         {reviewed && item.reviewNote && <p className="rv-item-note">Note to the student: {item.reviewNote}</p>}
         <div className="rv-meta">
           <span className="rv-code">{item.room?.code}</span>
@@ -313,7 +331,7 @@ function QueueItem({ item, active, open, showStatus, onPick }) {
           <ImportedTag plain from={item.room?.importedFrom} code={item.room?.code} />
           {item.topic && <span>{item.topic}</span>}
           <Level level={item.bloom} />
-          <span>{kindLabel(item.kind)}</span>
+          <span>{kindLabel(item)}</span>
           <span>Attempt {item.attempt ?? 1}</span>
           <span title={stampOf(item.answeredAt) || undefined}>{timeOf(item.answeredAt)}</span>
         </div>
@@ -323,8 +341,10 @@ function QueueItem({ item, active, open, showStatus, onPick }) {
         <b className="rv-item-score">{pctOf(item.score)}</b>
         <Verdict correct={item.correct} />
         {item.reviewStatus === 'overridden'
-          ? <small>was <span className="rv-was">{pctOf(item.autoScore)}</span></small>
-          : item.reviewStatus === 'provisional' && item.autoDetail && <small>{item.autoDetail}</small>}
+          ? !isDrawing(item) && <small>was <span className="rv-was">{pctOf(item.autoScore)}</span></small>
+          : item.reviewStatus === 'provisional' && (isDrawing(item)
+            ? <small>waits for your mark</small>
+            : item.autoDetail && <small>{item.autoDetail}</small>)}
       </div>
     </div>
   );
@@ -361,10 +381,52 @@ function Stimulus({ stimulus, figure }) {
   );
 }
 
+/* ---------------------------------------------------------------- drawing */
+
+/**
+ * A drawing answer's picture. An <img> sends no credentials, so the bytes are
+ * fetched with this console's own (in a header, as every request here) and
+ * shown from a blob url, revoked when the answer goes.
+ */
+function Drawing({ url, fetchBlob }) {
+  const [got, setGot] = useState({ for: null, src: null, failed: '' });
+  const [round, setRound] = useState(0);
+  useEffect(() => {
+    let live = true;
+    let made = null;
+    // The server's url (/api/media/<id>, no-store): never cached here either.
+    fetchBlob(url).then(
+      (src) => { if (live) { made = src; setGot({ for: url, src, failed: '' }); } else URL.revokeObjectURL(src); },
+      (err) => { if (live) setGot({ for: url, src: null, failed: err?.message || 'The server did not answer.' }); },
+    );
+    return () => {
+      live = false;
+      if (made) URL.revokeObjectURL(made);
+    };
+  }, [url, fetchBlob, round]);
+
+  const now = got.for === url ? got : { src: null, failed: '' };
+  return (
+    <figure className="rv-drawing">
+      {now.src
+        ? <img src={now.src} alt="The student's drawing" />
+        : now.failed
+          ? (
+            <p className="hint">
+              The drawing did not load: {now.failed}{' '}
+              <button type="button" className="link rv-linkbtn" onClick={() => { setGot({ for: null, src: null, failed: '' }); setRound((n) => n + 1); }}>Try again</button>
+            </p>
+          )
+          : <div className="skel rv-drawing-skel" aria-label="Loading the drawing" />}
+    </figure>
+  );
+}
+
 /* --------------------------------------------------------- decision form */
 
 function DecisionForm({ item, draft, onDraft, onSubmit, busy, said }) {
-  const hasAuto = typeof item.autoCorrect === 'boolean' && item.autoScore != null;
+  const drawing = isDrawing(item);
+  const hasAuto = !drawing && typeof item.autoCorrect === 'boolean' && item.autoScore != null;
   const rubricN = item.question?.rubric?.length ?? 0;
   const outcome = outcomeOf(item, draft);
   const note = draft.note ?? '';
@@ -400,26 +462,29 @@ function DecisionForm({ item, draft, onDraft, onSubmit, busy, said }) {
       onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submit(e); }}
       aria-labelledby={`${fid}-h`}
     >
-      <div className="rv-label" id={`${fid}-h`}>Your decision</div>
+      <div className="rv-label" id={`${fid}-h`}>{drawing ? 'Your mark' : 'Your decision'}</div>
 
-      <Segmented
-        label="Your decision"
-        value={draft.mode}
-        onChange={(mode) => onDraft({ mode })}
-        options={[
-          { id: 'confirm', label: 'Confirm the mark', disabled: !hasAuto },
-          { id: 'override', label: 'Change the mark' },
-        ]}
-      />
+      {/* A drawing is marked only: confirming one is a 409 (batch 9). */}
+      {drawing ? <p className="said">{DRAWING_MARK}</p> : (
+        <Segmented
+          label="Your decision"
+          value={draft.mode}
+          onChange={(mode) => onDraft({ mode })}
+          options={[
+            { id: 'confirm', label: 'Confirm the mark', disabled: !hasAuto },
+            { id: 'override', label: 'Change the mark' },
+          ]}
+        />
+      )}
 
-      {draft.mode === 'confirm' ? (
+      {draft.mode === 'confirm' && !drawing ? (
         <p className="said">
           Keeps the machine&apos;s mark, {pctOf(item.autoScore)} and {item.autoCorrect ? 'right' : 'wrong'}, as yours.
           {item.reviewStatus === 'provisional' && ' Their numbers do not move: it already counts.'}
         </p>
       ) : (
         <div className="rv-change">
-          {!hasAuto && <p className="hint">There is no machine mark to keep on this answer, so it can only be changed.</p>}
+          {!hasAuto && !drawing && <p className="hint">There is no machine mark to keep on this answer, so it can only be changed.</p>}
           {rubricN > 0 && (
             <div className="rv-row">
               <span className="rv-k" id={`${fid}-pts`}>Rubric points made</span>
@@ -515,7 +580,7 @@ function DecisionForm({ item, draft, onDraft, onSubmit, busy, said }) {
           busy={busy}
           disabled={!ready}
         >
-          {draft.mode === 'confirm' ? 'Confirm the mark' : 'Save the new mark'}
+          {draft.mode === 'confirm' ? 'Confirm the mark' : drawing ? 'Save the mark' : 'Save the new mark'}
         </Button>
       </div>
     </form>
@@ -524,9 +589,10 @@ function DecisionForm({ item, draft, onDraft, onSubmit, busy, said }) {
 
 /* ------------------------------------------------------------- the detail */
 
-function Detail({ item, entry, onRetryLog, role, readOnly, draft, onDraft, onSubmit, busy, said, handed, inSheet }) {
+function Detail({ item, entry, onRetryLog, role, readOnly, draft, onDraft, onSubmit, busy, said, handed, inSheet, mediaBlobUrl }) {
   const rubric = item.question?.rubric ?? [];
-  const text = responseText(item.response);
+  const drawing = isDrawing(item);
+  const text = saidOf(item);
   const log = entry?.log ?? [];
   const byWhom = (r) => (r.reviewedBy == null
     ? 'with the teacher key'
@@ -562,7 +628,8 @@ function Detail({ item, entry, onRetryLog, role, readOnly, draft, onDraft, onSub
         <div className="rv-meta">
           <Level level={item.bloom} />
           {item.topic && <span>{item.topic}</span>}
-          <span>{kindLabel(item.kind)}</span>
+          <span>{kindLabel(item)}</span>
+          {item.maxWords > 0 && <span>Up to {item.maxWords} words</span>}
           <span>Attempt {item.attempt ?? 1}</span>
         </div>
         <div className="rv-meta">
@@ -578,8 +645,17 @@ function Detail({ item, entry, onRetryLog, role, readOnly, draft, onDraft, onSub
       </section>
 
       <section className="rv-d-sec" aria-label="The student's answer">
-        <div className="rv-label">Their answer</div>
-        <p className="rv-answer">{text || 'No answer text was recorded.'}</p>
+        <div className="rv-label">
+          <span>Their answer</span>
+          {/* A written answer's words against its limit (batch 9, E3), counted as the server counts them. */}
+          {item.maxWords > 0 && <span className="rv-label-n">{wordsIn(text)} of {item.maxWords} words</span>}
+        </div>
+        {drawing && (item.drawing?.url
+          ? <Drawing url={item.drawing.url} fetchBlob={mediaBlobUrl} />
+          : <p className="hint">No drawing was stored with this answer.</p>)}
+        {drawing && item.drawing && !text
+          ? <p className="hint">No words with the drawing.</p>
+          : (text || !drawing) && <p className="rv-answer">{text || 'No answer text was recorded.'}</p>}
         {/* Batch 8 (9c): the key the row was stored under, the phone's own id for it when it sent one. `answerId` stays the row id the review routes take. */}
         {item.answerKey && <p className="hint">Answer reference <span className="ev-key">{item.answerKey}</span></p>}
       </section>
@@ -591,10 +667,10 @@ function Detail({ item, entry, onRetryLog, role, readOnly, draft, onDraft, onSub
         </div>
         {rubric.length > 0 ? (
           <>
-            <p className="hint">The points a full answer makes.</p>
+            <p className="hint">{drawing ? 'Your guide to marking it: the machine matches none of these.' : 'The points a full answer makes.'}</p>
             <ol className="rv-rubric">{rubric.map((r, i) => <li key={i}>{r}</li>)}</ol>
           </>
-        ) : <p className="hint">No rubric was stored with this question.</p>}
+        ) : <p className="hint">{drawing ? 'This question has no rubric: mark it on your own reading.' : 'No rubric was stored with this question.'}</p>}
         {item.question?.modelAnswer && (
           <div className="rv-model">
             <span className="rv-k">Model answer</span>
@@ -608,20 +684,27 @@ function Detail({ item, entry, onRetryLog, role, readOnly, draft, onDraft, onSub
         <ol className="rv-trail">
           <li data-kind="machine">
             <span className="rv-trail-dot" aria-hidden="true" />
-            <div className="rv-trail-main">
-              <b>Machine reading</b>
-              <span className="rv-trail-mark">
-                {pctOf(item.autoScore)} <Verdict correct={item.autoCorrect} />
-                {item.autoDetail && <span className="muted">· {item.autoDetail}</span>}
-              </span>
-            </div>
+            {drawing ? (
+              <div className="rv-trail-main">
+                <b>Sent</b>
+                <span className="rv-trail-mark">Not marked by the machine. It counts nowhere until it has your mark.</span>
+              </div>
+            ) : (
+              <div className="rv-trail-main">
+                <b>Machine reading</b>
+                <span className="rv-trail-mark">
+                  {pctOf(item.autoScore)} <Verdict correct={item.autoCorrect} />
+                  {item.autoDetail && <span className="muted">· {item.autoDetail}</span>}
+                </span>
+              </div>
+            )}
             <time className="rv-trail-t" dateTime={item.answeredAt}>{stampOf(item.answeredAt)}</time>
           </li>
           {log.map((r) => (
             <li key={r.id} data-kind={r.decision}>
               <span className="rv-trail-dot" aria-hidden="true" />
               <div className="rv-trail-main">
-                <b>{r.decision === 'confirm' ? 'Confirmed' : 'Changed'} {byWhom(r)}</b>
+                <b>{r.decision === 'confirm' ? 'Confirmed' : drawing ? 'Marked' : 'Changed'} {byWhom(r)}</b>
                 <span className="rv-trail-mark">{pctOf(r.score)} <Verdict correct={r.correct} /></span>
                 {r.note && <span className="rv-trail-note">“{r.note}”</span>}
               </div>
@@ -639,7 +722,7 @@ function Detail({ item, entry, onRetryLog, role, readOnly, draft, onDraft, onSub
           </p>
         )}
         {!entry?.loading && !entry?.error && log.length === 0 && (
-          <p className="hint">No one has confirmed or changed this mark yet.</p>
+          <p className="hint">{drawing ? 'No one has marked it yet.' : 'No one has confirmed or changed this mark yet.'}</p>
         )}
       </section>
 
@@ -973,8 +1056,8 @@ export function ReviewScreen({ services, initialStatus = 'provisional', initialO
   ) : <span>Review</span>;
 
   const sub = readOnly
-    ? 'Written answers across the department and the marks in force. Read only: the professor who runs a room decides.'
-    : 'Written answers the machine marked against their rubric. Confirm the mark or change it.';
+    ? 'Written and drawn answers across the department and the marks in force. Read only: the professor who runs a room decides.'
+    : 'Written answers the machine marked against their rubric, to confirm or change, and drawings, to mark.';
 
   const waitingInView = code ? summary.items.filter((x) => x.room?.code === code).length : waitingN;
   const actions = (
@@ -1048,12 +1131,12 @@ export function ReviewScreen({ services, initialStatus = 'provisional', initialO
         {plain ? (
           <Empty
             icon="checklist"
-            title="No written answers to review"
+            title="No answers to review"
             action={<Button icon="history" onClick={() => changeStatus('all')}>See answers already reviewed</Button>}
           >
-            Written answers land here when a room serves a question that asks students to write in their own words. The
-            machine marks each one against its rubric as it arrives; {readOnly ? 'the professor' : 'you'} then confirm that
-            mark or change it here.
+            Answers land here when a room serves a question that asks students to write in their own words or to draw. The
+            machine marks each written one against its rubric as it arrives; {readOnly ? 'the professor' : 'you'} then confirm that
+            mark or change it here. A drawing waits for a mark of {readOnly ? 'theirs' : 'yours'}.
           </Empty>
         ) : (
           <Empty
@@ -1062,7 +1145,7 @@ export function ReviewScreen({ services, initialStatus = 'provisional', initialO
             action={<Button onClick={() => { changeCode(''); changeStatus('all'); }}>Show every room and state</Button>}
           >
             {status === 'all'
-              ? 'No written answer has been sent in this room.'
+              ? 'No written or drawn answer has been sent in this room.'
               : 'Nothing in this view. The answers themselves have not changed.'}
           </Empty>
         )}
@@ -1126,6 +1209,7 @@ export function ReviewScreen({ services, initialStatus = 'provisional', initialO
     busy: sending === openItem.answerId,
     said: said[openItem.answerId],
     handed: handed && handed.to === openItem.answerId ? handed.text : null,
+    mediaBlobUrl: services.mediaBlobUrl ?? api.mediaBlobUrl,
   };
 
   return shell({ crumb, sub, actions }, (

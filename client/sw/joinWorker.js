@@ -9,7 +9,8 @@
    exception (Phase 7, "Next"): the pictures of packed questions, which the
    page itself keeps in the `bloomloop-media` cache while online, are served
    from there, so a question answered offline still shows its image. A picture
-   at /api/media/<id> never changes its bytes. */
+   at /api/media/<id> never changes its bytes. A response marked no-store (a
+   student's drawing, batch 9) is never kept here, nor served from a cache. */
 
 const VERSION = '__VERSION__';
 const SHELL = __SHELL__;
@@ -40,6 +41,8 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+const noStore = (res) => /no-store/i.test(res.headers.get('cache-control') || '');
+
 function pageFromNetwork(request) {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('slow')), PATIENCE);
@@ -53,7 +56,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api/media/')) {
-    event.respondWith(caches.match(request, ANY).then((kept) => kept || fetch(request)));
+    event.respondWith(caches.match(request, ANY).then((kept) => (kept && !noStore(kept) ? kept : fetch(request))));
     return;
   }
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/socket.io/')) return;

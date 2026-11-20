@@ -20,7 +20,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { newId, untilDone } from '../hub/hubApi.js';
-import { KIND_LABEL } from '../lib/kinds.js';
+import { labelOf } from '../lib/kinds.js';
 import { DraftTag, StatusTag } from '../teach/ItemStats.jsx';
 import { Button, Empty, Icon, Level, Note } from '../ui/index.jsx';
 
@@ -289,7 +289,7 @@ export function QMeta({ q, children }) {
       <Level level={q.bloom} />
       {q.topic && <span className="hq-topic clip" title={q.topic}>{q.topic}</span>}
       <i className="it-dot" aria-hidden="true" />
-      <span>{q.kindLabel ?? KIND_LABEL[q.kind] ?? q.kind}</span>
+      <span>{q.kindLabel ?? labelOf(q)}</span>
       <StatusTag status={q.status} />
       {children}
     </span>

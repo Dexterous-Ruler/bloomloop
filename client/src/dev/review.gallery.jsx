@@ -166,6 +166,10 @@ function buildSample() {
         topic: q.topic,
         bloom: q.bloom,
         kind: 'open',
+        // Batch 9 (E3): the server's label and limit; every written answer here is a short one.
+        kindLabel: 'Short answer',
+        length: 'short',
+        maxWords: 60,
         question: { id: qid, text: q.text, rubric: q.rubric, modelAnswer: null, stimulus: q.stimulus ?? null },
         response,
         autoCorrect,

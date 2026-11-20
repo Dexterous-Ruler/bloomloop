@@ -32,6 +32,10 @@
  * Teacher-led room has no phones, so it opens on In the room and has no Class
  * view. A waiting room shows its lobby, with Start, above whichever is open.
  * All of it is for this screen only: none of it reaches a phone or the wall.
+ *
+ * Batch 9 adds Exam mode as a part of the room (teach/ExamRoom.jsx): the
+ * setting, changed live by the owner, and the signals in roll order. Closing a
+ * room whose record is near the archive's ceiling says so (archiveWarning).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -53,6 +57,7 @@ import Records, { RECORD_TABS } from './Records.jsx';
 import ClassQuestions, { RoomConfidence } from './ClassQuestions.jsx';
 import { RoomMisconceptions } from './Misconceptions.jsx';
 import StudentCard from './StudentCard.jsx';
+import ExamRoom, { signalSentence } from './ExamRoom.jsx';
 import useRoomFeed from './useRoomFeed.js';
 import { ImportedNote, isKept, KeptTag, laptopItems } from './imported.jsx';
 
@@ -85,18 +90,26 @@ const FILTERS = [
 const isObserved = (e) => e?.src === 'observed';
 const secs = (ms) => `${(Math.max(0, Number(ms) || 0) / 1000).toFixed(1)}s`;
 
+const SHOT_KEY = { printscreen: 'Print Screen', snip_shortcut: 'Windows+Shift+S', mac_shortcut: 'Cmd+Shift+3, 4 or 5' };
+
 /** One event as a sentence: what was reported or worked out, and nothing more. */
 function eventLine(e) {
   switch (e?.kind) {
-    case 'hidden': return `The tab was hidden${Number(e.awayMs) ? ` for ${secs(e.awayMs)}` : ''}.`;
+    // A phone's focus or visibility loss (E7): what Lens, Circle to Search and
+    // screenshot tools cause, as well as simply going elsewhere.
+    case 'hidden':
+    case 'visibility_hidden': return `Page left${Number(e.awayMs) ? ` for ${secs(e.awayMs)}` : ''}: possibly Lens or a screenshot tool.`;
     case 'returned': return 'The tab came back.';
-    case 'blurred': return 'The window lost focus.';
+    case 'blurred':
+    case 'focus_lost': return 'Page left: possibly Lens or a screenshot tool.';
+    case 'screenshot_attempt': return `A screenshot key was pressed${SHOT_KEY[e.method] ? ` (${SHOT_KEY[e.method]})` : ''}.`;
     case 'fullscreen-exit': return 'Focus mode was left.';
     case 'paste': return 'Text was pasted into an answer.';
     case 'reload': return 'The page was reloaded.';
     case 'too-fast': return `An answer arrived in ${secs(e.tookMs)}, against about ${secs(e.expectedMs)} to read the question.`;
     case 'second-socket': return 'The same roll number was answering from a second live connection.';
-    default: return String(e?.kind ?? 'unknown');
+    // The exam kinds (Batch 9), said the same way as on the exam screen.
+    default: return signalSentence(e);
   }
 }
 
@@ -120,7 +133,7 @@ const lasted = (ms) => {
 
 // The parts of the room, as the address names them (F3): `?space=` and, for
 // the teacher records, `?tab=`. A reload or a shared link opens on the same one.
-const SPACE_IDS = ['class', 'insights', 'ask', 'attendance', 'room', 'projector'];
+const SPACE_IDS = ['class', 'insights', 'ask', 'attendance', 'room', 'projector', 'exam'];
 
 /**
  * A room code split in two for reading aloud: "K7Q 42M", with a visual gap and
@@ -743,7 +756,7 @@ function useRoomInfo(code, status) {
 }
 
 export default function Live({ code, title, closed, onClosed, onProjector, onOpenQuestion }) {
-  const { rows, room, insights, classQuestion, setClassQuestion, teachingMove, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus } = useRoomFeed(code);
+  const { rows, room, insights, classQuestion, setClassQuestion, teachingMove, integrity, wire, wireError, error, setError, downFor, retry, roomStatus, setRoomStatus } = useRoomFeed(code);
   const info = useRoomInfo(code, roomStatus);
   const known = info !== undefined;
   const mode = info?.settings?.mode ?? 'devices';
@@ -801,6 +814,9 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
   const [posted, setPosted] = useState(null);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [ending, setEnding] = useState(false);
+  // Batch 9: the close reply's warning that the room's record is near the
+  // archive's ceiling (long answers can take it there), shown as given.
+  const [closeWarning, setCloseWarning] = useState('');
   // The raw events for one student. Asked for, never fetched on selection.
   const [trail, setTrail] = useState(null);
   const [trailBusy, setTrailBusy] = useState(false);
@@ -886,7 +902,11 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
 
   async function end() {
     setError(''); setEnding(true);
-    try { await api.closeSession(code); onClosed(); }
+    try {
+      const res = await api.closeSession(code);
+      setCloseWarning(res?.archiveWarning ?? '');
+      onClosed();
+    }
     catch (err) { setError(`Could not close the room: ${err.message}`); }
     finally { setEnding(false); setConfirmEnd(false); }
   }
@@ -1141,12 +1161,15 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
   const masteredAt = (pool) => LEVELS.map((l) => pool.filter((r) => Array.isArray(r.mastered) && r.mastered.includes(l)).length);
 
   // ---- Phase 3: the parts of the room beside the class ---------------------
+  const examOn = Boolean(integrity?.examMode?.on ?? info?.examMode?.on);
   const spaces = [
     !led && { id: 'class', label: 'Class' },
     { id: 'insights', label: 'Insights' },
     // Phase 5: one question put to every phone. Only where phones answer.
     !led && { id: 'ask', label: 'Class question', count: classQuestion && classQuestion.state !== 'closed' ? 'running' : undefined },
     classRoom && { id: 'attendance', label: 'Attendance' },
+    // Batch 9: exam mode, where phones answer. A closed room shows it only if it was on.
+    !led && (examOn || !closed) && { id: 'exam', label: 'Exam mode', count: examOn ? 'on' : undefined },
     { id: 'room', label: 'In the room' },
     { id: 'projector', label: 'Projector' },
   ].filter(Boolean);
@@ -1219,7 +1242,7 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
       {/* Phase 7: a room run in laptop mode and imported is never shown as one this server ran. */}
       <ImportedNote from={info?.importedFrom} code={code} />
 
-      {(stopped && !closed) || (stale && !stopped) || rejoined || (wireError && !everLive && !stopped) || error || classroomError || posted ? (
+      {(stopped && !closed) || (stale && !stopped) || rejoined || (wireError && !everLive && !stopped) || error || classroomError || posted || closeWarning ? (
         <div className="stack stack-2">
           {stopped && !closed && (
             <Note tone="bad" role="alert">
@@ -1242,6 +1265,7 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
             <Note tone="bad">The live connection could not open: {wireError}. The roster below was read once and will not move until it does.</Note>
           )}
           {error && <Note tone="bad">{error}</Note>}
+          {closeWarning && <Note tone="warn" role="status">{closeWarning}</Note>}
           {classroomError && <Note tone="bad">{classroomError}</Note>}
           {posted && (
             <Note tone="ok">
@@ -1839,6 +1863,9 @@ export default function Live({ code, title, closed, onClosed, onProjector, onOpe
           />
           <RoomConfidence code={code} />
         </div>
+      )}
+      {current === 'exam' && !led && (
+        <ExamRoom code={code} canControl={canControl} closed={closed} info={info} integrity={integrity} onOpenStudent={setCardRoll} />
       )}
       {current === 'attendance' && classRoom && (
         <Attendance code={code} canControl={canControl} mode={mode} summary={room.attendance} />

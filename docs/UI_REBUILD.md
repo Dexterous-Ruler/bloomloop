@@ -1142,6 +1142,181 @@ answers 404, and everything that works today works as before.
     the answer and offers "Open the question again" or "Forget this answer".
   - Get Ready's "End this check", and "Why this path" with its source.
 
+### Batch 8: the five figure kinds on the phone (20 Nov)
+
+- **Loading:** `learn/figkinds/` holds hotspot, label, plot, number line and chart. They
+  are lazy-loaded by `learn/Answer.jsx`, so `/join`'s first download carries none of
+  them; the figure view (`learn/Figure.jsx`) now loads the same way.
+- **Offline:** the service worker precaches the phone's own lazy chunks
+  (`sw/plugin.js`), so a packed figure question still works offline.
+- **Answering on the server's figure:** each control works on top of the server's SVG,
+  and the phone never marks anything or holds a key.
+  - **Hotspot:** tap one or more parts (`data-part` tokens).
+  - **Label:** tap or drag labels onto numbered parts, and change or remove them.
+  - **Plot:** points, or a line through two points, snapped to the grid.
+  - **Number line:** points, intervals with open or closed ends, and rays.
+  - **Chart:** bars set by drag or arrow keys, snapped to the scale.
+- **Keyboard and screen readers:** every control has a name, works by keyboard, and
+  announces changes in a status line.
+- **After marking:** each control shows the server's solution beside the student's own
+  answer.
+- **Accessible names:** True and False, and the match and categorise tiles, carry their
+  names directly.
+- **`/join`:** 169,850 bytes gzip, 134 under the ceiling.
+- **Checked:** one phone (375 px) went through a room of all 21 kinds on the local test
+  server. Every question rendered, took an answer and was marked. 19 of the 20 graded
+  were right, all five figure kinds among them; the open answer waits for review, and
+  the poll is not graded.
+- **Not run:**
+  - a real phone or screen reader;
+  - hotspot or label on a picture with regions (none is seeded);
+  - a plot answered as points or under conditions;
+  - saving a figure answer as a draft across a reload, which `lib/draft.js` does not
+    yet accept.
+- **For the server:** at phone width the number line's text is about 6 px and one step
+  on the plot is about 9 px. A taller drawing would help.
+
+### Batch 9: exam mode's copy guard and screenshot signals (E5 client part, E7)
+
+- **Where:** `learn/guard/Guard.jsx` and `styles/guard.css`, lazy (precached by the
+  service worker), mounted by `learn/LearnApp.jsx` only when exam mode is on.
+- **Switched on by the server** (the localStorage flag is gone): `exam` on GET
+  /api/session/:code before joining, `examMode` on session:accepted, and exam:mode mid-room.
+  `watched: false` means nothing that watches is asked for; the copy guard and watermark stay.
+- **On the question:** no selection, copy, cut, context menu, drag or iOS callout (answer
+  fields keep theirs); blurred while the page is hidden or unfocused; a faint watermark of
+  the roll number and room code over the page. Read-aloud, screen readers and the keyboard
+  are untouched.
+- **Signals:** Print Screen (down and up), Win+Shift+S (or focus lost just after Shift+S),
+  Cmd+Shift+3/4/5 blur at once and send `student:signal` `{ kind: 'screenshot_attempt',
+  method }`, at most one per method per 10 s. A student whose `session:accepted` carries
+  `signalsOff: true` (marked under 18) sends no signal of any kind; blur and watermark stay.
+- **Console:** a page's focus or visibility loss reads "Page left: possibly Lens or a
+  screenshot tool."
+
+### Batch 9: the wheel, the finish link, short and long answers, drawings (20 Nov)
+
+- **The wheel (E6, `teach/WheelDisc.jsx`):**
+  - A real SVG wheel replaces the tick ring.
+  - Segments are only for the students on the wheel. Labels are fitted with canvas text
+    metrics: the full name, then "First L.", then a shortened first name, or the roll
+    number with Names off. Labels on the left half are turned to read upright.
+  - The pointer sits at 3 o'clock. A flick, then friction (3.6 s), stops inside the
+    server's pick, and the client never chooses who.
+  - The think-time ring runs round the rim. Under reduced motion there is no spin and the
+    pick is simply at the pointer.
+  - Past 30 students a reel with a band takes over.
+  - Every behaviour of the wheel screen is kept. Gallery: `dev/wheel.gallery.jsx`.
+- **The finish screen (E2, `learn/Finish.jsx`, now lazy):** a linked room offers
+  "Continue in your Learning Hub". Otherwise one line, "Signing in keeps a history of your
+  answers and opens your Learning Hub", with Sign in. Both leave the room first.
+- **Short and long answers (E3):**
+  - **Phone:** the open kind's `length` gives short (default; up to 60 words, a compact
+    box) or long (up to 600 words, a growing box), with a live word count that turns gold
+    near the limit. Submit is never blocked; the server judges.
+  - **Labels:** "Short answer" and "Long answer" through `labelOf` in `lib/kinds.js`,
+    used on the phone, wall, hub, bank, review and staff screens.
+  - **Editor:** a Short / Long switch, with `length` sent on save.
+- **Drawings (E4, `learn/drawing/`, lazy):**
+  - **The tools:** pen, eraser, four colours, three widths, undo and redo (a clear can be
+    undone), and an optional "Explain your drawing" box.
+  - **Input:** pointer events for touch, mouse and stylus, with pressure. A resting palm
+    draws nothing once a stylus has been used.
+  - **Export:** WebP (PNG on Safari) under 400 KB.
+  - **Upload and answer:** sent as `student:drawing { questionId, uploadId, type, bytes,
+    image }`, which waits for `drawing:stored { mediaId }` or `drawing:refused`. The answer
+    is then `{ mediaId, text }`.
+  - **Review:** the drawing shows with its text, fetched with credentials in a header.
+- **`/join`:** 167,651 bytes gzip (2,333 under the ceiling). Finish, LevelMove, the figure
+  view, the five figure kinds, the guard and the drawing board are lazy chunks under
+  `src/learn/`, which the service worker precaches (`sw/plugin.js`).
+- **Not run:**
+  - the drawing upload and the screenshot signal against a server (batch 9's is not
+    here yet);
+  - the under-18 path;
+  - a long answer from the server, which does not send `length` yet;
+  - the linked finish screen in a real room (gallery only);
+  - a real phone, stylus or screen reader.
+- **For the server:**
+  - Send `examMode` in `session.settings` and `signalsOff` on `session:accepted`.
+  - Accept `screenshot_attempt` with its method.
+  - Keep and send the open kind's `length`.
+  - Accept `student:drawing` as above, and echo `uploadId` in its replies.
+  - Accept `{ mediaId: null, text }` for an answer in words only, or drop that path.
+
+### Batch 9 wired to the server (ba569d5, 20 Nov)
+
+- **The phone in an exam room (`learn/guard/Exam.jsx`, `screen.js`; lazy, precached):**
+  - The room's rules replace the join form before joining; joining counts as having seen
+    them.
+  - Exam mode turned on or off mid-room shows the new rules, then sends
+    `student:exam-consent` and waits for its ack.
+  - Safe Exam Browser: its values go on the join, and a refusal mid-room goes back to
+    the join form with the server's reason.
+  - Laptops follow the steps in order: the rules, then sharing the whole screen (only
+    `monitor` counts), then fullscreen. Answering pauses under one panel until each is
+    done, and again if one is left.
+  - An answer refused with `exam:screen-needed` stays on the phone and goes once the
+    screen is shared. After a rejoin, the share is told again before the outbox.
+  - Screen pictures go every `snapshotSeconds`, under `snapshotMaxBytes`. On 'size' the
+    picture shrinks; on 'full' it carries on.
+  - The signals are `copy_attempt`, `context_menu`, `focus_lost`, `visibility_hidden`,
+    `fullscreen_exit`, and `screenshot_attempt` with its method.
+- **Written and drawn answers on the phone:**
+  - **Limits:** `maxWords` and `maxChars` are counted the server's way (a zero-width
+    space is a gap; characters on the trimmed text with spaces collapsed). Answers go as
+    plain strings.
+  - **Refused:** `server:refused` keeps the text in its box ("Not taken").
+  - **Kept:** an over-limit answer kept after the room closed reads "Kept, not counted".
+  - **Drawings:**
+    - The picture goes first (`student:drawing` with the answer's own id).
+    - `drawing:stored` then sends `{ mediaId, text? }`; `drawing:rejected` is retried at
+      8, 16 and 32 s; `drawing:refused` is final.
+    - Until stored, the picture stays in the outbox, and offline it reads "Saved, will
+      be sent when you reconnect".
+    - The result shows its awaiting-review note, never a mark.
+  - **Service worker:** it never serves a cached `/api/media`.
+- **The console (`teach/ExamSettings.jsx`, `teach/ExamRoom.jsx`):**
+  - **When a room opens:** exam settings with each server help line beside its control
+    and the honesty line.
+    - Fullscreen, sharing and pictures are disabled with the reason without a class, and
+      pictures need sharing.
+    - None of it applies to Teacher-led rooms.
+    - Safe Exam Browser takes Config Keys and optional Browser Exam Keys, checked before
+      sending.
+  - **"Exam mode" space in the live room:**
+    - The summary, and changing the settings live (PATCH; an HOD and a closed room read
+      only).
+    - The students in roll order, with counts and the latest signal in words, and never
+      a ranking or colour by amount.
+    - The screen-picture viewer: fetched with credentials and no cache, re-read when
+      `snapshotAt` moves, with the time it was taken.
+    - The matching-wrong-answers card, in exam rooms only, marked as signals, not proof.
+  - **Elsewhere:** the student card shows the signals and the picture time. The rooms
+    list shows an exam chip. Closing shows `archiveWarning`.
+- **Review, bank and hub:**
+  - **Review:** drawings load with credentials and take a mark only. Written items show
+    Short or Long with the word count against `maxWords`.
+  - **Bank:** Short/Long comes from the bank's `kinds.openLengths`. The drawing kind
+    has words allowed or not, and an optional "What to look for" list.
+  - **Hub:**
+    - A question in a running class is kept on the device with its sentence.
+    - A held resend shows `heldNote` and no key, and held hints their note.
+    - DRAWINGS_DONE shows its message, and practice drawings show the not-marked note.
+- **`/join`:** 168,809 bytes gzip, 1,175 under the ceiling. The exam code, the drawing board,
+  the figure kinds, Finish and LevelMove are lazy chunks the service worker precaches.
+- **Not run:**
+  - a real laptop screen-share picker, real fullscreen, and Safe Exam Browser (stubbed
+    or scripted);
+  - `drawing:rejected` on demand;
+  - `archiveWarning` from a real oversized room (gallery);
+  - a real phone or stylus.
+- **Open for the server:**
+  - A route for the exam help text before a room exists. `ExamSettings.jsx` keeps a copy
+    of it until the first exam reply.
+  - Turning exam mode off sends `{ on: false }`, which clears the stored settings, so
+    turning it on again starts from the defaults.
+
 ## References and what they shaped
 
 - Karim's Goodfor design (Claude Design file, Nov 2026) shaped the direction:

@@ -37,7 +37,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import '../styles/wall.css';
 
 import Figure from '../learn/Figure.jsx';
-import { KIND_LABEL } from '../lib/kinds.js';
+import { labelOf } from '../lib/kinds.js';
 import { connect, stillTrying } from '../lib/socket.js';
 import { Flow, Icon, Mark, Num } from '../ui/index.jsx';
 // The wall's icons are not in the phone's set (ui/Icon.jsx).
@@ -232,7 +232,7 @@ function Question({ q }) {
     <section className="wl-q" data-stim={q.stimulus ? true : undefined} aria-label="Question">
       {q.stimulus && <Stimulus stimulus={q.stimulus} />}
       <div className="wl-q-main">
-        <span className="wl-label">{KIND_LABEL[q.kind] ?? 'Question'}</span>
+        <span className="wl-label">{labelOf(q) || 'Question'}</span>
         <h1 className="wl-q-text" data-size={len > 220 ? 's' : len > 110 ? 'm' : 'l'}>{q.text}</h1>
         {shown.length > 0 && (
           <ol className="wl-opts" data-cols={cols} data-long={longest > 70 || undefined} data-bare={bare || undefined}>

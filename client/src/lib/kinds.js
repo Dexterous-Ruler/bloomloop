@@ -18,7 +18,9 @@ export const KIND_LABEL = {
   multi: 'Choose all that apply',
   order: 'Put these in order',
   rank: 'Rank them',
-  open: 'Write your answer',
+  // A written answer is short unless the question says long (batch 9, E3);
+  // labelOf below names the long one.
+  open: 'Short answer',
   hottext: 'Pick the words',
   dropdown: 'Choose for each gap',
   table: 'Complete the table',
@@ -26,7 +28,18 @@ export const KIND_LABEL = {
   // Named for what it asks and not for what it measures, because it measures
   // nothing — it is in no level's set on the server and carries no answer key.
   poll: 'Have your say',
+  // Batch 9 (E4): a whiteboard, with words if the student wants.
+  drawing: 'Draw your answer',
 };
+
+/**
+ * A written answer's word limit by its `length` (batch 9, E3). Guidance only:
+ * the server is the judge. A question without `length` is short.
+ */
+export const OPEN_WORDS = { short: 60, long: 600 };
+
+/** The label for one question: the kind's, except that a long written answer says so. */
+export const labelOf = (q) => (q?.kind === 'open' && q.length === 'long' ? 'Long answer' : KIND_LABEL[q?.kind] ?? q?.kind ?? '');
 
 /** Four characters or so, for a bar label under a stat card. */
 export const KIND_TICK = {

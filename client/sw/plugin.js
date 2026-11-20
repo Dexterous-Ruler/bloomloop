@@ -5,8 +5,9 @@
 // chunk it imports statically, the CSS those carry, and the fonts that CSS
 // points at for the scripts the phone's own text is in (Latin: Manrope,
 // JetBrains Mono, and Atkinson Hyperlegible for the dyslexia support). Other
-// subsets, and lazy chunks, are kept by the worker the first time a phone
-// loads them. VERSION is a hash of that list, so it changes exactly when one
+// subsets, and other lazy chunks, are kept by the worker the first time a
+// phone loads them; the phone's own lazy chunks under src/learn/ are
+// precached. VERSION is a hash of that list, so it changes exactly when one
 // of those files does.
 
 import { createHash } from 'node:crypto';
@@ -32,6 +33,13 @@ export default function joinWorker() {
         bundle[name].imports.forEach(walk);
       };
       walk(entry.fileName);
+      // The phone's own lazy chunks (a figure, the figure kinds' controls): a
+      // packed question answered offline needs them before the network goes.
+      for (const name of [...chunks]) {
+        (bundle[name].dynamicImports ?? []).forEach((d) => {
+          if ((bundle[d]?.facadeModuleId ?? '').split('\\').join('/').includes('/src/learn/')) walk(d);
+        });
+      }
 
       const css = new Set();
       chunks.forEach((name) => bundle[name].viteMetadata?.importedCss?.forEach((f) => css.add(f)));

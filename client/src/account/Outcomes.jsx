@@ -29,7 +29,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import { api } from '../lib/api.js';
 import { LABEL, LEVELS } from '../lib/bloom.js';
-import { KIND_LABEL } from '../lib/kinds.js';
+import { labelOf } from '../lib/kinds.js';
 import { useViewer } from '../shell/viewer.js';
 import { Button, Chip, Dialog, Empty, Field, Icon, Level, Menu, Note, Segmented, Tip } from '../ui/index.jsx';
 
@@ -1167,7 +1167,7 @@ function OverrideDialog({ state, onOpenChange, outcomesInUse, overrides, source,
               <span className="oc-ov-meta">
                 {chosen.topic && <span>{chosen.topic}</span>}
                 {chosen.level && <Level level={chosen.level} />}
-                {chosen.kind && <span>{KIND_LABEL[chosen.kind] ?? chosen.kind}</span>}
+                {chosen.kind && <span>{labelOf(chosen)}</span>}
               </span>
             </div>
             {!state?.override && <Button size="sm" variant="ghost" onClick={() => setChosen(null)}>Choose another</Button>}
@@ -1311,7 +1311,7 @@ function Overrides({ data, canEdit, source, on, start }) {
                       {qn.chapter && <span className="clip" title={qn.chapter}>{qn.chapter}</span>}
                       {qn.topic && <span>{qn.topic}</span>}
                       {qn.level && <Level level={qn.level} />}
-                      {qn.kind && <span>{KIND_LABEL[qn.kind] ?? qn.kind}</span>}
+                      {qn.kind && <span>{labelOf(qn)}</span>}
                       {STATUS[qn.status] && <span>{STATUS[qn.status]}</span>}
                     </span>
                   ) : ov.note && <p className="oc-ov-note">{ov.note}</p>}

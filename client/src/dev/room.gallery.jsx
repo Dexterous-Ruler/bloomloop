@@ -15,6 +15,7 @@ import { useState } from 'react';
 import { LEVELS } from '../lib/bloom.js';
 import AppShell from '../shell/AppShell.jsx';
 import Room from '../teach/Room.jsx';
+import { EXAM_OFF } from '../teach/ExamSettings.jsx';
 import { Note } from '../ui/index.jsx';
 
 /* ------------------------------------------------------------------- sample */
@@ -157,6 +158,7 @@ function serverFor(bank, refuse) {
       questionIds: ids ?? null,
       classId: settings.classId ?? null,
       status: settings.lobby ? 'waiting' : 'open',
+      examMode: settings.examMode ?? { on: false },
       // Not in the server's reply: what the form sent, for this page's note.
       sent: settings,
     };
@@ -316,6 +318,43 @@ export default [
         }}
       />
     ),
+  },
+  {
+    id: 'room-exam-class',
+    title: 'Room set-up: exam mode for a class',
+    note: 'Batch 9. SY-CS A, exam mode with fullscreen, the whole screen shared, a picture every 30 seconds and Safe Exam Browser with one Config Key. Each control has the server’s help beside it, under the honesty line. Open it to see the examMode sent.',
+    render: () => (
+      <Demo
+        bank={BANKS.whole}
+        initialRun={{
+          classId: CLASSES[0].id,
+          exam: { ...EXAM_OFF, on: true, fullscreen: true, screenShare: true, snapshotSeconds: 30, sebRequired: true, configKeys: '3f1c9a0b7d2e4f6a8b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a' },
+        }}
+      />
+    ),
+  },
+  {
+    id: 'room-exam-no-class',
+    title: 'Room set-up: exam mode without a class',
+    note: 'Batch 9. Fullscreen, screen sharing and pictures are off and cannot be turned on, with the reason; the copy guard and signals still work. Choose a class to offer them.',
+    render: () => <Demo bank={BANKS.whole} initialRun={{ exam: { ...EXAM_OFF, on: true, fullscreen: true } }} />,
+  },
+  {
+    id: 'room-exam-bad-key',
+    title: 'Room set-up: a Safe Exam Browser key that is not one',
+    note: 'Batch 9. A Config Key must be the 64-character key Safe Exam Browser shows: said under the field, and Open stays off.',
+    render: () => (
+      <Demo
+        bank={BANKS.whole}
+        initialRun={{ classId: CLASSES[0].id, exam: { ...EXAM_OFF, on: true, sebRequired: true, configKeys: '3f1c9a0b7d2e', browserKeys: '' } }}
+      />
+    ),
+  },
+  {
+    id: 'room-exam-teacher-led',
+    title: 'Room set-up: exam mode in a Teacher-led room',
+    note: 'Batch 9. No phone joins a Teacher-led room, so exam mode is not offered and nothing is sent.',
+    render: () => <Demo bank={BANKS.whole} initialRun={{ classId: CLASSES[0].id, mode: 'teacher-led', exam: { ...EXAM_OFF, on: true } }} />,
   },
   {
     id: 'room-out-of-range',

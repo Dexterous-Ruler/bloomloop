@@ -155,6 +155,25 @@ function Key({ q }) {
     );
   }
 
+  // Batch 9 (E4): a drawing has no key; its optional rubric is the reviewer's guide.
+  if (kind === 'drawing') {
+    const rubric = list(q.rubric);
+    return (
+      <div className="stack stack-2">
+        <p className="t-small dim">
+          {q.allowText ? 'A drawing, with words beside it if the student wants.' : 'A drawing only.'} Never marked by the machine: each
+          answer waits for your mark in Review.
+        </p>
+        {rubric.length > 0 && (
+          <>
+            <p className="t-small dim">What to look for:</p>
+            <ol className="tc-key">{rubric.map((r, i) => <Line key={i} mark={i + 1}>{r}</Line>)}</ol>
+          </>
+        )}
+      </div>
+    );
+  }
+
   if (kind === 'hottext') {
     const tokens = list(q.tokens);
     const right = new Set(list(q.answerIdxs).map(Number));

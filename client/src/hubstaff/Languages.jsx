@@ -15,7 +15,7 @@ import { useCallback, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { staffHub } from '../hub/hubApi.js';
-import { KIND_LABEL } from '../lib/kinds.js';
+import { labelOf } from '../lib/kinds.js';
 import { TranslationLine } from '../teach/ItemStats.jsx';
 import { Chip, Icon, Level, Note, Segmented } from '../ui/index.jsx';
 import { QueueFailed, QueueLoading, StaleRead, list, pickFilter, plural, useQueue } from './QueueParts.jsx';
@@ -31,7 +31,7 @@ function Row({ item }) {
       <div className="hq-row-q">
         <span className="hq-meta">
           <Level level={item.bloom} />
-          <span>{KIND_LABEL[item.kind] ?? item.kind}</span>
+          <span>{labelOf(item)}</span>
           <i className="it-dot" aria-hidden="true" />
           <span>{plural(item.students ?? 0, 'student')} answered</span>
           {warn && <Chip tone="warn" icon="alert">Check the translation</Chip>}

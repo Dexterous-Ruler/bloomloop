@@ -312,6 +312,9 @@
 .hub-q-kept svg { flex: none; margin-top: 3px; color: var(--warn); }
 .hub-q-kept b { font-weight: 600; }
 .hub-q-reopen { display: flex; margin-top: -4px; }
+/* Batch 9: a resent answer whose question a running class holds: its mark stays, the key waits. */
+.hub-q-held { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: var(--raised); font: 400 14px/1.5 var(--font); color: var(--text-2); }
+.hub-q-held svg { flex: none; margin-top: 3px; color: var(--text-3); }
 .hub-q-verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font: 400 14px/1.4 var(--font); color: var(--text-2); }
 .hub-q-verdict b { font: 700 16px/1.3 var(--font); color: var(--text); }
 .hub-q-disc { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border-radius: var(--r-full); color: #FFFFFF; background: var(--ok-fill); }

@@ -19,7 +19,7 @@ import { forwardRef, useId, useState } from 'react';
 import Answer from '../learn/Answer.jsx';
 import { DockSlot } from '../learn/parts.jsx';
 import Stimulus from '../learn/Stimulus.jsx';
-import { KIND_LABEL } from '../lib/kinds.js';
+import { labelOf } from '../lib/kinds.js';
 import { Icon, Level } from '../ui/index.jsx';
 import RichText from './RichText.jsx';
 
@@ -205,7 +205,7 @@ export const TestQuestion = forwardRef(function TestQuestion(
         <span id={`${id}-n`} className="hub-test-q-n">{of ? `Question ${number} of ${of}` : `Question ${number}`}</span>
         <span className="hub-test-q-meta">
           {topicName && <span>{topicName}</span>}
-          <span>{KIND_LABEL[kind] ?? kind}</span>
+          <span>{labelOf(question) || kind}</span>
           <Level level={question.bloom} />
         </span>
       </header>

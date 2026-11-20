@@ -33,7 +33,7 @@
 .rc-wheel { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
 .rc-wheel-main { min-width: 0; }
 
-.rc-stage-body { display: grid; grid-template-columns: 240px minmax(0, 1fr); align-items: start; gap: 32px; padding: 22px 26px 24px; }
+.rc-stage-body { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); align-items: center; gap: 28px; padding: 22px 26px 20px; }
 .rc-stage-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .rc-draw { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 .rc-draw-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -53,35 +53,74 @@
 /* The wheel's empty reason, with the fix beside it when there is one. */
 .rc-empty > .grow { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 
-/* The ring: one tick per student on the wheel. Ticks are grey; the lit one is
-   green; one who has had a turn this round is faint. */
-.rc-ring { position: relative; width: 240px; height: 240px; flex: none; }
-.rc-ring > svg { width: 100%; height: 100%; overflow: visible; }
-.rc-ring-track { fill: none; stroke: var(--line-2); stroke-width: 1; stroke-dasharray: 1 5; stroke-linecap: round; }
-.rc-tick { stroke: var(--text-4); stroke-linecap: round; opacity: 0.6; }
-.rc-tick[data-off] { opacity: 0.2; }
-.rc-tick[data-on] { stroke: var(--primary); opacity: 1; }
-.rc-ring:not([data-spinning]) .rc-tick { transition: opacity var(--t-2) var(--ease); }
-.rc-ring-mid {
-  position: absolute; inset: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 5px; text-align: center; min-width: 0;
+/* The wheel (Batch 9, E6): one segment per student on the wheel, the pointer
+   on the right so the pick reads level, think time round the rim. Two quiet
+   tones and hairlines; the pick alone turns green. Past 30, a reel. */
+.rc-disc { position: relative; width: 100%; max-width: 340px; aspect-ratio: 1; flex: none; }
+.rc-disc > svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.rc-disc-seg { fill: var(--surface); }
+.rc-disc-seg[data-alt] { fill: var(--primary-soft); }
+.rc-disc-seg[data-pick] { fill: var(--primary); }
+.rc-disc[data-at-rest] .rc-disc-seg { transition: fill var(--t-3) var(--ease); }
+.rc-disc-sep { stroke: var(--line-2); stroke-width: 1; }
+.rc-disc-peg { fill: var(--text-4); }
+.rc-disc-rim { fill: none; stroke: var(--line-2); stroke-width: 1.5; }
+.rc-disc-empty { fill: var(--sunk); stroke: var(--line-2); stroke-width: 1; stroke-dasharray: 3 5; }
+.rc-disc-label { font-family: var(--font); font-weight: 600; fill: var(--text); }
+.rc-disc-label.is-roll { font-family: var(--mono); font-weight: 500; }
+.rc-disc-label[data-pick] { fill: var(--on-primary); font-weight: 700; }
+.rc-disc-bezel { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.rc-disc-think { fill: none; stroke: var(--primary); stroke-width: 4; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
+.rc-disc-hubring { fill: var(--surface); stroke: var(--line-2); stroke-width: 1.5; }
+.rc-disc-pointer { fill: var(--text); stroke: var(--surface); stroke-width: 2; stroke-linejoin: round; }
+.rc-disc-pivot { fill: var(--surface); }
+.rc-disc-hub {
+  position: absolute; left: 50%; top: 50%; width: 27%; aspect-ratio: 1; translate: -50% -50%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  text-align: center; container-type: inline-size;
 }
-.rc-ring-mid > * { max-width: 100%; }
-.rc-ring:not([data-spinning]) .rc-ring-mid { animation: rc-land 320ms var(--ease) both; }
-.rc-ring-roll { font: 600 28px/1.05 var(--mono); letter-spacing: 0.01em; color: var(--text); overflow-wrap: anywhere; }
-.rc-ring-roll.is-walking { color: var(--text-3); }
-.rc-ring-count { font-size: 44px; line-height: 1; font-variant-numeric: tabular-nums; }
-/* Think time's arc, outside the ticks: full at the start, empty at the draw. */
-.rc-ring-think { fill: none; stroke: var(--primary); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
-.rc-ring-name { font: 600 14px/1.3 var(--font); color: var(--text-2); }
-.rc-ring-sub { font: 400 12px/1.4 var(--font); color: var(--text-3); }
-.rc-ring-skel { width: 220px; height: 220px; margin: 10px; border-radius: 50%; }
+.rc-disc-hub > * { max-width: 100%; }
+.rc-hub-eye { font: 600 10.5px/1.2 var(--font); letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); }
+.rc-hub-count { font: 600 30px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--text); }
+.rc-hub-roll { font: 600 18px/1.1 var(--mono); letter-spacing: 0.01em; color: var(--text); overflow-wrap: anywhere; }
+.rc-hub-sub { font: 400 11.5px/1.3 var(--font); color: var(--text-3); }
+.rc-hub-name { font: 600 11.5px/1.3 var(--font); color: var(--text-2); }
+.rc-disc-hub .rc-hub-eye { font-size: clamp(8.5px, 11cqi, 10.5px); }
+.rc-disc-hub .rc-hub-count { font-size: clamp(22px, 34cqi, 32px); }
+.rc-disc-hub .rc-hub-roll { font-size: clamp(13px, 19cqi, 19px); }
+.rc-disc-hub .rc-hub-sub, .rc-disc-hub .rc-hub-name { font-size: clamp(9.5px, 12.5cqi, 12px); }
+[data-at-rest] > .rc-disc-hub, .rc-reel[data-at-rest] > .rc-reel-head { animation: rc-land 320ms var(--ease) both; }
+.rc-disc-skel { width: 100%; max-width: 340px; aspect-ratio: 1; border-radius: 50%; }
+
+/* The reel: the same draw past 30 on the wheel, a row per student. The band in
+   the middle is the pointer. */
+.rc-reel { width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 12px; }
+.rc-reel-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; min-height: 34px; }
+.rc-reel-head .rc-hub-count { font-size: 28px; }
+.rc-reel-head .rc-hub-roll { font-size: 20px; }
+.rc-reel-head .rc-hub-sub, .rc-reel-head .rc-hub-name { font-size: 13px; }
+.rc-reel-win { position: relative; border: 1px solid var(--line-2); border-radius: var(--r-4); background: var(--surface); overflow: hidden; }
+.rc-reel-band { position: absolute; left: 0; right: 0; background: var(--primary-soft); border-block: 1px solid var(--line-2); }
+.rc-reel-band::before, .rc-reel-band::after {
+  content: ''; position: absolute; top: 50%; translate: 0 -50%; border-block: 7px solid transparent;
+}
+.rc-reel-band::before { left: 0; border-left: 9px solid var(--text); }
+.rc-reel-band::after { right: 0; border-right: 9px solid var(--text); }
+.rc-reel[data-landed] .rc-reel-band { background: var(--primary); border-color: var(--primary); }
+.rc-reel[data-at-rest] .rc-reel-band { transition: background-color var(--t-3) var(--ease), border-color var(--t-3) var(--ease); }
+.rc-reel-rows { position: absolute; inset: 0; -webkit-mask-image: linear-gradient(transparent, #000 32%, #000 68%, transparent); mask-image: linear-gradient(transparent, #000 32%, #000 68%, transparent); }
+.rc-reel-row { position: absolute; left: 0; right: 0; display: flex; align-items: center; gap: 14px; min-width: 0; padding: 0 30px; }
+.rc-reel-row > b { flex: none; font: 500 14px/1 var(--mono); color: var(--text); }
+.rc-reel-row > span { min-width: 0; font: 500 14px/1.3 var(--font); color: var(--text-2); }
+.rc-reel-row[data-pick] > b, .rc-reel-row[data-pick] > span { color: var(--on-primary); font-weight: 700; }
+.rc-reel-think { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--primary); transform-origin: left; transition: transform 1s linear; }
 @keyframes rc-land { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
-.rc-sets { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
-.rc-set { display: flex; align-items: center; gap: 16px; padding: 12px 0; }
-.rc-set + .rc-set { border-top: 1px solid var(--line); }
-.rc-set:last-child { padding-bottom: 0; }
+/* The settings, under the wheel in two columns. */
+.rc-sets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 28px; padding: 4px 26px 8px; border-top: 1px solid var(--line); }
+.rc-set { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); }
+.rc-sets > .rc-set:nth-child(-n + 2) { border-top: 0; }
+.rc-sets > .rc-think-pick { grid-column: 1 / -1; padding-top: 12px; }
 .rc-set .grow > b { display: block; font: 600 13px/1.35 var(--font); color: var(--text); }
 .rc-set .grow > span { display: block; margin-top: 1px; font: 400 12px/1.45 var(--font); color: var(--text-3); text-wrap: pretty; }
 
@@ -349,6 +388,8 @@
   .rc-opts, .rc-flash, .rc-ob-tools, .rc-keys { padding-left: 16px; padding-right: 16px; }
   .rc-onwheel > summary, .rc-onwheel ul { padding-left: 16px; padding-right: 16px; }
   .rc-stage-body { grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 20px; padding: 18px 16px 20px; }
+  .rc-sets { grid-template-columns: minmax(0, 1fr); padding: 0 16px 6px; }
+  .rc-sets > .rc-set:nth-child(2) { border-top: 1px solid var(--line); }
   .rc-stage-side { justify-self: stretch; }
   .rc-ob-list, .rc-kind-list, .rc-act-list { padding-left: 6px; padding-right: 6px; }
   .rc-ob-search { flex: 1 1 100%; }
